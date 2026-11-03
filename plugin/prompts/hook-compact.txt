@@ -1,0 +1,1 @@
+Kioku: Claude Code compacted the conversation. Confirm the Kioku project and the mode from the summary; in local mode also its path and the last pull result. If the project is unclear, choose it again with the kioku skill.

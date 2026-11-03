@@ -1,0 +1,1 @@
+Kioku: the kioku CLI is not available in this session, so local mode is not available. If this conversation already chose a Kioku project, keep it. If the kioku MCP server tools exist, use the kioku skill in remote mode after the user's first message.

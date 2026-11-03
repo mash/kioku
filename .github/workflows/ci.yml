@@ -1,0 +1,49 @@
+name: Go
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./cmd/...
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Build the self-hosting image
+        run: docker build --target final -t kioku:ci .
+      - name: Check the image CLI and server
+        run: |
+          docker run --rm --entrypoint kioku kioku:ci version
+          docker run -d --name kioku-ci -p 127.0.0.1:18080:8080 \
+            -e KIOKU_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+            -e GITHUB_CLIENT_ID=ci -e GITHUB_CLIENT_SECRET=ci kioku:ci
+          trap 'docker logs kioku-ci; docker rm -fv kioku-ci' EXIT
+          curl --fail --retry 10 --retry-delay 1 --retry-all-errors \
+            --max-time 5 http://127.0.0.1:18080/healthz
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: Check plugin shell scripts
+        run: for f in plugin/hooks/*.sh plugin/tools/*.sh; do sh -n "$f"; done
+      - name: Run plugin tests
+        run: python3 -m unittest discover -s plugin/tests
+      - name: Run plugin tests against the built CLI
+        run: |
+          go build -o "$RUNNER_TEMP/kioku" ./cmd/kioku
+          python3 tools/test_claude_plugin.py --binary "$RUNNER_TEMP/kioku" --plugin plugin

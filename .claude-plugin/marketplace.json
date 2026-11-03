@@ -1,0 +1,5 @@
+{
+  "name": "kioku",
+  "owner": {"name": "mash"},
+  "plugins": [{"name": "kioku", "source": "./plugin", "description": "Kioku shared project wiki: read, search and record sources"}]
+}

@@ -1,0 +1,1 @@
+Kioku: if this conversation already chose a Kioku project, keep it. Otherwise, after the user's first message, use the kioku skill to choose the Kioku project. Then pull it and read its wiki/ with grep and file tools before project work. Ask the user when the project is unclear.

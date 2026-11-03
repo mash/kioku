@@ -1,0 +1,17 @@
+{
+  "projects": [
+    {
+      "server": "https://kioku.example.com",
+      "namespace": "acme/platform",
+      "description": "Platform project",
+      "repositories": [
+        "github.com/acme/platform"
+      ],
+      "triggers": [
+        "acme-platform",
+        "PlatformGateway"
+      ],
+      "path": "/Users/you/.local/share/kioku/projects/acme/platform"
+    }
+  ]
+}

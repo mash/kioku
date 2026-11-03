@@ -1,0 +1,8 @@
+name: kioku-wiki
+config:
+  type: cloud
+  networking:
+    type: limited
+    allowed_hosts: ["kioku.magicians.ee"]
+    allow_package_managers: false
+    allow_mcp_servers: false

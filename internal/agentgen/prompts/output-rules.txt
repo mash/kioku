@@ -1,0 +1,6 @@
+Write only wiki/*.md, the complete set of agent-authored pages; omitted pages are deleted.
+Always include wiki/index.md.
+Do not write wiki/source-*.md or wiki/inbox*; Kioku owns those paths.
+File names use lowercase letters, digits and hyphens, with a .md suffix.
+Write at most 300 pages, at most 256 KiB per page, and at most 64 MiB for the whole wiki including the source pages Kioku adds.
+Kioku rewrites the trailing Source snapshots section.

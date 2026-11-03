@@ -1,0 +1,164 @@
+# Kioku plugin for Claude
+
+会話の対象・ローカル保存先・取得タイミングを管理するプラグイン。
+CLI は cwd の `.kioku/config` に従って1プロジェクトを操作する。
+
+## 責務
+
+| スキル | CLI |
+| --- | --- |
+| 会話内のプロジェクト選択 | 接続先別の認証 |
+| カタログと cwd の指定 | `.kioku/config` の読み書き |
+| 対象選択直後の pull、人のログイン後の巡回 | 単一プロジェクトの差分取得・再試行 |
+| Wiki の参照と結果の説明 | ファイル反映・取得メタデータ・更新ロック |
+
+## CLI の操作
+
+プラグインは `${CLAUDE_PLUGIN_DATA}/bin/kioku` の CLI を使う。
+以下の `kioku` はそのパスに置き換える。プラグインなしでは PATH の CLI を使う。
+
+```sh
+mkdir -p /path/to/project
+cd /path/to/project
+kioku pull org/project       # 既定接続先で確認し .kioku/config を作って取得
+kioku pull                   # cwd の設定を使って取得
+```
+
+接続先の既定は `https://kioku.magicians.ee`。
+初回は `kioku --server URL pull org/project` で別の接続先を指定できる。
+`create` はクラウドに新規作成し、`join` は招待へ参加する。
+どちらも cwd に JSON の設定を保存する。CLI は親ディレクトリを探索しない。
+既存の異なる設定は上書きしない。
+
+`wiki/`・`maps/`・`inbox/` は cwd 直下、CLI のメタデータは `.kioku/` 内に置く。
+CLI はユーザー共通領域で接続先別に認証を管理する。スキルは認証情報を読まない。
+
+## Claude Code
+
+| 利用環境 | インストール | Kioku MCP の接続 | 初回の動作 |
+| --- | --- | --- | --- |
+| Claude Code | `/plugin marketplace add mash/kioku` の後に `/plugin install kioku@kioku`。開発時は `claude --plugin-dir /absolute/path/to/kioku/plugin` も使える。 | `/mcp` | SessionStart が取得した CLI で local mode を使う。CLI やサーバーを使えなければ、モード判定に従う。 |
+| Claude Desktop / Cowork | Customize > Plugins > Add marketplace に `mash/kioku` を追加し、`kioku` をインストールする。 | プラグインの Connectors タブ | スキルがモードを選ぶ。Cowork のネットワーク接続は未検証。 |
+| claude.ai chat | 同じ marketplace からインストールする。 | プラグインの Connectors タブ | remote mode のみ。chat のサンドボックスは Kioku サーバーへ接続できない。 |
+
+claude.ai アカウントのプラグインは Claude Code にも同期する（[公式仕様](https://claude.com/docs/plugins/platform-support.md)）。
+
+SessionStart フックは POSIX sh を使う。Python は不要。
+CLI のパスは `${CLAUDE_PLUGIN_DATA}/bin/kioku` の1つだけで、実体の実行ファイルを置く。
+startup・resume・clear・fork では、フックが `bin/kioku version` を実行し、次の場合だけ固定した CLI を取得する。
+
+- `bin/kioku` がない、実行できない、または `version` が失敗する。
+- 入っている CLI のバージョンの文字列が `cli-pin/version` と異なる。古くても新しくても取得する。
+
+同じバージョンなら、フックは何もしない。フックはバージョンの新旧を比べない。
+compact ではフックが CLI を取得せず、文を出すだけにする。
+古いプラグインのセッションも compact でフックを再実行するので、この規則で古い版へ戻る主な経路をなくす。
+ただし古いセッションでプラグインの更新後に `/clear` を実行すると、古い pin の CLI を一度取得することがある。
+次の新しいセッションが、現在の pin の CLI を再び取得する。
+フックは SHA-256 を検証したファイルを一時ディレクトリに置き、1回の `mv -f` で `bin/kioku` へ差し替える。
+既存のファイルには書き込まないので、実行中のプロセスは古いファイルを使い続ける。
+プラグインの更新前に始めたセッションも、次のコマンドから新しい CLI を使う。
+そのため CLI は、スキルが使うコマンド（whoami、pull、put、logout、login、agent login、list、status、version）の後方互換を保つ。
+古い CLI に足りないのは新しい機能だけになる。
+
+初回取得には curl、tar、sha256sum または shasum が必要。
+対応環境は macOS と Linux の amd64・arm64。
+CLI を取得するたびに、一度だけ `github.com` と、その転送先（`release-assets.githubusercontent.com` または `objects.githubusercontent.com`）へのネットワーク接続が必要になる。
+取得失敗はセッションを止めない。古い CLI が動けばそれを使い、次の startup・resume・clear・fork が再度取得を試みる。
+`cli-pin/version` がなければ、フックは取得しない。動く `bin/kioku` がなければ、CLI が無いことを伝える文を出す。
+
+スキルは CLI のパスをそのままコマンド名に書き、変数や `cd` を前に付けない。
+次の許可ルールを1つ足すと、スキルのすべての CLI 呼び出しを許可できる。`<id>` はプラグインのデータディレクトリ名。
+
+```text
+Bash(/Users/you/.claude/plugins/data/<id>/bin/kioku:*)
+```
+
+パスに空白などの引用が必要な文字があると、スキルはパスを引用する。この場合は、最初の許可の確認で、表示されたコマンドの形のまま常に許可する。
+
+開発時は Claude Code の起動前に `KIOKU_CLI=/abs/path/to/kioku` を設定する。
+startup・resume・clear・fork では、フックが取得とバージョン確認を省き、そのファイルを `bin/kioku` へコピーする。
+コピーも同じ一時ファイルと `mv -f` を使う。compact ではコピーしない。
+スキルは `KIOKU_CLI` を読まず、常に `bin/kioku` を使う。
+ローカルでビルドした CLI のバージョン `dev` は pin と異なる。そのため `KIOKU_CLI` を外すと、次の startup が固定した CLI を取得する。
+通常のプラグインは PATH の `kioku` を使わない。
+`/reload-plugins` は CLI を取得しない。新しい pin の CLI は次の startup などが取得する。
+
+フックは SessionStart だけで動く。
+スキルは最初のユーザーメッセージから対象を選び、会話ごとに一度 pull の完了を待つ。
+pull の後に `wiki/index.md` と関連ページを grep やファイルツールで読む。
+追加の pull は、ユーザーの依頼か、作業に新しい内容が必要な場合だけ実行する。
+pull に失敗した場合は、既存コピーを最新と呼ばない。
+Claude Code の sandbox を有効にしている場合は、sandbox の設定で `kioku.magicians.ee` への通信と `~/.local/share/kioku/projects`・`~/.config/kioku`・既定以外のプロジェクトの path への書き込みを許す。許さないと pull が失敗する。
+
+選択は会話内で保持し、カタログは `~/.config/kioku/projects.json` に置く。
+成功した pull ごとに、スキルが同じ server・namespace の項目の有無を確認する。
+項目がなければ path とともに追加し、既存の項目とフィールドを保持する。
+[examples/projects.json](examples/projects.json) に形式の例がある。
+保存先はカタログの path、ユーザー指定の順で決める。
+指定がなければ `~/.local/share/kioku/projects/<organization>/<project>` を使う。
+プロジェクトはプラグインのデータ領域の外に置き、アンインストール後も inbox を残す。
+
+人の `kioku login` が成功したら、スキルが `list` を確認し、各 path を直列に pull する。
+1件失敗しても残りを続行し、結果をまとめて伝える。CLI の login 自体は取得しない。
+選択中のプロジェクトの pull は会話の初回取得を兼ねる。重ねて pull しない。
+
+## Connector login（ローカル・クラウド共通）
+
+対象サーバーの `/mcp` を Claude の connector に接続する。
+既定は `https://kioku.magicians.ee/mcp`。
+local mode の namespace はユーザー指定、repository、カタログから確定する。
+認証前の `list` は不要。
+
+スキルは `whoami` の `agent_id` を確認する。人の認証が有効なら使い続ける。
+認証がないクラウドセッションでは connector login を使う。
+ローカル端末では人に `!` 付きのログインを頼み、完了を待つ。Claude は login を実行しない。
+人が connector login を明示的に頼んだ場合も、connector login を使う。
+
+connector login は `cli_login_code` → `kioku agent login CODE` → pull の順で進む。
+コードは60秒・一度限り。CLI は24時間の agent 認証を保存する。
+対象1プロジェクトを pull し、カタログを更新する。全件巡回はしない。
+人の認証ファイルはコピーしない。
+詳しい判定は [connector.md](skills/kioku/references/connector.md) を参照する。
+
+## CLI の固定
+
+`cli-pin/version` は CLI のバージョン、`cli-pin/SHA256SUMS.txt` は公開リリースのチェックサムを持つ。
+公開後にメンテナーが `tools/pin-cli.sh VERSION` を実行する。
+手元のチェックサムを使う場合は `tools/pin-cli.sh VERSION SUMS_FILE` を実行する。
+スクリプトは4種類のアーカイブのチェックサムを確認し、pin を更新する。
+同じコミットで `.claude-plugin/plugin.json` のバージョンも上げる。
+フックは `https://github.com/mash/kioku/releases/download/<VERSION>/<archive>` から CLI を取得する。
+リリースは次の順に進める。
+
+1. `mash/kioku` の `main` にあるコミットに tag `vX.Y.Z` を push する。push で draft release ができる（[RELEASES.md](../docs/RELEASES.md)）。
+2. メンテナーが draft `vX.Y.Z` を確認して公開する。
+3. `plugin/tools/pin-cli.sh vX.Y.Z` を実行し、`plugin.json` のバージョンを上げて、同じコミットで commit する。
+
+`KIOKU_CLI_DOWNLOAD_BASE` はローカル fixture 用のテスト専用設定とする。
+
+macOS の初回確認（`<path>` はインストールした `kioku`）: `xattr -l <path>`、`<path> version`。
+
+## Codex / プラグインなし
+
+```sh
+mkdir -p ~/.agents/skills
+cp -R skills/kioku ~/.agents/skills/
+```
+
+既存ファイルがあれば差分を確認する。
+`rules/kioku.md` を読み、必要な自動記録規則を AGENTS.md に統合する。
+スキルの「プラグインなし」に従い、PATH の `kioku` をコマンド名に使う。
+対象選択、認証、pull、カタログはプラグインと同じ手順を使う。
+
+## 検証
+
+```sh
+sh -n hooks/kioku.sh
+sh -n tools/pin-cli.sh
+python3 -m unittest discover -s tests
+KIOKU_TEST_BINARY=/absolute/path/to/kioku python3 -m unittest discover -s tests
+```
+
+旧コマンド・互換エイリアス・migration コードは用意しない。
+プラグインは固定した版の CLI を使う。

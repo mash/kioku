@@ -1,0 +1,79 @@
+name: CLI release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z source tag to build
+        required: true
+        type: string
+      publish_draft:
+        description: Create a draft release (otherwise build artifacts only)
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: cli-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve immutable source tag
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          source_sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          git merge-base --is-ancestor "$source_sha" origin/main
+          git checkout --detach "$source_sha"
+          echo "version=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+      - run: go vet ./...
+      - name: Build client archives and checksums
+        env:
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: go run ./tools/release --version "$RELEASE_VERSION" --commit "$SOURCE_SHA" --out dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kioku-cli-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: build
+    if: github.event_name == 'push' || inputs.publish_draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: kioku-cli-release
+          path: dist
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Never overwrite assets of an existing release, including published versions.
+          gh release create "$RELEASE_VERSION" dist/kioku_*.tar.gz dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Kioku CLI $RELEASE_VERSION" --notes-file dist/RELEASE_NOTES.md

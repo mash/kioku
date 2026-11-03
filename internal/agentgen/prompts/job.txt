@@ -1,0 +1,9 @@
+# Kioku generation job
+
+mode: %s
+job: %s
+project: %s
+input: %s
+output: %s
+
+%s

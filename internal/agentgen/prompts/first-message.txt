@@ -1,0 +1,4 @@
+Job {{.JobID}} for project {{.ProjectID}}. Mode: {{.Mode}}.
+Input:  {{.InputURL}}
+Output: {{.OutputURL}}
+Changes: {{len .Changes.Added}} added, {{len .Changes.Updated}} updated, {{len .Changes.Removed}} removed.

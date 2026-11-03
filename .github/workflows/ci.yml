@@ -44,7 +44,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Check plugin shell scripts
-        run: for f in plugin/hooks/*.sh plugin/tools/*.sh; do sh -n "$f"; done
+        run: for f in plugin/hooks/*.sh; do sh -n "$f"; done
       - name: Run plugin tests
         run: python3 -m unittest discover -s plugin/tests
       - name: Run plugin tests against the built CLI

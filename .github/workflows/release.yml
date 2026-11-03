@@ -1,55 +1,80 @@
-name: CLI release
+name: Release
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths: ['plugin/.claude-plugin/plugin.json']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing vX.Y.Z source tag to build
-        required: true
-        type: string
-      publish_draft:
-        description: Create a draft release (otherwise build artifacts only)
-        default: false
-        type: boolean
 permissions:
   contents: read
 concurrency:
-  group: cli-release-${{ inputs.tag || github.ref_name }}
+  group: release
   cancel-in-progress: false
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.source.outputs.version }}
+      commit: ${{ steps.source.outputs.commit }}
+      released: ${{ steps.source.outputs.released }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve immutable source tag
+      - name: Resolve the version and its bump commit
         id: source
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-          source_sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
-          git merge-base --is-ancestor "$source_sha" origin/main
-          git checkout --detach "$source_sha"
-          echo "version=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+          manifest=plugin/.claude-plugin/plugin.json
+          # The tag names the latest commit that changed the version line, also on a retry.
+          commit=$(git log -1 -G'"version"' --format=%H -- "$manifest")
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          git checkout --detach "$commit"
+          version=$(jq -r .version "$manifest")
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "plugin.json version must be X.Y.Z, got '$version'" >&2
+            exit 1
+          fi
+          tag="v$version"
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+            echo "Release $tag is already published"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag exists without a published release" >&2
+            exit 1
+          fi
+          # Empty when no release exists yet.
+          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
+            --json isLatest,tagName --jq '.[] | select(.isLatest) | .tagName')
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$tag" | sort -V | tail -n 1)" != "$tag" ]; then
+            echo "Version $tag must be greater than the latest release $latest" >&2
+            exit 1
+          fi
+          echo "released=false" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: steps.source.outputs.released == 'false'
         with:
           go-version-file: go.mod
-      - run: go test -race ./...
-      - run: go vet ./...
+      - if: steps.source.outputs.released == 'false'
+        run: go test -race ./...
+      - if: steps.source.outputs.released == 'false'
+        run: go vet ./...
       - name: Build client archives and checksums
+        if: steps.source.outputs.released == 'false'
         env:
           RELEASE_VERSION: ${{ steps.source.outputs.version }}
-        run: make release VERSION="$RELEASE_VERSION" COMMIT="$SOURCE_SHA"
+          RELEASE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: make release VERSION="$RELEASE_VERSION" COMMIT="$RELEASE_COMMIT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.source.outputs.released == 'false'
         with:
           name: kioku-cli-release
           path: dist/
@@ -57,7 +82,7 @@ jobs:
           retention-days: 14
   publish:
     needs: build
-    if: github.event_name == 'push' || inputs.publish_draft
+    if: needs.build.outputs.released == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -66,14 +91,18 @@ jobs:
         with:
           name: kioku-cli-release
           path: dist
-      - name: Create draft release
+      - name: Create the tag and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.build.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
-          # Never overwrite assets of an existing release, including published versions.
+          # A failed earlier run can leave a draft. A draft has no tag, so delete it and start again.
+          if [ "$(gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
+            gh release delete "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           gh release create "$RELEASE_VERSION" dist/kioku_*.tar.gz dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "Kioku CLI $RELEASE_VERSION" --notes-file dist/RELEASE_NOTES.md
+            --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" --latest \
+            --title "Kioku $RELEASE_VERSION" --notes-file dist/RELEASE_NOTES.md

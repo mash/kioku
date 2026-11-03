@@ -37,6 +37,8 @@ class ManifestTest(unittest.TestCase):
             'type': 'http', 'url': 'https://kioku.magicians.ee/mcp',
         })
         self.assertFalse((ROOT / 'bin').exists())
+        self.assertFalse((ROOT / 'cli-pin').exists())
+        self.assertFalse((ROOT / 'tools').exists())
 
     def test_only_session_start(self):
         config = json.loads((ROOT / 'hooks/hooks.json').read_text())
@@ -58,10 +60,9 @@ class HooksTest(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.work = Path(temp.name).resolve()
         self.root = self.work / 'plugin'
-        for directory in ('hooks', 'prompts'):
+        for directory in ('hooks', 'prompts', '.claude-plugin'):
             shutil.copytree(ROOT / directory, self.root / directory)
-        self.pin = self.root / 'cli-pin'
-        self.pin.mkdir()
+        self.manifest = self.root / '.claude-plugin/plugin.json'
         self.data = self.work / 'data'
         self.requests = []
         self.archives = {}
@@ -108,9 +109,20 @@ class HooksTest(unittest.TestCase):
                 body = content.getvalue()
                 self.archives[f'/{version}/{archive}'] = body
                 sums.append(f'{hashlib.sha256(body).hexdigest()}  {archive}\n')
-        (self.pin / 'version').write_text(version + '\n')
-        (self.pin / 'SHA256SUMS.txt').write_text(''.join(sums))
         self.archives[f'/{version}/SHA256SUMS.txt'] = ''.join(sums).encode()
+        self.set_plugin_version(version[1:])
+
+    def set_plugin_version(self, version):
+        manifest = json.loads(self.manifest.read_text())
+        manifest['version'] = version
+        self.manifest.write_text(json.dumps(manifest, indent=2) + '\n')
+
+    def sums_path(self):
+        return '/v9.9.9/SHA256SUMS.txt'
+
+    def set_sums(self, transform):
+        lines = self.archives[self.sums_path()].decode().splitlines()
+        self.archives[self.sums_path()] = ''.join(line + '\n' for line in transform(lines)).encode()
 
     def hook(self, operation='start'):
         return subprocess.run(['sh', str(self.root / 'hooks/kioku.sh'), operation],
@@ -122,6 +134,11 @@ class HooksTest(unittest.TestCase):
         expected = ''.join((self.root / f'prompts/hook-{name}.txt').read_text()
                            for name in names or ('start',))
         self.assertEqual(result.stdout, expected)
+
+    def platform(self):
+        system = {'Darwin': 'darwin', 'Linux': 'linux'}[os.uname().sysname]
+        arch = {'x86_64': 'amd64', 'amd64': 'amd64', 'arm64': 'arm64', 'aarch64': 'arm64'}[os.uname().machine]
+        return f'{system}_{arch}'
 
     def binary(self):
         return self.data / 'bin' / 'kioku'
@@ -145,14 +162,13 @@ class HooksTest(unittest.TestCase):
         self.assertFalse(self.binary().exists())
         self.assert_tmp_empty()
 
-    def corrupt_pin(self):
-        sums = self.pin / 'SHA256SUMS.txt'
-        sums.write_text(''.join('0' * 64 + '  ' + line.split()[1] + '\n'
-                                for line in sums.read_text().splitlines()))
+    def corrupt_sums(self):
+        self.set_sums(lambda lines: ['0' * 64 + '  ' + line.split()[1] for line in lines])
 
     def test_first_cached_and_compact(self):
         self.assert_text(self.hook())
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.requests, ['/v9.9.9/SHA256SUMS.txt',
+                                         f'/v9.9.9/kioku_v9.9.9_{self.platform()}.tar.gz'])
         self.assert_installed(cli('v9.9.9'))
         self.requests.clear()
         self.assert_text(self.hook())
@@ -165,21 +181,21 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(self.requests, [])
         self.assert_installed(cli('v9.9.9'))
 
-    def test_different_version_installs_pin(self):
+    def test_different_version_installs_release(self):
         for version in ('v9.9.8', 'v9.10.0', 'v9.9.9-rc.1'):
             with self.subTest(version=version):
                 self.requests.clear()
                 self.install(cli(version))
                 self.assert_text(self.hook())
-                self.assertEqual(len(self.requests), 1)
+                self.assertEqual(len(self.requests), 2)
                 self.assert_installed(cli('v9.9.9'))
                 self.assert_tmp_empty()
 
-    def test_pin_change_installs_new_pin(self):
+    def test_version_change_installs_new_release(self):
         self.assert_text(self.hook())
         self.make_release('v9.9.10')
         self.assert_text(self.hook())
-        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(len(self.requests), 4)
         self.assert_installed(cli('v9.9.10'))
         self.assertFalse((self.data / 'cli').exists())
         self.assert_tmp_empty()
@@ -198,26 +214,60 @@ class HooksTest(unittest.TestCase):
     def test_broken_binary_reinstalled(self):
         self.install(cli('v9.9.9', status=1))
         self.assert_text(self.hook())
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(len(self.requests), 2)
         self.assert_installed(cli('v9.9.9'))
 
     def test_wrong_hash(self):
-        self.corrupt_pin()
+        self.corrupt_sums()
         self.assert_no_cli()
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(len(self.requests), 2)
 
     def test_wrong_hash_keeps_old_binary(self):
         self.install(cli('v9.9.8'))
-        self.corrupt_pin()
+        self.corrupt_sums()
         self.assert_text(self.hook())
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(len(self.requests), 2)
         self.assert_installed(cli('v9.9.8'))
         self.assert_tmp_empty()
+
+    def test_bad_sum_line(self):
+        archive = f'kioku_v9.9.9_{self.platform()}.tar.gz'
+        cases = {
+            'missing': lambda lines: [line for line in lines if not line.endswith(archive)],
+            'duplicate': lambda lines: lines + [line for line in lines if line.endswith(archive)],
+            'upper case': lambda lines: ['A' * 64 + line[64:] for line in lines],
+            'short': lambda lines: [line[1:] for line in lines],
+            'not hex': lambda lines: ['g' + line[1:] for line in lines],
+        }
+        original = self.archives[self.sums_path()]
+        for name, transform in cases.items():
+            with self.subTest(name):
+                self.archives[self.sums_path()] = original
+                self.set_sums(transform)
+                self.requests.clear()
+                self.assert_no_cli()
+                self.assertEqual(self.requests, [self.sums_path()])
 
     def test_http_404(self):
         self.archives.clear()
         self.assert_no_cli()
         self.assertEqual(len(self.requests), 1)
+
+    def test_missing_release_keeps_old_binary(self):
+        self.install(cli('v9.9.8'))
+        self.archives.clear()
+        self.assert_text(self.hook())
+        self.assertEqual(self.requests, [self.sums_path()])
+        self.assert_installed(cli('v9.9.8'))
+        self.assert_tmp_empty()
+
+    def test_missing_archive_keeps_old_binary(self):
+        self.install(cli('v9.9.8'))
+        del self.archives[f'/v9.9.9/kioku_v9.9.9_{self.platform()}.tar.gz']
+        self.assert_text(self.hook())
+        self.assertEqual(len(self.requests), 2)
+        self.assert_installed(cli('v9.9.8'))
+        self.assert_tmp_empty()
 
     def restricted_path(self, omit=(), system=None):
         path = self.work / 'path'
@@ -244,14 +294,21 @@ class HooksTest(unittest.TestCase):
         self.assert_no_cli()
         self.assertEqual(self.requests, [])
 
-    def test_no_pin(self):
-        (self.pin / 'version').rename(self.pin / 'unused-version')
-        self.assert_no_cli()
-        self.assertEqual(self.requests, [])
-        with self.subTest('working CLI without pin'):
+    def test_bad_plugin_version(self):
+        for version in ('', 'v9.9.9', '9.9', '9.9.9-rc.1', '9.9.9 '):
+            with self.subTest(version=version):
+                self.set_plugin_version(version)
+                self.assert_no_cli()
+                self.assertEqual(self.requests, [])
+        with self.subTest('missing manifest'):
+            self.manifest.unlink()
+            self.assert_no_cli()
+            self.assertEqual(self.requests, [])
+        with self.subTest('working CLI without a valid version'):
             self.install(cli('v9.9.8'))
             self.assert_text(self.hook())
             self.assertEqual(self.requests, [])
+            self.assert_installed(cli('v9.9.8'))
 
     def test_developer_override_copies(self):
         self.install(cli('v9.9.9'))
@@ -271,7 +328,7 @@ class HooksTest(unittest.TestCase):
         self.assert_tmp_empty()
         del self.env['KIOKU_CLI']
         self.assert_text(self.hook())
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(len(self.requests), 2)
         self.assert_installed(cli('v9.9.9'))
 
     def test_fallback_data_directory(self):
@@ -298,29 +355,10 @@ class HooksTest(unittest.TestCase):
         for process in processes:
             stdout, stderr = process.communicate(timeout=15)
             self.assert_text(subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr))
-        self.assertIn(len(self.requests), (1, 2))
+        # Each hook downloads SHA256SUMS.txt and the archive, unless the other hook installed first.
+        self.assertIn(len(self.requests), (2, 4))
         self.assert_installed(cli('v9.9.9'))
         self.assert_tmp_empty()
-
-    def test_pin_script(self):
-        shutil.copytree(ROOT / 'tools', self.root / 'tools')
-        sums = self.work / 'SHA256SUMS.txt'
-        original = (self.pin / 'SHA256SUMS.txt').read_bytes()
-        sums.write_bytes(original)
-        (self.pin / 'version').write_text('old version\n')
-        (self.pin / 'SHA256SUMS.txt').write_text('old checksums\n')
-        command = [str(self.root / 'tools/pin-cli.sh'), 'v9.9.9', str(sums)]
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.pin / 'version').read_text(), 'v9.9.9\n')
-        self.assertEqual((self.pin / 'SHA256SUMS.txt').read_bytes(), original)
-        self.assertEqual(result.stdout, 'Pinned v9.9.9. Bump .claude-plugin/plugin.json version in the same commit.\n')
-        sums.write_bytes(b'\n'.join(original.splitlines()[1:]) + b'\n')
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn('four CLI archives', result.stderr)
-        self.assertEqual((self.pin / 'version').read_text(), 'v9.9.9\n')
-        self.assertEqual((self.pin / 'SHA256SUMS.txt').read_bytes(), original)
 
 
 if __name__ == '__main__':

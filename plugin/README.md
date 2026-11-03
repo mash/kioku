@@ -45,16 +45,16 @@ claude.ai アカウントのプラグインは Claude Code にも同期する（
 
 SessionStart フックは POSIX sh を使う。Python は不要。
 CLI のパスは `${CLAUDE_PLUGIN_DATA}/bin/kioku` の1つだけで、実体の実行ファイルを置く。
-startup・resume・clear・fork では、フックが `bin/kioku version` を実行し、次の場合だけ固定した CLI を取得する。
+startup・resume・clear・fork では、フックが `bin/kioku version` を実行し、次の場合だけプラグインと同じ版の CLI を取得する。
 
 - `bin/kioku` がない、実行できない、または `version` が失敗する。
-- 入っている CLI のバージョンの文字列が `cli-pin/version` と異なる。古くても新しくても取得する。
+- 入っている CLI のバージョンの文字列が、`.claude-plugin/plugin.json` の `version` に `v` を付けた値と異なる。古くても新しくても取得する。
 
 同じバージョンなら、フックは何もしない。フックはバージョンの新旧を比べない。
 compact ではフックが CLI を取得せず、文を出すだけにする。
 古いプラグインのセッションも compact でフックを再実行するので、この規則で古い版へ戻る主な経路をなくす。
-ただし古いセッションでプラグインの更新後に `/clear` を実行すると、古い pin の CLI を一度取得することがある。
-次の新しいセッションが、現在の pin の CLI を再び取得する。
+ただし古いセッションでプラグインの更新後に `/clear` を実行すると、古い版の CLI を一度取得することがある。
+次の新しいセッションが、現在の版の CLI を再び取得する。
 フックは SHA-256 を検証したファイルを一時ディレクトリに置き、1回の `mv -f` で `bin/kioku` へ差し替える。
 既存のファイルには書き込まないので、実行中のプロセスは古いファイルを使い続ける。
 プラグインの更新前に始めたセッションも、次のコマンドから新しい CLI を使う。
@@ -65,7 +65,8 @@ compact ではフックが CLI を取得せず、文を出すだけにする。
 対応環境は macOS と Linux の amd64・arm64。
 CLI を取得するたびに、一度だけ `github.com` と、その転送先（`release-assets.githubusercontent.com` または `objects.githubusercontent.com`）へのネットワーク接続が必要になる。
 取得失敗はセッションを止めない。古い CLI が動けばそれを使い、次の startup・resume・clear・fork が再度取得を試みる。
-`cli-pin/version` がなければ、フックは取得しない。動く `bin/kioku` がなければ、CLI が無いことを伝える文を出す。
+`plugin.json` の `version` が `X.Y.Z` の形でなければ、フックは取得しない。動く `bin/kioku` がなければ、CLI が無いことを伝える文を出す。
+その版のリリースがまだ無いときも取得に失敗し、フックは今の CLI を使い続ける。
 
 スキルは CLI のパスをそのままコマンド名に書き、変数や `cd` を前に付けない。
 次の許可ルールを1つ足すと、スキルのすべての CLI 呼び出しを許可できる。`<id>` はプラグインのデータディレクトリ名。
@@ -80,9 +81,9 @@ Bash(/Users/you/.claude/plugins/data/<id>/bin/kioku:*)
 startup・resume・clear・fork では、フックが取得とバージョン確認を省き、そのファイルを `bin/kioku` へコピーする。
 コピーも同じ一時ファイルと `mv -f` を使う。compact ではコピーしない。
 スキルは `KIOKU_CLI` を読まず、常に `bin/kioku` を使う。
-ローカルでビルドした CLI のバージョン `dev` は pin と異なる。そのため `KIOKU_CLI` を外すと、次の startup が固定した CLI を取得する。
+ローカルでビルドした CLI のバージョン（`git describe` の値や `dev`）はプラグインの版と異なる。そのため `KIOKU_CLI` を外すと、次の startup がプラグインと同じ版の CLI を取得する。
 通常のプラグインは PATH の `kioku` を使わない。
-`/reload-plugins` は CLI を取得しない。新しい pin の CLI は次の startup などが取得する。
+`/reload-plugins` は CLI を取得しない。新しい版の CLI は次の startup などが取得する。
 
 フックは SessionStart だけで動く。
 スキルは最初のユーザーメッセージから対象を選び、会話ごとに一度 pull の完了を待つ。
@@ -121,19 +122,17 @@ connector login は `cli_login_code` → `kioku agent login CODE` → pull の�
 人の認証ファイルはコピーしない。
 詳しい判定は [connector.md](skills/kioku/references/connector.md) を参照する。
 
-## CLI の固定
+## CLI の版とリリース
 
-`cli-pin/version` は CLI のバージョン、`cli-pin/SHA256SUMS.txt` は公開リリースのチェックサムを持つ。
-公開後にメンテナーが `tools/pin-cli.sh VERSION` を実行する。
-手元のチェックサムを使う場合は `tools/pin-cli.sh VERSION SUMS_FILE` を実行する。
-スクリプトは4種類のアーカイブのチェックサムを確認し、pin を更新する。
-同じコミットで `.claude-plugin/plugin.json` のバージョンも上げる。
-フックは `https://github.com/mash/kioku/releases/download/<VERSION>/<archive>` から CLI を取得する。
-リリースは次の順に進める。
+プラグインの版 `X.Y.Z` が、取得する CLI の版 `vX.Y.Z` を決める。
+フックは `https://github.com/mash/kioku/releases/download/vX.Y.Z/` から `SHA256SUMS.txt` とアーカイブを取得する。
+`SHA256SUMS.txt` にアーカイブの行がちょうど1つあり、その値が小文字の16進数64文字で、アーカイブの SHA-256 と一致するときだけ CLI を差し替える。
+リリースは次の順に進める（[RELEASES.md](../docs/RELEASES.md)）。
 
-1. `mash/kioku` の `main` にあるコミットに tag `vX.Y.Z` を push する。push で draft release ができる（[RELEASES.md](../docs/RELEASES.md)）。
-2. メンテナーが draft `vX.Y.Z` を確認して公開する。
-3. `plugin/tools/pin-cli.sh vX.Y.Z` を実行し、`plugin.json` のバージョンを上げて、同じコミットで commit する。
+1. PR で `.claude-plugin/plugin.json` の `version` を上げる。
+2. PR を `main` にマージすると、`release.yml` が tag `vX.Y.Z` を作り、リリースを公開する。
+
+スキルやプロンプトの文だけを変えた場合も、ユーザーに届けるには版を上げる。
 
 `KIOKU_CLI_DOWNLOAD_BASE` はローカル fixture 用のテスト専用設定とする。
 
@@ -155,10 +154,9 @@ cp -R skills/kioku ~/.agents/skills/
 
 ```sh
 sh -n hooks/kioku.sh
-sh -n tools/pin-cli.sh
 python3 -m unittest discover -s tests
 KIOKU_TEST_BINARY=/absolute/path/to/kioku python3 -m unittest discover -s tests
 ```
 
 旧コマンド・互換エイリアス・migration コードは用意しない。
-プラグインは固定した版の CLI を使う。
+プラグインは自分と同じ版の CLI を使う。

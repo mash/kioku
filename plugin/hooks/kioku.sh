@@ -28,10 +28,19 @@ copy_override() {
     mv -f "$T/kioku" "$TARGET"
 }
 
+# Print the version field of the plugin manifest. Fail unless it is one X.Y.Z value.
+plugin_version() {
+    V=$(sed -n 's/^[ ]*"version"[ ]*:[ ]*"\([^"]*\)".*/\1/p' "$ROOT/.claude-plugin/plugin.json") || return 1
+    case $V in
+        ''|*[!0123456789.]*) return 1 ;;
+    esac
+    printf '%s\n' "$V" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' || return 1
+    printf '%s\n' "$V"
+}
+
 download() {
-    [ -r "$ROOT/cli-pin/version" ] || return 1
-    VERSION=$(cat "$ROOT/cli-pin/version")
-    [ -n "$VERSION" ] || return 1
+    V=$(plugin_version) || return 1
+    VERSION="v$V"
     if CURRENT=$(current_version) && [ "$CURRENT" = "$VERSION" ]; then
         return 0
     fi
@@ -55,14 +64,18 @@ download() {
         return 1
     fi
     ARCHIVE="kioku_${VERSION}_${OS}_${ARCH}.tar.gz"
-    # tools/pin-cli.sh writes one lower-case "<hash>  <name>" line per archive.
-    LINES=$(grep -c "  $ARCHIVE\$" "$ROOT/cli-pin/SHA256SUMS.txt") || return 1
-    [ "$LINES" = 1 ] || return 1
-    EXPECTED=$(grep "  $ARCHIVE\$" "$ROOT/cli-pin/SHA256SUMS.txt") || return 1
-    EXPECTED=${EXPECTED%% *}
-    [ ${#EXPECTED} = 64 ] || return 1
     new_temp || return 1
     BASE=${KIOKU_CLI_DOWNLOAD_BASE:-https://github.com/mash/kioku/releases/download}
+    curl -fsSL --connect-timeout 10 --max-time 30 -o "$T/SHA256SUMS.txt" "$BASE/$VERSION/SHA256SUMS.txt" >/dev/null || return 1
+    # The release has one lower-case "<hash>  <name>" line per archive.
+    LINES=$(grep -c "  $ARCHIVE\$" "$T/SHA256SUMS.txt") || return 1
+    [ "$LINES" = 1 ] || return 1
+    EXPECTED=$(grep "  $ARCHIVE\$" "$T/SHA256SUMS.txt") || return 1
+    EXPECTED=${EXPECTED%%  *}
+    case $EXPECTED in
+        *[!0123456789abcdef]*) return 1 ;;
+    esac
+    [ ${#EXPECTED} = 64 ] || return 1
     curl -fsSL --connect-timeout 10 --max-time 90 -o "$T/a.tar.gz" "$BASE/$VERSION/$ARCHIVE" >/dev/null || return 1
     if [ "$HASH" = sha256sum ]; then
         ACTUAL=$(sha256sum < "$T/a.tar.gz") || return 1

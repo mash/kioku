@@ -37,7 +37,7 @@ In Claude Code, run:
 /plugin install kioku@kioku
 ```
 
-In Claude Desktop or Cowork, add the marketplace `mash/kioku` and install `kioku`. The plugin downloads a pinned CLI release and checks its SHA-256 sum. [plugin/README.md](plugin/README.md) describes the plugin, its data paths and the use without the plugin.
+In Claude Desktop or Cowork, add the marketplace `mash/kioku` and install `kioku`. The plugin downloads the CLI release of its own version and checks its SHA-256 sum. [plugin/README.md](plugin/README.md) describes the plugin, its data paths and the use without the plugin.
 
 ## Self-hosting
 
@@ -341,7 +341,7 @@ The web path is `/acme/platform`. The caller chooses a working directory; `.kiok
 
 ## Cloud operations and releases
 
-- [CLI build/release pipeline](docs/RELEASES.md): macOS/Linux amd64/arm64 archives, version metadata, checksums, private or external draft releases.
+- [Releases](docs/RELEASES.md): one version for the server, the CLI and the plugin; a version bump in `plugin.json` makes the release; macOS/Linux amd64/arm64 archives and checksums.
 - [Project-scoped cloud agents](docs/CLOUD_AGENTS.md): expiring read/write credentials, origin pinning, revocation, and the separate VM/container sandbox boundary.
 - [Claude connector](docs/CLOUD_AGENTS.md#claude-connector): select the Kioku projects to share at consent, then read and search their wikis and save sources through MCP tools in claude.ai chat. For CLI access, exchange a one-time login code, then run `kioku pull`.
 - [Account administration](docs/ACCOUNT_ADMIN.md): session revocation, provider management, safe ownership handoff and account deletion.
@@ -382,7 +382,7 @@ kioku pull                   # cwd の設定から同じプロジェクトを取
 
 ### プラグインの運用
 
-Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、固定した版の CLI を取得します。対象の選択と pull はスキルが行い、会話ごとに一度 pull の完了を待ちます。CLI は会話セッションを知りません。
+Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じ版の CLI を取得します。対象の選択と pull はスキルが行い、会話ごとに一度 pull の完了を待ちます。CLI は会話セッションを知りません。
 
 旧コマンドは削除し、互換エイリアス・migration コード・旧設定へのフォールバックは提供しません。
 

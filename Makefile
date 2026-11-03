@@ -16,7 +16,7 @@ VERSION ?=
 COMMIT ?= $(shell git rev-parse HEAD)
 TARGETS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 release:
-	@echo '$(VERSION)' | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' || { echo 'VERSION must be vX.Y.Z' >&2; exit 1; }
+	@echo '$(VERSION)' | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || { echo 'VERSION must be vX.Y.Z' >&2; exit 1; }
 	@echo '$(COMMIT)' | grep -Eqx '[0-9a-f]{40}' || { echo 'COMMIT must be a full SHA' >&2; exit 1; }
 	@# Never merge releases or delete an existing output directory.
 	mkdir dist

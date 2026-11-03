@@ -4,3 +4,4 @@
 /docs/plans/
 .env
 *.test
+/.claude/worktrees/

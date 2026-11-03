@@ -210,7 +210,7 @@ Managed Agents 未設定では原資料ページ・索引・リンクマップ�
 export ANTHROPIC_API_KEY=...
 export KIOKU_MA_AGENT_ID=agent_...
 export KIOKU_MA_ENVIRONMENT_ID=env_...
-# 任意: 0 は最新の agent 版。未設定の webhook は 30 秒ごとの照合で補います。
+# 任意: 0 は最新の agent バージョン。未設定の webhook は 30 秒ごとの照合で補います。
 export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
@@ -382,7 +382,7 @@ kioku pull                   # cwd の設定から同じプロジェクトを取
 
 ### プラグインの運用
 
-Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じ版の CLI を取得します。対象の選択と pull はスキルが行い、会話ごとに一度 pull の完了を待ちます。CLI は会話セッションを知りません。
+Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。対象の選択と pull はスキルが行い、会話ごとに一度 pull の完了を待ちます。CLI は会話セッションを知りません。
 
 旧コマンドは削除し、互換エイリアス・migration コード・旧設定へのフォールバックは提供しません。
 

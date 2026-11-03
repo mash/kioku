@@ -4,8 +4,8 @@ One tag `vX.Y.Z` names one release of this repository. The server (`kiokud`), th
 
 ## Make a release
 
-1. Open a PR that sets `version` in `plugin/.claude-plugin/plugin.json` to a new `X.Y.Z`. The new version must be greater than the latest release. Claude Code updates the plugin on any change of `version`, so every plugin change that users must get needs a bump.
-2. Merge the PR to `main`. `.github/workflows/release.yml` then makes the tag `vX.Y.Z` on the bump commit and publishes the release, marked latest.
+1. Set `version` in `plugin/.claude-plugin/plugin.json` to a new `X.Y.Z`. The new version must be greater than the latest release. Claude Code updates the plugin on any change of `version`, so every plugin change that users must get needs a bump. Commit only this change; the `release` skill (`.claude/skills/release/SKILL.md`) does this on a local `release/vX.Y.Z` branch and merges it into `main`.
+2. Push `main`. `.github/workflows/release.yml` then makes the tag `vX.Y.Z` on the bump commit and publishes the release, marked latest.
 
 Nobody pushes tags by hand. The bump commit is the latest commit that changed the `"version"` line of `plugin.json`.
 

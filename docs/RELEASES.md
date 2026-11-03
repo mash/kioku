@@ -7,10 +7,10 @@ This repository builds the CLI for macOS and Linux, each on amd64 and arm64. The
 From a clean reviewed checkout, choose a version and its source commit, then run:
 
 ```bash
-go run ./tools/release --version v0.1.0 --commit FULL_40_CHARACTER_COMMIT_SHA --out dist
+make release VERSION=v0.1.0 COMMIT=FULL_40_CHARACTER_COMMIT_SHA
 ```
 
-The output directory must not already exist. The builder cross-compiles with CGO disabled, strips local build paths/VCS metadata, embeds the supplied version and commit, and creates four `.tar.gz` archives, `SHA256SUMS.txt` and release notes. It executes the native-platform client to verify the embedded metadata. For a real release, the supplied commit must identify the checkout being built; the workflow resolves that automatically from an existing source tag.
+`COMMIT` defaults to `HEAD`. The `dist` directory must not already exist. The target cross-compiles with CGO disabled, strips local build paths/VCS metadata, embeds the supplied version and commit, and creates four `.tar.gz` archives, `SHA256SUMS.txt` and release notes. It executes the native-platform client to verify the embedded metadata. For a real release, the supplied commit must identify the checkout being built; the workflow resolves that automatically from an existing source tag.
 
 Archive checksums detect corruption; binaries are not currently Developer ID signed or Apple-notarized. Install the extracted executable on your PATH and verify `kioku version` before authenticating.
 

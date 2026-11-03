@@ -48,7 +48,7 @@ jobs:
       - name: Build client archives and checksums
         env:
           RELEASE_VERSION: ${{ steps.source.outputs.version }}
-        run: go run ./tools/release --version "$RELEASE_VERSION" --commit "$SOURCE_SHA" --out dist
+        run: make release VERSION="$RELEASE_VERSION" COMMIT="$SOURCE_SHA"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kioku-cli-release

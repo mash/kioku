@@ -16,7 +16,7 @@ The workflow:
 - in the `build` job (`contents: read`), checks out the bump commit, runs the race tests and vet, and runs `make release`;
 - in the `publish` job (`contents: write`), deletes a draft left by a failed run and runs `gh release create vX.Y.Z --target <bump commit> --latest`.
 
-After a failed run, fix the cause and run `gh workflow run release.yml -R mash/kioku`. The retry names the same bump commit. Until the release is published, the plugin hook keeps the CLI it has.
+A retry with `gh workflow run release.yml -R mash/kioku` builds the same bump commit again, so it helps only for a transient failure (runner, network, flaky test). When the bump commit's code is the cause, fix it on `main` and bump to the next patch version; the failed version stays unused. Until a release is published, the plugin hook keeps the CLI it has.
 
 ## Release assets
 

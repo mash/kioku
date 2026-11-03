@@ -29,7 +29,8 @@ One version names the server (`kiokud`), the CLI (`kioku`) and the plugin. Its s
 6. Push: `git push origin main`.
 7. Watch the release run and report the result:
    ```bash
-   gh run list -R mash/kioku --workflow release.yml --limit 1 --json databaseId,headSha
+   # The run can take a few seconds to appear; repeat until it prints an ID.
+   gh run list -R mash/kioku --workflow release.yml --commit "$(git rev-parse HEAD)" --limit 1 --json databaseId --jq '.[0].databaseId'
    gh run watch <id> -R mash/kioku --exit-status
    gh release view vX.Y.Z -R mash/kioku --json url,assets --jq '.url, (.assets[].name)'
    ```
@@ -38,4 +39,7 @@ One version names the server (`kiokud`), the CLI (`kioku`) and the plugin. Its s
 
 ## When the release run fails
 
-`main` then names a version that has no release. The plugin hook keeps each user's current CLI, so nothing breaks, but new users get remote mode. Read the failed log (`gh run view <id> -R mash/kioku --log-failed`), fix the cause in a normal commit on `main`, then retry with `gh workflow run release.yml -R mash/kioku`. The retry tags the same release commit. Do not bump the version again to retry.
+`main` then names a version that has no release. The plugin hook keeps each user's current CLI, so nothing breaks, but new users get remote mode. Read the failed log (`gh run view <id> -R mash/kioku --log-failed`).
+
+- Transient failure (runner, network, flaky test): retry with `gh workflow run release.yml -R mash/kioku`. The retry builds the same release commit again.
+- The release commit's code is the cause: a retry fails the same way. Fix it in a normal commit on `main`, then run this skill again with the next patch version. The failed version stays unused.

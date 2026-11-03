@@ -112,9 +112,11 @@ local mode の namespace はユーザー指定、repository、カタログから
 認証前の `list` は不要。
 
 スキルは `whoami` の `agent_id` を確認する。人の認証が有効なら使い続ける。
-認証がないクラウドセッションでは connector login を使う。
+人の認証がなく、有効な agent 認証があれば、agent 認証を使う。
+有効な認証がないクラウドセッションでは connector login を使う。
 ローカル端末では人に `!` 付きのログインを頼み、完了を待つ。Claude は login を実行しない。
-人が connector login を明示的に頼んだ場合も、connector login を使う。
+`!` が使えない環境（Claude Desktop や Cowork など）では connector login を使う。
+人の認証がある状態で人が connector login を頼んだ場合は、`kioku logout` が人のセッションを終えることを説明し、同意を得てから logout する。
 
 connector login は `cli_login_code` → `kioku agent login CODE` → pull の順で進む。
 コードは60秒・一度限り。CLI は24時間の agent 認証を保存する。

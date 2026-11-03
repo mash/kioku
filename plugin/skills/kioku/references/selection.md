@@ -32,13 +32,17 @@ path がなければユーザーの指定先を使う。
 `mkdir -p "$P"` を実行してから、`kioku -C "$P" --server "$SERVER" whoami` を実行する。
 モードを決める前に、`list`・`whoami`・`logout` を含むサーバーを呼ぶコマンドが通信・DNS エラーになったら、[SKILL.md](../SKILL.md) のモード判定に戻る。モードを決めた後は、失敗として報告する。
 参加権限エラーは「取得に失敗した場合」に従う。
-`P/.kioku/config` があり、`whoami` が認証エラーなら、先に `kioku -C "$P" --server "$SERVER" logout` を1回実行して、保存済みの agent 認証を消す。logout の通信・DNS エラー以外の失敗は無視する。そのあと `whoami` をもう1回実行し、その結果で次へ進む。CLI は保存済みの agent 認証を人の認証より先に読むので、消さないと人のログイン後も同じエラーが続く。
+CLI は人の認証があれば、どのコマンドでも人の認証を使う。人の認証がなければ、設定のあるディレクトリで agent 認証を使う。
 `whoami` の結果から、次の順序でログイン方法を決める。
-有効な agent 認証と一致する設定があれば、既存認証で取得へ進む。
 
-- `whoami` が人の identity で成功する場合は、`cli_login_code` があっても既存認証を使う。人が connector login を明示的に頼んだ場合だけ [connector.md](connector.md) へ進む。
-- 有効な認証がなく、`CLAUDE_CODE_REMOTE_SESSION_ID` がある場合は、クラウドセッションと判断する。[connector.md](connector.md) で agent 認証と pull を済ませる。
-- 有効な認証がなく、ローカル端末の場合は、人に `!` 付きのログインを頼み、完了を待つ。CLI のパス・P・SERVER を展開し、引用が必要な値だけを引用したコマンドを示す。例は `! /abs/path/to/kioku -C "/path/to/project" --server "https://kioku.magicians.ee" login`。プラグインなしで既定の接続先を使う場合は `! kioku login` も使える。`kioku login` はブラウザを使うので、Claude は実行しない。connector login は人が依頼した場合だけ使う。認証ファイルをコピーさせない。プロンプトの `!` が使えない環境（Claude Desktop や Cowork など）では、connector login を選べることを人に伝える。人のログイン後は「人のログイン後の全プロジェクト取得」へ進む。
+1. `whoami` が人の identity で成功する場合は、`cli_login_code` があっても既存認証を使う。
+2. 人の認証がなく、P の有効な agent 認証と一致する設定があれば、既存認証で取得へ進む。
+3. 有効な認証がなく、`CLAUDE_CODE_REMOTE_SESSION_ID` がある場合は、クラウドセッションと判断する。[connector.md](connector.md) で agent 認証と pull を済ませる。
+4. 有効な認証がなく、ローカル端末の場合は、人に `!` 付きのログインを頼み、完了を待つ。CLI のパス・P・SERVER を展開し、引用が必要な値だけを引用したコマンドを示す。例は `! /abs/path/to/kioku -C "/path/to/project" --server "https://kioku.magicians.ee" login`。プラグインなしで既定の接続先を使う場合は `! kioku login` も使える。`kioku login` はブラウザを使うので、Claude は実行しない。認証ファイルをコピーさせない。プロンプトの `!` が使えない環境（Claude Desktop や Cowork など）では、[connector.md](connector.md) で connector login を使う。人のログイン後は「人のログイン後の全プロジェクト取得」へ進む。
+
+- 人の認証がある状態で人が connector login を頼んだ場合は、`kioku logout` が必要で、logout が人のセッションを終えることを説明する。人が同意した場合だけ `kioku -C "$P" --server "$SERVER" logout` を実行し、ログイン順序の最初に戻る。
+- `agent login` が `a human login exists` のエラーで失敗し、`whoami` が認証エラーなら、人の認証は無効である。`kioku -C "$P" --server "$SERVER" logout` を1回実行し、ログイン順序の最初に戻る。
+- agent 認証が期限切れなら、CLI はサーバーを呼ばずに `run kioku agent login` を含むエラーを返す。新しいコードを取得して `agent login` をやり直す。logout は不要。
 
 
 ## 取得

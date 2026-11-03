@@ -10,12 +10,15 @@ ENTRYPOINT ["kiokud"]
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=768MiB GOGC=50 go build -p 1 -trimpath -o /out/kiokud ./cmd/kiokud && \
-    GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=768MiB GOGC=50 go build -p 1 -trimpath -o /out/kioku ./cmd/kioku
+RUN LDFLAGS="-X github.com/mash/kioku/internal/buildinfo.Version=$VERSION -X github.com/mash/kioku/internal/buildinfo.Commit=$COMMIT" && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=768MiB GOGC=50 go build -p 1 -trimpath -ldflags "$LDFLAGS" -o /out/kiokud ./cmd/kiokud && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=768MiB GOGC=50 go build -p 1 -trimpath -ldflags "$LDFLAGS" -o /out/kioku ./cmd/kioku
 
 # The prebuilt target packages binaries cross-compiled elsewhere, so the host does not build Go.
 FROM runtime AS prebuilt

@@ -1,7 +1,10 @@
 .PHONY: build test check release
+BUILDINFO := github.com/mash/kioku/internal/buildinfo
 build:
-	go build -trimpath -o bin/kioku ./cmd/kioku
-	go build -trimpath -o bin/kiokud ./cmd/kiokud
+	@set -eu; \
+	ldflags="-X $(BUILDINFO).Version=$$(git describe --tags --always) -X $(BUILDINFO).Commit=$$(git rev-parse HEAD)"; \
+	go build -trimpath -ldflags "$$ldflags" -o bin/kioku ./cmd/kioku; \
+	go build -trimpath -ldflags "$$ldflags" -o bin/kiokud ./cmd/kiokud
 test:
 	go test -race ./...
 check: test
@@ -12,7 +15,6 @@ check: test
 VERSION ?=
 COMMIT ?= $(shell git rev-parse HEAD)
 TARGETS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
-BUILDINFO := github.com/mash/kioku/internal/buildinfo
 release:
 	@echo '$(VERSION)' | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' || { echo 'VERSION must be vX.Y.Z' >&2; exit 1; }
 	@echo '$(COMMIT)' | grep -Eqx '[0-9a-f]{40}' || { echo 'COMMIT must be a full SHA' >&2; exit 1; }

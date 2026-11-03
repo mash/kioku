@@ -18,12 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Build the self-hosting image
-        run: docker build --target final -t kioku:ci .
+        run: |
+          docker build --target final -t kioku:ci \
+            --build-arg VERSION="$(git describe --tags --always)" \
+            --build-arg COMMIT="$GITHUB_SHA" .
       - name: Check the image CLI and server
         run: |
-          docker run --rm --entrypoint kioku kioku:ci version
+          docker run --rm --entrypoint kioku kioku:ci version | grep -F "\"commit\":\"$GITHUB_SHA\""
           docker run -d --name kioku-ci -p 127.0.0.1:18080:8080 \
             -e KIOKU_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
             -e GITHUB_CLIENT_ID=ci -e GITHUB_CLIENT_SECRET=ci kioku:ci

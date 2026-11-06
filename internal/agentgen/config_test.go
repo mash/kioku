@@ -10,9 +10,9 @@ import (
 )
 
 func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
-	parts := strings.SplitN(prompts.WikiDefinition, "---", 3)
-	if len(parts) != 3 || parts[0] != "" {
-		t.Fatal("frontmatter missing")
+	frontmatter, system, err := prompts.SplitWikiDefinition()
+	if err != nil {
+		t.Fatal(err)
 	}
 	var agent struct {
 		Name, Model string
@@ -27,7 +27,7 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 			}
 		}
 	}
-	if err := yaml.Unmarshal([]byte(parts[1]), &agent); err != nil {
+	if err := yaml.Unmarshal([]byte(frontmatter), &agent); err != nil {
 		t.Fatal(err)
 	}
 	if agent.Name != "kioku-wiki" || agent.Model != "claude-opus-5-5" || len(agent.Tools) != 1 {
@@ -45,12 +45,12 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 		t.Fatal(disabled)
 	}
 	for _, rule := range strings.Split(prompts.OutputRules, "\n") {
-		if !strings.Contains(parts[2], rule) {
+		if !strings.Contains(system, rule) {
 			t.Errorf("prompt lacks %q", rule)
 		}
 	}
 	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_GENERATOR_TOKEN", "diff -u", "400 or 413", "16 MiB"} {
-		if !strings.Contains(parts[2], text) {
+		if !strings.Contains(system, text) {
 			t.Error("prompt missing", text)
 		}
 	}

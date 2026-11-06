@@ -29,15 +29,15 @@ func (a *API) EnsureResources(ctx context.Context, connection, host, agentID, en
 		}
 	}
 	if agentID == "" {
-		parts := strings.SplitN(prompts.WikiDefinition, "---", 3)
-		if len(parts) != 3 {
-			return errors.New("invalid embedded agent definition")
+		frontmatter, system, err := prompts.SplitWikiDefinition()
+		if err != nil {
+			return err
 		}
 		var definition map[string]any
-		if err := yaml.Unmarshal([]byte(parts[1]), &definition); err != nil {
+		if err := yaml.Unmarshal([]byte(frontmatter), &definition); err != nil {
 			return errors.New("invalid agent definition")
 		}
-		definition["system"] = strings.TrimSpace(parts[2])
+		definition["system"] = strings.TrimSpace(system)
 		definition["metadata"] = map[string]string{"kioku_connection": connection}
 		// SDK parameter structs are write-only; unmarshalling into them silently
 		// drops model shorthand and tool overrides. Preserve the manifest body.

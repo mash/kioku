@@ -10,6 +10,10 @@ The repository has three parts:
 | CLI `kioku` | `cmd/kioku`, `internal/cli` | Logs in, puts sources, pulls the wiki of one project into the current directory |
 | Claude plugin | [`plugin/`](plugin/README.md) | Skill and hooks for Claude Code, Claude Desktop, Cowork and claude.ai chat |
 
+Prompts are kept in [`prompts/`](prompts/): the wiki agent definition, generation
+templates, and Claude plugin hook messages. The plugin links to this shared
+directory so its installed copy includes the hook messages.
+
 The default service is `https://kioku.magicians.ee`. The CLI and the plugin use it unless you give another server.
 
 ## Install the CLI

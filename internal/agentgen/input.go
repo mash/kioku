@@ -14,6 +14,7 @@ import (
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
+	"github.com/mash/kioku/prompts"
 )
 
 const MaxInputBytes int64 = 256 << 20
@@ -94,7 +95,7 @@ func buildInput(spec InputSpec, w io.Writer, limit int64) error {
 		return errors.New("invalid generation mode")
 	}
 	files := map[string]string{
-		"JOB.md":     fmt.Sprintf(jobMessage, spec.Mode, spec.JobID, spec.ProjectID, spec.InputURL, spec.OutputURL, OutputRules),
+		"JOB.md":     fmt.Sprintf(prompts.Job, spec.Mode, spec.JobID, spec.ProjectID, spec.InputURL, spec.OutputURL, prompts.OutputRules),
 		"CHANGES.md": changesMarkdown(spec),
 	}
 	ordered := append([]SourceText(nil), spec.Sources...)
@@ -171,17 +172,17 @@ func (w *inputWriter) Write(p []byte) (int, error) {
 
 func changesMarkdown(spec InputSpec) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, changesHeader, spec.Mode, spec.PublishedRevision, len(spec.Changes.Added))
+	fmt.Fprintf(&b, prompts.ChangesHeader, spec.Mode, spec.PublishedRevision, len(spec.Changes.Added))
 	for _, s := range spec.Changes.Added {
-		fmt.Fprintf(&b, changesSource, s.ID, s.URL, s.Title)
+		fmt.Fprintf(&b, prompts.ChangesSource, s.ID, s.URL, s.Title)
 	}
-	fmt.Fprintf(&b, changesUpdatedHeader, len(spec.Changes.Updated))
+	fmt.Fprintf(&b, prompts.ChangesUpdatedHeader, len(spec.Changes.Updated))
 	for _, s := range spec.Changes.Updated {
-		fmt.Fprintf(&b, changesUpdatedSource, s.Current.ID, s.Previous.ID, s.Current.URL, s.Previous.ID, s.Current.ID)
+		fmt.Fprintf(&b, prompts.ChangesUpdatedSource, s.Current.ID, s.Previous.ID, s.Current.URL, s.Previous.ID, s.Current.ID)
 	}
-	fmt.Fprintf(&b, changesRemovedHeader, len(spec.Changes.Removed))
+	fmt.Fprintf(&b, prompts.ChangesRemovedHeader, len(spec.Changes.Removed))
 	for _, s := range spec.Changes.Removed {
-		fmt.Fprintf(&b, changesSource, s.ID, s.URL, s.Title)
+		fmt.Fprintf(&b, prompts.ChangesSource, s.ID, s.URL, s.Title)
 	}
 	return b.String()
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/prompts"
 )
 
 type entry struct {
@@ -192,7 +193,7 @@ func TestBuildInputDeterministicAndModes(t *testing.T) {
 	if files["sources/new.txt"] != spec.Sources[0].Text || files["previous/old.txt"] != "old text" || files["wiki/index.md"] != "# Index" {
 		t.Fatal(files)
 	}
-	if len(files) != 6 || !strings.Contains(files["CHANGES.md"], "diff -u previous/old.txt sources/new.txt") || !strings.Contains(files["JOB.md"], OutputRules) {
+	if len(files) != 6 || !strings.Contains(files["CHANGES.md"], "diff -u previous/old.txt sources/new.txt") || !strings.Contains(files["JOB.md"], prompts.OutputRules) {
 		t.Fatal(files)
 	}
 	r := csv.NewReader(strings.NewReader(files["sources/index.tsv"]))

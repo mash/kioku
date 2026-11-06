@@ -43,6 +43,10 @@ CLI はユーザー共通領域で接続先別に認証を管理する。スキ�
 
 claude.ai アカウントのプラグインは Claude Code にも同期する（[公式仕様](https://claude.com/docs/plugins/platform-support.md)）。
 
+プロンプト本文はリポジトリルートの [`prompts/`](../prompts/) に集約する。
+`plugin/prompts` はそのディレクトリへのシンボリックリンクで、marketplace からのインストール時にはリンク先の内容がプラグイン内へコピーされる。
+プラグイン単体を配布するときは、`cp -RL plugin /path/to/package` などでリンクを実体化する。
+
 SessionStart フックは POSIX sh を使う。Python は不要。
 CLI のパスは `${CLAUDE_PLUGIN_DATA}/bin/kioku` の1つだけで、実体の実行ファイルを置く。
 startup・resume・clear・fork では、フックが `bin/kioku version` を実行し、次の場合だけプラグインと同じバージョンの CLI を取得する。

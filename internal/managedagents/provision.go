@@ -7,7 +7,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/packages/param"
-	"github.com/mash/kioku/agents"
+	"github.com/mash/kioku/prompts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +29,7 @@ func (a *API) EnsureResources(ctx context.Context, connection, host, agentID, en
 		}
 	}
 	if agentID == "" {
-		parts := strings.SplitN(agents.WikiDefinition, "---", 3)
+		parts := strings.SplitN(prompts.WikiDefinition, "---", 3)
 		if len(parts) != 3 {
 			return errors.New("invalid embedded agent definition")
 		}

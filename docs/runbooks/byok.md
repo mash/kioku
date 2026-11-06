@@ -5,7 +5,7 @@ Console workspace. For a multi-workspace key, also provide the workspace ID.
 This is separately billed API usage, not Claude Pro/Max subscription usage.
 
 Setup creates one Agent and one Environment in that workspace using the embedded
-`agents/kioku-wiki.md` definition. The environment permits only the configured
+`prompts/kioku-wiki.md` definition. The environment permits only the configured
 Kioku HTTPS host. Retrying partial setup reuses saved IDs or discovers resources
 by a stable connection metadata tag. Setup does not start a generation session.
 

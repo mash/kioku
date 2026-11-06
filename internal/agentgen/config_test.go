@@ -5,15 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mash/kioku/prompts"
 	"gopkg.in/yaml.v3"
 )
 
 func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
-	b, err := os.ReadFile("../../agents/kioku-wiki.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	parts := strings.SplitN(string(b), "---", 3)
+	parts := strings.SplitN(prompts.WikiDefinition, "---", 3)
 	if len(parts) != 3 || parts[0] != "" {
 		t.Fatal("frontmatter missing")
 	}
@@ -30,7 +27,7 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 			}
 		}
 	}
-	if err = yaml.Unmarshal([]byte(parts[1]), &agent); err != nil {
+	if err := yaml.Unmarshal([]byte(parts[1]), &agent); err != nil {
 		t.Fatal(err)
 	}
 	if agent.Name != "kioku-wiki" || agent.Model != "claude-opus-5-5" || len(agent.Tools) != 1 {
@@ -47,7 +44,7 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 	if !disabled["web_fetch"] || !disabled["web_search"] {
 		t.Fatal(disabled)
 	}
-	for _, rule := range strings.Split(OutputRules, "\n") {
+	for _, rule := range strings.Split(prompts.OutputRules, "\n") {
 		if !strings.Contains(parts[2], rule) {
 			t.Errorf("prompt lacks %q", rule)
 		}

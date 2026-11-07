@@ -166,7 +166,7 @@ kioku connect github
 
 `kioku login` は CLI と同じ端末のブラウザで認証する必要があります（SSH 先や別端末で開く使い方には対応しません）。
 
-`login`・`connect`・`agent login` で標準サーバー（`https://kioku.magicians.ee`）以外を使う場合は、信頼する接続先を `--server ORIGIN` または `KIOKU_SERVER` で明示します。作業フォルダーの `.kioku/config` だけでは認証先を変更できません。例えばセルフホスト版では `kioku --server https://kioku.example.com login` を実行します。明示した接続先と `.kioku/config` が異なる場合も拒否します。通常の `pull` などは引き続き `.kioku/config` の接続先を使用します。
+`login`・`connect`・`agent login` では、標準サーバー（`https://kioku.magicians.ee`）以外への初回認証時に接続先を表示し、信頼するか確認します。承認はユーザーの `~/.config/kioku/auth/` に接続先ごとに保存し、次回から確認を省略します。別の接続先には改めて承認が必要です。非対話実行で未承認の接続先を使う場合は、信頼する接続先を `--server ORIGIN` または `KIOKU_SERVER` で明示します（明示指定も承認として保存します）。明示した接続先と `.kioku/config` が異なる場合は拒否します。通常の `pull` などは引き続き `.kioku/config` の接続先を使用します。
 
 ログインと原資料への認可は別です。GoogleはDocs／Driveの読み取りスコープ、GitHubはOAuth Appの `read:user user:email repo` を使用します。`repo` は非公開資料へのアクセスを含む広い権限です。選択リポジトリだけを許可するGitHub App方式はこの実装の対象外です。
 

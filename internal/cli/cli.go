@@ -105,8 +105,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	// authorize sending login codes or establishing credentials on another server.
 	authenticating := commands[0] == "login" || commands[0] == "connect" ||
 		(len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login")
-	if authenticating && !a.ServerExplicit && a.Config.Server != defaultServer {
-		return fmt.Errorf("authentication server %q comes from .kioku/config; explicitly select a trusted server with --server or KIOKU_SERVER", a.Config.Server)
+	if authenticating {
+		if err := a.trustAuthenticationServer(); err != nil {
+			return err
+		}
 	}
 	switch {
 	case commands[0] == "login", len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login":

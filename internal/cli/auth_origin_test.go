@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,6 +14,11 @@ func TestAuthenticationRejectsImplicitProjectServer(t *testing.T) {
 	for _, command := range [][]string{{"login"}, {"connect", "google"}, {"agent", "login", "kioku_code.secret"}} {
 		t.Run(strings.Join(command, " "), func(t *testing.T) {
 			f := newOrderFixture(t)
+			previous := confirmAuthenticationServer
+			confirmAuthenticationServer = func(out io.Writer, origin string) error {
+				return promptAuthenticationServer(strings.NewReader("yes\n"), out, origin, false)
+			}
+			t.Cleanup(func() { confirmAuthenticationServer = previous })
 			f.bind()
 			f.writeHuman(orderHumanToken)
 			// Guard before even reading credentials, not just before the browser opens.
@@ -22,7 +29,7 @@ func TestAuthenticationRejectsImplicitProjectServer(t *testing.T) {
 			opened := false
 			stubBrowser(t, func(_, _ string) error { opened = true; return nil })
 			err := f.run(command...)
-			if err == nil || !strings.Contains(err.Error(), "explicitly select a trusted server") || !strings.Contains(err.Error(), f.server.URL) {
+			if err == nil || !strings.Contains(err.Error(), "explicitly select a trusted server") || !strings.Contains(f.err.String(), f.server.URL) {
 				t.Fatal("implicit authentication server accepted", err)
 			}
 			if len(f.server.paths) != 0 || opened {
@@ -114,5 +121,124 @@ func TestProjectReadStillUsesConfiguredServer(t *testing.T) {
 	}
 	if len(f.server.paths) != 1 || f.server.auths[0] != "Bearer "+orderHumanToken {
 		t.Fatal("normal project credential selection changed", f.server.paths)
+	}
+}
+
+func TestAuthenticationRemembersApproval(t *testing.T) {
+	f := newOrderFixture(t)
+	f.bind()
+	t.Setenv("KIOKU_SERVER", "")
+	previous := confirmAuthenticationServer
+	calls := 0
+	confirmAuthenticationServer = func(out io.Writer, origin string) error {
+		calls++
+		if len(f.server.paths) != 0 {
+			t.Fatal("contacted server before approval")
+		}
+		return promptAuthenticationServer(strings.NewReader("yes\n"), out, origin, true)
+	}
+	t.Cleanup(func() { confirmAuthenticationServer = previous })
+	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.err.String(), f.server.URL) {
+		t.Fatal("origin not displayed")
+	}
+	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(f.server.paths) != 2 {
+		t.Fatal("approval not reused", calls, f.server.paths)
+	}
+	info, err := os.Stat(f.app.credentialPath() + ".trusted")
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("trust record permissions", err)
+	}
+	// Trust is scoped to the origin, not the project or its directory.
+	f.app.Config.Server = "https://other.example"
+	f.app.Err = &f.err
+	confirmAuthenticationServer = func(out io.Writer, origin string) error {
+		return promptAuthenticationServer(strings.NewReader("no\n"), out, origin, true)
+	}
+	if err := f.app.trustAuthenticationServer(); err == nil {
+		t.Fatal("different origin trusted")
+	}
+}
+
+func TestAuthenticationDeclineDoesNotPersistOrConnect(t *testing.T) {
+	for _, answer := range []string{"no\n", "\n", "yes"} {
+		t.Run(answer, func(t *testing.T) {
+			f := newOrderFixture(t)
+			f.bind()
+			t.Setenv("KIOKU_SERVER", "")
+			previous := confirmAuthenticationServer
+			confirmAuthenticationServer = func(out io.Writer, origin string) error {
+				return promptAuthenticationServer(strings.NewReader(answer), out, origin, true)
+			}
+			t.Cleanup(func() { confirmAuthenticationServer = previous })
+			if err := f.run("agent", "login", "kioku_code.secret"); err == nil {
+				t.Fatal("decline accepted")
+			}
+			if len(f.server.paths) != 0 {
+				t.Fatal("server contacted")
+			}
+			if _, err := os.Stat(f.app.credentialPath() + ".trusted"); !os.IsNotExist(err) {
+				t.Fatal("trust persisted", err)
+			}
+		})
+	}
+}
+
+func TestExplicitAuthenticationSavesTrust(t *testing.T) {
+	f := newOrderFixture(t)
+	f.bind()
+	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KIOKU_SERVER", "")
+	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuthenticationRejectsInvalidTrustRecord(t *testing.T) {
+	for _, content := range []string{`"https://other.example"`, `{broken`} {
+		f := newOrderFixture(t)
+		f.bind()
+		t.Setenv("KIOKU_SERVER", "")
+		if err := os.MkdirAll(f.app.AuthDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f.app.credentialPath()+".trusted", []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.run("login"); err == nil {
+			t.Fatal("bad trust record accepted")
+		}
+		if len(f.server.paths) != 0 {
+			t.Fatal("server contacted")
+		}
+	}
+}
+
+func TestAuthenticationRejectsSymlinkTrustRecord(t *testing.T) {
+	f := newOrderFixture(t)
+	f.bind()
+	t.Setenv("KIOKU_SERVER", "")
+	if err := os.MkdirAll(f.app.AuthDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "trust")
+	if err := os.WriteFile(target, []byte(`"`+f.server.URL+`"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, f.app.credentialPath()+".trusted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run("login"); err == nil {
+		t.Fatal("symlink trusted")
+	}
+	if len(f.server.paths) != 0 {
+		t.Fatal("server contacted")
 	}
 }

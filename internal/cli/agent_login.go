@@ -66,9 +66,6 @@ func (a *App) agentLogin(args []string) error {
 	if len(args) != 1 || !strings.HasPrefix(args[0], "kioku_code.") {
 		return errors.New("usage: kioku agent login CODE")
 	}
-	if !a.ServerExplicit {
-		return errors.New("agent login requires KIOKU_SERVER or --server")
-	}
 	// A human credential wins over any agent credential, so refuse before the
 	// code exchange and leave the code unused.
 	human := *a

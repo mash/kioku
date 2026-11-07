@@ -13,7 +13,7 @@ import (
 	"github.com/mattn/go-isatty"
 )
 
-// Only a terminal can approve a project-supplied origin; piped input cannot.
+// Only a terminal can approve an unfamiliar origin; piped input cannot.
 var confirmAuthenticationServer = func(out io.Writer, origin string) error {
 	return promptAuthenticationServer(os.Stdin, out, origin, isatty.IsTerminal(os.Stdin.Fd()))
 }
@@ -21,7 +21,7 @@ var confirmAuthenticationServer = func(out io.Writer, origin string) error {
 func promptAuthenticationServer(in io.Reader, out io.Writer, origin string, terminal bool) error {
 	fmt.Fprintf(out, "Authentication server: %s\n", origin)
 	if !terminal {
-		return errors.New("untrusted authentication server: run in a terminal to approve it, or explicitly select a trusted server with --server or KIOKU_SERVER")
+		return errors.New("untrusted authentication server: run this command in a terminal to approve it")
 	}
 	fmt.Fprint(out, "Trust this server for future authentication? [y/N]: ")
 	line, err := bufio.NewReader(in).ReadString('\n')
@@ -59,11 +59,8 @@ func (a *App) trustAuthenticationServer() error {
 	if !os.IsNotExist(err) {
 		return err
 	}
-	// Explicit selection is also consent, including in non-interactive scripts.
-	if !a.ServerExplicit {
-		if err := confirmAuthenticationServer(a.Err, a.Config.Server); err != nil {
-			return err
-		}
+	if err := confirmAuthenticationServer(a.Err, a.Config.Server); err != nil {
+		return err
 	}
 	b, err = json.Marshal(a.Config.Server)
 	if err != nil {

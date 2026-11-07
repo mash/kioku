@@ -47,10 +47,8 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 	t.Setenv("KIOKU_SERVER", server.URL)
 	t.Setenv("KIOKU_AGENT_TOKEN", "")
 	authDir := filepath.Join(home, ".config", "kioku", "auth")
-	if err := os.MkdirAll(authDir, 0700); err != nil {
-		t.Fatal(err)
-	}
 	humanPath := filepath.Join(authDir, auth.Hash(server.URL)+".json")
+	seedTrustedOrigin(t, humanPath, server.URL)
 	human, _ := json.Marshal(credentials{Server: server.URL, Token: "human-credential"})
 	if err := os.WriteFile(humanPath, human, 0600); err != nil {
 		t.Fatal(err)

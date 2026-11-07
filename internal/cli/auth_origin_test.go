@@ -10,67 +10,41 @@ import (
 	"testing"
 )
 
-func TestAuthenticationRejectsImplicitProjectServer(t *testing.T) {
-	for _, command := range [][]string{{"login"}, {"connect", "google"}, {"agent", "login", "kioku_code.secret"}} {
-		t.Run(strings.Join(command, " "), func(t *testing.T) {
-			f := newOrderFixture(t)
-			previous := confirmAuthenticationServer
-			confirmAuthenticationServer = func(out io.Writer, origin string) error {
-				return promptAuthenticationServer(strings.NewReader("yes\n"), out, origin, false)
-			}
-			t.Cleanup(func() { confirmAuthenticationServer = previous })
-			f.bind()
-			f.writeHuman(orderHumanToken)
-			// Guard before even reading credentials, not just before the browser opens.
-			if err := os.WriteFile(f.app.credentialPath(), []byte("invalid credentials JSON"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("KIOKU_SERVER", "")
-			opened := false
-			stubBrowser(t, func(_, _ string) error { opened = true; return nil })
-			err := f.run(command...)
-			if err == nil || !strings.Contains(err.Error(), "explicitly select a trusted server") || !strings.Contains(f.err.String(), f.server.URL) {
-				t.Fatal("implicit authentication server accepted", err)
-			}
-			if len(f.server.paths) != 0 || opened {
-				t.Fatal("untrusted server contacted or browser opened", f.server.paths)
-			}
-			if strings.Contains(err.Error(), "kioku_code.secret") {
-				t.Fatal("login code leaked in error")
-			}
-		})
-	}
-}
-
-func TestAuthenticationAcceptsExplicitServer(t *testing.T) {
-	for _, selection := range []string{"flag", "environment"} {
-		for _, command := range [][]string{{"login"}, {"connect", "google"}, {"agent", "login", "kioku_code.single-use"}} {
+func TestAuthenticationRequiresTerminalApprovalRegardlessOfServerSelection(t *testing.T) {
+	for _, selection := range []string{"project", "flag", "environment"} {
+		for _, command := range [][]string{{"login"}, {"connect", "google"}, {"agent", "login", "kioku_code.secret"}} {
 			t.Run(selection+"/"+strings.Join(command, " "), func(t *testing.T) {
 				f := newOrderFixture(t)
 				f.bind()
-				if command[0] == "connect" {
-					f.writeHuman(orderHumanToken)
+				previous := confirmAuthenticationServer
+				confirmAuthenticationServer = func(out io.Writer, origin string) error {
+					return promptAuthenticationServer(strings.NewReader("yes\n"), out, origin, false)
+				}
+				t.Cleanup(func() { confirmAuthenticationServer = previous })
+				f.writeHuman(orderHumanToken)
+				// Reject before reading credentials, making requests, or opening the browser.
+				if err := os.WriteFile(f.app.credentialPath(), []byte("invalid credentials JSON"), 0600); err != nil {
+					t.Fatal(err)
 				}
 				args := command
-				if selection == "flag" {
+				switch selection {
+				case "project":
+					t.Setenv("KIOKU_SERVER", "")
+				case "flag":
 					t.Setenv("KIOKU_SERVER", "")
 					args = append([]string{"--server", f.server.URL}, command...)
 				}
-				// The recorder rejects login and returns no connect request ID. Reaching it
-				// is sufficient; agent login also exercises a successful code exchange.
+				opened := false
+				stubBrowser(t, func(_, _ string) error { opened = true; return nil })
 				err := f.run(args...)
-				if err != nil && strings.Contains(err.Error(), "explicitly select") {
-					t.Fatal(err)
+				if err == nil || !strings.Contains(err.Error(), "run this command in a terminal") || !strings.Contains(f.err.String(), f.server.URL) {
+					t.Fatal("untrusted authentication server accepted", err)
 				}
-				if len(f.server.paths) != 1 {
-					t.Fatal("explicit server not contacted", err, f.server.paths)
+				if len(f.server.paths) != 0 || opened {
+					t.Fatal("untrusted server contacted or browser opened", f.server.paths)
 				}
-				expected := ""
-				if command[0] == "connect" {
-					expected = "Bearer " + orderHumanToken
-				}
-				if f.server.auths[0] != expected {
-					t.Fatal("wrong credential sent", f.server.auths)
+				if strings.Contains(err.Error(), "kioku_code.secret") {
+					t.Fatal("login code leaked in error")
 				}
 			})
 		}
@@ -138,7 +112,7 @@ func TestAuthenticationRemembersApproval(t *testing.T) {
 		return promptAuthenticationServer(strings.NewReader("yes\n"), out, origin, true)
 	}
 	t.Cleanup(func() { confirmAuthenticationServer = previous })
-	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
+	if err := f.run("--server", f.server.URL, "agent", "login", "kioku_code.secret"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(f.err.String(), f.server.URL) {
@@ -186,18 +160,6 @@ func TestAuthenticationDeclineDoesNotPersistOrConnect(t *testing.T) {
 				t.Fatal("trust persisted", err)
 			}
 		})
-	}
-}
-
-func TestExplicitAuthenticationSavesTrust(t *testing.T) {
-	f := newOrderFixture(t)
-	f.bind()
-	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("KIOKU_SERVER", "")
-	if err := f.run("agent", "login", "kioku_code.secret"); err != nil {
-		t.Fatal(err)
 	}
 }
 

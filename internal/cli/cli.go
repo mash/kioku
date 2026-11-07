@@ -24,7 +24,6 @@ type App struct {
 	Out, Err        io.Writer
 	ctx             context.Context
 	AgentToken      string
-	ServerExplicit  bool
 	storedAgentPath string
 	kind            credentialKind
 }
@@ -76,7 +75,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if !info.IsDir() {
 		return errors.New("working directory must be a directory")
 	}
-	a := &App{Dir: workingDir, ServerExplicit: *server != "",
+	a := &App{Dir: workingDir,
 		AuthDir: filepath.Join(home, ".config", "kioku", "auth"),
 		Client:  &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		Out:     out, Err: errOut, ctx: ctx}

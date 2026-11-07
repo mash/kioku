@@ -22,7 +22,7 @@ func (a *App) wait(j model.Job) error {
 			if j.Unchanged {
 				fmt.Fprintln(a.Out, "No waiting inbox items; wiki is up to date.")
 			}
-			if j.Kind == "put" || j.Unchanged && j.Revision == "" {
+			if j.Unchanged && j.Revision == "" {
 				return a.print(j)
 			}
 			return a.pull()

@@ -163,6 +163,8 @@ func (a *App) dispatch(args []string) error {
 		return a.organization(args[1:])
 	case "project":
 		return a.project(args[1:])
+	case "delete":
+		return a.deleteSources(args[1:])
 	case "put":
 		return a.put(args[1:])
 	case "generate":

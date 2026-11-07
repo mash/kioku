@@ -100,6 +100,7 @@ func controlJSON(st model.State) ([]byte, error) {
 
 // projectContent contains no account configuration, membership or credentials.
 type projectContent struct {
+	Inbox                   map[string]model.InboxItem   `json:"inbox"`
 	JobsValidAfter          time.Time                    `json:"jobs_valid_after,omitempty"`
 	Schema                  int                          `json:"schema"`
 	ProjectID               string                       `json:"project_id"`
@@ -125,7 +126,7 @@ type projectContent struct {
 
 func contentFor(st model.State, pid string) projectContent {
 	p := st.Projects[pid]
-	c := projectContent{JobsValidAfter: p.JobsValidAfter, Schema: 1, ProjectID: pid, SourceVersion: p.SourceVersion, WikiSourceVersion: p.WikiSourceVersion, SourcesUpdatedAt: p.SourcesUpdatedAt, WikiUpdatedAt: p.WikiUpdatedAt, NextPutSequence: p.NextPutSequence, NextIntakeSequence: p.NextIntakeSequence, ProcessedIntakeSequence: p.ProcessedIntakeSequence, NextGenerateAt: p.NextGenerateAt, GenerateIntervalSeconds: p.GenerateIntervalSeconds, SourceHeads: p.SourceHeads, SourceHeadSequences: p.SourceHeadSequences, Incomplete: p.WikiIncomplete, Sources: map[string]model.Source{}, Jobs: map[string]model.Job{}, Uploads: map[string]model.Upload{}, Audit: map[string]model.Audit{}, Intake: map[string]model.IntakeEntry{}}
+	c := projectContent{Inbox: map[string]model.InboxItem{}, JobsValidAfter: p.JobsValidAfter, Schema: 1, ProjectID: pid, SourceVersion: p.SourceVersion, WikiSourceVersion: p.WikiSourceVersion, SourcesUpdatedAt: p.SourcesUpdatedAt, WikiUpdatedAt: p.WikiUpdatedAt, NextPutSequence: p.NextPutSequence, NextIntakeSequence: p.NextIntakeSequence, ProcessedIntakeSequence: p.ProcessedIntakeSequence, NextGenerateAt: p.NextGenerateAt, GenerateIntervalSeconds: p.GenerateIntervalSeconds, SourceHeads: p.SourceHeads, SourceHeadSequences: p.SourceHeadSequences, Incomplete: p.WikiIncomplete, Sources: map[string]model.Source{}, Jobs: map[string]model.Job{}, Uploads: map[string]model.Upload{}, Audit: map[string]model.Audit{}, Intake: map[string]model.IntakeEntry{}}
 	for id, v := range st.Sources {
 		if v.ProjectID == pid {
 			c.Sources[id] = v
@@ -154,6 +155,11 @@ func contentFor(st model.State, pid string) projectContent {
 			c.Intake[id] = v
 		}
 	}
+	for id, v := range st.Inbox {
+		if v.ProjectID == pid {
+			c.Inbox[id] = v
+		}
+	}
 	return c
 }
 func contentKey(pid string) blob.Key { return blob.Key("projects/" + pid + "/.kioku/state.json") }
@@ -173,6 +179,14 @@ func (s *Store) loadContent(pid string) error {
 	}
 	if c.Schema != 1 || c.ProjectID != pid {
 		return errors.New("invalid project content schema or project identity")
+	}
+	for id, v := range c.Inbox {
+		if v.ProjectID != pid || id != v.ID || !validID(id) {
+			return errors.New("cross-project inbox in content")
+		}
+		if prior, exists := s.state.Inbox[id]; exists && prior.ProjectID != pid {
+			return errors.New("duplicate inbox identity across projects")
+		}
 	}
 	for id, v := range c.Sources {
 		if prior, exists := s.state.Sources[id]; exists && prior.ProjectID != pid {
@@ -216,6 +230,9 @@ func (s *Store) loadContent(pid string) error {
 				return errors.New("cross-project wiki object reference")
 			}
 		}
+	}
+	for id, v := range c.Inbox {
+		s.state.Inbox[id] = v
 	}
 	p := s.state.Projects[pid]
 	p.JobsValidAfter = c.JobsValidAfter

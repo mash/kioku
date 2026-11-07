@@ -19,16 +19,16 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Operations"}, &p)
 	base := "/api/projects/" + p.ID
 	var job model.Job
-	input := model.PutRequest{Files: []model.FileInput{{Name: "one.md", Content: "One source", SourceURL: testSourceURL("one.md", "One source")}}}
-	if c := f.request("POST", base+"/put", token, input, &job); c != 202 {
+	input := model.PutRequest{File: &model.FileInput{Name: "one.md", Content: "One source", SourceURL: testSourceURL("one.md", "One source")}}
+	if c := f.seedSource("POST", base+"/put", token, input, &job); c != 202 {
 		t.Fatal(c)
 	}
 	f.wait(p.ID, token, f.generate(p.ID, token, false).ID)
 	var second model.Job
-	f.request("POST", base+"/put", token, input, &second)
+	f.seedSource("POST", base+"/put", token, input, &second)
 	f.wait(p.ID, token, f.generate(p.ID, token, true).ID)
-	input.Files[0].Name = "two.md"
-	if c := f.request("POST", base+"/put", token, input, nil); c != 413 {
+	input.File.Name = "two.md"
+	if c := f.seedSource("POST", base+"/put", token, input, nil); c != 413 {
 		t.Fatalf("quota: %d", c)
 	}
 	if err := f.s.Blobs.Put(context.Background(), blob.Key("projects/"+p.ID+"/orphan"), []byte("orphan")); err != nil {

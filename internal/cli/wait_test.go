@@ -15,7 +15,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func TestWritesReturnWithoutPollingAndPutWaitDoesNotPull(t *testing.T) {
+func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	polls, snapshots, writes := 0, 0, 0
 	jobKind := "generate"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,16 +67,16 @@ func TestWritesReturnWithoutPollingAndPutWaitDoesNotPull(t *testing.T) {
 	if polls != 0 || snapshots != 0 || writes != len(operations) {
 		t.Fatal("default writes polled or pulled", polls, snapshots, writes)
 	}
-	if err := a.put([]string{"--wait", file}); err != nil {
+	if err := a.put([]string{"--wait", file}); err == nil {
 		t.Fatal(err)
 	}
-	if polls != 1 || snapshots != 0 {
+	if polls != 0 || snapshots != 0 {
 		t.Fatal("put --wait pulled wiki", polls, snapshots)
 	}
 	if err := a.generate([]string{"--wait"}); err != nil {
 		t.Fatal(err)
 	}
-	if polls != 2 || snapshots != 1 {
+	if polls != 1 || snapshots != 1 {
 		t.Fatal("generate --wait did not pull", polls, snapshots)
 	}
 	body, err := os.ReadFile(filepath.Join(a.localDir(), "wiki", "index.md"))
@@ -86,13 +86,13 @@ func TestWritesReturnWithoutPollingAndPutWaitDoesNotPull(t *testing.T) {
 	if err := a.job([]string{"wait", "job"}); err != nil {
 		t.Fatal(err)
 	}
-	if polls != 3 || snapshots != 2 {
+	if polls != 2 || snapshots != 2 {
 		t.Fatal("job wait did not pull completed job", polls, snapshots)
 	}
 	if err := a.job([]string{"retry", "--wait", "job"}); err != nil {
 		t.Fatal(err)
 	}
-	if polls != 4 || snapshots != 3 {
+	if polls != 3 || snapshots != 3 {
 		t.Fatal("retry --wait did not wait and pull", polls, snapshots)
 	}
 }

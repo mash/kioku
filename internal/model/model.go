@@ -200,6 +200,7 @@ type Upload struct {
 	Heads     map[string]string `json:"heads"`
 }
 type State struct {
+	Inbox         map[string]InboxItem    `json:"inbox"`
 	OAuthClients  map[string]OAuthClient  `json:"oauth_clients"`
 	OAuthCodes    map[string]OAuthCode    `json:"oauth_codes"`
 	OAuthTokens   map[string]OAuthGrant   `json:"oauth_tokens"`
@@ -230,7 +231,7 @@ type Audit struct {
 }
 
 func NewState() State {
-	return State{OAuthClients: map[string]OAuthClient{}, OAuthCodes: map[string]OAuthCode{}, OAuthTokens: map[string]OAuthGrant{}, LoginCodes: map[string]LoginCode{}, Intake: map[string]IntakeEntry{}, AgentTokens: map[string]AgentToken{}, Organizations: map[string]Organization{}, Uploads: map[string]Upload{}, Audit: map[string]Audit{}, Users: map[string]User{}, Projects: map[string]Project{}, Invites: map[string]Invite{}, Sessions: map[string]Session{}, OAuth: map[string]OAuthState{}, Devices: map[string]Device{}, Sources: map[string]Source{}, Revisions: map[string]Revision{}, Jobs: map[string]Job{}}
+	return State{Inbox: map[string]InboxItem{}, OAuthClients: map[string]OAuthClient{}, OAuthCodes: map[string]OAuthCode{}, OAuthTokens: map[string]OAuthGrant{}, LoginCodes: map[string]LoginCode{}, Intake: map[string]IntakeEntry{}, AgentTokens: map[string]AgentToken{}, Organizations: map[string]Organization{}, Uploads: map[string]Upload{}, Audit: map[string]Audit{}, Users: map[string]User{}, Projects: map[string]Project{}, Invites: map[string]Invite{}, Sessions: map[string]Session{}, OAuth: map[string]OAuthState{}, Devices: map[string]Device{}, Sources: map[string]Source{}, Revisions: map[string]Revision{}, Jobs: map[string]Job{}}
 }
 
 type FileInput struct {
@@ -239,9 +240,26 @@ type FileInput struct {
 	Content   string `json:"content"`
 }
 type PutRequest struct {
-	Files []FileInput `json:"files,omitempty"`
-	URL   string      `json:"url,omitempty"`
+	URL       string     `json:"url,omitempty"`
+	File      *FileInput `json:"file,omitempty"`
+	Remove    bool       `json:"remove,omitempty"`
+	SourceURL string     `json:"source_url,omitempty"`
 }
+
+type InboxItem struct {
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id"`
+	SourceURL string    `json:"source_url"`
+	Status    string    `json:"status"`
+	Submitter string    `json:"submitter"`
+	Created   time.Time `json:"created"`
+	RunID     string    `json:"run_id,omitempty"`
+}
+
+func (i InboxItem) BodyKey() blob.Key {
+	return blob.Key("projects/" + i.ProjectID + "/.kioku/inbox/" + i.ID + ".md")
+}
+
 type Snapshot struct {
 	Revision string            `json:"revision"`
 	Files    map[string]string `json:"files"`

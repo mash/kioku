@@ -104,37 +104,13 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("---\nsource_url: https://example.com/notes\n---\n# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
 		t.Fatal(err)
 	}
-	must("put", "--wait")
-	must("generate", "--wait")
-	must("generate", "--full", "--wait")
-	index, err := os.ReadFile(filepath.Join(project, "wiki", "index.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(index), "notes.md") {
-		t.Fatal(string(index))
-	}
-	if _, err = os.Stat(filepath.Join(project, "maps", "graph.json")); err != nil {
-		t.Fatal(err)
-	}
-	if out := must("status"); !strings.Contains(out, `"pending_files": []`) {
+	must("put")
+	if out := must("status"); !strings.Contains(out, `"inbox_count": 1`) {
 		t.Fatal(out)
 	}
 	if out := must("put"); !strings.Contains(out, "新しい投入ファイルはありません") {
 		t.Fatal(out)
 	}
-	path := filepath.Join(project, "wiki", "index.md")
-	if err = os.Chmod(path, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(path, []byte("local changes"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	must("pull")
-	if restored, err := os.ReadFile(path); err != nil || !bytes.Equal(restored, index) {
-		t.Fatalf("mirror edit not overwritten: %v", err)
-	}
-	must("pull")
 	must("logout")
 	if _, err = run("whoami"); err == nil {
 		t.Fatal("logout did not revoke session")

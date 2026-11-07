@@ -48,6 +48,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 				req.SetPathValue("project", tc.pid)
 				req.SetPathValue("job", tc.jid)
 				req.Header.Set("Authorization", "Bearer "+tc.bearer)
+				req.Header.Set("Kioku-Client-Version", "dev")
 				w := httptest.NewRecorder()
 				f.s.wrap(func(w http.ResponseWriter, r *http.Request, uid string) error { w.WriteHeader(200); return nil }, true)(w, req)
 				if w.Code != tc.want {
@@ -63,6 +64,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 		req.SetPathValue("project", job.ProjectID)
 		req.SetPathValue("job", job.ID)
 		req.Header.Set("Authorization", "Bearer "+other)
+		req.Header.Set("Kioku-Client-Version", "dev")
 		_, p := f.s.session(req)
 		if err := f.s.authorizeAgent(req, p); err == nil {
 			t.Fatal("accepted", role)
@@ -87,6 +89,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 		req.SetPathValue("project", job.ProjectID)
 		req.SetPathValue("job", job.ID)
 		req.Header.Set("Authorization", "Bearer "+raw)
+		req.Header.Set("Kioku-Client-Version", "dev")
 		w := httptest.NewRecorder()
 		f.s.wrap(func(http.ResponseWriter, *http.Request, string) error {
 			t.Error("invalid token reached handler")
@@ -143,6 +146,7 @@ func TestJobTokenRouteAudit(t *testing.T) {
 		"POST /api/projects/{project}/invites",
 		"DELETE /api/projects/{project}/members/{member}",
 		"POST /api/projects/{project}/put",
+		"GET /api/projects/{project}/inbox",
 		"POST /api/projects/{project}/generate",
 		"GET /api/projects/{project}/jobs/{job}",
 		"POST /api/projects/{project}/jobs/{job}/retry",

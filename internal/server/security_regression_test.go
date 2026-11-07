@@ -143,6 +143,7 @@ func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
 	defer close(body.release)
 	req := httptest.NewRequest("POST", "/api/projects/"+p.ID+"/maintenance", body)
 	req.Header.Set("Authorization", "Bearer "+attacker)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() { f.s.Handler().ServeHTTP(rec, req); close(done) }()
@@ -167,6 +168,7 @@ func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
 	defer release()
 	req := httptest.NewRequest("POST", "/api/projects/"+p.ID+"/maintenance", body)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	done := make(chan struct{})
 	go func() { f.s.Handler().ServeHTTP(httptest.NewRecorder(), req); close(done) }()
 	<-body.started
@@ -227,6 +229,7 @@ func TestSlowHTTPResponseDoesNotHoldDatabaseMutex(t *testing.T) {
 	defer release()
 	req := httptest.NewRequest("GET", "/api/projects", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	done := make(chan struct{})
 	go func() { f.s.Handler().ServeHTTP(w, req); close(done) }()
 	<-w.started
@@ -259,7 +262,7 @@ func TestRejectedUploadsWriteNoObjects(t *testing.T) {
 	p := securityProject(t, f, token)
 	f.s.Config.MaxBytes = 1
 	for i := 0; i < 3; i++ {
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "over-quota.md", Content: "Rejected", SourceURL: testSourceURL("over-quota.md", "Rejected")}}}, nil); c != 413 {
+		if c := f.seedSource("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "over-quota.md", Content: "Rejected", SourceURL: testSourceURL("over-quota.md", "Rejected")}}, nil); c != 413 {
 			t.Fatal(c)
 		}
 	}
@@ -308,7 +311,7 @@ func TestFailedUploadsAreCleanedOrRemainReserved(t *testing.T) {
 			p := securityProject(t, f, token)
 			objects := &failingUploadStore{Store: f.s.Blobs, failDelete: outage}
 			f.s.Blobs = objects
-			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "source.md", Content: "Evidence", SourceURL: testSourceURL("source.md", "Evidence")}}}, nil); c != 500 {
+			if c := f.seedSource("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Evidence", SourceURL: testSourceURL("source.md", "Evidence")}}, nil); c != 500 {
 				t.Fatal(c)
 			}
 			var reserved int
@@ -347,57 +350,6 @@ func TestFailedUploadsAreCleanedOrRemainReserved(t *testing.T) {
 		})
 	}
 }
-func TestURLRefreshAtoBtoAUsesLatestObservationWithoutDuplicateObjects(t *testing.T) {
-	f := setup(t)
-	token := f.login("owner@example.com")
-	p := securityProject(t, f, token)
-	base := "/api/projects/" + p.ID
-	var mu sync.Mutex
-	body := ""
-	f.s.Fetcher.Public = &http.Client{Transport: oauthTransport(func(*http.Request) (*http.Response, error) {
-		mu.Lock()
-		text := body
-		mu.Unlock()
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/plain"}}, Body: io.NopCloser(strings.NewReader(text))}, nil
-	})}
-	ids := []string{}
-	for _, value := range []string{"Version A", "Version B", "Version A"} {
-		mu.Lock()
-		body = value
-		mu.Unlock()
-		var j model.Job
-		if c := f.request("POST", base+"/put", token, model.PutRequest{URL: "https://example.com/source.txt"}, &j); c != 202 {
-			t.Fatal(c)
-		}
-		j = f.wait(p.ID, token, j.ID)
-		ids = append(ids, j.SourceIDs[0])
-		f.wait(p.ID, token, f.generate(p.ID, token, false).ID)
-	}
-	if ids[0] != ids[2] {
-		t.Fatal("duplicate content was uploaded again")
-	}
-	keys, err := f.s.Blobs.List(context.Background(), "projects/"+p.ID+"/sources/")
-	if err != nil || len(keys) != 2 {
-		t.Fatal("duplicate object writes", keys, err)
-	}
-	_ = f.db.View(func(st model.State) error {
-		p := st.Projects[p.ID]
-		if p.SourceVersion != 3 || p.WikiSourceVersion != 3 || st.Revisions[p.Revision].SourceVersion != 3 {
-			t.Error("cache hit did not track current source version", p)
-		}
-		return nil
-	})
-	var snapshot model.Snapshot
-	f.request("GET", base+"/snapshot", token, nil, &snapshot)
-	combined := ""
-	for _, text := range snapshot.Files {
-		combined += text
-	}
-	if !strings.Contains(combined, "Version A") || strings.Contains(combined, "Version B") {
-		t.Fatal("latest observation was ignored")
-	}
-}
-
 func TestInterruptedUploadRecoveryAndGC(t *testing.T) {
 	f := setup(t)
 	token := f.login("owner@example.com")

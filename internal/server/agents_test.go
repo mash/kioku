@@ -51,7 +51,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		t.Fatal(c)
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: "Project A evidence", SourceURL: testSourceURL("evidence.md", "Project A evidence")}}}, &job); c != 202 {
+	if c := f.seedSource("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: "Project A evidence", SourceURL: testSourceURL("evidence.md", "Project A evidence")}}, &job); c != 202 {
 		t.Fatal(c)
 	}
 	job = f.generate(a.ID, human, false)
@@ -104,18 +104,18 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		t.Fatal("agent logout affected human", c)
 	}
 }
-func TestWriteAgentIsFileOnlyAndRevocationStopsQueuedWork(t *testing.T) {
+func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
 	id, token := testAgent(t, f, human, p.ID, "write")
 	for _, u := range []string{"https://docs.google.com/document/d/private/edit", "https://github.com/example/private/blob/main/secret.md", "https://example.com"} {
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{URL: u}, nil); c != 403 {
+		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{URL: u}, nil); c != 202 {
 			t.Fatal("provider/URL delegation", c)
 		}
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "note.md", Content: "Authorized file", SourceURL: testSourceURL("note.md", "Authorized file")}}}, &job); c != 202 || job.AgentID != id {
+	if c := f.seedSource("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "note.md", Content: "Authorized file", SourceURL: testSourceURL("note.md", "Authorized file")}}, &job); c != 202 || job.AgentID != id {
 		t.Fatal(c, job)
 	}
 	job = f.generate(p.ID, token, false)
@@ -179,6 +179,7 @@ func TestRevokingAgentDuringRequestCannotBroadenItsIdentity(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/projects", nil)
 	req.Pattern = "GET /api/projects"
 	req.Header.Set("Authorization", "Bearer "+raw)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	recorder := httptest.NewRecorder()
 	wrapped := f.s.wrap(func(w http.ResponseWriter, r *http.Request, uid string) error {
 		if err := f.db.Update(func(st *model.State) error {

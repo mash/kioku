@@ -50,7 +50,7 @@ func TestConnectorLoginEndToEnd(t *testing.T) {
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
-	if status := f.request("POST", "/api/projects/"+project.ID+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: "Connector test source", SourceURL: testSourceURL("evidence.md", "Connector test source")}}}, nil); status != 202 {
+	if status := f.seedSource("POST", "/api/projects/"+project.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: "Connector test source", SourceURL: testSourceURL("evidence.md", "Connector test source")}}, nil); status != 202 {
 		t.Fatal("prepare snapshot", status)
 	}
 	access := connectorAccessToken(t, f, human, project.ID)

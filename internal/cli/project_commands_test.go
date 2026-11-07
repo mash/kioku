@@ -13,7 +13,7 @@ import (
 
 func TestProjectCommandBoundary(t *testing.T) {
 	a := &App{Out: io.Discard, Err: io.Discard, ctx: context.Background()}
-	for _, cmd := range []string{"create", "join", "list", "delete", "share", "usage", "audit", "maintenance"} {
+	for _, cmd := range []string{"create", "join", "list", "share", "usage", "audit", "maintenance"} {
 		if err := a.dispatch([]string{cmd}); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Fatalf("%s: %v", cmd, err)
 		}

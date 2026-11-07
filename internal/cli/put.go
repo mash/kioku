@@ -20,7 +20,6 @@ func (a *App) put(args []string) error {
 	f := flag.NewFlagSet("put", flag.ContinueOnError)
 	f.SetOutput(a.Err)
 	sourceURL := f.String("source-url", "", "original HTTPS URL for one explicit file; otherwise use source_url YAML frontmatter")
-	wait := f.Bool("wait", false, "wait for source intake to complete (does not generate or pull wiki)")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -45,8 +44,11 @@ func (a *App) put(args []string) error {
 	if err != nil {
 		return err
 	}
-	inputs := []model.FileInput{}
-	hashes := map[string]string{}
+	type filePut struct {
+		file       model.FileInput
+		path, hash string
+	}
+	inputs := []filePut{}
 	paths := f.Args()
 	if *sourceURL != "" {
 		if len(paths) != 1 || strings.HasPrefix(paths[0], "https://") {
@@ -61,16 +63,13 @@ func (a *App) put(args []string) error {
 		}
 	}
 	if len(paths) == 1 && strings.HasPrefix(paths[0], "https://") {
-		var job model.Job
-		if _, err = a.request("POST", p+"/put", model.PutRequest{URL: paths[0]}, &job); err != nil {
+		var item model.InboxItem
+		if _, err = a.request("POST", p+"/put", model.PutRequest{URL: paths[0]}, &item); err != nil {
 			return err
 		}
 		unlock()
 		locked = false
-		if *wait {
-			return a.wait(job)
-		}
-		return a.print(job)
+		return a.print(item)
 	}
 	inbox := len(paths) == 0
 	if inbox {
@@ -102,8 +101,8 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return err
 			}
-			if info.Size() > 4<<20 {
-				return fmt.Errorf("%s exceeds 4 MiB", p)
+			if info.Size() > 1<<20 {
+				return fmt.Errorf("%s exceeds 1 MiB", p)
 			}
 			b, err := os.ReadFile(p)
 			if err != nil {
@@ -125,11 +124,7 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
 			}
-			inputs = append(inputs, model.FileInput{Name: filepath.ToSlash(name), Content: string(b), SourceURL: doc.URL})
-			hashes[abs] = h
-			if len(inputs) > 30 {
-				return errors.New("at most 30 files per put")
-			}
+			inputs = append(inputs, filePut{model.FileInput{Name: filepath.ToSlash(name), Content: string(b), SourceURL: doc.URL}, abs, h})
 			return nil
 		})
 		if err != nil {
@@ -138,29 +133,21 @@ func (a *App) put(args []string) error {
 	}
 	if len(inputs) == 0 {
 		fmt.Fprintln(a.Out, "新しい投入ファイルはありません。")
-		if *wait && r.LastJob != "" {
-			unlock()
-			locked = false
-			return a.job([]string{"wait", r.LastJob})
-		}
 		return nil
 	}
-	var job model.Job
-	if _, err = a.request("POST", p+"/put", model.PutRequest{Files: inputs}, &job); err != nil {
-		return err
+	for _, input := range inputs {
+		var item model.InboxItem
+		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input.file}, &item); err != nil {
+			return err
+		}
+		r.Hashes[input.path] = input.hash
+		b, _ := json.MarshalIndent(r, "", "  ")
+		if err = store.AtomicWrite(filepath.Join(a.metadataDir(), "receipts.json"), b, 0600); err != nil {
+			return err
+		}
+		if err = a.print(item); err != nil {
+			return err
+		}
 	}
-	for path, h := range hashes {
-		r.Hashes[path] = h
-	}
-	r.LastJob = job.ID
-	b, _ := json.MarshalIndent(r, "", "  ")
-	if err = store.AtomicWrite(filepath.Join(a.metadataDir(), "receipts.json"), b, 0600); err != nil {
-		return err
-	}
-	unlock()
-	locked = false
-	if !*wait {
-		return a.print(job)
-	}
-	return a.wait(job)
+	return nil
 }

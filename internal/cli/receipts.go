@@ -7,8 +7,7 @@ import (
 )
 
 type receipts struct {
-	Hashes  map[string]string `json:"hashes"`
-	LastJob string            `json:"last_job,omitempty"`
+	Hashes map[string]string `json:"hashes"`
 }
 
 func (a *App) readReceipts() (receipts, error) {

@@ -1,0 +1,141 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"sort"
+	"time"
+
+	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/source"
+)
+
+const maxPutBytes = 1 << 20
+const maxInboxItems = 200
+
+func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
+	pid := r.PathValue("project")
+	if err := s.check(pid, uid); err != nil {
+		return err
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPutBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var large *http.MaxBytesError
+		if errors.As(err, &large) {
+			return fail(413, "put exceeds 1 MiB")
+		}
+		return fail(400, "could not read put")
+	}
+	var req model.PutRequest
+	if !decodeMCPArguments(body, &req) {
+		return fail(400, "invalid put request")
+	}
+	item, err := s.acceptInbox(r.Context(), pid, uid, req)
+	if err != nil {
+		return err
+	}
+	jsonOut(w, http.StatusAccepted, map[string]string{"id": item.ID, "status": item.Status})
+	return nil
+}
+
+func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest) (model.InboxItem, error) {
+	item := model.InboxItem{ID: auth.Token()[:20], ProjectID: pid, Submitter: uid, Created: time.Now().UTC()}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		return item, err
+	}
+	if len(encoded) > maxPutBytes {
+		return item, fail(413, "put exceeds 1 MiB")
+	}
+	var body string
+	switch {
+	case req.URL != "" && req.File == nil && !req.Remove && req.SourceURL == "":
+		item.SourceURL, item.Status = req.URL, "pending"
+	case req.URL == "" && req.File != nil && !req.Remove && req.SourceURL == "":
+		doc, err := source.FileWithURL(req.File.Name, req.File.Content, req.File.SourceURL)
+		if err != nil {
+			return item, fail(400, err.Error())
+		}
+		item.SourceURL, item.Status, body = doc.URL, "fetched", req.File.Content
+	case req.URL == "" && req.File == nil && req.Remove && req.SourceURL != "":
+		item.SourceURL, item.Status = req.SourceURL, "removed"
+	default:
+		return item, fail(400, "provide one URL, one file, or remove and source_url")
+	}
+	if err := source.ValidateSourceURL(item.SourceURL); err != nil {
+		return item, fail(400, err.Error())
+	}
+	unlock, err := s.lockProject(ctx, pid)
+	if err != nil {
+		return item, err
+	}
+	defer unlock()
+	check := func(st model.State) error {
+		p, err := member(st, pid, uid)
+		if err != nil {
+			return err
+		}
+		if item.Status != "removed" && st.Revisions[p.Revision].StoredBytes > s.Config.MaxWikiBytes {
+			return fail(413, "published wiki exceeds max-wiki-bytes; remove sources first")
+		}
+		count := 0
+		for _, v := range st.Inbox {
+			if v.ProjectID == pid && !(v.RunID == "" && v.SourceURL == item.SourceURL) {
+				count++
+			}
+		}
+		if count >= maxInboxItems {
+			return fail(429, "project inbox is full")
+		}
+		return nil
+	}
+	if err = s.DB.View(check); err != nil {
+		return item, err
+	}
+	if item.Status == "fetched" {
+		if err = s.Blobs.Put(ctx, item.BodyKey(), []byte(body)); err != nil {
+			return item, err
+		}
+	}
+	err = s.DB.Update(func(st *model.State) error {
+		if err := check(*st); err != nil {
+			return err
+		}
+		for id, v := range st.Inbox {
+			if v.ProjectID == pid && v.RunID == "" && v.SourceURL == item.SourceURL {
+				delete(st.Inbox, id)
+			}
+		}
+		st.Inbox[item.ID] = item
+		return nil
+	})
+	return item, err
+}
+
+func (s *Server) inbox(w http.ResponseWriter, r *http.Request, uid string) error {
+	return s.DB.View(func(st model.State) error {
+		pid := r.PathValue("project")
+		if _, err := member(st, pid, uid); err != nil {
+			return err
+		}
+		items := []model.InboxItem{}
+		for _, item := range st.Inbox {
+			if item.ProjectID == pid {
+				items = append(items, item)
+			}
+		}
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Created.Equal(items[j].Created) {
+				return items[i].ID < items[j].ID
+			}
+			return items[i].Created.Before(items[j].Created)
+		})
+		jsonOut(w, 200, items)
+		return nil
+	})
+}

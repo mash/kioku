@@ -49,6 +49,7 @@ func agentRequest(t *testing.T, f *fixture, job model.Job, raw, method, suffix s
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+raw)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	req.Header.Set("Content-Type", "application/gzip")
 	resp, err := f.client.Do(req)
 	if err != nil {

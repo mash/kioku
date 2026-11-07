@@ -215,6 +215,11 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) err
 func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	live := map[blob.Key]bool{}
 	if err := s.DB.View(func(st model.State) error {
+		for _, item := range st.Inbox {
+			if item.ProjectID == pid && item.Status == "fetched" {
+				live[item.BodyKey()] = true
+			}
+		}
 		for _, src := range st.Sources {
 			if src.ProjectID == pid {
 				live[src.TextKey] = true
@@ -244,7 +249,7 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	}
 	removed := 0
 	for _, key := range keys {
-		if strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/") || strings.HasPrefix(string(key), "projects/"+pid+"/wiki/inbox/") {
+		if strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/") && !strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/inbox/") || strings.HasPrefix(string(key), "projects/"+pid+"/wiki/inbox/") {
 			continue
 		}
 		if !live[key] {
@@ -381,6 +386,11 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 	}
 	err = s.DB.Update(func(st *model.State) error {
 		delete(st.Projects, pid)
+		for id, item := range st.Inbox {
+			if item.ProjectID == pid {
+				delete(st.Inbox, id)
+			}
+		}
 		for id, u := range st.Uploads {
 			if u.ProjectID == pid {
 				delete(st.Uploads, id)

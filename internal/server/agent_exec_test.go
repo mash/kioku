@@ -47,6 +47,7 @@ func TestExecRunnerHelper(t *testing.T) {
 	}
 	req, _ := http.NewRequest("GET", in.InputURL, nil)
 	req.Header.Set("Authorization", "Bearer "+in.Token)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		os.Exit(91)
@@ -63,6 +64,7 @@ func TestExecRunnerHelper(t *testing.T) {
 		output := outputArchive(t, map[string]string{"wiki/index.md": "# Exec wiki\n"})
 		req, _ = http.NewRequest("PUT", in.OutputURL, bytes.NewReader(output))
 		req.Header.Set("Authorization", "Bearer "+in.Token)
+		req.Header.Set("Kioku-Client-Version", "dev")
 		resp, err = http.DefaultClient.Do(req)
 		if err != nil {
 			os.Exit(94)

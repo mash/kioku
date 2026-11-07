@@ -32,7 +32,7 @@ func TestPutSourceURL(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Error(err)
 				}
-				if len(req.Files) != 1 || req.Files[0].SourceURL != "https://example.com/evidence" || req.Files[0].Content != tc.body {
+				if req.File == nil || req.File.SourceURL != "https://example.com/evidence" || req.File.Content != tc.body {
 					t.Errorf("input: %+v", req)
 				}
 				w.WriteHeader(202)

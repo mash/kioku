@@ -37,6 +37,7 @@ type Config struct {
 	BaseURL       string
 	Providers     map[string]auth.Provider
 	MaxSources    int
+	MaxWikiBytes  int64
 	MaxBytes      int64
 	MaxQueued     int
 	RatePerMinute int
@@ -95,6 +96,9 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 	if c.MaxSources <= 0 {
 		c.MaxSources = 200
 	}
+	if c.MaxWikiBytes <= 0 {
+		c.MaxWikiBytes = 64 << 20
+	}
 	if c.MaxBytes <= 0 {
 		c.MaxBytes = 64 << 20
 	}
@@ -149,6 +153,10 @@ func (s *Server) Handler() http.Handler {
 					return
 				}
 			}
+		}
+		if err := checkClientVersion(r); err != nil {
+			writeError(w, err)
+			return
 		}
 		s.mux.ServeHTTP(w, r)
 	})
@@ -213,6 +221,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{project}/members", s.wrap(s.members, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/invites", s.wrap(s.invite, true))
 	s.mux.HandleFunc("DELETE /api/projects/{project}/members/{member}", s.wrap(s.removeMember, true))
+	s.mux.HandleFunc("GET /api/projects/{project}/inbox", s.wrap(s.inbox, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/put", s.wrap(s.put, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/generate", s.wrap(s.generate, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/jobs/{job}", s.wrap(s.job, true))

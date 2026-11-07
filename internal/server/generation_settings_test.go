@@ -73,6 +73,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	f, token, p, _ := managedFixture(t)
 	req, _ := http.NewRequest("GET", f.url+"/projects/"+p.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +88,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	}
 	req, _ = http.NewRequest("POST", f.url+"/api/projects/"+p.ID+"/generate", strings.NewReader("budget_usd=0.50&full=true"))
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Kioku-Client-Version", "dev")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err = f.client.Do(req)
 	if err != nil {

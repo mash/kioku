@@ -18,7 +18,8 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   project share transfer --yes EMAIL_OR_ID     Transfer project ownership
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
   project share remove EMAIL_OR_ID
-  put [--wait] [URL|FILES...] Save sources, or changed inbox files
+  delete SOURCE_URL...                Remove sources at the next generation
+  put [URL|FILES...] Save sources, or changed inbox files
   generate [--full] [--wait]         Generate wiki from saved sources (wait also pulls)
   pull [ORG/PROJECT]          Bind cwd on first pull; fetch one project
   status | open
@@ -28,7 +29,7 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   project delete --yes                         Delete project and cloud objects
   job status|wait JOB_ID | job retry [--wait] JOB_ID
 
-put saves sources; --wait waits for intake only. Changed projects generate periodically.
+put accepts one inbox item per request. Projects generate periodically.
 Use generate --wait to generate immediately and pull the completed wiki.
 All project members can read submitted sources and generated content.
 The cwd .kioku/config selects server and namespace; no parent directory search.

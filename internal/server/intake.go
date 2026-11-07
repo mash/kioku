@@ -3,11 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -17,79 +15,6 @@ import (
 	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/usd"
 )
-
-// put acknowledges durable intake independently of wiki generation. URL bodies
-// are fetched by bounded background workers, never in the submission request.
-func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
-	pid := r.PathValue("project")
-	if err := s.check(pid, uid); err != nil {
-		return err
-	}
-	var req model.PutRequest
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	if len(req.Files) == 0 && req.URL == "" || len(req.Files) > 30 || req.URL != "" && len(req.Files) > 0 {
-		return fail(400, "provide 1–30 files or one URL")
-	}
-	_, principal := s.session(r)
-	job := model.Job{ID: auth.Token()[:20], Kind: "put", ProjectID: pid, UserID: uid, AgentID: principal.AgentID, Created: time.Now().UTC()}
-	if req.URL != "" {
-		if principal.AgentID != "" {
-			return fail(403, "agents put files only; provider connections are not delegated")
-		}
-		u, err := url.Parse(req.URL)
-		if err != nil || len(req.URL) > 4096 {
-			return fail(400, "invalid source URL")
-		}
-		if err = source.ValidateURL(u); err != nil {
-			return fail(400, err.Error())
-		}
-		job.InputURL = req.URL
-		job.Status = "queued"
-		err = s.DB.Update(func(st *model.State) error {
-			p, err := member(*st, pid, uid)
-			if err != nil {
-				return err
-			}
-			pending := 0
-			for _, j := range st.Jobs {
-				if j.ProjectID == pid && j.Kind == "put" && (j.Status == "queued" || j.Status == "running") {
-					pending++
-				}
-			}
-			if pending >= s.Config.MaxIntakeJobs {
-				return fail(429, "project intake queue is full")
-			}
-			p.NextPutSequence++
-			job.PutSequence = p.NextPutSequence
-			st.Projects[pid] = p
-			st.Jobs[job.ID] = job
-			recordIntake(st, job, "submitted", nil)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		s.notifyIntake()
-	} else {
-		docs := make([]source.Document, 0, len(req.Files))
-		for _, f := range req.Files {
-			doc, err := source.FileWithURL(f.Name, f.Content, f.SourceURL)
-			if err != nil {
-				return fail(400, fmt.Sprintf("%s: %v", f.Name, err))
-			}
-			docs = append(docs, doc)
-		}
-		var err error
-		job, err = s.storeSources(r.Context(), docs, job)
-		if err != nil {
-			return err
-		}
-	}
-	jsonOut(w, http.StatusAccepted, job)
-	return nil
-}
 
 func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) error {
 	var req struct {

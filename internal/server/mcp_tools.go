@@ -4,16 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 
-	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/wiki"
 )
 
@@ -113,11 +109,21 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 			Name      *string `json:"name"`
 			Content   *string `json:"content"`
 			SourceURL string  `json:"source_url"`
+			URL       string  `json:"url"`
+			Remove    bool    `json:"remove"`
 		}
-		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil || args.Name == nil || args.Content == nil {
+		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil {
 			return nil, invalid
 		}
-		return s.mcpSourcePut(ctx, key, *args.Project, *args.Name, *args.Content, args.SourceURL)
+		req := model.PutRequest{URL: args.URL, Remove: args.Remove, SourceURL: args.SourceURL}
+		if args.Name != nil || args.Content != nil {
+			if args.Name == nil || args.Content == nil || args.Remove || args.URL != "" {
+				return nil, invalid
+			}
+			req.File = &model.FileInput{Name: *args.Name, Content: *args.Content, SourceURL: args.SourceURL}
+			req.SourceURL = ""
+		}
+		return s.mcpSourcePut(ctx, key, *args.Project, req)
 	default:
 		return nil, invalid
 	}
@@ -266,7 +272,7 @@ func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string
 	return map[string]any{"project": namespace, "query": query, "results": results, "truncated": truncated}, nil
 }
 
-func (s *Server) mcpSourcePut(ctx context.Context, key, namespace, name, content, sourceURL string) (any, error) {
+func (s *Server) mcpSourcePut(ctx context.Context, key, namespace string, req model.PutRequest) (any, error) {
 	var project model.Project
 	var uid string
 	if err := s.DB.View(func(st model.State) error {
@@ -276,15 +282,10 @@ func (s *Server) mcpSourcePut(ctx context.Context, key, namespace, name, content
 	}); err != nil {
 		return nil, err
 	}
-	doc, err := source.FileWithURL(name, content, sourceURL)
-	if err != nil {
-		return nil, fail(400, fmt.Sprintf("%s: %v", name, err))
-	}
-	job := model.Job{ID: auth.Token()[:20], Kind: "put", ProjectID: project.ID, UserID: uid, Created: time.Now().UTC()}
-	job, err = s.storeSources(ctx, []source.Document{doc}, job)
+	item, err := s.acceptInbox(ctx, project.ID, uid, req)
 	if err != nil {
 		return nil, err
 	}
 	s.recordAudit(project.ID, uid, "POST", "mcp source_put")
-	return map[string]any{"job_id": job.ID, "source_ids": job.SourceIDs}, nil
+	return map[string]string{"id": item.ID, "status": item.Status}, nil
 }

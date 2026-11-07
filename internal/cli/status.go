@@ -53,7 +53,7 @@ func (a *App) status() error {
 			return err
 		}
 	}
-	result := map[string]any{"namespace": a.Config.Namespace, "server": a.Config.Server, "local_revision": local.Revision, "local_sync_incomplete": local.Incomplete, "pending_files": changed, "last_job": r.LastJob}
+	result := map[string]any{"namespace": a.Config.Namespace, "server": a.Config.Server, "local_revision": local.Revision, "local_sync_incomplete": local.Incomplete, "pending_files": changed}
 	var projects []model.Project
 	if _, err = a.request("GET", "/api/projects", nil, &projects); err != nil {
 		return err
@@ -62,14 +62,8 @@ func (a *App) status() error {
 	for _, p := range projects {
 		if p.ID == a.Config.Project {
 			result["remote_revision"] = p.Revision
-			result["sources_updated_at"] = p.SourcesUpdatedAt
 			result["wiki_updated_at"] = p.WikiUpdatedAt
-			result["source_version"] = p.SourceVersion
-			result["wiki_source_version"] = p.WikiSourceVersion
-			result["wiki_stale"] = p.WikiIncomplete || p.SourceVersion > p.WikiSourceVersion
 			result["wiki_incomplete"] = p.WikiIncomplete
-			result["intake_sequence"] = p.NextIntakeSequence
-			result["processed_intake_sequence"] = p.ProcessedIntakeSequence
 			result["next_generate_at"] = p.NextGenerateAt
 			found = true
 		}
@@ -77,13 +71,15 @@ func (a *App) status() error {
 	if !found {
 		return errors.New("project no longer accessible")
 	}
-	if r.LastJob != "" {
-		p, _ := a.projectPath()
-		var j model.Job
-		if _, err = a.request("GET", p+"/jobs/"+r.LastJob, nil, &j); err != nil {
-			return err
-		}
-		result["job"] = j
+	p, err := a.projectPath()
+	if err != nil {
+		return err
 	}
+	var items []model.InboxItem
+	if _, err = a.request("GET", p+"/inbox", nil, &items); err != nil {
+		return err
+	}
+	result["inbox"] = items
+	result["inbox_count"] = len(items)
 	return a.print(result)
 }

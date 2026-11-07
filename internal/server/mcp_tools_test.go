@@ -74,7 +74,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	content := "MixedCaseNeedle\n" + strings.Repeat("界", 12000) + "\n" + strings.Repeat("FloodNeedle\n", 55) + "ẞ" + strings.Repeat("x", 300) + "DeepNeedle" + "Ⱥ" + strings.Repeat("y", 300)
 	var put model.Job
 	base := "/api/projects/" + project.ID
-	if code := f.request("POST", base+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: content, SourceURL: testSourceURL("evidence.md", content)}}}, &put); code != 202 {
+	if code := f.seedSource("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: content, SourceURL: testSourceURL("evidence.md", content)}}, &put); code != 202 {
 		t.Fatal("put source", code)
 	}
 	if msg := connectorTool(t, f, access, "wiki_read", args, nil); msg != "wiki not generated yet; read wiki/inbox.md" {
@@ -235,7 +235,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			human := f.login("owner@example.com")
 			project := securityProject(t, f, human)
 			base := "/api/projects/" + project.ID
-			if code := f.request("POST", base+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "initial.md", Content: "Initial evidence", SourceURL: testSourceURL("initial.md", "Initial evidence")}}}, nil); code != 202 {
+			if code := f.seedSource("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "initial.md", Content: "Initial evidence", SourceURL: testSourceURL("initial.md", "Initial evidence")}}, nil); code != 202 {
 				t.Fatal("initial put", code)
 			}
 			f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
@@ -272,39 +272,17 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			var result struct {
-				JobID     string   `json:"job_id"`
-				SourceIDs []string `json:"source_ids"`
-			}
+			var result model.InboxItem
 			content := "---\nsource_url: https://example.com/record\n---\nA new shared record"
 			args := map[string]any{"project": project.Namespace, "name": "record.md", "content": content}
-			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result.JobID == "" || len(result.SourceIDs) != 1 {
-				t.Fatal("source put", msg, result)
+			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result.ID == "" || result.Status != "fetched" {
+				t.Fatal(msg, result)
 			}
-			var job model.Job
-			if code := f.request("GET", base+"/jobs/"+result.JobID, human, nil, &job); code != 200 || job.Status != "completed" || job.Kind != "put" || job.AgentID != "" || len(job.SourceIDs) != 1 || job.SourceIDs[0] != result.SourceIDs[0] {
-				t.Fatal("put job", code, job)
-			}
-			var sources []model.Source
-			if code := f.request("GET", base+"/sources", human, nil, &sources); code != 200 || len(sources) != 2 {
-				t.Fatal("stored sources", code, sources)
-			}
-			found := false
-			for _, src := range sources {
-				if src.ID == result.SourceIDs[0] {
-					found = src.Title == "record.md" && src.ContentHash == auth.Hash(content) && src.URL == "https://example.com/record" && src.CreatedBy == job.UserID
-				}
-			}
-			if !found {
-				t.Fatal("source missing from list")
-			}
+			var submitter string
 			if err := f.db.View(func(st model.State) error {
-				after := st.Projects[project.ID]
-				if after.Revision != before.Revision || len(st.Jobs) != jobsBefore+1 {
-					t.Error("source put started generation")
-				}
-				if !after.SourcesUpdatedAt.After(before.SourcesUpdatedAt) || job.UserID != st.Sessions[auth.Hash(caller)].UserID {
-					t.Error("source put metadata")
+				submitter = st.Inbox[result.ID].Submitter
+				if st.Projects[project.ID].Revision != before.Revision || len(st.Jobs) != jobsBefore || submitter != st.Sessions[auth.Hash(caller)].UserID {
+					t.Error("inbox acceptance changed generation or submitter")
 				}
 				return nil
 			}); err != nil {
@@ -318,7 +296,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			for _, record := range audit {
 				if record.Detail == "mcp source_put" {
 					count++
-					if record.ProjectID != project.ID || record.UserID != job.UserID || record.Action != "POST" {
+					if record.ProjectID != project.ID || record.UserID != submitter || record.Action != "POST" {
 						t.Fatal("audit metadata", record)
 					}
 				}
@@ -339,10 +317,10 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		args    map[string]any
 		message string
 	}{
-		{map[string]any{"project": project.Namespace, "name": "record.pdf", "content": "text"}, "record.pdf: unsupported file extension; use text, Markdown, HTML or code"},
+		{map[string]any{"project": project.Namespace, "name": "record.pdf", "content": "text"}, "unsupported file extension; use text, Markdown, HTML or code"},
 		{map[string]any{"project": project.Namespace, "name": "record.md"}, "unknown tool or invalid arguments"},
-		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "record.md: original source URL is required: use source_url frontmatter or --source-url"},
-		{map[string]any{"project": project.Namespace, "name": "record.md", "content": ""}, "record.md: source is empty"},
+		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "original source URL is required: use source_url frontmatter or --source-url"},
+		{map[string]any{"project": project.Namespace, "name": "record.md", "content": ""}, "source is empty"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "text", "url": "https://example.com"}, "unknown tool or invalid arguments"},
 	} {
 		if msg := connectorTool(t, f, access, "source_put", tc.args, nil); msg != tc.message {

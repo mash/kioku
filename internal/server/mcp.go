@@ -114,13 +114,15 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			}, "required": []string{"project", "query"}, "additionalProperties": false},
 		}, map[string]any{
 			"name":        "source_put",
-			"description": "Save extracted Markdown and its original source URL from one UTF-8 text file (.md, .txt, .html, code; at most 4 MiB) as a new source in a Kioku project. The wiki includes the source after the next generation; this tool does not start one. Use it for records the user may share with the project team.",
+			"description": "Submit one URL, one text body with source_url, or remove=true with source_url to the project inbox. The request is limited to 1 MiB. Generation processes the inbox later.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"url":        map[string]any{"type": "string"},
+				"remove":     map[string]any{"type": "boolean"},
 				"project":    map[string]any{"type": "string"},
 				"name":       map[string]any{"type": "string"},
 				"content":    map[string]any{"type": "string"},
 				"source_url": map[string]any{"type": "string", "description": "Original source HTTPS URL. Required unless content has source_url YAML frontmatter."},
-			}, "required": []string{"project", "name", "content"}, "additionalProperties": false},
+			}, "required": []string{"project"}, "additionalProperties": false},
 		}}}
 	case "tools/call":
 		value, err := s.mcpCall(r.Context(), key, req.Params)

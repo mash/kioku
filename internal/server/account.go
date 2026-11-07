@@ -16,12 +16,7 @@ func (s *Server) confirmAccount(r *http.Request, uid string) error {
 }
 func (s *Server) updateAccount(r *http.Request, uid string, fn func(*model.State) error) error {
 	key, principal := s.session(r)
-	unlock, err := s.lockGitHubOwner(r.Context(), uid)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	return s.DB.Update(func(st *model.State) error {
+	return s.updateGitHubOwner(r.Context(), uid, func(st *model.State) error {
 		session, ok := st.Sessions[key]
 		if _, exists := st.Users[uid]; !exists || !ok || session.UserID != uid || !time.Now().Before(session.Expires) || principal.AgentID != "" {
 			return fail(401, "session changed; sign in again")

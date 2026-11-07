@@ -396,6 +396,9 @@ func (c *Client) Issue(ctx context.Context, jwt runner.Secret, scope AuthorizedR
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	_, err := c.request(ctx, "issue", "POST", fmt.Sprintf("https://api.github.com/app/installations/%d/access_tokens", scope.InstallationID), jwt, map[string]any{"repository_ids": scope.RepositoryIDs, "permissions": Permissions()}, &out)
+	if Reason(err) == "unauthorized" {
+		err = &Failure{Reason: "configuration_error", Status: http.StatusUnauthorized}
+	}
 	if err != nil {
 		return "", time.Time{}, err
 	}

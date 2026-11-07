@@ -280,3 +280,13 @@ func TestUnknownIssuanceAndCleanupBackoff(t *testing.T) {
 		t.Fatal(calls)
 	}
 }
+
+func TestIssueJWTRejectionIsConfigurationError(t *testing.T) {
+	s, key, scope := tokenFixture(t)
+	s.Client.HTTP = &http.Client{Transport: transport(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusUnauthorized, "invalid JWT"), nil
+	})}
+	if _, err := s.Issue(t.Context(), key, scope); Reason(err) != "configuration_error" {
+		t.Fatalf("JWT rejection classification: %v", err)
+	}
+}

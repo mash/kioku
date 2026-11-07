@@ -241,3 +241,20 @@ func TestGitHubRevocationProgressesWhileRunnerStopIsBlocked(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestRenamedInstallationFailureDoesNotFallBack(t *testing.T) {
+	f, token := appFixture(t)
+	uid := loopbackSnapshot(t, f).Sessions[auth.Hash(token)].UserID
+	seedAppConnection(t, f, uid)
+	f.s.GitHubApp.Client.HTTP = &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
+		status, body := 503, "temporary failure"
+		if r.URL.Path == "/user/installations" {
+			status, body = 200, `{"installations":[{"id":3,"app_id":7,"account":{"id":9,"login":"renamed"}}]}`
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	credentials, selections, err := f.s.githubCredentials(t.Context(), uid, runner.AttemptKey{}, 1, []GitHubRepository{{Account: "renamed", Name: "docs"}})
+	if err != nil || len(credentials) != 0 || len(selections) != 1 || selections[0].Mode != "blocked" || selections[0].Reason != "temporary" {
+		t.Fatalf("renamed installation authorization failure: %v, %v", selections, err)
+	}
+}

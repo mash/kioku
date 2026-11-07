@@ -386,12 +386,7 @@ func (s *Server) completeGitHub(w http.ResponseWriter, r *http.Request, uid stri
 	}
 	key, principal := s.session(r)
 	var problem error
-	unlock, err := s.lockGitHubOwner(r.Context(), uid)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	err = s.DB.Update(func(st *model.State) error {
+	err := s.updateGitHubOwner(r.Context(), uid, func(st *model.State) error {
 		a, ok := st.GitHubAppConnectAttempts[req.Device]
 		d := st.Devices[req.Device]
 		if !ok {
@@ -446,34 +441,56 @@ func (s *Server) completeGitHub(w http.ResponseWriter, r *http.Request, uid stri
 
 // Lock the same boundary used while publishing each object. Never wait for a
 // remote runner or GitHub request while holding these locks or the DB mutex.
-func (s *Server) lockGitHubOwner(ctx context.Context, uid string) (func(), error) {
-	var ids []string
-	if err := s.DB.View(func(st model.State) error {
-		for id, p := range st.Projects {
-			if p.Members[uid] == "owner" {
-				ids = append(ids, id)
+func (s *Server) updateGitHubOwner(ctx context.Context, uid string, update func(*model.State) error) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var ids []string
+		locked := map[string]bool{}
+		if err := s.DB.View(func(st model.State) error {
+			for id, p := range st.Projects {
+				if p.Members[uid] == "owner" {
+					ids = append(ids, id)
+					locked[id] = true
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		sort.Strings(ids)
+		var unlocks []func()
+		release := func() {
+			for i := len(unlocks) - 1; i >= 0; i-- {
+				unlocks[i]()
 			}
 		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	sort.Strings(ids)
-	var unlocks []func()
-	release := func() {
-		for i := len(unlocks) - 1; i >= 0; i-- {
-			unlocks[i]()
+		for _, id := range ids {
+			unlock, err := s.lockProject(ctx, id)
+			if err != nil {
+				release()
+				return err
+			}
+			unlocks = append(unlocks, unlock)
+		}
+		changed := false
+		err := s.DB.Update(func(st *model.State) error {
+			// Creation or transfer may have added an owned project while we
+			// waited. Check under the catalog mutex before changing authority.
+			for id, p := range st.Projects {
+				if p.Members[uid] == "owner" && !locked[id] {
+					changed = true
+					return nil
+				}
+			}
+			return update(st)
+		})
+		release()
+		if err != nil || !changed {
+			return err
 		}
 	}
-	for _, id := range ids {
-		unlock, err := s.lockProject(ctx, id)
-		if err != nil {
-			release()
-			return nil, err
-		}
-		unlocks = append(unlocks, unlock)
-	}
-	return release, nil
 }
 func invalidateGitHub(st *model.State, uid, pid string, now time.Time) {
 	for id, a := range st.GitHubAttemptAuthorizations {

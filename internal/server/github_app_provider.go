@@ -40,6 +40,9 @@ func (p *githubAppProvider) Installations(ctx context.Context, owner string, _ [
 		if !ok || current.AppID != c.AppID || current.Account.ID != selected.AccountID {
 			lookupErr = &githubapp.Failure{Reason: "inaccessible"}
 		} else {
+			// Match failures against the current account name too: a rename
+			// must not turn a failed authorization into unauthenticated access.
+			resolved.Account = current.Account.Login
 			var verified githubapp.Installation
 			verified, lookupErr = p.service.Client.Installation(ctx, id)
 			if lookupErr == nil {

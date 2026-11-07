@@ -61,7 +61,6 @@ func (p *githubAppProvider) Installations(ctx context.Context, owner string, _ [
 							resolved.Repositories = append(resolved.Repositories, GitHubRepository{Account: parts[0], Name: parts[1], ID: repo.ID})
 						}
 					}
-					resolved.Account = current.Account.Login
 				}
 			}
 		}

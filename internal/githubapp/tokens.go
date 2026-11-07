@@ -162,10 +162,15 @@ func (s *Service) Issue(ctx context.Context, key runner.AttemptKey, scope Author
 		if !Authorized(*st, key, scope.OwnerID, scope.ConnectionVersion) {
 			return ErrAuthorization
 		}
+		connection := st.GitHubAppConnections[scope.OwnerID]
+		if connection.Status != "active" || connection.RefreshState != "" {
+			return &Failure{Reason: "reauthorization_required"}
+		}
 		st.GitHubTokenAttempts[id] = intent
 		return nil
 	}); err != nil {
-		if errors.Is(err, ErrAuthorization) {
+		var failure *Failure
+		if errors.Is(err, ErrAuthorization) || errors.As(err, &failure) {
 			return "", err
 		}
 		return "", PersistenceError{}
@@ -183,10 +188,12 @@ func (s *Service) Issue(ctx context.Context, key runner.AttemptKey, scope Author
 	} else {
 		intent.EncryptedToken = s.Cipher.Seal(string(token), "github-token:"+id)
 	}
-	valid := false
+	valid, connected := false, false
 	err = s.DB.Update(func(st *model.State) error {
 		valid = Authorized(*st, key, scope.OwnerID, scope.ConnectionVersion)
-		if intent.Status == "active" && !valid {
+		connection := st.GitHubAppConnections[scope.OwnerID]
+		connected = connection.Status == "active" && connection.RefreshState == ""
+		if intent.Status == "active" && (!valid || !connected) {
 			intent.Status = "revocation_pending"
 			intent.RevocationRequestedAt = s.Client.now()
 		}
@@ -207,6 +214,9 @@ func (s *Service) Issue(ctx context.Context, key runner.AttemptKey, scope Author
 	}
 	if !valid {
 		return "", ErrAuthorization
+	}
+	if !connected {
+		return "", &Failure{Reason: "reauthorization_required"}
 	}
 	if issueErr != nil {
 		if intent.Status == "issuance_unknown" {

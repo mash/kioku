@@ -156,3 +156,65 @@ func TestCrashIntentAndWrongDatabaseKey(t *testing.T) {
 		t.Fatal("opened encrypted catalog with wrong key")
 	}
 }
+
+func TestIssueRechecksConnectionAfterConcurrentRefreshFailure(t *testing.T) {
+	for _, timing := range []string{"before POST", "during POST"} {
+		t.Run(timing, func(t *testing.T) {
+			s, key, scope := tokenFixture(t)
+			posts, revokes := 0, 0
+			requireAuthorization := func() {
+				t.Helper()
+				if err := s.RequireAuthorization(scope.OwnerID, scope.ConnectionVersion, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.Client.HTTP = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "DELETE" {
+					revokes++
+					return response(204, ""), nil
+				}
+				posts++
+				if timing == "during POST" {
+					requireAuthorization()
+				}
+				return response(201, fmt.Sprintf(`{"token":"late-token","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))), nil
+			})}
+			if timing == "before POST" {
+				requireAuthorization()
+			}
+			if token, err := s.Issue(t.Context(), key, scope); token != "" || Reason(err) != "reauthorization_required" {
+				t.Fatalf("issued after refresh failed: token present=%v, err=%v", token != "", err)
+			}
+			if timing == "before POST" && posts != 0 {
+				t.Fatal("issued despite known authorization failure")
+			}
+			if err := s.Sweep(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if revokes != posts {
+				t.Fatal("late-issued token was not revoked")
+			}
+		})
+	}
+}
+
+func TestReauthorizationDoesNotAbortAlreadyIssuedAttempts(t *testing.T) {
+	s, key, scope := tokenFixture(t)
+	calls := 0
+	s.Client.HTTP = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return response(201, fmt.Sprintf(`{"token":"active-token","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))), nil
+	})}
+	if _, err := s.Issue(t.Context(), key, scope); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequireAuthorization(scope.OwnerID, scope.ConnectionVersion, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := s.Issue(t.Context(), key, scope); err != nil || token == "" || calls != 1 {
+		t.Fatal("already issued scope should remain usable", err, calls)
+	}
+}

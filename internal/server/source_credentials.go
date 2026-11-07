@@ -34,10 +34,6 @@ type GitHubInstallation struct {
 	CheckedAt                time.Time
 	Repositories             []GitHubRepository
 }
-type GitHubTokenRequest struct {
-	RepositoryIDs []int64           `json:"repository_ids"`
-	Permissions   map[string]string `json:"permissions"`
-}
 
 var githubAccount = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 var githubRepository = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)

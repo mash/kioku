@@ -25,6 +25,11 @@ type tokenIssue struct {
 	installation int64
 	request      GitHubTokenRequest
 }
+type GitHubTokenRequest struct {
+	RepositoryIDs []int64           `json:"repository_ids"`
+	Permissions   map[string]string `json:"permissions"`
+}
+
 type fakeGitHubTokens struct {
 	owner                              string
 	repositories                       []GitHubRepository

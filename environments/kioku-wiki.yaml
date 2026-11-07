@@ -3,6 +3,6 @@ config:
   type: cloud
   networking:
     type: limited
-    allowed_hosts: ["kioku.magicians.ee"]
+    allowed_hosts: ["kioku.magicians.ee", "api.github.com", "docs.googleapis.com", "www.googleapis.com", "docs.google.com"]
     allow_package_managers: false
     allow_mcp_servers: false

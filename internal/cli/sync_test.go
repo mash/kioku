@@ -55,6 +55,21 @@ func syncFixture(t *testing.T) (*App, *map[string]string, *map[string]int, *int)
 	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Project: "project", Namespace: "org/project"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
 	return a, &files, &hits, &status
 }
+
+func TestPullPageWhoseJSONExceedsLegacyResponseLimit(t *testing.T) {
+	a, files, _, _ := syncFixture(t)
+	// A valid 17 MiB page expands past 96 MiB as JSON (six bytes per rune).
+	// The server's archive limit counts the page bytes, not JSON escaping.
+	body := strings.Repeat("\x01", 17<<20)
+	(*files)["wiki/large.md"] = body
+	if _, err := a.syncWiki(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(a.localDir(), "wiki/large.md"))
+	if err != nil || string(got) != body {
+		t.Fatalf("large page did not round-trip: bytes=%d, error=%v", len(got), err)
+	}
+}
 func TestSyncDeltaOverwriteDeleteAndPartialFailure(t *testing.T) {
 	a, files, hits, _ := syncFixture(t)
 	r, err := a.syncWiki()

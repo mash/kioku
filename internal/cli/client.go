@@ -33,11 +33,11 @@ func (a *App) request(method, path string, input, output any) (int, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 96<<20))
-	if err != nil {
-		return resp.StatusCode, err
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return resp.StatusCode, err
+		}
 		var e struct {
 			Error string `json:"error"`
 		}
@@ -48,11 +48,15 @@ func (a *App) request(method, path string, input, output any) (int, error) {
 		return resp.StatusCode, errors.New(e.Error)
 	}
 	if output != nil {
-		decoder := json.NewDecoder(bytes.NewReader(b))
+		// Wiki pages have no fixed per-page limit. JSON escaping can also make
+		// their wire representation larger than the server's archive limit.
+		decoder := json.NewDecoder(resp.Body)
 		decoder.UseNumber()
 		if err = decoder.Decode(output); err != nil {
 			return resp.StatusCode, err
 		}
+	} else if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return resp.StatusCode, err
 	}
 	return resp.StatusCode, nil
 }

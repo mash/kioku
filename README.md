@@ -162,6 +162,8 @@ kioku connect google
 kioku connect github
 ```
 
+`kioku login` は CLI と同じ端末のブラウザで認証する必要があります（SSH 先や別端末で開く使い方には対応しません）。
+
 ログインと原資料への認可は別です。GoogleはDocs／Driveの読み取りスコープ、GitHubはOAuth Appの `read:user user:email repo` を使用します。`repo` は非公開資料へのアクセスを含む広い権限です。選択リポジトリだけを許可するGitHub App方式はこの実装の対象外です。
 
 `connect` は別のログイン方法を同じユーザーに紐づける操作も兼ねます。既存アカウントでログインしてから実行してください。メール一致だけでアカウントを自動統合しません。CLI認証はブラウザでのOAuth＋一度だけ受領できるトークン交換、stateとPKCEの検証を使用します。

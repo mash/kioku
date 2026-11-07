@@ -14,7 +14,12 @@ func (a *App) open() error {
 	if a.Config.Namespace != "" {
 		target = a.Config.Server + "/" + a.Config.Namespace
 	}
+	if _, err := browserOrigin(a.Config.Server, target); err != nil {
+		return err
+	}
 	fmt.Fprintln(a.Out, target)
-	openBrowser(target)
+	if err := openBrowser(a.Config.Server, target); err != nil {
+		fmt.Fprintf(a.Err, "ブラウザを開けませんでした。表示された URL をブラウザに貼り付けてください: %v\n", err)
+	}
 	return nil
 }

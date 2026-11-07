@@ -30,6 +30,12 @@ func normalizeOrigin(value string) (string, error) {
 		return "", errors.New("server must be an HTTP(S) origin")
 	}
 	u.Host = strings.ToLower(u.Host)
+	if u.Scheme == "https" && u.Port() == "443" || u.Scheme == "http" && u.Port() == "80" {
+		u.Host = u.Hostname()
+		if strings.Contains(u.Host, ":") {
+			u.Host = "[" + u.Host + "]"
+		}
+	}
 	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")) {
 		return "", errors.New("HTTPS is required for remote servers")
 	}

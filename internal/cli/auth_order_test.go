@@ -35,7 +35,7 @@ func newAuthRecorder(t *testing.T) *authRecorder {
 		switch {
 		case r.URL.Path == "/api/agent/login":
 			json.NewEncoder(w).Encode(map[string]any{"id": "connector-id", "token": orderAgentToken, "role": "read", "expires": time.Now().Add(24 * time.Hour), "namespace": orderNamespace})
-		case r.URL.Path == "/api/auth/device":
+		case r.URL.Path == "/api/auth/loopback":
 			w.WriteHeader(400)
 			json.NewEncoder(w).Encode(map[string]string{"error": "bad request"})
 		default:
@@ -224,8 +224,8 @@ func TestDamagedHumanCredentialAllowsOnlyLogin(t *testing.T) {
 	if err := f.run("login"); err == nil {
 		t.Fatal("login ignored the 400 reply")
 	}
-	if len(f.server.paths) != 1 || f.server.paths[0] != "POST /api/auth/device" || f.server.auths[0] != "" {
-		t.Fatal("login did not start the device flow without a credential", f.server.paths, f.server.auths)
+	if len(f.server.paths) != 1 || f.server.paths[0] != "POST /api/auth/loopback" || f.server.auths[0] != "" {
+		t.Fatal("login did not start the loopback flow without a credential", f.server.paths, f.server.auths)
 	}
 }
 
@@ -235,7 +235,7 @@ func TestLoginSendsNoStoredHumanCredential(t *testing.T) {
 	if err := f.run("login"); err == nil {
 		t.Fatal("login ignored the 400 reply")
 	}
-	if len(f.server.paths) != 1 || f.server.paths[0] != "POST /api/auth/device" || f.server.auths[0] != "" {
+	if len(f.server.paths) != 1 || f.server.paths[0] != "POST /api/auth/loopback" || f.server.auths[0] != "" {
 		t.Fatal("login sent a stored credential", f.server.paths, f.server.auths)
 	}
 }

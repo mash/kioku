@@ -55,7 +55,7 @@ func TestRedoJournalRecoversControlAndExternalContent(t *testing.T) {
 }
 
 func TestMissingOrInvalidProjectContentFailsClosed(t *testing.T) {
-	for _, mode := range []string{"missing file", "empty file", "wrong project", "unsupported version"} {
+	for _, mode := range []string{"missing file", "empty file", "wrong project", "legacy content", "unsupported version"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			s, err := Open(dir)
@@ -77,7 +77,9 @@ func TestMissingOrInvalidProjectContentFailsClosed(t *testing.T) {
 			case "empty file":
 				err = os.WriteFile(file, nil, 0600)
 			case "wrong project":
-				err = os.WriteFile(file, []byte(`{"schema":1,"project_id":"other"}`), 0600)
+				err = os.WriteFile(file, []byte(`{"schema":2,"project_id":"other"}`), 0600)
+			case "legacy content":
+				err = os.WriteFile(file, []byte(`{"schema":1,"project_id":"p"}`), 0600)
 			case "unsupported version":
 				err = os.WriteFile(file, []byte(`{"schema":99,"project_id":"p"}`), 0600)
 			}
@@ -88,6 +90,15 @@ func TestMissingOrInvalidProjectContentFailsClosed(t *testing.T) {
 			if err == nil {
 				reopened.Close()
 				t.Fatal("invalid content silently accepted")
+			}
+			if mode == "legacy content" {
+				if !strings.Contains(err.Error(), "old project content (schema 1) must be deleted") {
+					t.Fatalf("missing operator guidance: %v", err)
+				}
+				raw, readErr := os.ReadFile(file)
+				if readErr != nil || string(raw) != `{"schema":1,"project_id":"p"}` {
+					t.Fatalf("startup modified old content: %s, %v", raw, readErr)
+				}
 			}
 			if mode == "missing file" {
 				if _, err = os.Stat(file); !os.IsNotExist(err) {

@@ -153,7 +153,7 @@ func openStore(dir string, objects Objects, controlOnly bool) (*Store, error) {
 		return nil, err
 	}
 	if version != 2 {
-		return nil, errors.New("unsupported legacy SQLite schema; upgrade storage before migrating inbox")
+		return nil, errors.New("unsupported legacy SQLite schema; restore a schema 2 account configuration catalog")
 	}
 	var pending []byte
 	err = s.catalog.QueryRow("SELECT payload FROM pending WHERE id=1").Scan(&pending)

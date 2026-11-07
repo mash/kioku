@@ -318,9 +318,9 @@ Wikiは一組だけを保持し、生成中に変更ファイルを順次上書�
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
-## 移行・オンラインバックアップ
+## 旧データ・オンラインバックアップ
 
-旧データの自動移行は行いません。旧 content schema 1 を検出すると起動を拒否します。新方式への更新では、運用者が削除対象を承認し、サーバーを止めて明示的な移行コマンドを実行します。アカウント・接続・プロジェクト設定・監査を保持し、旧資料・Wiki・maps・ジョブを削除します。[移行手順](docs/INBOX_MIGRATION.md)に従い、更新後に利用者へ put し直しを依頼してください。
+旧 content schema 1 を検出すると起動を拒否します。旧プロジェクト内容は、運用者がサーバーを停止して手作業で削除する必要があります。更新後は利用者へ put し直しを依頼してください。
 
 稼働中のサーバへオンラインバックアップを依頼できます。
 
@@ -332,7 +332,7 @@ kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
 
 バックアップは設定・アカウントのSQLiteのみです。本文やジョブはS3に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとS3接続設定は別途復元してください。自動生成した `encryption.key` もSQLiteバックアップには含まれないため、別途保管・復元が必要です。保存先はサービスアカウントが書き込める新規ディレクトリにします。バックアップの定期実行・暗号化・S3転送はまだ構成していません。
 
-詳しい保存境界、障害復旧、移行、オンラインバックアップは [WORKERS.md](docs/WORKERS.md) を参照してください。
+詳しい保存境界、障害復旧、オンラインバックアップは [WORKERS.md](docs/WORKERS.md) を参照してください。
 
 ## 運用・削除・接続確認
 
@@ -375,7 +375,7 @@ go vet ./...
 go build ./cmd/...
 ```
 
-CLI/API/MCP の inbox 受付、単一実行、出力の source_url 検査、公開・再起動・再試行、明示的移行、容量制限・GC、owner の資格情報と秘密の非露出、認証・権限・バックアップ、Markdown／SVG の安全性をテストします。CIにもブラウザは不要です。
+CLI/API/MCP の inbox 受付、単一実行、出力の source_url 検査、公開・再起動・再試行、容量制限・GC、owner の資格情報と秘密の非露出、認証・権限・バックアップ、Markdown／SVG の安全性をテストします。CIにもブラウザは不要です。
 
 Google／GitHub／Managed Agents はモック、S3はTLSテストサーバで検証します。実サービスの接続は各アプリの登録と資格情報を設定し、`connect` と手順書の実セッションで検証してください。未設定の資格情報による実接続を「検証済み」とは扱いません。
 
@@ -402,7 +402,7 @@ The web path is `/acme/platform`. The caller chooses a working directory; `.kiok
 
 `kioku put [URL|FILES...]` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku generate --wait` waits for publication and pulls the wiki. Inspect `kioku status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
 
-CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together using the [migration runbook](docs/INBOX_MIGRATION.md). Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
+CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together. Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 
 ## CLI と skills の責務
 

@@ -18,13 +18,12 @@
 - GitHub provider は、発行応答を失った場合や再起動後も attempt ID で失効できる契約とした。サーバーは発行前に片付け義務を保存する。provider 不在・失効失敗では片付け完了にせず、復旧後に再試行する。将来の実 provider はこの契約を実装する必要がある。
 - Google は Start 直前に refresh し、実行中には更新しない。vault を片付けても、今後の実行に必要な owner の Google 接続・grant は失効させない。短い access token は期限で失効する。
 - OpenAI の複数資格情報は runner 内に閉じ込め、fake HTTP API で検証した。従来の Kioku ホストだけに固定する network override を除き、運用者の環境設定を使う。コードで新しい allowlist を設けない。既存の環境テンプレートは運用者が取得先に合わせて変更する。
-- 移行は旧 wiki/maps/sources に加えて旧ジョブの記録・tar・一時 inbox・content transaction を消し、旧ジョブの資格情報を無効にする。監査とアカウント設定は保持する。schema 2 を最後に書き、再実行で新方式のデータを消さない。旧 catalog schema 1／metadata.json の自動移行は削除した。
 - macOS の Unix socket のパス長に合わせ、バックアップのテスト用ソケットには短い相対パスを使った。製品のバックアップ API は変えていない。
 - source_url 検査の HTTP 応答テストを PR-5、source ページ名・slug 衝突の公開往復テストを PR-6 で補った。実装の依存順は変えていない。
 
 ## 検証
 
-各コミット後に `go vet ./...`、`go test -race ./...`、`go build ./cmd/...` と CI の plugin shell／Python／ビルド済み CLI テストを実行する。GitHub、Google、managed-agent API は fake とローカル HTTP サーバーを使い、実ネットワークを使わない。移行テストは一時データだけを使う。
+各コミット後に `go vet ./...`、`go test -race ./...`、`go build ./cmd/...` と CI の plugin shell／Python／ビルド済み CLI テストを実行する。GitHub、Google、managed-agent API は fake とローカル HTTP サーバーを使い、実ネットワークを使わない。
 
 | 設計の条件 | 主なテスト |
 | --- | --- |
@@ -35,10 +34,9 @@
 | source_url による更新・slug の -2、原文を公開 | wiki/source_validation_test.go、server/source_pages_roundtrip_test.go、wiki/assemble_test.go |
 | 途中公開・期限切れ・再起動・片付け | server/inbox_generation_test.go、server/agent_lifecycle_test.go、server/agent_recovery_test.go、server/agent_cleanup_review_test.go |
 | owner の資格情報、接続なし・発行失敗、500件分割、失効再試行、exec、秘密の非露出 | server/source_credentials_test.go、runner/* のテスト、managedagents/client_test.go |
-| 移行の保持範囲・ロック・再開・再実行 | store/migrate_inbox_test.go |
 
 表のパスは `internal/` 以下。slug や取得失敗の意味的な期待値は fake が作る出力で確かめる。実モデルがプロンプトどおりに取得・編集する保証を、このテスト結果から主張しない。
 
 ## 今回行わない作業
 
-push、PR 作成、リリース、実データの移行、運用者の network 設定、GitHub App の認可／インストール実装、実 Google／GitHub／managed-agent API と実モデルの試験は行わない。新しい metrics は追加しない。実環境の導入は [移行手順](INBOX_MIGRATION.md) と [運用文書](WORKERS.md) に従う。
+push、PR 作成、リリース、実データの削除、運用者の network 設定、GitHub App の認可／インストール実装、実 Google／GitHub／managed-agent API と実モデルの試験は行わない。新しい metrics は追加しない。実環境の導入は [運用文書](WORKERS.md) に従う。

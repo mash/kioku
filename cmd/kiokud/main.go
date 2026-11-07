@@ -33,8 +33,6 @@ func main() {
 	}
 }
 func run() error {
-	migrateInbox := flag.Bool("migrate-inbox", false, "irreversibly clear old project content for the inbox schema, then exit")
-	confirmMigration := flag.Bool("confirm-delete-project-content", false, "confirm operator approval of the inbox migration")
 	addr := flag.String("addr", env("KIOKU_ADDR", "127.0.0.1:8080"), "listen address")
 	storage := flag.String("storage", env("KIOKU_STORAGE", string(blob.BackendLocal)), "object storage backend: local or s3")
 	dir := flag.String("data", env("KIOKU_DATA", "./data"), "persistent metadata directory")
@@ -102,16 +100,6 @@ func run() error {
 		return err
 	}
 
-	if *migrateInbox {
-		if !*confirmMigration {
-			return errors.New("migrate-inbox requires confirm-delete-project-content after operator approval")
-		}
-		count, err := store.MigrateInbox(context.Background(), *dir, objects)
-		if err == nil {
-			slog.Info("inbox migration complete", "projects", count)
-		}
-		return err
-	}
 	db, err := store.OpenWithObjects(*dir, objects)
 	if err != nil {
 		return err

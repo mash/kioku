@@ -168,8 +168,8 @@ These commands create local, unencrypted configuration backups. Continuous repli
 
 SQLite backups do not restore old wiki page contents. Published source pages and any independent object-store backup policy are separate. There is no cross-project content snapshot or page-history restore promise.
 
-## Inbox migration
+## Legacy project content
 
-Content schema 1 cannot be served by this version. There is no automatic import or backward compatibility. Use the [explicit migration runbook](INBOX_MIGRATION.md): obtain the operator's deletion approval, stop/fence kiokud, delete old content with the confirmed migration command, deploy the matching server/CLI/plugin, then ask users to put their sources again. The migration preserves account/configuration data, provider connections and audits. It deletes old wiki (including inbox blobs), maps, sources and job artifacts, then writes empty content schema 2 last. Retrying resumes incomplete projects and never clears schema-2 projects.
+Content schema 1 cannot be served by this version. The operator must stop kiokud and manually delete old project content before starting the new version. Upgrade the server, CLI and plugin together, then ask users to put their sources again.
 
 See [implementation decisions and test coverage](INBOX_IMPLEMENTATION.md) for the explicit interpretations and remaining live verification.

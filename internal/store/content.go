@@ -150,8 +150,14 @@ func (s *Store) loadContent(pid string) error {
 	if err = json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	if c.Schema != 2 || c.ProjectID != pid {
-		return errors.New("project content requires migrate-inbox or has invalid identity")
+	if c.ProjectID != pid {
+		return errors.New("project content identity mismatch")
+	}
+	if c.Schema == 1 {
+		return errors.New("old project content (schema 1) must be deleted by the operator and replaced with empty schema 2 content before startup")
+	}
+	if c.Schema != 2 {
+		return errors.New("unsupported project content schema")
 	}
 	for id, v := range c.Inbox {
 		if v.ProjectID != pid || id != v.ID || !validID(id) {

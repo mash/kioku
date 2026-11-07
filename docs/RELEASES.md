@@ -49,4 +49,4 @@ may still name the previous release while working on the next one. Use
 
 ## Inbox release transition
 
-The inbox release uses version 0.1.0 as the minimum CLI version. PR-1 adds the version header and the `project` command group; PR-2 through PR-6 must ship together after the stopped-server migration. The version bump is included with PR-6 for this coordinated change. Do not deploy a partial series. Follow [INBOX_MIGRATION.md](INBOX_MIGRATION.md) before starting the new server against existing content. No release or remote change is performed by the six local implementation commits.
+The inbox release uses version 0.1.0 as the minimum CLI version. PR-1 adds the version header and the `project` command group; PR-2 through PR-6 must ship together after the operator has stopped the server and manually deleted old project content. The version bump is included with PR-6 for this coordinated change. Do not deploy a partial series. No release or remote change is performed by the six local implementation commits.

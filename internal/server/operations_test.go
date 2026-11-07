@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -30,13 +31,13 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	if c := f.request("POST", base+"/put", token, input, nil); c != 413 {
 		t.Fatalf("quota: %d", c)
 	}
-	if err := f.s.Blobs.Put(context.Background(), "projects/"+p.ID+"/orphan", []byte("orphan")); err != nil {
+	if err := f.s.Blobs.Put(context.Background(), blob.Key("projects/"+p.ID+"/orphan"), []byte("orphan")); err != nil {
 		t.Fatal(err)
 	}
 	if c := f.request("POST", base+"/maintenance", token, map[string]int{"keep": 1}, nil); c != 200 {
 		t.Fatal(c)
 	}
-	if _, err := f.s.Blobs.Get(context.Background(), "projects/"+p.ID+"/orphan"); err == nil {
+	if _, err := f.s.Blobs.Get(context.Background(), blob.Key("projects/"+p.ID+"/orphan")); err == nil {
 		t.Fatal("orphan retained")
 	}
 	var revisions int

@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
-	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
 	"net/http"
 	"testing"
+
+	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/model"
 )
 
 func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T) {
@@ -16,7 +18,7 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 	if code := f.request("POST", "/api/projects", token, map[string]string{"name": "sync"}, &p); code != 201 {
 		t.Fatal(code)
 	}
-	key := "projects/" + p.ID + "/wiki/index.md"
+	key := blob.Key("projects/" + p.ID + "/wiki/index.md")
 	if err := f.s.Blobs.Put(context.Background(), key, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +27,7 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 		current.Revision = "revision"
 		current.WikiIncomplete = true
 		st.Projects[p.ID] = current
-		st.Revisions["revision"] = model.Revision{ID: "revision", ProjectID: p.ID, Files: map[string]string{"wiki/index.md": key}, FileHashes: map[string]string{"wiki/index.md": auth.Hash("first")}, FileBytes: map[string]int64{"wiki/index.md": 5}}
+		st.Revisions["revision"] = model.Revision{ID: "revision", ProjectID: p.ID, Files: map[string]blob.Key{"wiki/index.md": key}, FileHashes: map[string]string{"wiki/index.md": auth.Hash("first")}, FileBytes: map[string]int64{"wiki/index.md": 5}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

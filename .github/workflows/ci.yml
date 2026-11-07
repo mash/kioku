@@ -30,6 +30,7 @@ jobs:
           docker run --rm --entrypoint kioku kioku:ci version | grep -F "\"commit\":\"$GITHUB_SHA\""
           docker run -d --name kioku-ci -p 127.0.0.1:18080:8080 \
             -e KIOKU_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+            -e KIOKU_STORAGE=local \
             -e GITHUB_CLIENT_ID=ci -e GITHUB_CLIENT_SECRET=ci kioku:ci
           trap 'docker logs kioku-ci; docker rm -fv kioku-ci' EXIT
           curl --fail --retry 10 --retry-delay 1 --retry-all-errors \

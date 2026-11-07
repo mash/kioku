@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
 )
@@ -34,7 +35,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	if err != nil {
 		return "", err
 	}
-	rev := model.Revision{SourcesUpdatedAt: project.SourcesUpdatedAt, SourceVersion: project.SourceVersion, Fingerprint: fingerprint, ID: auth.Token()[:20], ProjectID: job.ProjectID, Created: time.Now().UTC(), Files: map[string]string{}, FileBytes: map[string]int64{}, FileHashes: map[string]string{}, SourceIDs: []string{}}
+	rev := model.Revision{SourcesUpdatedAt: project.SourcesUpdatedAt, SourceVersion: project.SourceVersion, Fingerprint: fingerprint, ID: auth.Token()[:20], ProjectID: job.ProjectID, Created: time.Now().UTC(), Files: map[string]blob.Key{}, FileBytes: map[string]int64{}, FileHashes: map[string]string{}, SourceIDs: []string{}}
 	for _, body := range files {
 		rev.StoredBytes += int64(len(body))
 	}
@@ -77,7 +78,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 			if err := s.DB.View(validate); err != nil {
 				return err
 			}
-			key := "projects/" + job.ProjectID + "/" + name
+			key := blob.Key("projects/" + job.ProjectID + "/" + name)
 			// An unchanged file needs no upload. Current metadata is updated per file,
 			// so partial progress remains readable and accountable after a failure.
 			changed := true
@@ -109,7 +110,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 				}
 				current := st.Revisions[p.Revision]
 				if current.Files == nil {
-					current = model.Revision{ID: rev.ID, ProjectID: p.ID, Files: map[string]string{}}
+					current = model.Revision{ID: rev.ID, ProjectID: p.ID, Files: map[string]blob.Key{}}
 				}
 				current.Files[name] = key
 				if current.FileBytes == nil {
@@ -157,7 +158,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		return "", err
 	}
 	for _, key := range keys {
-		name := strings.TrimPrefix(key, "projects/"+job.ProjectID+"/")
+		name := strings.TrimPrefix(string(key), "projects/"+job.ProjectID+"/")
 		if (strings.HasPrefix(name, "wiki/") || strings.HasPrefix(name, "maps/")) && !strings.HasPrefix(name, "wiki/inbox/") && files[name] == "" {
 			if _, ok := files[name]; !ok {
 				if err = s.Blobs.Delete(ctx, key); err != nil {

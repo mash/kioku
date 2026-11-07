@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
 )
@@ -31,7 +32,7 @@ func (s *Server) migrateWikiStorage() error {
 			selected := st.Revisions[p.Revision]
 			needs := counts[p.ID] > 1
 			for name, key := range selected.Files {
-				if key != "projects/"+p.ID+"/"+name {
+				if key != blob.Key("projects/"+p.ID+"/"+name) {
 					needs = true
 				}
 			}
@@ -48,7 +49,7 @@ func (s *Server) migrateWikiStorage() error {
 	for _, item := range candidates {
 		p, selected := item.project, item.selected
 		next := selected
-		next.Files = map[string]string{}
+		next.Files = map[string]blob.Key{}
 		next.FileBytes = map[string]int64{}
 		next.FileHashes = map[string]string{}
 		next.StoredBytes = 0
@@ -60,7 +61,7 @@ func (s *Server) migrateWikiStorage() error {
 			if err != nil {
 				return err
 			}
-			current := "projects/" + p.ID + "/" + name
+			current := blob.Key("projects/" + p.ID + "/" + name)
 			if err = s.Blobs.Put(ctx, current, body); err != nil {
 				return err
 			}

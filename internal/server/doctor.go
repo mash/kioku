@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -37,7 +38,7 @@ func (s *Server) doctor(w http.ResponseWriter, r *http.Request, uid string) erro
 			checks[name] = "ok"
 		}
 	}
-	key := "projects/" + pid + "/checks/" + auth.Token()
+	key := blob.Key("projects/" + pid + "/checks/" + auth.Token())
 	data := []byte(auth.Token())
 	err = s.Blobs.Put(r.Context(), key, data)
 	if err == nil {

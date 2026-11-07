@@ -12,11 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
-
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/cli"
+	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
 )
@@ -31,7 +30,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := server.New(server.Config{BaseURL: "http://127.0.0.1"}, db, blob.Local{Dir: filepath.Join(data, "objects")}, key)
+	s := server.New(server.Config{BaseURL: "http://127.0.0.1"}, db, local.Store{Dir: filepath.Join(data, "objects")}, key)
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
 	ctx, cancel := context.WithCancel(context.Background())
@@ -93,7 +92,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := config
-	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("# Architecture\nAll application code is Go. Objects live in R2."), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
 		t.Fatal(err)
 	}
 	must("put", "--wait")

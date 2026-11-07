@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
@@ -35,7 +36,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			})
 			ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
 			old := f.s
-			dir := filepath.Dir(old.Blobs.(blob.Local).Dir)
+			dir := filepath.Dir(old.Blobs.(local.Store).Dir)
 			if err := f.db.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -82,12 +83,12 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 
 type pauseOutputRead struct {
 	blob.Store
-	key              string
+	key              blob.Key
 	entered, release chan struct{}
 	once             sync.Once
 }
 
-func (b *pauseOutputRead) Get(ctx context.Context, key string) ([]byte, error) {
+func (b *pauseOutputRead) Get(ctx context.Context, key blob.Key) ([]byte, error) {
 	if key == b.key {
 		b.once.Do(func() { close(b.entered); <-b.release })
 	}

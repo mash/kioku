@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -21,7 +22,7 @@ func (s *Server) discardUpload(ctx context.Context, id string) error {
 	}
 	var cleanupErr error
 	for _, src := range u.Sources {
-		for _, key := range []string{src.OriginalKey, src.TextKey} {
+		for _, key := range []blob.Key{src.OriginalKey, src.TextKey} {
 			if err := s.Blobs.Delete(ctx, key); err != nil {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}

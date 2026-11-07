@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
@@ -40,7 +40,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, blob.Local{Dir: dir + "/objects"}, key)
+	s := New(Config{BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, local.Store{Dir: dir + "/objects"}, key)
 	s.Config.Providers["google"] = auth.Provider{Name: "google", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		uid := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var u model.User
@@ -178,7 +178,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("POST", base+"/invites", bob, map[string]string{}, nil); code != 403 {
 		t.Fatalf("member cannot invite: %d", code)
 	}
-	req := model.PutRequest{Files: []model.FileInput{{Name: "decisions.md", Content: "# Decision\nWe use Go and R2."}}}
+	req := model.PutRequest{Files: []model.FileInput{{Name: "decisions.md", Content: "# Decision\nWe use Go and S3."}}}
 	if code := f.request("POST", base+"/put", eve, req, nil); code != 404 {
 		t.Fatalf("nonmember put: %d", code)
 	}
@@ -191,7 +191,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("GET", base+"/snapshot", alice, nil, &snap); code != 200 {
 		t.Fatal(code)
 	}
-	if !strings.Contains(snap.Files["wiki/source-"+job.SourceIDs[0]+".md"], "Go and R2") {
+	if !strings.Contains(snap.Files["wiki/source-"+job.SourceIDs[0]+".md"], "Go and S3") {
 		t.Fatal("source not in wiki")
 	}
 	if !strings.Contains(snap.Files["maps/graph.json"], "links-to") {

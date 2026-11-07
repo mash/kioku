@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -78,7 +79,7 @@ func setManagedPhase(t *testing.T, f *fixture, job model.Job, phase model.Manage
 func TestAgentIOPhasesAndResend(t *testing.T) {
 	f, raw, job, _, human := generatorFixture(t)
 	input := []byte("saved input archive")
-	if err := f.s.Blobs.Put(context.Background(), agentJobPrefix(job)+"input.tar.gz", input); err != nil {
+	if err := f.s.Blobs.Put(context.Background(), agentJobKey(job, "input.tar.gz"), input); err != nil {
 		t.Fatal(err)
 	}
 	for _, phase := range []model.ManagedPhase{model.PhasePreparing, model.PhaseAgentRunning, model.PhaseOutputReceived} {
@@ -152,7 +153,7 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 func TestAgentOutputIncludesSourcePagesInSizeLimit(t *testing.T) {
 	f, raw, job, _, _ := generatorFixture(t)
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
-	src := model.Source{ID: "large", ProjectID: job.ProjectID, TextKey: "projects/" + job.ProjectID + "/sources/large/extracted.txt"}
+	src := model.Source{ID: "large", ProjectID: job.ProjectID, TextKey: blob.Key("projects/" + job.ProjectID + "/sources/large/extracted.txt")}
 	if err := f.s.Blobs.Put(context.Background(), src.TextKey, bytes.Repeat([]byte("x"), 64<<20)); err != nil {
 		t.Fatal(err)
 	}

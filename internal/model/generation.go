@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"github.com/mash/kioku/internal/blob"
+)
 
 type GenerationMode string
 
@@ -39,7 +43,7 @@ type ManagedRun struct {
 	SourceVersion      int64          `json:"source_version"`
 	NextIntakeSequence int64          `json:"next_intake_sequence"`
 	SourcesUpdatedAt   time.Time      `json:"sources_updated_at"`
-	OutputKey          string         `json:"output_key,omitempty"`
+	OutputKey          blob.Key       `json:"output_key,omitempty"`
 	OutputHash         string         `json:"output_hash,omitempty"`
 	ListCostCents      int64          `json:"list_cost_cents,omitempty"`
 }

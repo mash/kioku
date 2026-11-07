@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	_ "modernc.org/sqlite"
 )
@@ -29,7 +30,7 @@ type Store struct {
 	state    model.State
 	lock     *os.File
 	catalog  *sql.DB
-	logged   map[string]bool
+	logged   map[blob.Key]bool
 	objects  Objects
 	poisoned error
 }

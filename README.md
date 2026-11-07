@@ -60,7 +60,7 @@ You can run your own server, but self-hosting is not supported. There is no comp
 4. Put a TLS proxy in front of port 8080 for the origin in `KIOKU_BASE_URL`.
 5. Log in with `kioku --server <KIOKU_BASE_URL> login`.
 
-The server keeps its catalog in SQLite and needs one host with a persistent disk. Without `R2_*` values, it stores project data under `/data` too. Wiki generation with Anthropic Managed Agents is optional. The sections below describe the settings, storage and backups in detail (in Japanese).
+The server keeps its catalog in SQLite and needs one host with a persistent disk. Set `KIOKU_STORAGE=local` to store project data under `/data/objects`, or `KIOKU_STORAGE=s3` with the required `S3_*` settings to use S3. These backends are mutually exclusive; S3 does not use a local content cache. Wiki generation with Anthropic Managed Agents is optional. The sections below describe the settings, storage and backups in detail (in Japanese).
 
 ## License
 
@@ -233,26 +233,29 @@ kiokud は原資料・差分・既存 Wiki をジョブ専用の tar にまと�
 
 スキルとインストール手順は [plugin/](plugin/README.md) にあります。
 
-## 保存構成: 管理情報はSQLite、プロジェクト情報はR2
+## 保存構成: 管理情報はSQLite、プロジェクト情報は選択したストレージ
 
 ```text
 KIOKU_DATA/
   catalog.sqlite       # アカウント・組織・権限・プロジェクト設定
-  cache/               # R2使用時の破棄可能な作業キャッシュ（256 MiB）
   admin.sock           # オペレーター専用、0600
-  objects/projects/    # ローカル開発時のプロジェクト保存先
+  objects/projects/    # KIOKU_STORAGE=local の場合のみ
 ```
 
 原資料・原資料メタデータ・Wiki・マップ・追記ログ・ジョブ・生成進捗はプロジェクトの保存先に置きます。SQLiteには本文、ファイル一覧、生成チェックポイントを保存しません。プロジェクト専用SQLiteは不要になりました。
 
 ```bash
-export R2_ACCOUNT_ID='your-32-character-account-id'
-export R2_BUCKET=kioku-projects
-export R2_ACCESS_KEY_ID=...
-export R2_SECRET_ACCESS_KEY=...
+export KIOKU_STORAGE=s3
+export S3_ENDPOINT='https://storage.example.com'
+export S3_REGION='your-region'
+export S3_BUCKET=kioku-projects
+export S3_ACCESS_KEY_ID=...
+export S3_SECRET_ACCESS_KEY=...
 ```
 
-事前作成した非公開の `R2_BUCKET` に、`projects/<project-id>/` プレフィックスでデータを保存します。バケット名とルートはSQLiteに記録します。R2 の資格情報は対象バケットの Object Read & Write に限定できます。バケットの作成・削除はアプリでは行いません。
+`KIOKU_STORAGE=local|s3` または `kiokud --storage=local|s3` で保存先を選択します（指定必須、フラグ優先）。localではS3設定を拒否し、s3では資格情報の不足を拒否します。保存先障害時の自動切り替えはありません。既存環境も新しい設定名へ更新し、`KIOKU_STORAGE` を明示してください。S3互換サービスの違いは `S3_ENDPOINT`・`S3_REGION` などの設定値で指定します。設定変更はデータ移行を行わないため、既存データの切り替えには停止・データ移送・カタログの保存先情報の整合が必要です。旧 `cache/` は使用しません。
+
+事前作成した非公開の `S3_BUCKET` に、`projects/<project-id>/` プレフィックスでデータを保存します。バケット名とルートはSQLiteに記録します。S3 の資格情報は対象バケットの Object Read & Write に限定できます。バケットの作成・削除はアプリでは行いません。
 
 ```text
 <project-bucket>/projects/<project-id>/
@@ -266,13 +269,13 @@ export R2_SECRET_ACCESS_KEY=...
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と処理済み原資料バージョンはR2に保存し、失敗時の再実行を可能にします。追記ログは生成で書き換えず、最新64件を `wiki/inbox.md` としてpullできます。
+Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と処理済み原資料バージョンはS3に保存し、失敗時の再実行を可能にします。追記ログは生成で書き換えず、最新64件を `wiki/inbox.md` としてpullできます。
 
-VPSのディスクは作業キャッシュです。R2への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はR2から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
+S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
 ## 移行・オンラインバックアップ
 
-旧プロジェクトSQLiteをR2に移行する前に `DATA/migration-backup/` に保護したアーカイブを作成します。旧 `metadata.json` は `.migrated` として保持します。現在のWikiだけを通常のパスへ移し、ページ履歴は保持しません。移行元が欠損・破損していれば起動を拒否します。旧共有S3バケットから専用バケットへの移動は別途必要です。
+旧プロジェクトSQLiteをS3に移行する前に `DATA/migration-backup/` に保護したアーカイブを作成します。旧 `metadata.json` は `.migrated` として保持します。現在のWikiだけを通常のパスへ移し、ページ履歴は保持しません。移行元が欠損・破損していれば起動を拒否します。旧共有S3バケットから専用バケットへの移動は別途必要です。
 
 稼働中のサーバへオンラインバックアップを依頼できます。
 
@@ -282,7 +285,7 @@ kiokud --data /var/lib/kioku --online-backup /var/backups/kioku/config-2026-10-3
 kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
 ```
 
-バックアップは設定・アカウントのSQLiteのみです。本文やジョブはR2に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとR2接続設定は別途復元してください。保存先はサービスアカウントが書き込める新規ディレクトリにします。バックアップの定期実行・暗号化・R2転送はまだ構成していません。
+バックアップは設定・アカウントのSQLiteのみです。本文やジョブはS3に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとS3接続設定は別途復元してください。保存先はサービスアカウントが書き込める新規ディレクトリにします。バックアップの定期実行・暗号化・S3転送はまだ構成していません。
 
 詳しい保存境界、障害復旧、移行、オンラインバックアップは [WORKERS.md](docs/WORKERS.md) を参照してください。
 
@@ -319,7 +322,7 @@ docker build -t kioku .
 docker run --rm -p 8080:8080 --env-file .env -v kioku-data:/data kioku
 ```
 
-Cloudflare R2を保存先として使えます。Cloudflare ContainersやCloud RunのエフェメラルディスクをSQLiteの保存先にするとデータを失うため、この構成をそのまま配置してはいけません。デプロイ先はSQLiteを永続化できる単一サーバを前提とします。
+S3互換ストレージを保存先として使えます。Cloudflare ContainersやCloud RunのエフェメラルディスクをSQLiteの保存先にするとデータを失うため、この構成をそのまま配置してはいけません。デプロイ先はSQLiteを永続化できる単一サーバを前提とします。
 
 ## 検証
 
@@ -331,7 +334,7 @@ go build ./cmd/...
 
 CLI/APIの連携、取得不能なURLのファイル投入案内、SQLiteの分離・移行・障害復旧・バックアップ、署名付きバケット操作、同時投入、招待・権限剥奪、OAuth/PKCE、暗号化、削除・容量制限・GC、Markdown／SVGの安全性をテストします。CIにもブラウザは不要です。
 
-Google／GitHub／Managed Agents はモック、R2／S3はTLSテストサーバで検証します。実サービスの接続は各アプリの登録と資格情報を設定し、`connect` と手順書の実セッションで検証してください。`doctor --llm` は設定の確認だけです。未設定の資格情報による実接続を「検証済み」とは扱いません。
+Google／GitHub／Managed Agents はモック、S3はTLSテストサーバで検証します。実サービスの接続は各アプリの登録と資格情報を設定し、`connect` と手順書の実セッションで検証してください。`doctor --llm` は設定の確認だけです。未設定の資格情報による実接続を「検証済み」とは扱いません。
 
 ## Organizations
 

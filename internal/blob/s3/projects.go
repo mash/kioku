@@ -1,4 +1,4 @@
-package blob
+package s3
 
 import (
 	"context"
@@ -6,12 +6,14 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/mash/kioku/internal/blob"
 )
 
 // Projects stores all project objects in one pre-provisioned private bucket.
 // Object keys retain their projects/<id>/ prefix; bucket management is external.
 type Projects struct {
-	Template S3
+	Template Store
 	buckets  sync.Map
 }
 
@@ -38,41 +40,41 @@ func (p *Projects) DeleteProject(_ context.Context, id string) error {
 	return p.checkProject(id)
 }
 
-func (p *Projects) route(key string) (S3, error) {
-	parts := strings.SplitN(key, "/", 3)
-	if len(parts) != 3 || parts[0] != "projects" || parts[1] == "" || !ValidKey(key) {
-		return S3{}, errors.New("project-scoped object key required")
+func (p *Projects) route(key Key) (Store, error) {
+	parts := strings.SplitN(string(key), "/", 3)
+	if len(parts) != 3 || parts[0] != "projects" || parts[1] == "" || !blob.ValidKey(key) {
+		return Store{}, errors.New("project-scoped object key required")
 	}
 	if err := p.checkProject(parts[1]); err != nil {
-		return S3{}, err
+		return Store{}, err
 	}
 	s := p.Template
 	s.Bucket = p.Bucket(parts[1])
 	return s, nil
 }
-func (p *Projects) Put(ctx context.Context, key string, b []byte) error {
+func (p *Projects) Put(ctx context.Context, key Key, b []byte) error {
 	s, err := p.route(key)
 	if err != nil {
 		return err
 	}
 	return s.Put(ctx, key, b)
 }
-func (p *Projects) Get(ctx context.Context, key string) ([]byte, error) {
+func (p *Projects) Get(ctx context.Context, key Key) ([]byte, error) {
 	s, err := p.route(key)
 	if err != nil {
 		return nil, err
 	}
 	return s.Get(ctx, key)
 }
-func (p *Projects) Delete(ctx context.Context, key string) error {
+func (p *Projects) Delete(ctx context.Context, key Key) error {
 	s, err := p.route(key)
 	if err != nil {
 		return err
 	}
 	return s.Delete(ctx, key)
 }
-func (p *Projects) List(ctx context.Context, prefix string) ([]string, error) {
-	s, err := p.route(prefix + "placeholder")
+func (p *Projects) List(ctx context.Context, prefix string) ([]Key, error) {
+	s, err := p.route(Key(prefix + "placeholder"))
 	if err != nil {
 		return nil, err
 	}
@@ -88,14 +90,14 @@ func (p *Projects) RegisterProjectBucket(id, bucket string) {
 
 // Refuse silent migration of catalog entries that point to a legacy bucket.
 func (p *Projects) checkProject(id string) error {
-	if !ValidKey("projects/"+id) || strings.Contains(id, "/") || id == "" {
+	if !blob.ValidKey(Key("projects/"+id)) || strings.Contains(id, "/") || id == "" {
 		return errors.New("invalid project ID")
 	}
 	if !sharedBucketName.MatchString(p.Template.Bucket) {
-		return errors.New("invalid R2_BUCKET")
+		return errors.New("invalid S3_BUCKET")
 	}
 	if p.Bucket(id) != p.Template.Bucket {
-		return errors.New("project bucket differs from R2_BUCKET; explicit migration required")
+		return errors.New("project bucket differs from S3_BUCKET; explicit migration required")
 	}
 	return nil
 }

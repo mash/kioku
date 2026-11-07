@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/wiki"
@@ -80,7 +81,7 @@ func (s *Server) storeSources(ctx context.Context, docs []source.Document, job m
 			}
 			if id == "" {
 				id = auth.Token()[:20]
-				prefix := "projects/" + pid + "/sources/" + id + "/"
+				prefix := blob.Key("projects/" + pid + "/sources/" + id + "/")
 				src := model.Source{ID: id, ProjectID: pid, Title: doc.Title, URL: doc.URL, Kind: doc.Kind, Version: doc.Version, ContentHash: hash, OriginalKey: prefix + "original", TextKey: prefix + "extracted.txt", MediaType: doc.MediaType, Bytes: int64(len(doc.Original) + len(doc.Text) + len(doc.Title) + len(doc.URL)), StoredBytes: int64(len(doc.Original) + len(doc.Text)), CreatedBy: uid, Created: time.Now().UTC()}
 				upload.Sources = append(upload.Sources, src)
 				known[id] = src

@@ -32,6 +32,7 @@ func main() {
 }
 func run() error {
 	addr := flag.String("addr", env("KIOKU_ADDR", "127.0.0.1:8080"), "listen address")
+	storage := flag.String("storage", env("KIOKU_STORAGE", ""), "required object storage backend: local or s3")
 	dir := flag.String("data", env("KIOKU_DATA", "./data"), "persistent metadata directory")
 	onlineBackup := flag.String("online-backup", "", "request an online configuration backup from the running server")
 	adminSocket := flag.String("admin-socket", "", "operator Unix socket (default DATA/admin.sock)")
@@ -100,18 +101,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	var objects blob.Store = blob.Local{Dir: filepath.Join(*dir, "objects")}
-	if os.Getenv("S3_ENDPOINT") != "" {
-		return errors.New("S3_ENDPOINT is no longer supported; configure R2_ACCOUNT_ID and R2 credentials")
-	}
-	if account := os.Getenv("R2_ACCOUNT_ID"); account != "" {
-		remote, err := blob.NewR2Projects(account, os.Getenv("R2_BUCKET"), os.Getenv("R2_ACCESS_KEY_ID"), os.Getenv("R2_SECRET_ACCESS_KEY"))
-		if err != nil {
-			return err
-		}
-		objects = &blob.Cache{Remote: remote, Dir: filepath.Join(*dir, "cache"), MaxBytes: 256 << 20}
-	} else if os.Getenv("R2_BUCKET") != "" || os.Getenv("R2_ACCESS_KEY_ID") != "" || os.Getenv("R2_SECRET_ACCESS_KEY") != "" {
-		return errors.New("R2_ACCOUNT_ID is required when R2 credentials or bucket are configured")
+	objects, err := openStorage(blob.Backend(*storage), *dir, os.Getenv)
+	if err != nil {
+		return err
 	}
 
 	db, err := store.OpenWithObjects(*dir, objects)
@@ -119,11 +111,6 @@ func run() error {
 		return err
 	}
 	defer db.Close()
-	if cache, ok := objects.(*blob.Cache); ok {
-		if err = cache.PruneUnused(); err != nil {
-			return err
-		}
-	}
 	providers := map[string]auth.Provider{}
 	for _, name := range []string{"google", "github"} {
 		prefix := strings.ToUpper(name)
@@ -160,7 +147,7 @@ func run() error {
 	httpServer := &http.Server{Addr: *addr, Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 6 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	serverDone := make(chan error, 1)
 	go func() {
-		slog.Info("kioku server ready", "url", base, "storage", map[bool]string{true: "R2", false: "local"}[os.Getenv("R2_ACCOUNT_ID") != ""])
+		slog.Info("kioku server ready", "url", base, "storage", *storage)
 		serverDone <- httpServer.ListenAndServe()
 	}()
 	select {

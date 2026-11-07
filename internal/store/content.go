@@ -14,37 +14,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
 // Objects avoids an import cycle with the concrete local and S3 implementations.
-type Objects interface {
-	Put(context.Context, string, []byte) error
-	Get(context.Context, string) ([]byte, error)
-	Delete(context.Context, string) error
-	List(context.Context, string) ([]string, error)
-}
+type Objects = blob.Store
 type fileObjects struct{ dir string }
 
-func (f fileObjects) Put(_ context.Context, key string, b []byte) error {
-	path := filepath.Join(f.dir, filepath.FromSlash(key))
+func (f fileObjects) Put(_ context.Context, key blob.Key, b []byte) error {
+	path := filepath.Join(f.dir, filepath.FromSlash(string(key)))
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 	return AtomicWrite(path, b, 0600)
 }
-func (f fileObjects) Get(_ context.Context, key string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(key)))
+func (f fileObjects) Get(_ context.Context, key blob.Key) ([]byte, error) {
+	return os.ReadFile(filepath.Join(f.dir, filepath.FromSlash(string(key))))
 }
-func (f fileObjects) Delete(_ context.Context, key string) error {
-	err := os.Remove(filepath.Join(f.dir, filepath.FromSlash(key)))
+func (f fileObjects) Delete(_ context.Context, key blob.Key) error {
+	err := os.Remove(filepath.Join(f.dir, filepath.FromSlash(string(key))))
 	if os.IsNotExist(err) {
 		return nil
 	}
 	return err
 }
-func (f fileObjects) List(_ context.Context, prefix string) ([]string, error) {
-	var out []string
+func (f fileObjects) List(_ context.Context, prefix string) ([]blob.Key, error) {
+	var out []blob.Key
 	err := filepath.WalkDir(f.dir, func(path string, d os.DirEntry, err error) error {
 		if os.IsNotExist(err) {
 			return nil
@@ -58,7 +54,7 @@ func (f fileObjects) List(_ context.Context, prefix string) ([]string, error) {
 		key, _ := filepath.Rel(f.dir, path)
 		key = filepath.ToSlash(key)
 		if strings.HasPrefix(key, prefix) {
-			out = append(out, key)
+			out = append(out, blob.Key(key))
 		}
 		return nil
 	})
@@ -160,7 +156,7 @@ func contentFor(st model.State, pid string) projectContent {
 	}
 	return c
 }
-func contentKey(pid string) string { return "projects/" + pid + "/.kioku/state.json" }
+func contentKey(pid string) blob.Key { return blob.Key("projects/" + pid + "/.kioku/state.json") }
 func (s *Store) loadContent(pid string) error {
 	if !validID(pid) {
 		return errors.New("invalid project identity")
@@ -210,15 +206,15 @@ func (s *Store) loadContent(pid string) error {
 		}
 	}
 	for _, src := range c.Sources {
-		for _, key := range []string{src.OriginalKey, src.TextKey} {
-			if key != "" && !strings.HasPrefix(key, "projects/"+pid+"/") {
+		for _, key := range []blob.Key{src.OriginalKey, src.TextKey} {
+			if key != "" && !strings.HasPrefix(string(key), "projects/"+pid+"/") {
 				return errors.New("cross-project source object reference")
 			}
 		}
 	}
 	if c.Wiki != nil {
 		for _, key := range c.Wiki.Files {
-			if !strings.HasPrefix(key, "projects/"+pid+"/") {
+			if !strings.HasPrefix(string(key), "projects/"+pid+"/") {
 				return errors.New("cross-project wiki object reference")
 			}
 		}
@@ -266,12 +262,12 @@ func (s *Store) flushIntake(ctx context.Context, c projectContent) error {
 	for id, e := range c.Intake {
 		// Immutable IDs make retrying the exact same object idempotent. The writer is
 		// fenced by the catalog process lock; no other server writes this project.
-		key := fmt.Sprintf("projects/%s/wiki/inbox/%020d-%s.json", c.ProjectID, e.Sequence, id)
+		key := blob.Key(fmt.Sprintf("projects/%s/wiki/inbox/%020d-%s.json", c.ProjectID, e.Sequence, id))
 		if !validID(id) {
 			return errors.New("invalid intake id")
 		}
 		if s.logged == nil {
-			s.logged = map[string]bool{}
+			s.logged = map[blob.Key]bool{}
 		}
 		if s.logged[key] {
 			continue
@@ -319,8 +315,8 @@ type controlIntent struct {
 	Projects    []string        `json:"projects"`
 }
 
-func transactionKey(pid, id string) string {
-	return "projects/" + pid + "/.kioku/transactions/" + id + ".json"
+func transactionKey(pid, id string) blob.Key {
+	return blob.Key("projects/" + pid + "/.kioku/transactions/" + id + ".json")
 }
 func (s *Store) persist(st model.State) error {
 	fresh := map[string]model.IntakeEntry{}
@@ -338,7 +334,7 @@ func (s *Store) persist(st model.State) error {
 			}
 		}
 		if len(s.logged) > 1024 {
-			s.logged = map[string]bool{}
+			s.logged = map[blob.Key]bool{}
 		}
 		return nil
 	}
@@ -506,7 +502,7 @@ func registerBuckets(objects Objects, st model.State) {
 const hotRecords = 256
 const hotIntake = 64
 
-// The append-only journal and job archive live in R2. Keep only recent records
+// The append-only journal and job archive live in S3. Keep only recent records
 // in the working index so a busy project's state.json does not grow forever.
 func compactContent(st *model.State) {
 	for pid := range st.Projects {
@@ -559,7 +555,7 @@ func (s *Store) archiveChangedRecords(st model.State) error {
 	return s.archiveRecords(ctx, st)
 }
 func (s *Store) archiveRecords(ctx context.Context, st model.State) error {
-	put := func(key string, old, record any) error {
+	put := func(key blob.Key, old, record any) error {
 		before, _ := json.Marshal(old)
 		after, err := json.Marshal(record)
 		if err != nil {
@@ -577,7 +573,7 @@ func (s *Store) archiveRecords(ctx context.Context, st model.State) error {
 		if !validID(id) {
 			return errors.New("invalid job id")
 		}
-		if err := put("projects/"+j.ProjectID+"/.kioku/jobs/"+id+".json", s.state.Jobs[id], j); err != nil {
+		if err := put(recordKey(j.ProjectID, "jobs", id), s.state.Jobs[id], j); err != nil {
 			return err
 		}
 	}
@@ -588,7 +584,7 @@ func (s *Store) archiveRecords(ctx context.Context, st model.State) error {
 		if !validID(id) {
 			return errors.New("invalid audit id")
 		}
-		if err := put("projects/"+e.ProjectID+"/.kioku/audit/"+id+".json", s.state.Audit[id], e); err != nil {
+		if err := put(recordKey(e.ProjectID, "audit", id), s.state.Audit[id], e); err != nil {
 			return err
 		}
 	}
@@ -600,7 +596,7 @@ func (s *Store) ArchivedJob(ctx context.Context, pid, id string) (model.Job, err
 	if !validID(pid) || !validID(id) {
 		return model.Job{}, errors.New("invalid job identity")
 	}
-	b, err := s.objects.Get(ctx, "projects/"+pid+"/.kioku/jobs/"+id+".json")
+	b, err := s.objects.Get(ctx, recordKey(pid, "jobs", id))
 	if err != nil {
 		return model.Job{}, err
 	}
@@ -612,4 +608,8 @@ func (s *Store) ArchivedJob(ctx context.Context, pid, id string) (model.Job, err
 		return j, errors.New("invalid archived job identity")
 	}
 	return j, nil
+}
+
+func recordKey(pid, kind, id string) blob.Key {
+	return blob.Key("projects/" + pid + "/.kioku/" + kind + "/" + id + ".json")
 }

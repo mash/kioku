@@ -460,7 +460,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job) error {
 		return nil
 	}
 	for _, key := range keys {
-		if strings.HasSuffix(key, ".tar.gz") {
+		if strings.HasSuffix(string(key), ".tar.gz") {
 			if err := s.Blobs.Delete(cleanupCtx, key); err != nil {
 				complete = false
 				slog.Warn("agent archive cleanup failed", "job", job.ID, "error", err)

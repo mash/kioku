@@ -59,7 +59,7 @@ Real provider behavior must also be verified; mocked tests do not establish it.
 
 A real BYOK smoke test passed on the hosted service. One synthetic source
 generated `wiki/index.md` and `wiki/infrastructure.md` with source links;
-publication to R2 and browser rendering succeeded.
+publication to object storage and browser rendering succeeded.
 
 - Session budget: $0.50; Anthropic-reported list cost: $0.07.
 - Provider session terminated and archived; job vault archived.

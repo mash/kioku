@@ -1,4 +1,4 @@
-package blob
+package s3
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=test/") {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=test/") || !strings.Contains(r.Header.Get("Authorization"), "/auto/s3/aws4_request") || r.Header.Get("X-Amz-Security-Token") != "session" {
 			t.Error("missing signed request")
 		}
 		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
@@ -73,13 +73,16 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	projects := &Projects{Template: S3{Bucket: "kioku-projects", Endpoint: server.URL, Region: "auto", AccessKey: "test", SecretKey: "secret", Client: server.Client()}}
+	projects, err := New(Config{Bucket: "kioku-projects", Endpoint: server.URL, Region: "auto", AccessKeyID: "test", SecretAccessKey: "secret", SessionToken: "session", HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	for _, pid := range []string{"alpha", "beta"} {
 		if err := projects.EnsureProject(ctx, pid); err != nil {
 			t.Fatal(err)
 		}
-		key := "projects/" + pid + "/original"
+		key := Key("projects/" + pid + "/original")
 		if err := projects.Put(ctx, key, []byte(pid)); err != nil {
 			t.Fatal(err)
 		}
@@ -122,22 +125,5 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 	b, err := projects.Get(ctx, "projects/beta/original")
 	if err != nil || string(b) != "beta" {
 		t.Fatal("deletion affected another project", err)
-	}
-}
-func TestLocalTraversalAndGarbageCollectionListing(t *testing.T) {
-	l := Local{Dir: t.TempDir()}
-	ctx := context.Background()
-	if err := l.Put(ctx, "../escape", nil); err == nil {
-		t.Fatal("traversal accepted")
-	}
-	if err := l.Put(ctx, "projects/p/source", []byte("evidence")); err != nil {
-		t.Fatal(err)
-	}
-	keys, err := l.List(ctx, "projects/p/")
-	if err != nil || len(keys) != 1 {
-		t.Fatal(keys, err)
-	}
-	if err = l.Delete(ctx, keys[0]); err != nil {
-		t.Fatal(err)
 	}
 }

@@ -12,8 +12,8 @@ import (
 
 type failGraphPublication struct{ blob.Store }
 
-func (b failGraphPublication) Put(ctx context.Context, key string, body []byte) error {
-	if strings.HasSuffix(key, "/maps/graph.json") {
+func (b failGraphPublication) Put(ctx context.Context, key blob.Key, body []byte) error {
+	if strings.HasSuffix(string(key), "/maps/graph.json") {
 		return errors.New("publication unavailable")
 	}
 	return b.Store.Put(ctx, key, body)

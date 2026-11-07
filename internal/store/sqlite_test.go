@@ -31,7 +31,7 @@ func TestContentIsolationMigrationAndConfigurationOnlyBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, pid := range []string{"alpha", "beta"} {
-		raw, err = os.ReadFile(filepath.Join(dir, "objects", filepath.FromSlash(contentKey(pid))))
+		raw, err = os.ReadFile(filepath.Join(dir, "objects", filepath.FromSlash(string(contentKey(pid)))))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +160,7 @@ func TestMissingOrInvalidProjectContentFailsClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.Close()
-			file := filepath.Join(dir, "objects", filepath.FromSlash(contentKey("p")))
+			file := filepath.Join(dir, "objects", filepath.FromSlash(string(contentKey("p"))))
 			switch mode {
 			case "missing file":
 				err = os.Remove(file)
@@ -222,7 +222,7 @@ func TestConfigurationBackupDoesNotNeedContentStorage(t *testing.T) {
 	if err = s.Update(func(st *model.State) error { st.Projects["p"] = model.Project{ID: "p"}; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Remove(filepath.Join(dir, "objects", filepath.FromSlash(contentKey("p")))); err != nil {
+	if err = os.Remove(filepath.Join(dir, "objects", filepath.FromSlash(string(contentKey("p"))))); err != nil {
 		t.Fatal(err)
 	}
 	backup := filepath.Join(t.TempDir(), "backup")

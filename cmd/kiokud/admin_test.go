@@ -25,7 +25,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	if err = db.Update(func(st *model.State) error {
 		st.Users["u"] = model.User{ID: "u"}
 		st.Projects["p"] = model.Project{ID: "p"}
-		st.Sources["s"] = model.Source{ID: "s", ProjectID: "p", Title: "Content belongs in R2"}
+		st.Sources["s"] = model.Source{ID: "s", ProjectID: "p", Title: "Content belongs in S3"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

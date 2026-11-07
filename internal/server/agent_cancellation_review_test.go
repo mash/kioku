@@ -12,11 +12,11 @@ import (
 
 type cancelOutputRead struct {
 	blob.Store
-	key     string
+	key     blob.Key
 	entered chan struct{}
 }
 
-func (b *cancelOutputRead) Get(ctx context.Context, key string) ([]byte, error) {
+func (b *cancelOutputRead) Get(ctx context.Context, key blob.Key) ([]byte, error) {
 	if key == b.key {
 		close(b.entered)
 		<-ctx.Done()

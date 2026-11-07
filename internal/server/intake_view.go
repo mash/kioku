@@ -11,7 +11,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-// The append-only journal is stored as immutable R2 segments. Readers get one
+// The append-only journal is stored as immutable S3 segments. Readers get one
 // ordinary Markdown file; generation is never allowed to replace this view.
 func (s *Server) addIntakeView(ctx context.Context, uid, pid string, files map[string]string) error {
 	var entries []model.IntakeEntry

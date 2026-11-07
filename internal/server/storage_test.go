@@ -13,6 +13,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
@@ -49,7 +50,7 @@ func runGeneration(t *testing.T, f *fixture, token, pid string) model.Job {
 
 func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	root, remote := t.TempDir(), t.TempDir()
-	objects := blob.Local{Dir: remote}
+	objects := local.Store{Dir: remote}
 	f := objectFixture(t, root, objects)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
@@ -100,7 +101,7 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range keys {
-		if strings.Contains(key, "/revisions/") {
+		if strings.Contains(string(key), "/revisions/") {
 			t.Error("full wiki history retained", key)
 		}
 	}
@@ -118,14 +119,14 @@ type failCurrentWiki struct {
 	fail bool
 }
 
-func (b *failCurrentWiki) Put(ctx context.Context, key string, body []byte) error {
-	if b.fail && strings.HasSuffix(key, "/wiki/index.md") {
-		return errors.New("temporary R2 upload failure")
+func (b *failCurrentWiki) Put(ctx context.Context, key blob.Key, body []byte) error {
+	if b.fail && strings.HasSuffix(string(key), "/wiki/index.md") {
+		return errors.New("temporary S3 upload failure")
 	}
 	return b.Store.Put(ctx, key, body)
 }
 func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
-	objects := &failCurrentWiki{Store: blob.Local{Dir: t.TempDir()}, fail: true}
+	objects := &failCurrentWiki{Store: local.Store{Dir: t.TempDir()}, fail: true}
 	f := objectFixture(t, t.TempDir(), objects)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
@@ -159,7 +160,7 @@ func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
 		}
 		return nil
 	})
-	raw, err := objects.Get(context.Background(), "projects/"+p.ID+"/.kioku/state.json")
+	raw, err := objects.Get(context.Background(), blob.Key("projects/"+p.ID+"/.kioku/state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

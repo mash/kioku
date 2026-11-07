@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -212,7 +213,7 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) err
 	return nil
 }
 func (s *Server) gc(r *http.Request, pid string) (int, error) {
-	live := map[string]bool{}
+	live := map[blob.Key]bool{}
 	if err := s.DB.View(func(st model.State) error {
 		for _, src := range st.Sources {
 			if src.ProjectID == pid {
@@ -245,7 +246,7 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	}
 	removed := 0
 	for _, key := range keys {
-		if strings.HasPrefix(key, "projects/"+pid+"/.kioku/") || strings.HasPrefix(key, "projects/"+pid+"/wiki/inbox/") {
+		if strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/") || strings.HasPrefix(string(key), "projects/"+pid+"/wiki/inbox/") {
 			continue
 		}
 		if !live[key] {

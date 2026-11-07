@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
@@ -26,8 +27,8 @@ func (unavailableCleanupClient) ArchiveVault(context.Context, string) error {
 
 type unavailableCleanupStore struct{ blob.Store }
 
-func (b unavailableCleanupStore) Delete(ctx context.Context, key string) error {
-	if strings.HasSuffix(key, ".tar.gz") {
+func (b unavailableCleanupStore) Delete(ctx context.Context, key blob.Key) error {
+	if strings.HasSuffix(string(key), ".tar.gz") {
 		return errors.New("cleanup interrupted")
 	}
 	return b.Store.Delete(ctx, key)
@@ -35,7 +36,7 @@ func (b unavailableCleanupStore) Delete(ctx context.Context, key string) error {
 func restartManagedFixture(t *testing.T, f *fixture) {
 	t.Helper()
 	old := f.s
-	dir := filepath.Dir(old.Blobs.(blob.Local).Dir)
+	dir := filepath.Dir(old.Blobs.(local.Store).Dir)
 	if err := f.db.Close(); err != nil {
 		t.Fatal(err)
 	}

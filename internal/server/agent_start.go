@@ -248,7 +248,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		return err
 	}
 	// Persist cleanup identity before the first external artifact can exist.
-	if err = s.Blobs.Put(ctx, agentJobPrefix(job)+"input.tar.gz", archive.Bytes()); err != nil {
+	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
 		return err
 	}
 	u, _ := url.Parse(s.Config.BaseURL)

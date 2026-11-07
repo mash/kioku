@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -74,7 +75,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		MaxBudget       string
 		RecentJobs      []model.Job
 	}{}
-	key := ""
+	var key blob.Key
 	err := s.DB.View(func(st model.State) error {
 		p, err := member(st, r.PathValue("project"), uid)
 		if err != nil {
@@ -137,7 +138,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	}
 	data.Query = r.URL.Query().Get("q")
 	data.Markdown = markdownView(data.Body, data.File, data.Files)
-	var graphKey string
+	var graphKey blob.Key
 	if err = s.DB.View(func(st model.State) error {
 		graphKey = st.Revisions[data.Project.Revision].Files["maps/graph.json"]
 		return nil

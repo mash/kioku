@@ -10,6 +10,7 @@ import (
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
 )
@@ -54,7 +55,7 @@ func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) 
 	}); err != nil {
 		return err
 	}
-	b, err := s.Blobs.Get(r.Context(), agentJobPrefix(job)+"input.tar.gz")
+	b, err := s.Blobs.Get(r.Context(), agentJobKey(job, "input.tar.gz"))
 	if err != nil {
 		return err
 	}
@@ -151,7 +152,7 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 		return err
 	}
 	defer unlock()
-	var selectedKey string
+	var selectedKey blob.Key
 	if err = s.DB.View(func(st model.State) error {
 		current, e := agentIOJob(st, principal, job.ProjectID, job.ID)
 		if e == nil {
@@ -175,12 +176,12 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 		}
 	}
 	hash := auth.Hash(string(body))
-	key := agentJobPrefix(job) + "output-" + hash + ".tar.gz"
+	key := agentJobKey(job, "output-"+hash+".tar.gz")
 	if err = s.Blobs.Put(r.Context(), key, body); err != nil {
 		return err
 	}
 	selected := false
-	previousKey := ""
+	var previousKey blob.Key
 	err = s.DB.Update(func(st *model.State) error {
 		current := st.Jobs[job.ID]
 		selected = current.Managed != nil && current.Managed.OutputKey == key
@@ -212,3 +213,5 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	jsonOut(w, 200, map[string]any{"pages": len(pages), "bytes": len(body), "sha256": hash})
 	return nil
 }
+
+func agentJobKey(job model.Job, name string) blob.Key { return blob.Key(agentJobPrefix(job) + name) }

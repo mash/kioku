@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
@@ -374,7 +374,7 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 		body, _ := json.Marshal(payload)
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
-	s := server.New(server.Config{Providers: map[string]auth.Provider{"google": provider}}, db, blob.Local{Dir: filepath.Join(dir, "objects")}, cipher)
+	s := server.New(server.Config{Providers: map[string]auth.Provider{"google": provider}}, db, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	s.Config.BaseURL = ts.URL

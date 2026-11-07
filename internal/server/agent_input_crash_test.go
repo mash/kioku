@@ -10,11 +10,11 @@ import (
 
 type crashAfterInputWrite struct{ blob.Store }
 
-func (b crashAfterInputWrite) Put(ctx context.Context, key string, body []byte) error {
+func (b crashAfterInputWrite) Put(ctx context.Context, key blob.Key, body []byte) error {
 	if err := b.Store.Put(ctx, key, body); err != nil {
 		return err
 	}
-	if strings.HasSuffix(key, "/input.tar.gz") {
+	if strings.HasSuffix(string(key), "/input.tar.gz") {
 		panic("simulated process crash after input write")
 	}
 	return nil

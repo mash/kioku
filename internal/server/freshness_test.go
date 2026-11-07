@@ -12,10 +12,10 @@ import (
 // An unchanged generate must not need source downloads or new object writes.
 type noGenerationObjects struct{ blob.Store }
 
-func (noGenerationObjects) Get(context.Context, string) ([]byte, error) {
+func (noGenerationObjects) Get(context.Context, blob.Key) ([]byte, error) {
 	return nil, errors.New("unchanged generation read an object")
 }
-func (noGenerationObjects) Put(context.Context, string, []byte) error {
+func (noGenerationObjects) Put(context.Context, blob.Key, []byte) error {
 	return errors.New("unchanged generation wrote an object")
 }
 

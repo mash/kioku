@@ -282,7 +282,7 @@ type failingUploadStore struct {
 	putCount   int
 }
 
-func (b *failingUploadStore) Put(ctx context.Context, key string, data []byte) error {
+func (b *failingUploadStore) Put(ctx context.Context, key blob.Key, data []byte) error {
 	b.mu.Lock()
 	b.putCount++
 	b.mu.Unlock()
@@ -291,7 +291,7 @@ func (b *failingUploadStore) Put(ctx context.Context, key string, data []byte) e
 	}
 	return errors.New("simulated lost storage response after commit")
 }
-func (b *failingUploadStore) Delete(ctx context.Context, key string) error {
+func (b *failingUploadStore) Delete(ctx context.Context, key blob.Key) error {
 	b.mu.Lock()
 	fail := b.failDelete
 	b.mu.Unlock()
@@ -407,7 +407,7 @@ func TestInterruptedUploadRecoveryAndGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	src := model.Source{ID: "interrupted", ProjectID: p.ID, Bytes: 40, OriginalKey: "projects/" + p.ID + "/sources/interrupted/original", TextKey: "projects/" + p.ID + "/sources/interrupted/text"}
+	src := model.Source{ID: "interrupted", ProjectID: p.ID, Bytes: 40, OriginalKey: blob.Key("projects/" + p.ID + "/sources/interrupted/original"), TextKey: blob.Key("projects/" + p.ID + "/sources/interrupted/text")}
 	if err = f.db.Update(func(st *model.State) error {
 		st.Uploads["interrupted"] = model.Upload{ID: "interrupted", ProjectID: p.ID, Sources: []model.Source{src}, Job: model.Job{ID: "j", ProjectID: p.ID}}
 		return nil
@@ -475,7 +475,7 @@ func TestWorkerRecoversUnfinishedUploadOnStartup(t *testing.T) {
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
-	src := model.Source{ID: "unfinished", ProjectID: p.ID, Bytes: 40, OriginalKey: "projects/" + p.ID + "/sources/unfinished/original", TextKey: "projects/" + p.ID + "/sources/unfinished/text"}
+	src := model.Source{ID: "unfinished", ProjectID: p.ID, Bytes: 40, OriginalKey: blob.Key("projects/" + p.ID + "/sources/unfinished/original"), TextKey: blob.Key("projects/" + p.ID + "/sources/unfinished/text")}
 	if err := f.db.Update(func(st *model.State) error {
 		st.Uploads["unfinished"] = model.Upload{ID: "unfinished", ProjectID: p.ID, Sources: []model.Source{src}}
 		return nil
@@ -541,10 +541,10 @@ func TestRecoverySkipsUploadsStillInProgress(t *testing.T) {
 	})
 }
 
-func nonStateObjects(keys []string) []string {
-	var out []string
+func nonStateObjects(keys []blob.Key) []blob.Key {
+	var out []blob.Key
 	for _, key := range keys {
-		if !strings.Contains(key, "/.kioku/") {
+		if !strings.Contains(string(key), "/.kioku/") {
 			out = append(out, key)
 		}
 	}

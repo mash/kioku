@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/mash/kioku/internal/blob"
 )
 
 type AnthropicConnection struct {
@@ -155,8 +157,8 @@ type Source struct {
 	Kind        string    `json:"kind"`
 	Version     string    `json:"version"`
 	ContentHash string    `json:"content_hash"`
-	OriginalKey string    `json:"original_key"`
-	TextKey     string    `json:"text_key"`
+	OriginalKey blob.Key  `json:"original_key"`
+	TextKey     blob.Key  `json:"text_key"`
 	MediaType   string    `json:"media_type"`
 	CreatedBy   string    `json:"created_by"`
 	Created     time.Time `json:"created"`
@@ -165,17 +167,17 @@ type Source struct {
 	StoredBytes int64     `json:"stored_bytes"`
 }
 type Revision struct {
-	FileBytes        map[string]int64  `json:"file_bytes,omitempty"`
-	FileHashes       map[string]string `json:"file_hashes,omitempty"`
-	SourcesUpdatedAt time.Time         `json:"sources_updated_at,omitempty"`
-	SourceVersion    int64             `json:"source_version"`
-	Fingerprint      string            `json:"fingerprint,omitempty"`
-	StoredBytes      int64             `json:"stored_bytes"`
-	ID               string            `json:"id"`
-	ProjectID        string            `json:"project_id"`
-	Created          time.Time         `json:"created"`
-	Files            map[string]string `json:"files"` // relative filename -> current object key
-	SourceIDs        []string          `json:"source_ids"`
+	FileBytes        map[string]int64    `json:"file_bytes,omitempty"`
+	FileHashes       map[string]string   `json:"file_hashes,omitempty"`
+	SourcesUpdatedAt time.Time           `json:"sources_updated_at,omitempty"`
+	SourceVersion    int64               `json:"source_version"`
+	Fingerprint      string              `json:"fingerprint,omitempty"`
+	StoredBytes      int64               `json:"stored_bytes"`
+	ID               string              `json:"id"`
+	ProjectID        string              `json:"project_id"`
+	Created          time.Time           `json:"created"`
+	Files            map[string]blob.Key `json:"files"` // relative filename -> current object key
+	SourceIDs        []string            `json:"source_ids"`
 }
 type Job struct {
 	AnthropicConnectionID string      `json:"anthropic_connection_id,omitempty"`

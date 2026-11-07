@@ -144,13 +144,16 @@ type Device struct {
 	Used                bool      `json:"used"`
 }
 type Revision struct {
-	FileBytes   map[string]int64    `json:"file_bytes,omitempty"`
-	FileHashes  map[string]string   `json:"file_hashes,omitempty"`
-	StoredBytes int64               `json:"stored_bytes"`
-	ID          string              `json:"id"`
-	ProjectID   string              `json:"project_id"`
-	Created     time.Time           `json:"created"`
-	Files       map[string]blob.Key `json:"files"` // relative filename -> current object key
+	// CompleteBytes retains the last completed tree's size during publication.
+	// StoredBytes still accounts for the current, possibly partial tree.
+	CompleteBytes *int64              `json:"complete_bytes,omitempty"`
+	FileBytes     map[string]int64    `json:"file_bytes,omitempty"`
+	FileHashes    map[string]string   `json:"file_hashes,omitempty"`
+	StoredBytes   int64               `json:"stored_bytes"`
+	ID            string              `json:"id"`
+	ProjectID     string              `json:"project_id"`
+	Created       time.Time           `json:"created"`
+	Files         map[string]blob.Key `json:"files"` // relative filename -> current object key
 }
 type Job struct {
 	// Retained only to reject execution/retry of retired BYOK jobs.

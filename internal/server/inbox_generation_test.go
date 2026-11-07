@@ -289,3 +289,143 @@ func TestGenerationWikiOnlyIgnoresMissingFilesDuringRecovery(t *testing.T) {
 		t.Fatal("storage failure was ignored during recovery")
 	}
 }
+
+type failAfterLargeWikiWrite struct{ blob.Store }
+
+func (b failAfterLargeWikiWrite) Put(ctx context.Context, key blob.Key, data []byte) error {
+	if strings.HasSuffix(string(key), "/wiki/z.md") {
+		return errors.New("interrupted after writing an oversized page")
+	}
+	return b.Store.Put(ctx, key, data)
+}
+
+func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		name := "manual"
+		if automatic {
+			name = "scheduled"
+		}
+		t.Run(name, func(t *testing.T) {
+			f, token, p, ma := managedFixture(t)
+			f.s.Config.MaxWikiBytes = 1 << 20
+			j := startManaged(t, f, token, p.ID, true)
+			pages := map[string]string{
+				"wiki/index.md": "# Index",
+				"wiki/large.md": strings.Repeat("a", (1<<20)+100),
+				"wiki/z.md":     "# Last page",
+			}
+			if c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages)); c != 200 {
+				t.Fatalf("output %d: %s", c, b)
+			}
+			objects := f.s.Blobs
+			f.s.Blobs = failAfterLargeWikiWrite{objects}
+			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+			if got := reconcileManaged(t, f, j); got.Status != "failed" {
+				t.Fatal(got)
+			}
+			f.s.Blobs = objects
+			restartManagedFixture(t, f)
+			if err := f.db.View(func(st model.State) error {
+				p := st.Projects[p.ID]
+				if !p.WikiIncomplete || st.Revisions[p.Revision].StoredBytes <= f.s.Config.MaxWikiBytes {
+					t.Fatal("publication did not stop over quota", p)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if automatic {
+				f.s.Config.GenerateEvery = time.Hour
+				now := time.Now().UTC()
+				for _, at := range []time.Time{now, now.Add(time.Hour)} {
+					if err := f.s.scheduleGenerations(at); err != nil {
+						t.Fatal(err)
+					}
+				}
+				j = model.Job{}
+				if err := f.db.Update(func(st *model.State) error {
+					for _, candidate := range st.Jobs {
+						if candidate.ProjectID == p.ID && candidate.Status == "queued" {
+							j = candidate
+							j.Status = "running"
+							st.Jobs[j.ID] = j
+						}
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if j.ID == "" {
+					t.Fatal("partial publication prevented scheduled retry")
+				}
+			} else {
+				j = managedJob(t, f, token, p.ID, false)
+			}
+			if err := f.s.startAgentJob(t.Context(), j); err != nil {
+				t.Fatal(err)
+			}
+			j = storedJob(t, f, j.ID)
+			if j.Run == nil || j.Status != "running" {
+				t.Fatalf("partial publication prevented inbox retry: %+v", j)
+			}
+			sendOutput(t, f, ma, j, "Recovered")
+			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+			if got := reconcileManaged(t, f, j); got.Status != "completed" {
+				t.Fatal(got)
+			}
+			if err := f.db.View(func(st model.State) error {
+				rev := st.Revisions[st.Projects[p.ID].Revision]
+				if rev.CompleteBytes != nil || len(st.Inbox) != 0 {
+					t.Fatal("recovery did not finish", rev.CompleteBytes, st.Inbox)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
+	f, token, p, ma := managedFixture(t)
+	f.s.Config.MaxWikiBytes = 1 << 20
+	j := startManaged(t, f, token, p.ID, true)
+	// This item arrives after pinning and stays waiting after the oversized publish.
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{URL: "https://example.com/waiting"}, nil); c != 202 {
+		t.Fatal(c)
+	}
+	pages := map[string]string{"wiki/index.md": "# Index", "wiki/large.md": strings.Repeat("a", (1<<20)+100)}
+	if c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages)); c != 200 {
+		t.Fatalf("output %d: %s", c, b)
+	}
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	if got := reconcileManaged(t, f, j); got.Status != "completed" {
+		t.Fatal(got)
+	}
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/fixture"}, nil); c != 202 {
+		t.Fatal(c)
+	}
+	j = startManaged(t, f, token, p.ID, false)
+	pages["wiki/large.md"] = "# Smaller"
+	pages["wiki/z.md"] = "# Last page"
+	if c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages)); c != 200 {
+		t.Fatalf("output %d: %s", c, b)
+	}
+	objects := f.s.Blobs
+	f.s.Blobs = failAfterLargeWikiWrite{objects}
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	if got := reconcileManaged(t, f, j); got.Status != "failed" {
+		t.Fatal(got)
+	}
+	f.s.Blobs = objects
+	restartManagedFixture(t, f)
+	j = startManaged(t, f, token, p.ID, false)
+	if err := f.db.View(func(st model.State) error {
+		if len(j.Run.InboxIDs) != 1 || st.Inbox[j.Run.InboxIDs[0]].Status != "removed" {
+			t.Fatal("partial removal bypassed the published quota", j.Run.InboxIDs)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

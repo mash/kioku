@@ -117,7 +117,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			p.NextGenerateAt = now.Add(interval)
 			st.Projects[id] = p
 			dirty := false
-			over := st.Revisions[p.Revision].StoredBytes > s.Config.MaxWikiBytes
+			over := completedWikiBytes(st.Revisions[p.Revision]) > s.Config.MaxWikiBytes
 			for _, item := range st.Inbox {
 				if item.ProjectID == id && item.RunID == "" && (!over || item.Status == "removed") {
 					dirty = true
@@ -152,4 +152,13 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 		s.notify()
 	}
 	return err
+}
+
+// Partial writes must not change which waiting items can rebuild the wiki.
+// The removal-only rule takes effect after a completed publication.
+func completedWikiBytes(rev model.Revision) int64 {
+	if rev.CompleteBytes != nil {
+		return *rev.CompleteBytes
+	}
+	return rev.StoredBytes
 }

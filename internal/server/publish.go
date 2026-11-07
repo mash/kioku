@@ -33,6 +33,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	if err != nil {
 		return "", err
 	}
+	completeBytes := completedWikiBytes(published)
 	rev := model.Revision{ID: auth.Token()[:20], ProjectID: job.ProjectID, Created: time.Now().UTC(), Files: map[string]blob.Key{}, FileBytes: map[string]int64{}, FileHashes: map[string]string{}}
 	for _, body := range files {
 		rev.StoredBytes += int64(len(body))
@@ -107,6 +108,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 				if current.Files == nil {
 					current = model.Revision{ID: rev.ID, ProjectID: p.ID, Files: map[string]blob.Key{}}
 				}
+				current.CompleteBytes = &completeBytes
 				current.Files[name] = key
 				if current.FileBytes == nil {
 					current.FileBytes = map[string]int64{}

@@ -79,7 +79,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		p := st.Projects[job.ProjectID]
 		published = st.Revisions[p.Revision]
 		incomplete = p.WikiIncomplete
-		over := published.StoredBytes > s.Config.MaxWikiBytes
+		over := completedWikiBytes(published) > s.Config.MaxWikiBytes
 		for _, item := range st.Inbox {
 			if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Status == "removed") {
 				items = append(items, item)

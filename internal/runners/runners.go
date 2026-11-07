@@ -14,11 +14,14 @@ import (
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/runner/managed"
+	openairunner "github.com/mash/kioku/internal/runner/openai"
 	"github.com/mash/kioku/internal/store"
 )
 
 type Config struct {
 	Type                 string
+	OpenAIAPIKey         string
+	OpenAIModel          string
 	Command              []string
 	DataDir              string
 	AnthropicAPIKey      string
@@ -34,10 +37,11 @@ type Config struct {
 }
 
 type Set struct {
-	config     Config
-	execRunner *execrunner.Runner
-	db         *store.Store
-	cipher     *auth.Cipher
+	config       Config
+	execRunner   *execrunner.Runner
+	openaiRunner *openairunner.Runner
+	db           *store.Store
+	cipher       *auth.Cipher
 }
 
 func Load(c Config, db *store.Store, cipher *auth.Cipher, onExit func(string, string)) (*Set, error) {
@@ -84,6 +88,18 @@ func (s *Set) connectionClient(uid string, c model.AnthropicConnection) (*manage
 // fall back to the operator's key.
 func (s *Set) New(job model.Job) (runner.Runner, error) {
 	if job.AnthropicConnectionID == "" {
+		if job.Run != nil && job.Run.Ref.Resources["provider"] == "openai" {
+			if s.openaiRunner == nil {
+				return nil, errors.New("OpenAI runner unavailable")
+			}
+			return s.openaiRunner, nil
+		}
+		if s.config.Type == "openai" {
+			if job.Run != nil && job.Run.Ref.ID != "" {
+				return nil, errors.New("cannot use OpenAI credentials for an existing non-OpenAI run")
+			}
+			return s.openaiRunner, nil
+		}
 		if s.config.Type == "exec" {
 			return s.execRunner, nil
 		}

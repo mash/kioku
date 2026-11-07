@@ -63,7 +63,7 @@ func TestBYOKIgnoresRunnerSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, selection := range []string{"", "managed", "exec", "invalid"} {
+	for _, selection := range []string{"", "managed", "exec", "openai", "invalid"} {
 		// Saved BYOK jobs must not depend on the operator's current selection.
 		g.config.Type = selection
 		r, err := g.New(model.Job{UserID: "user", AnthropicConnectionID: "connection"})

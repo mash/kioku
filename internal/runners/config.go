@@ -11,6 +11,7 @@ import (
 
 	"github.com/mash/kioku/internal/managedagents"
 	execrunner "github.com/mash/kioku/internal/runner/exec"
+	openairunner "github.com/mash/kioku/internal/runner/openai"
 	"github.com/mash/kioku/prompts"
 	"gopkg.in/yaml.v3"
 )
@@ -61,6 +62,19 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 		if s.config.ManagedAgents == nil {
 			return errors.New("KIOKU_RUNNER=managed requires Managed Agents configuration")
 		}
+	case "openai":
+		if strings.TrimSpace(s.config.OpenAIAPIKey) == "" || strings.TrimSpace(s.config.OpenAIModel) == "" {
+			return errors.New("KIOKU_RUNNER=openai requires OPENAI_API_KEY and KIOKU_OPENAI_MODEL")
+		}
+		u, err := url.Parse(s.config.BaseURL)
+		if err != nil || !validBaseOrigin(s.config.BaseURL) || u.Scheme != "https" || (u.Port() != "" && u.Port() != "443" && u.Port() != "8443") {
+			return errors.New("OpenAI generation requires an HTTPS KIOKU_BASE_URL on port 443 or 8443")
+		}
+		_, prompt, err := prompts.SplitWikiDefinition()
+		if err != nil {
+			return err
+		}
+		s.openaiRunner = openairunner.New(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: strings.TrimSpace(prompt)})
 	case "exec":
 		command := s.config.Command
 		if len(command) == 0 || !filepath.IsAbs(command[0]) {

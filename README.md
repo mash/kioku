@@ -416,3 +416,32 @@ Claude Code のプラグインは [plugin/](plugin/README.md) にあります。
 旧コマンドは削除し、互換エイリアス・migration コード・旧設定へのフォールバックは提供しません。
 
 Namespaceのorg名・project名はそれぞれ1〜63文字のASCII小文字英数字と単一ハイフンに限定し、先頭・末尾は英数字とします（例: `acme/team-wiki`）。
+
+### OpenAI Agents API runner
+
+`KIOKU_RUNNER=openai` selects the OpenAI-managed agent and hosted sandbox for
+operator-key generation. Set `OPENAI_API_KEY` and `KIOKU_OPENAI_MODEL` explicitly.
+The application key needs `api.agents.read`, `api.agents.write`,
+`api.responses.write`, `api.vaults.read`, and `api.vaults.write` permissions.
+`KIOKU_BASE_URL` must use HTTPS on port 443 or 8443 and be reachable from OpenAI.
+Existing Anthropic BYOK jobs continue using their original Anthropic connection.
+OpenAI BYOK is not implemented.
+
+The runner reuses the wiki prompt body and input/output archive contract, limits
+sandbox egress and vault token injection to the Kioku host, disables subagents,
+and requests a small hosted container. The existing per-job budget is sent as
+`spend_control.limit`; this is not a guarantee that total charges, including
+sandbox compute, cannot exceed that amount. Reported provider spend is provisional,
+so this runner leaves the common settled cost unknown. Inspect billing in OpenAI.
+
+Cancellation and session/vault deletion are separate operations. Kioku revokes the
+job token and retries cleanup through reconciliation. Do not change runner type
+while jobs or resource cleanup are pending, including starts whose responses were
+lost. Session creation is not automatically retried; discovery matches project,
+job, and attempt metadata. OpenAI currently documents US-only data residency and
+no Zero Data Retention for Agents API.
+
+This integration is covered by local HTTP contract tests; real API permissions,
+budget enforcement, hosted networking, and generated wiki quality still require
+an isolated live smoke test before production rollout.
+See the [Agents API documentation](https://developers.openai.com/api/docs/guides/agents-api/overview).

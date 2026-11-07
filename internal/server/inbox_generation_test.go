@@ -186,3 +186,106 @@ func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
 		return nil
 	})
 }
+
+func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
+	for _, offset := range []time.Duration{0, -time.Second} {
+		t.Run(offset.String(), func(t *testing.T) {
+			f, token, p, ma := managedFixture(t)
+			first := putFile(t, f, token, p.ID, "a.md", "Body")
+			j := startManaged(t, f, token, p.ID, false)
+			var replacement model.InboxItem
+			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: testSourceURL("a.md", "Body")}, &replacement); c != 202 {
+				t.Fatal(c)
+			}
+			if err := f.db.Update(func(st *model.State) error {
+				item := st.Inbox[replacement.ID]
+				item.Created = st.Inbox[first.ID].Created.Add(offset)
+				st.Inbox[item.ID] = item
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+			if got := reconcileManaged(t, f, j); got.Status != "failed" {
+				t.Fatal(got)
+			}
+			if err := f.db.View(func(st model.State) error {
+				if len(st.Inbox) != 1 || st.Inbox[replacement.ID].Status != "removed" {
+					t.Fatalf("failed item conflicts with accepted replacement: %+v", st.Inbox)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type failAfterWikiDelete struct {
+	blob.Store
+	failed bool
+}
+
+func (b *failAfterWikiDelete) Delete(ctx context.Context, key blob.Key) error {
+	if err := b.Store.Delete(ctx, key); err != nil {
+		return err
+	}
+	if !b.failed && strings.Contains(string(key), "/wiki/source-") {
+		b.failed = true
+		return errors.New("lost deletion response during publication")
+	}
+	return nil
+}
+
+func TestInterruptedSourceDeletionCanGenerateAgain(t *testing.T) {
+	f, token, p, ma := managedFixture(t)
+	putFile(t, f, token, p.ID, "a.md", "Body")
+	j := startManaged(t, f, token, p.ID, false)
+	sendOutput(t, f, ma, j, "First")
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	if got := reconcileManaged(t, f, j); got.Status != "completed" {
+		t.Fatal(got)
+	}
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: testSourceURL("a.md", "Body")}, nil); c != 202 {
+		t.Fatal(c)
+	}
+	j = startManaged(t, f, token, p.ID, false)
+	sendOutput(t, f, ma, j, "Removed")
+	objects := f.s.Blobs
+	f.s.Blobs = &failAfterWikiDelete{Store: objects}
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	if got := reconcileManaged(t, f, j); got.Status != "failed" {
+		t.Fatal(got)
+	}
+	f.s.Blobs = objects
+	j = startManaged(t, f, token, p.ID, false)
+	if j.Run == nil || j.Run.Ref.ID == "" {
+		t.Fatalf("publication failure made the inbox unrecoverable: %+v", j)
+	}
+	sendOutput(t, f, ma, j, "Recovered")
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	if got := reconcileManaged(t, f, j); got.Status != "completed" {
+		t.Fatal(got)
+	}
+}
+
+type unavailableWikiRead struct{ blob.Store }
+
+func (b unavailableWikiRead) Get(context.Context, blob.Key) ([]byte, error) {
+	return nil, errors.New("storage unavailable")
+}
+
+func TestGenerationWikiOnlyIgnoresMissingFilesDuringRecovery(t *testing.T) {
+	f, _, p, _ := managedFixture(t)
+	rev := model.Revision{Files: map[string]blob.Key{"wiki/source-missing.md": blob.Key("projects/" + p.ID + "/wiki/source-missing.md")}}
+	if _, err := f.s.generationWiki(t.Context(), rev, false); err == nil {
+		t.Fatal("missing file in a complete wiki was ignored")
+	}
+	if pages, err := f.s.generationWiki(t.Context(), rev, true); err != nil || len(pages) != 0 {
+		t.Fatal(pages, err)
+	}
+	f.s.Blobs = unavailableWikiRead{f.s.Blobs}
+	if _, err := f.s.generationWiki(t.Context(), rev, true); err == nil {
+		t.Fatal("storage failure was ignored during recovery")
+	}
+}

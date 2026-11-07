@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
@@ -64,14 +65,16 @@ func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) 
 	return err
 }
 func (s *Server) outputContext(ctx context.Context, job model.Job) (map[string]string, []model.InboxItem, error) {
-	previous := map[string]string{}
 	var rev model.Revision
+	var incomplete bool
 	var items []model.InboxItem
 	err := s.DB.View(func(st model.State) error {
 		if err := validateGeneration(st, job); err != nil {
 			return err
 		}
-		rev = st.Revisions[st.Projects[job.ProjectID].Revision]
+		project := st.Projects[job.ProjectID]
+		rev = st.Revisions[project.Revision]
+		incomplete = project.WikiIncomplete
 		for _, id := range job.Run.InboxIDs {
 			item, ok := st.Inbox[id]
 			if !ok || item.RunID != job.Run.Attempt.ID {
@@ -84,16 +87,29 @@ func (s *Server) outputContext(ctx context.Context, job model.Job) (map[string]s
 	if err != nil {
 		return nil, nil, err
 	}
+	previous, err := s.generationWiki(ctx, rev, incomplete)
+	return previous, items, err
+}
+
+// Publication mutates the current tree. After an interrupted deletion, the
+// working index can still reference an obsolete page whose blob is gone.
+// Retry uses the surviving tree; other storage errors must still fail closed.
+func (s *Server) generationWiki(ctx context.Context, rev model.Revision, incomplete bool) (map[string]string, error) {
+	previous := map[string]string{}
 	for name, key := range rev.Files {
 		if agentgen.AgentPage(name) {
 			b, err := s.Blobs.Get(ctx, key)
+			var missing interface{ NotFound() bool }
+			if incomplete && (os.IsNotExist(err) || errors.As(err, &missing) && missing.NotFound()) {
+				continue
+			}
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			previous[name] = string(b)
 		}
 	}
-	return previous, items, nil
+	return previous, nil
 }
 func (s *Server) outputLimits() agentgen.OutputLimits {
 	return agentgen.OutputLimits{MaxCompressed: 2 * s.Config.MaxWikiBytes, MaxUncompressed: 2 * s.Config.MaxWikiBytes}

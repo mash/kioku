@@ -70,6 +70,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	}
 	var items []model.InboxItem
 	var published model.Revision
+	var incomplete bool
 	var raw string
 	err = s.DB.Update(func(st *model.State) error {
 		if err := validateGeneration(*st, job); err != nil {
@@ -77,6 +78,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		}
 		p := st.Projects[job.ProjectID]
 		published = st.Revisions[p.Revision]
+		incomplete = p.WikiIncomplete
 		over := published.StoredBytes > s.Config.MaxWikiBytes
 		for _, item := range st.Inbox {
 			if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Status == "removed") {
@@ -139,14 +141,9 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		}
 		spec.Inbox = append(spec.Inbox, in)
 	}
-	for name, key := range published.Files {
-		if agentgen.AgentPage(name) {
-			b, err := s.Blobs.Get(ctx, key)
-			if err != nil {
-				return err
-			}
-			spec.Wiki[name] = string(b)
-		}
+	spec.Wiki, err = s.generationWiki(ctx, published, incomplete)
+	if err != nil {
+		return err
 	}
 	var archive bytes.Buffer
 	if err = agentgen.BuildInput(spec, &archive); err != nil {
@@ -199,7 +196,9 @@ func releaseInbox(st *model.State, job model.Job) {
 		}
 		replaced := false
 		for _, newer := range st.Inbox {
-			if newer.ProjectID == item.ProjectID && newer.RunID == "" && newer.SourceURL == item.SourceURL && newer.Created.After(item.Created) {
+			// All waiting items were pinned when this attempt began. A waiting
+			// replacement was accepted later, regardless of wall-clock changes.
+			if newer.ProjectID == item.ProjectID && newer.RunID == "" && newer.SourceURL == item.SourceURL {
 				replaced = true
 				break
 			}

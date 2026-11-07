@@ -1,19 +1,18 @@
-# Project storage, intake and generation
+# Project storage, inbox and generation
 
-`kiokud` is one Go process: HTTP API, four URL intake workers by default, one generation worker, maintenance and an operator-only Unix socket. Only one server may write a deployment. Its SQLite process lock is local to the VPS; fence the old server before starting a replacement against the same S3 buckets.
+`kiokud` is one Go process: HTTP API, one generation worker, reconciliation/maintenance and an operator-only Unix socket. Only one server may write a deployment. Its SQLite process lock is local to the host; fence the old server before starting a replacement against the same object storage.
 
 ## SQLite and project storage
 
-SQLite stores accounts, OAuth credentials, organizations, membership, invitations, delegated credentials, and project configuration/bucket/root. Sources, file locations, jobs, intake, generation status/cursors and wiki metadata are not stored in SQLite. The store joins configuration with a disposable in-memory view of project content.
-
-Each private project bucket is independently authoritative for content:
+SQLite stores accounts, encrypted provider connections, organizations, membership, invitations, delegated credentials and project configuration/bucket/root. Project content lives in the selected object storage. The store joins configuration with an in-memory view of that content.
 
 ```text
 projects/<project-id>/
-  sources/<source-id>/extracted.md
+  .kioku/inbox/<id>.md       # verbatim fetched body, temporary until consumed/GC
   wiki/index.md
+  wiki/log.md
+  wiki/source-<slug>.md
   wiki/*.md
-  wiki/inbox/<sequence>-<entry-id>.json
   maps/graph.json
   maps/graph.mmd
   .kioku/state.json
@@ -21,49 +20,63 @@ projects/<project-id>/
   .kioku/audit/<event-id>.json
 ```
 
-`state.json` contains source metadata, URL heads, scheduling deadlines, source and wiki timestamps/versions, processing cursor and current file metadata. It contains no account credentials or membership. Recent job/audit indexes are bounded to 256 terminal/recent entries and the intake view to 64 entries; unfinished jobs remain indexed. Full intake segments and job/audit records remain in object storage. Archived job IDs remain queryable/retryable through the authorized project API. Source deletion invalidates older jobs so retry cannot resurrect canceled intake.
+Content schema 2 stores inbox metadata, job state, scheduling deadlines and current wiki metadata. Each inbox item has an ID, source_url, status, submitter and optional run ID. Pending/removal items have no body. Fetched bodies are written before the inbox state commits; a crash in between leaves an unreferenced object for GC. The state contains no provider tokens. Recent job/audit indexes are bounded to 256 entries; unfinished jobs and pending cleanup remain indexed. Archived generation jobs remain queryable/retryable through the authorized API.
 
 Updates confined to content do not write SQLite. Changes spanning configuration and content use a configuration-only SQLite redo intent referring to external content transaction objects. Recovery completes that intent before serving. A failed/ambiguous storage commit fails closed until restart; missing or corrupt project state is never replaced by an empty wiki.
 
-## Put and intake
+## Put and inbox
 
-`kioku put [FILES...]` validates and durably stores extracted Markdown and original source URLs without generating wiki. Original files are never stored. Files require an original HTTPS URL via `--source-url` (one explicit file), `source_url` YAML frontmatter, or the API file field `source_url`. With no arguments it submits changed files from the local input inbox. `kioku put URL` records a durable URL job and returns before retrieval. Its worker uses the submitter's stored provider connection; delegated agents remain file-only. Source count, byte and queue limits still apply. A failed retrieval is visible on its job.
+POST `/api/projects/{id}/put` accepts exactly one of `{"url":"https://…"}`, `{"file":{"name":"doc.md","content":"…","source_url":"https://…"}}`, or `{"remove":true,"source_url":"https://…"}`. These create pending, fetched and removed items respectively. It returns 202 with `id` and `status`, not a job. File frontmatter may supply source_url; the caller's body is retained verbatim and cannot override the server-owned status. Source URLs must be HTTPS and cannot name private address literals. There is no server-side source fetcher.
 
-Successful submissions produce service-owned, append-only intake segments. Source references include contributor, timestamp, source URLs, metadata and extracted-text object keys. Submitted URL events precede retrieval; stored-source events describe actual material. Retries use stable event IDs, and existing entries cannot be modified. Generation cannot write the reserved intake paths.
+`kioku put [FILES...]` sends one request per file and saves each successful receipt immediately. With no arguments it sends changed files in local inbox/. `kioku put URL` saves pending; `kioku delete URL` saves removed. Human, write-agent and MCP callers may submit URLs. Neither operation starts a runner. `kioku status` includes GET `/api/projects/{id}/inbox` metadata; pull and MCP read only the published wiki/maps.
 
-`kioku pull` exposes the recent journal as `wiki/inbox.md`, including before the first generation. This is a generated reading view of the latest 64 entries, not the canonical log. Full segments remain unchanged in project storage. Extracted text is available through each entry's authenticated source link. Deleted sources are not included in this view.
-
-`put --wait` waits for intake only.
+Each put request is at most 1 MiB including JSON overhead (413 on excess). Each project has at most 200 inbox items, including pinned items (429 on excess). A new put replaces waiting items with the same exact source_url, including a removal canceling pending/fetched. Pinned items stay in their current run; new submissions wait for a later run. Replaced/consumed bodies are unreferenced and GC may delete them. No source history or intake journal is retained outside the published wiki.
 
 ## One current wiki
 
-There is one current wiki/maps tree, updated in place. Generation compares file hashes and uploads changed files only, then removes obsolete generated files. It does not create a second build directory or retain page history. Readers may observe partial updates while generation runs; file metadata is recorded as each write completes.
+Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
 
-`wiki_incomplete` is set before writes and cleared only after all writes/deletions finish. Failure leaves this flag and the last completed source coverage intact, so retry cannot incorrectly skip a partial update. Source changes during generation remain dirty for a later run. Publication rechecks project membership, agent validity and canceled/deleted input before every file mutation.
+The runner fetches pending items first, edits source and concept/entity/analysis/overview pages, and returns the complete wiki/*.md set. Existing sources are identified by exact frontmatter source_url and keep their filenames. New slug collisions use -2, -3, etc. The index omits source pages; log.md records changes and fetch failures, newest first, up to 100 entries. Fetch failure is per item, not a run failure: successful publication consumes it and the user must put it again to retry fetching. These semantic rules and the ban on tokens/signed URL secrets in log.md are prompt rules.
 
-The current file descriptor and the API's legacy `revision` field are synchronization metadata, not retained build history. Pull computes a content token including the intake view; a put can therefore update the local intake view even when generated pages have not changed. The CLI keeps one current local copy, briefly stages a download, checks for user edits, and removes retired local copies after switching.
+At output PUT, the server checks archive paths/types, duplicates, UTF-8, index.md, compressed/expanded size and source invariants: (a) source_url is a nonempty YAML string, (b) source URLs are unique, (c) removed URLs are absent, (d) old sources survive unless removed, (e) every fetched item has a source page. A 400 response contains a problems list and permits repair/re-upload. No per-page byte limit or page-count limit remains. Finalization checks the accepted output hash, reads its pages without repeating the validator and derives maps from their links. It does not synthesize or rewrite source pages.
+
+There is one current wiki/maps tree, updated in place. File hashes avoid unchanged writes and omitted files are deleted. Readers can observe partial updates. `wiki_incomplete` is set before writes and cleared only when publication completes. Publication rechecks membership and the requesting agent's validity. Inbox items are consumed only in the successful final state update; new items arriving during the run stay waiting. Failure releases pinned items, except when a newer waiting item has already superseded the same URL. A partial publication retains the items and incomplete flag for recovery.
+
+`--max-wiki-bytes` defaults to 64 MiB and measures published `Revision.StoredBytes`, including derived maps. Publication may exceed it. While over limit, pending/fetched puts return 413, removed puts remain allowed, and generation pins only removals. Without removals, it makes no model call. Compressed and expanded output archives each have a hard limit of twice the configured value (400). That hard bound applies to the submitted wiki archive; generated maps still count in the published total.
 
 ## Scheduling and freshness
 
-`kiokud --generate-every 24h` is the default. Project deadlines persist in S3 and are checked every two seconds. Only changed projects or pending URL intake schedule generation, and an already queued/running generation is not duplicated. Continuous puts never postpone a deadline. Set another interval or `--generate-every 0` for manual generation only.
+`--generate-every 24h` is the default. Persisted deadlines are checked every two seconds; waiting inbox items or incomplete publication trigger work, and an existing queued/running generation is not duplicated. Frequent puts do not postpone the deadline. `--generate-every 0` disables scheduled generation.
 
-`kioku generate` requests an earlier check; `generate --wait` waits and pulls. It waits for URL puts pending at acceptance; failed dependencies fail the job without a model call. Except for explicit `generate --full`, both manual and scheduled generation skip unchanged active source IDs, preserving wiki files and timestamps even if model settings changed. Empty projects complete unchanged without a model call. `job wait ID` pulls for generation jobs; `job retry ID` retries the failed operation.
-
-Source `updated_at` and project `sources_updated_at` advance only for material active-source changes. Identical puts/refreshes do not advance them. An older URL fetch cannot replace a newer successful observation or dirty the active sources. `wiki_updated_at` describes generated page updates, and `processed_intake_sequence` records the journal position captured by the last successful/no-op generation. Version numbers track coverage rather than wall-clock comparisons. Status exposes these timestamps, cursors and the incomplete flag.
+`kioku generate` requests a run; `generate --wait` waits and pulls. An empty inbox completes unchanged without starting a model. Missing runner configuration fails a generation job, including an empty one. `job wait ID` pulls a completed generation; `job retry ID` waits for prior cleanup and pins the items waiting at retry time. There is no full/incremental mode, fingerprint, source version or intake dependency list. Status reports inbox items, wiki_updated_at and wiki_incomplete.
 
 ## Generation runner type
 
-`KIOKU_RUNNER` selects the operator's LLM generation runner type. Leave it unset to keep the existing behavior: `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` together enable Managed Agents; with none configured, generation produces a deterministic source wiki. Partial Managed Agents settings fail startup. An explicit `KIOKU_RUNNER=claudemanaged` requires all three settings. Set `KIOKU_RUNNER=exec` for a trusted external command as described below. Unknown runner names fail startup. Changing `KIOKU_RUNNER` while operator-key jobs run makes those jobs fail; wait until running jobs finish before switching.
+`KIOKU_RUNNER` selects `claudemanaged`, `openai` or `exec`. When unset, all three of `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` enable Managed Agents; partial settings fail startup. With no configured runner, the server can accept inbox items and serve a wiki, but generation fails. There is no deterministic fallback. OpenAI requires `OPENAI_API_KEY` and `KIOKU_OPENAI_MODEL`. Exec requires the command below. Unknown names fail startup.
 
-Generation uses the server's runner configuration. To use your own API key, self-host kiokud. The server does not store personal generation keys.
+Generation uses the operator's runner configuration. Personal generation keys require self-hosting. Do not change runner type until running attempts and cleanup finish.
 
-Each attempt persists `Job.Run` (JSON `run`) with attempt ID, phase, budget, deadline and job token identity before creating external resources. `Start` returns the runner-neutral `ref`, which is saved after creation. Runner selection uses the server configuration and existing run reference; the runner type is not persisted. Fingerprints include source IDs and hashes.
+Each attempt persists Job.Run with attempt ID, pinned inbox IDs, phase, budget, deadline and job token identity before external resources are created. Start returns a runner-neutral ref. Recovery uses the same configured runner and attempt metadata; the runner type is not persisted.
+
+## Source credentials and network policy
+
+Managed runners create one vault per attempt, with one credential per token/destination. All values use runner.Secret. Injection is header-only: KIOKU_JOB_TOKEN to the Kioku host, GITHUB_TOKEN_<account> to api.github.com, and GOOGLE_ACCESS_TOKEN to docs.googleapis.com and www.googleapis.com. Neither the model's input tar/JOB.md/first message nor logs/API responses contain token values. The first message may contain repository-to-placeholder names, which are not secrets. Refresh tokens and GitHub App keys never enter a vault.
+
+Immediately before Start, kiokud selects the project owner's connections. It refreshes Google's access token even if the stored token has not yet expired, and never refreshes it during the run. GitHubTokenProvider resolves only the owner's installations, intersects them with pinned pending URLs and issues tokens with repository_ids and contents:read, splitting at 500 repositories per token. The interface requires attempt-scoped durable revocation, including ambiguous issuance and restart. Cleanup failure keeps the attempt pending for retry. Google access tokens expire; cleanup removes the vault without disconnecting the owner's grant.
+
+The shipped server does not implement/configure the GitHub App connection provider. It therefore puts no GitHub credential in the vault. Public GitHub repositories are fetched unauthenticated and private ones fail. Google connection/refresh failures also omit the credential. Never fall back to another member's credential or the legacy GitHub OAuth token. See [accepted source-access risks](ACCOUNT_ADMIN.md#project-source-authorization-policy).
+
+**The operator must configure runner networking outside Kioku.** Permit the Kioku origin, GitHub/Google API hosts above and the public websites the project needs; allow a model API only if the environment requires it. Decide how redirects, private/reserved addresses and outbound destinations are restricted in the provider environment. Kioku no longer performs server-side DNS-pinned URL fetching and does not install an allowlist. Vault host restrictions limit secret injection, not network egress. In particular, the OpenAI runner does not set a Kioku-only networking override. Disable package managers, MCP servers, web_fetch and web_search; use the approved HTTP tooling for source retrieval. The checked-in environments/kioku-wiki.yaml starts with only the Kioku host; extend that operator-owned configuration for the required source hosts before using pending items. Kioku does not apply that file at startup. Validate the deployed policy before production use.
+
+Exec receives no GitHub/Google source credential and sets fetch_allowed=false in JOB.md. It must log each pending item as a fetch failure and still process fetched/removed items. This is a prompt contract for the trusted command, not an OS network sandbox.
+
+Provider APIs and secret isolation are covered with local fakes. A real managed sandbox, Google refresh/access, GitHub App connection and model behavior remain operator smoke-test requirements; the current repository cannot exercise a real GitHub App flow until that separate implementation exists.
 
 ## Storage selection and recovery
 
 Select `KIOKU_STORAGE=local|s3` (or `--storage`, which takes precedence). The default is local, storing objects in `<KIOKU_DATA>/objects` (`./data/objects` when the data directory is also unset). S3 credentials with local selected are rejected. S3 requires all credentials and writes directly to remote storage without a local content cache or fallback. Existing S3 deployments must explicitly select s3. Changing this setting does not migrate existing objects or catalog bucket mappings. Old cache files are unused.
 
-Queued/running jobs live in project storage. URL and deterministic generation jobs return to their queues at startup. URL jobs have a two-minute deadline and deterministic generation has a five-minute execution timeout. LLM generation uses a Runner for its runner type lifecycle and has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts the run and immediately proceeds to another project; intake jobs use their separate workers.
+Queued/running generation jobs live in project storage. Generation has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts a run and proceeds to another project; there are no intake workers.
 
 Generation phases are `preparing`, `agent_running`, `output_received`, and `finalizing`. The server validates output at upload and stores its hash; finalization pins that output against replacement. Only the reconciler calls `Runner.Inspect`, once per job per pass, and passes its `Status` to finalization, failure handling and cleanup. Passes run every 30 seconds, at worker startup, and on signed MA webhooks or exec exit callbacks. The four states are None, Running, Stopped and Unknown; the zero value is Unknown.
 
@@ -71,9 +84,9 @@ For a missing run handle, `Inspect` searches by job and attempt metadata and sav
 
 Completed/failed jobs retain a cleanup marker and remain in the hot index until resource cleanup and tar removal finish. A late-discovered running run is stopped before cleanup. Retry waits for cleanup and creates a new attempt; discovery matches that attempt ID, so previous attempts cannot supply its run or cost. Stop confirmation and publication can take until the next pass (up to 30 seconds).
 
-Source/project deletion takes the generation lock before the project lock, interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. Deleting a source, project or Anthropic connection with a running generation first returns 503 while the reconciler confirms the stop. Retry the deletion after a pass. Pending cleanup or unavailable runner type configuration also returns 503 and preserves the data needed to retry. New puts remain independent of a running agent; only the captured source versions are marked processed by its publication. Queue caps are separate: `--max-intake-jobs 200`, `--intake-workers 4`, `--max-jobs 20`. The default project source limit remains 200 snapshots/64 MiB. These bounds are capacity limits, not a sustained-throughput promise independent of quotas or upstream latency.
+Project deletion interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. If reconciliation has not confirmed stop/cleanup, deletion returns 503 and preserves the data needed to retry. URL removal instead queues a removed item and does not cancel a running generation. New puts remain independent of a running agent. `--max-jobs 20` bounds queued jobs per project; the separate inbox limit is 200.
 
-Finishing a generation and recording its provider cost use the control/content redo protocol; page writes may already be visible before completion. Abandoned-upload recovery runs independently of generation. Managed Agents execute in a provider container whose outbound network is restricted to kiokud. The server validates returned archives and never executes their contents.
+Finishing a generation and recording its provider cost use the control/content redo protocol; page writes may already be visible before completion. Maintenance removes unreferenced inbox bodies. The server validates returned archives and never executes their contents.
 
 ## External runner (self-host and development)
 
@@ -100,7 +113,6 @@ The command receives one JSON object on stdin, followed by EOF:
   "job_id": "j_01",
   "attempt_id": "a1b2c3",
   "project_id": "p_01",
-  "mode": "incremental",
   "input_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/input",
   "output_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/output",
   "job_token": "<secret>",
@@ -112,7 +124,7 @@ The command receives one JSON object on stdin, followed by EOF:
 }
 ```
 
-`mode` is `incremental` or `full`. `prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` describes the captured generation input. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` for both. The server validates the output and never executes its contents.
+`prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` describes the pinned inbox and current wiki input. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 
@@ -154,10 +166,10 @@ The older `--backup DIR` operator command works with a stopped server and opens 
 
 These commands create local, unencrypted configuration backups. Continuous replication of the catalog, such as Litestream to a separate bucket, credential provisioning and restore drills are operator work outside this repository. Keep the application encryption key and backup recovery credentials separately. If `KIOKU_ENCRYPTION_KEY` is unset, the server creates `DATA/encryption.key` (0600) once and reuses it; this file is not included in SQLite backups and must be backed up and restored separately. An explicit environment key takes precedence and is not copied to disk. Restore SQLite with the same S3 endpoint/access and stored project bucket mapping; the newest project content/checkpoints load from S3, not the older backup. Old working cache files can be discarded. In local-development mode without S3, `DATA/objects/` is the durable content store and must be preserved separately. Account recovery still has the configuration backup's recovery point.
 
-SQLite backups do not restore old wiki page contents. Original/source retention and any independent S3 backup policy are separate. There is no cross-project content snapshot or page-history restore promise.
+SQLite backups do not restore old wiki page contents. Published source pages and any independent object-store backup policy are separate. There is no cross-project content snapshot or page-history restore promise.
 
-## Legacy migration
+## Inbox migration
 
-On first startup, the old per-project SQLite layout and metadata JSON are migrated into the configured project object storage. A private, complete `DATA/migration-backup/` archive preserves the old SQLite files before changing the catalog to schema 2. Legacy metadata JSON is retained as `.migrated`. Active project SQLite files are removed only after content is durable and the configuration schema change commits. Retain/protect these migration artifacts until verified; they contain old account/content metadata and are not part of new configuration-only backups.
+Content schema 1 cannot be served by this version. There is no automatic import or backward compatibility. Use the [explicit migration runbook](INBOX_MIGRATION.md): obtain the operator's deletion approval, stop/fence kiokud, delete old content with the confirmed migration command, deploy the matching server/CLI/plugin, then ask users to put their sources again. The migration preserves account/configuration data, provider connections and audits. It deletes old wiki (including inbox blobs), maps, sources and job artifacts, then writes empty content schema 2 last. Retrying resumes incomplete projects and never clears schema-2 projects.
 
-Only the selected legacy wiki is copied into the current tree; historical page records/directories are removed. Missing legacy files fail startup. Migration does not copy an old shared S3 bucket into new dedicated buckets; configure/copy that storage explicitly before upgrading. A storage read/write migration failure must be resolved before serving traffic.
+See [implementation decisions and test coverage](INBOX_IMPLEMENTATION.md) for the explicit interpretations and remaining live verification.

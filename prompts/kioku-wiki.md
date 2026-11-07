@@ -26,11 +26,14 @@ Workflow:
    supplied; use the repository-to-placeholder mapping in the first message. Public repositories outside
    installations are fetched unauthenticated. No GitHub credential means private
    repositories fail; do not use ambient git or other members' credentials.
-   Fetch PR descriptions and the first 100 comments, not diffs. For Google Docs
+   GitHub tokens have contents:read only. If an endpoint needs another permission,
+   record a fetch failure; never seek broader credentials. Fetch PR descriptions
+   and the first 100 issue comments, not diffs or inline review threads. For Google Docs
    use GOOGLE_ACCESS_TOKEN with docs.googleapis.com or www.googleapis.com.
    Missing Google credentials, forbidden access, 404 or expired credentials are
    per-item fetch failures. Do not stop other items or retry failed items later.
-   Public Web requires no credentials. Truncate each fetched source body at
+   Public Web requires no credentials. Never send a provider placeholder to a
+   different host, including a redirect target. Truncate each fetched source body at
    1 MiB on a UTF-8 boundary and record truncation in wiki/log.md.
 3. Handle each item using ONLY its outer, server-owned status:
    - pending: on successful fetch, create or update its source page.

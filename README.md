@@ -1,12 +1,12 @@
 # Kioku
 
-Kioku turns a team's source documents into a shared project wiki. Members put sources into a project: files, Google Docs, GitHub files and issues, and public web pages. The server keeps every source version and generates wiki pages and a link map from them. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector.
+Kioku turns a team's source documents into a shared project wiki. Members put sources into a project: files, Google Docs, GitHub files and issues, and public web pages. The server queues each submission in an inbox and uses one agent run to fetch sources and update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector.
 
 The repository has three parts:
 
 | Part | Path | Role |
 | --- | --- | --- |
-| Server `kiokud` | `cmd/kiokud`, `internal/` | Stores sources, runs wiki generation, serves the web viewer, the API and the MCP connector |
+| Server `kiokud` | `cmd/kiokud`, `internal/` | Stores inbox items, runs wiki generation, serves the web viewer, the API and the MCP connector |
 | CLI `kioku` | `cmd/kioku`, `internal/cli` | Logs in, puts sources, pulls the wiki of one project into the current directory |
 | Claude plugin | [`plugin/`](plugin/README.md) | Skill and hooks for Claude Code, Claude Desktop, Cowork and claude.ai chat |
 
@@ -60,7 +60,7 @@ You can run your own server, but self-hosting is not supported. There is no comp
 4. Put a TLS proxy in front of port 8080 for the origin in `KIOKU_BASE_URL`.
 5. Log in with `kioku --server <KIOKU_BASE_URL> login`.
 
-The server keeps its catalog in SQLite and needs one host with a persistent disk. Storage defaults to local: project data is stored under `<KIOKU_DATA>/objects` (`./data/objects` without configuration). Set `KIOKU_STORAGE=s3` with the required `S3_*` settings to use S3. These backends are mutually exclusive; S3 does not use a local content cache. Wiki generation with Anthropic Managed Agents is optional. The sections below describe the settings, storage and backups in detail (in Japanese).
+The server keeps its catalog in SQLite and needs one host with a persistent disk. Storage defaults to local: project data is stored under `<KIOKU_DATA>/objects` (`./data/objects` without configuration). Set `KIOKU_STORAGE=s3` with the required `S3_*` settings to use S3. These backends are mutually exclusive; S3 does not use a local content cache. Configure a generation runner to generate a wiki; without one, generation jobs fail. The sections below describe the settings, storage and backups in detail (in Japanese).
 
 ## License
 
@@ -72,10 +72,10 @@ MIT. See [LICENSE](LICENSE).
 
 ```text
 メンバーの inbox / Google Docs / GitHub / 公開Artifacts・Sites
-                      ↓ put (sources only)
-   原資料・追記ログ → 永続ジョブ → Wiki・リンクマップ
+                      ↓ put（1要求につき1項目）
+   inbox → 1回のエージェント実行（取得・編集）→ Wiki・リンクマップ
                       ↓ 変更ファイルを順次更新
-   プロジェクト専用バケット（本文・ログ・ジョブ） + 管理用SQLite
+   プロジェクト専用領域（inbox・Wiki・ジョブ） + 管理用SQLite
                       ↓ pull
    <作業ディレクトリ>/wiki/
 ```
@@ -96,41 +96,41 @@ export GOOGLE_CLIENT_SECRET=...
 
 `KIOKU_ENCRYPTION_KEY` を指定した場合は、その値を優先しファイルには書き出しません。未指定なら保存済みの鍵を読み、初回だけ暗号学的乱数で32バイトの鍵を生成します。保存済みの鍵が壊れている場合は再生成せず起動エラーにします。
 
-API／HTTPで原資料を取得します。クラウドから本文を取得できない場合は、その内容をMarkdownなどのファイルに書いて投入します。ローカルでもGoogle／GitHub認証を使い、認証を省略する起動モードはありません。
+生成 Runner が API／HTTP で原資料を取得します。クラウドから本文を取得できない場合は、その内容をMarkdownなどのファイルに書いて投入します。ローカルでもGoogle／GitHub認証を使い、認証を省略する起動モードはありません。
 
 別のターミナルで:
 
 ```bash
 ./bin/kioku --server http://127.0.0.1:8080 login --provider google
-./bin/kioku --server http://127.0.0.1:8080 create my-project
-./bin/kioku share list
-./bin/kioku share invite bob@example.com
+./bin/kioku --server http://127.0.0.1:8080 project create my-project
+./bin/kioku project share list
+./bin/kioku project share invite bob@example.com
 ```
 
-原資料の投入には2つの方法があります。Kioku が取得できる Google Docs や GitHub の資料はURLを渡します。非公開資料でも、利用者が接続を認可し、その資料を読む権限があれば取得できます。Artifact など Kioku が直接取得できない資料は、スキルを実行するエージェントが本文を抽出し、原本URLを YAML frontmatter に含む Markdown を渡します。具体例は[原資料](#原資料)を参照してください。
+原資料の投入には2つの方法があります。Kioku が取得できる Google Docs や GitHub の資料はURLを渡します。非公開資料は、プロジェクトオーナーの接続と閲覧権限で取得します。GitHub App の接続機能は未実装のため、現在の GitHub URL 取得は公開資料だけを対象にします。Artifact など Kioku が直接取得できない資料は、スキルを実行するエージェントが本文を抽出し、原本URLを YAML frontmatter に含む Markdown を渡します。具体例は[原資料](#原資料)を参照してください。
 
 例えば、GitHub にある Kioku の README を取り込み、Wiki を生成して開くには:
 
 ```bash
-./bin/kioku put --wait https://github.com/mash/kioku/blob/main/README.md
+./bin/kioku put https://github.com/mash/kioku/blob/main/README.md
 ./bin/kioku generate --wait
 ./bin/kioku status
 ./bin/kioku pull
 ./bin/kioku open
 ```
 
-プロジェクトのメンバーは、投入された全原資料と生成Wikiを閲覧できます。投入時の追加フラグや個別の共有設定はありません。投入した内容は設定したLLM事業者にも送信されます。変更のないinboxファイルは再送しません。
+プロジェクトのメンバーは、公開した source ページと Wiki を閲覧できます。投入時の追加フラグや個別の共有設定はありません。投入した内容は設定したLLM事業者にも送信されます。変更のないinboxファイルは再送しません。
 
 ```bash
-kioku put --wait ./payment-api-design.md  # Artifactから抽出した設計書（下のfrontmatter例）
+kioku put ./payment-api-design.md  # Artifactから抽出した設計書（下のfrontmatter例）
 kioku generate --wait         # Generate now and pull the wiki
 kioku job status <job-id>
 kioku job wait <job-id>
 kioku job retry <job-id>
-kioku join <invite-url>
-kioku list
+kioku project join <invite-url>
+kioku project list
 kioku pull <organization/project>
-kioku share remove bob@example.com
+kioku project share remove bob@example.com
 ```
 
 フラグは位置引数の前、グローバルフラグはコマンドの前に指定します。招待は7日間有効・一度限りです。メール指定の招待を受ける際は、そのログインセッションのGoogle／GitHubに現在の確認済みメールを問い合わせて照合します。古いセッションに本人確認情報がない場合や認可が期限切れの場合は、再ログインが必要です。メール送信はせず、招待URLを出力します。
@@ -166,7 +166,7 @@ kioku connect github
 
 `kioku login` は CLI と同じ端末のブラウザで認証する必要があります（SSH 先や別端末で開く使い方には対応しません）。
 
-ログインと原資料への認可は別です。GoogleはDocs／Driveの読み取りスコープ、GitHubはOAuth Appの `read:user user:email repo` を使用します。`repo` は非公開資料へのアクセスを含む広い権限です。選択リポジトリだけを許可するGitHub App方式はこの実装の対象外です。
+ログインと原資料への認可は別です。Google の接続は Docs／Drive の読み取りスコープを使います。既存の GitHub OAuth App 接続は `read:user user:email repo` を要求しますが、生成 Runner にはこの OAuth トークンを渡しません。GitHub App の接続・インストール機能は未実装です。`connect github` だけでは、生成時に非公開リポジトリを取得できません。
 
 `connect` は原資料の取得権限だけを接続します。ログイン方法の追加、プロフィールの変更、ブラウザへのKiokuログインは行いません。既存のログイン用の紐付けは維持します。既存アカウントでCLIにログインしてから実行してください。login／connect は同じ端末のブラウザとloopback、state、PKCEを使用します。connect はOAuthの承認後も、認証済みCLIが単回・短命のコードを交換するまで接続を確定しません。旧CLIのチケット方式は受け付けないため、サーバー更新時にはCLIも更新してください。
 
@@ -174,70 +174,74 @@ kioku connect github
 
 ### プロジェクトの資料アクセス方針
 
-プロジェクトオーナーが資料の取り込みとWiki生成を認可し、外部資料の閲覧可否はオーナーのGoogle／GitHub権限で判断する方針です。投稿者が読めない資料でもオーナーが読めれば取り込み、プロジェクト内で共有できます。この共有リスクは受容します。オーナーが読めない資料の取り込みと、それに依存するWiki生成は失敗させ、投稿者やretry実行者の権限にはフォールバックしません。retryも同じ方針です。
+生成時にはプロジェクトオーナーの接続を使います。投稿者や retry 実行者の接続には切り替えません。オーナーが読めない資料や接続がない提供元の非公開資料は取得失敗として `wiki/log.md` に記録し、ほかの資料の反映を続けます。公開に成功すると、取得に失敗した項目も inbox から消えます。再取得には URL を put し直します。
 
-**実装状況（2026-11-07）:** 現在のURL取得はまだ投入・retry実行者の資格情報を使っています。上記は確認済みの設計方針であり、オーナー権限への統一は未実装です。[方針・F7の評価・実装との差分](docs/ACCOUNT_ADMIN.md#project-source-authorization-policy)
+Google のトークンは文書単位に絞れません。原資料中の指示によって、誰も put していないオーナーの文書を Runner が取り込む危険も受容する方針です。[資料アクセス方針と実装状況](docs/ACCOUNT_ADMIN.md#project-source-authorization-policy)を確認してください。
 
-### 1. Kioku が取得できる資料はURLを渡す
+### 1. 取得できる資料は URL を渡す
 
-Google Docs の議事録や GitHub の設計書は、そのURLを投入します。公開・非公開ではなく、Kioku が本文を取得できるかで選びます。非公開資料には利用者の Google／GitHub 接続の認可と、その資料への閲覧権限が必要です。
+GitHub、Google Docs、公開 Web の URL は、人の CLI、agent 認証の CLI、MCP の `source_put` から同じように投入します。取得は生成時に行います。
 
 ```bash
-# 接続を認可する（初回）
+# Google Docs の非公開資料には、オーナーが接続を認可する
 kioku connect google
-kioku connect github
-
-# Google Docsの議事録（<document-id>を実際のIDに置き換える）
-kioku put --wait 'https://docs.google.com/document/d/<document-id>/edit'
-
-# GitHub上のKioku README
-kioku put --wait https://github.com/mash/kioku/blob/main/README.md
+kioku put 'https://docs.google.com/document/d/<document-id>/edit'
+kioku put https://github.com/mash/kioku/blob/main/README.md
+kioku status
+kioku generate --wait
 ```
 
-Kioku の取り込みワーカーが認可済みの接続で取得し、抽出テキストを保存します。`put --wait` は取り込みの完了まで待ち、Wiki生成は開始しません。定期生成を待つか、`kioku generate --wait` で直ちに生成できます。同じURLを再投入すると内容を再取得します。
+put は `pending` の項目を保存し、ID と status を返します。取得や Wiki 生成は待ちません。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。受付済みであることと、取得・公開に成功したことは別です。
 
-| 種類 | 抽出する内容 |
+Runner への取得規則は次のとおりです。実際の取得結果は `wiki/log.md` で確認します。
+
+| 種類 | 取得する内容 |
 | --- | --- |
-| Google Docs | 本文・表・タブのテキスト |
-| GitHub | ファイル、リポジトリURLのREADME、Issue／PRの説明と先頭100件までのIssueコメント |
-| その他のHTTPS URL | HTTPで取得できるHTML／テキスト |
+| Google Docs | Docs／Drive API で読める本文 |
+| GitHub | 指定ファイル、リポジトリの README、Issue／PR の説明と先頭100件までのコメント |
+| 公開 Web | 指定 URL の本文 |
 
-通常のHTTP取得は、認証済みブラウザのCookieを使用せず、JavaScriptも実行しません。GitHubのPR差分・インラインレビュー・リポジトリ全体の収集は対象外です。`/` を含むブランチ名はcommit SHAのファイルURLを使ってください。HTTP取得はDNS解決したIPに固定して接続し、プライベート／予約アドレス・任意ポートを拒否します。
+GitHub の PR 差分・リポジトリ全体の収集は対象外です。git リポジトリ内の文書には、そのファイルを指す URL を使います。ブランチの指定が曖昧な場合は commit SHA のファイル URL を使います。GitHub App 未設定時は資格情報を渡さず、公開リポジトリを認証なしで取得します。既存の GitHub OAuth 接続には切り替えません。
 
-### 2. Kioku が取得できない資料は、エージェントが抽出して渡す
+Runner は取得本文を UTF-8 境界で1 MiBまでに切り詰め、切り詰めたことをログに書きます。取得先のネットワーク制限は運用者が設定します。[運用設定](docs/WORKERS.md#source-credentials-and-network-policy)を参照してください。
 
-例えば、Claude Artifact で作成した「決済APIの設計書」は、Kioku のワーカーから本文を取得できない場合があります。この場合は、スキルを実行するエージェントが利用者の許可されたコネクターや画面から本文を読み、`payment-api-design.md` に書いて投入します。
+### 2. 取得できない資料は本文と原本 URL を渡す
 
-原本URLは YAML frontmatter の `source_url` に一度だけ記録します。以下の `<Artifact画面からコピーしたURL>` は実際のHTTPS URLに置き換えます。
+Artifact など Runner が直接取得できない資料は、スキルを実行するエージェントが許可されたコネクターや画面で本文を読み、UTF-8 のテキストファイルとして投入します。別の要約や操作記録は投入しません。
 
 ```markdown
 ---
-source_url: "<Artifact画面からコピーしたURL>"
-retrieved_at: "2026-11-07"
+source_url: "https://example.com/the-original-document"
 ---
 # 決済APIの設計書
 
-（Artifactから実際に抽出した本文）
+（原本から実際に取得した本文）
 ```
 
 ```bash
-kioku put --wait ./payment-api-design.md
-kioku generate --wait
-kioku open
+kioku put ./payment-api-design.md
+# 1ファイルなら URL を引数で指定してもよい
+kioku put --source-url https://example.com/the-original-document ./payment-api-design.md
 ```
 
-ファイル投入では、Kioku は frontmatter のURLを取得しに行きません。渡された本文を保存し、URLを出典として保持します。本文を読めなかった場合は推測で補わず、未取得と報告します。URLがない場合も捏造せず、投入を保留します。本文中に重複した `Source:` 行を書く必要はありません。
+ファイルの put は `fetched` の項目を作ります。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は、捏造せず投入を保留します。
 
-スキルの agent 認証では、利用者の Google／GitHub 接続を代理利用できないため、ファイル投入を使います。MCP の `source_put` でも、同じ frontmatter を含む Markdown を `content` に渡します。
+複数ファイルは1件ずつ別の要求で送ります。引数なしの `kioku put` はローカルの `inbox/` の変更分を送ります。成功したファイルごとに receipt を保存するため、途中で失敗しても成功分は再送しません。
 
-複数の抽出ファイルは `inbox/` に置き、引数なしの `kioku put --wait` で変更分を投入できます。各ファイルに `source_url` が必要です。原資料の抽出テキストと出典リンクは `kioku open` の認証済みWebビューアーから参照できます。
+### 3. 原資料を取り除く
 
+```bash
+kioku delete https://example.com/the-original-document
+kioku generate --wait
+```
 
-原本ファイルは保存せず、出典URLと取得時点の抽出テキストを `extracted.md` に保存します。URLを直接投入して更新したときは最後に取得した版をWiki生成に使用し、過去の抽出テキストも保持します。A → B → Aと戻った場合もAを現在の版とし、同一の内容は重複保存しません。新規資料は抽出テキストとタイトル・URLを容量に計上します。ファイル投入では同じ出典URLを参照する別々のメモも保持し、Wiki生成に使用します。
+delete は `removed` の項目を保存します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
+
+待機中の同じ source_url の項目は、新しい put で置き換えます。removed も待機中の pending／fetched を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
 
 ## Wikiとマップ
 
-Managed Agents 未設定では原資料ページ・索引・リンクマップを生成します。意味的な統合と矛盾の整理には Anthropic Managed Agents を設定します。3 変数は一緒に設定し、一部だけなら起動時にエラーになります。
+Wiki 生成には Runner の設定が必要です。Anthropic Managed Agents を使う場合は次を設定します。3 変数は一緒に設定し、一部だけなら起動時にエラーになります。
 
 ```bash
 export ANTHROPIC_API_KEY=...
@@ -248,13 +252,23 @@ export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
 
-kiokud は原資料・差分・既存 Wiki をジョブ専用の tar にまとめ、隔離されたエージェントが取得して生成物を返します。通常は増分生成です。`kioku generate --full --wait` は同じ原資料でも全体を作り直します。出力は完全なページ集合で、省略されたページは削除されます。原資料ページと出典一覧・リンクマップはサーバーが付けます。重要な判断は引用元の原資料を確認してください。
+kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。Runner が pending の取得と Wiki 編集を1回の実行で行い、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
 
-生成物は `wiki/*.md`、`maps/graph.json`、`maps/graph.mmd`。Web画面でMarkdownとクリックできるSVGマップを表示し、ページを検索できます。原資料の抽出テキストは、プロジェクト権限を確認して配信します。原本は出典URLから参照します。未信頼HTMLやJavaScriptを閲覧者のブラウザで実行しません。
+Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。概念・エンティティ・分析・概要ページから source ページを引用します。`wiki/index.md` は種類ごとの目録で、source ページを載せません。`wiki/log.md` は変更と取得失敗を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
-保存前に容量と待機ジョブ数を予約し、拒否された投入ではオブジェクトを書きません。途中失敗・中断した投入は永続的な予約として残し、削除が完了するまで容量に計上します。再起動後も回収を再試行します。`kioku usage` で予約容量も確認できます。
+出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開して `maps/graph.json` と `maps/graph.mmd` を作ります。原資料ページをサーバーが後から付け足す処理はありません。
 
-現在の上限は1原資料4 MiB、1投入30ファイル／JSON全体16 MiB、取得するWiki全体64 MiB。入力 tar は展開時256 MiBまで。エージェント出力はgzip 16 MiB・展開 tar 64 MiB・最大300ページ・各256 KiBまでです。原資料ページを加えたWiki全体も64 MiBまでです。超過は失敗として明示します。
+公開に成功した実行の項目だけを inbox から消します。失敗した実行の項目は待機に戻します。公開の途中で停止した場合は `wiki_incomplete` と項目を残します。新しい put が同じ URL の待機項目を作っていた場合は、失敗した古い項目を戻さず新しい項目を優先します。
+
+| 制限 | 動作 |
+| --- | --- |
+| put 1要求の JSON 全体1 MiB | 超過は413。1要求に1項目だけ受け付ける |
+| プロジェクトの inbox 200項目 | 固定中も数える。追加で超える場合は429 |
+| `--max-wiki-bytes`（既定64 MiB） | 公開後の合計で判定。超過中の pending／fetched は413、removed は受付可能 |
+| 出力 tar の圧縮後・展開後それぞれ設定値の2倍 | 受け取り時に400。ページ数・1ページの固定上限はない |
+| 入力 tar の展開後256 MiB | 超過した実行は失敗し、項目を残す |
+
+公開は Wiki の上限を超えても成功します。超過中の生成は removed だけを固定し、pending／fetched を待機に残します。removed がなければ実行しません。`kioku project usage` で公開容量と inbox 件数を確認します。公開容量の `Revision.StoredBytes` は派生した maps も含みます。入力の全資料が256 MiBに収まらない場合は、不要な待機資料を取り消すなどして入力を減らす必要があります。
 
 ## Codex / Claude Code用スキル
 
@@ -270,7 +284,7 @@ KIOKU_DATA/
   objects/projects/    # KIOKU_STORAGE=local の場合のみ
 ```
 
-原資料・原資料メタデータ・Wiki・マップ・追記ログ・ジョブ・生成進捗はプロジェクトの保存先に置きます。SQLiteには本文、ファイル一覧、生成チェックポイントを保存しません。プロジェクト専用SQLiteは不要になりました。
+inbox・Wiki・マップ・ジョブ・生成進捗はプロジェクトの保存先に置きます。SQLiteには本文、ファイル一覧、生成チェックポイントを保存しません。プロジェクト専用SQLiteは不要になりました。
 
 ```bash
 export KIOKU_STORAGE=s3
@@ -287,23 +301,24 @@ export S3_SECRET_ACCESS_KEY=...
 
 ```text
 <project-bucket>/projects/<project-id>/
-  sources/<source-id>/extracted.md
+  .kioku/inbox/<id>.md                 # fetched の本文。公開後に回収
   wiki/index.md
   wiki/*.md
-  wiki/inbox/<sequence>-<entry-id>.json  # putの追記専用ログ
+  wiki/source-<slug>.md
+  wiki/log.md
   maps/graph.{json,mmd}
-  .kioku/state.json                    # 原資料・現在ファイル・進捗
+  .kioku/state.json                    # inbox・現在ファイル・進捗
   .kioku/jobs/<job-id>.json
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と処理済み原資料バージョンはS3に保存し、失敗時の再実行を可能にします。追記ログは生成で書き換えず、最新64件を `wiki/inbox.md` としてpullできます。
+Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの wiki/maps だけを取得します。生成前の受付状態は `kioku status` の inbox 一覧で確認します。
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
 ## 移行・オンラインバックアップ
 
-旧プロジェクトSQLiteをS3に移行する前に `DATA/migration-backup/` に保護したアーカイブを作成します。旧 `metadata.json` は `.migrated` として保持します。現在のWikiだけを通常のパスへ移し、ページ履歴は保持しません。移行元が欠損・破損していれば起動を拒否します。旧共有S3バケットから専用バケットへの移動は別途必要です。
+旧データの自動移行は行いません。旧 content schema 1 を検出すると起動を拒否します。新方式への更新では、運用者が削除対象を承認し、サーバーを止めて明示的な移行コマンドを実行します。アカウント・接続・プロジェクト設定・監査を保持し、旧資料・Wiki・maps・ジョブを削除します。[移行手順](docs/INBOX_MIGRATION.md)に従い、更新後に利用者へ put し直しを依頼してください。
 
 稼働中のサーバへオンラインバックアップを依頼できます。
 
@@ -320,22 +335,22 @@ kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
 ## 運用・削除・接続確認
 
 ```bash
-kioku usage
-kioku audit                             # ownerのみ
-kioku maintenance             # owner: currentを含む20リビジョンを保持、GC
-kioku source remove --yes <source-id>   # owner: 保存した資料と旧生成物を削除し再生成
-kioku delete --yes                      # owner: プロジェクトと専用バケットを削除
+kioku project usage
+kioku project audit                  # owner のみ
+kioku project maintenance            # owner: 未参照オブジェクトを回収
+kioku delete https://example.com/doc  # 資料の削除を inbox に投入
+kioku project delete --yes           # owner: プロジェクトを削除
 ```
 
-資料削除では、削除した内容が旧Wikiに残らないようそのプロジェクトの全生成履歴を破棄して再生成します。プロジェクト削除は途中失敗時にも同じコマンドで再実行できます。メンバーが既に取得したローカルコピーや外部バックアップまでは遠隔消去できません。
+資料の削除は次の生成で反映します。プロジェクト削除は実行・資格情報の片付けを待ち、途中失敗時にも同じコマンドで再実行できます。取得済みのローカルコピーや外部バックアップは遠隔消去できません。
 
-`maintenance` は未参照オブジェクトを回収し、完了／失敗ジョブを30日、監査履歴を90日で整理します。必要な頻度で明示的に実行・スケジュールしてください。原資料投入／Wiki公開とGCはプロジェクトごとに排他制御し、権限確認と本文の読み込みをロック取得前に行います。HTTP応答の送信中に共通DBのロックは保持しません。オブジェクトストアのバージョニングを使う場合、旧バージョンの保持・削除もプロバイダ側で設定してください。
+`project maintenance` は未参照の fetched 本文を含むオブジェクトを回収し、完了／失敗ジョブを30日、監査履歴を90日で整理します。必要な頻度で実行・スケジュールしてください。オブジェクトストアの旧バージョンは、プロバイダー側でも保持・削除を設定します。
 
 ```bash
-kiokud --max-sources 200 --max-source-bytes 67108864 --max-jobs 20 --rate-per-minute 600
+kiokud --max-wiki-bytes 67108864 --max-jobs 20 --rate-per-minute 600
 ```
 
-これらはプロジェクトごとの原資料・待機ジョブ上限と、接続元IPごとの1分間のリクエスト上限です。認証開始は1 IPあたり20回／分。転送ヘッダーを信用せず、実接続元を使用します。プロキシ経由では全員が同じIPになるため、適切な上限と入口側の制限を設定してください。
+Wiki の容量と待機ジョブ数はプロジェクトごとに制限します。リクエスト数は接続元 IP ごとに毎分制限し、認証開始は20回／分です。転送ヘッダーを信用せず実接続元を使うため、プロキシ経由では入口側の制限も設定します。
 
 `GET /healthz` はメタデータの正常性を確認します。構造化アクセスログに認証トークン・招待トークン・クエリは出力しません。Prometheus形式の `GET /metrics` は `KIOKU_METRICS_TOKEN` をBearerで要求し、未設定なら利用できません。
 
@@ -358,7 +373,7 @@ go vet ./...
 go build ./cmd/...
 ```
 
-CLI/APIの連携、取得不能なURLのファイル投入案内、SQLiteの分離・移行・障害復旧・バックアップ、署名付きバケット操作、同時投入、招待・権限剥奪、OAuth/PKCE、暗号化、削除・容量制限・GC、Markdown／SVGの安全性をテストします。CIにもブラウザは不要です。
+CLI/API/MCP の inbox 受付、単一実行、出力の source_url 検査、公開・再起動・再試行、明示的移行、容量制限・GC、owner の資格情報と秘密の非露出、認証・権限・バックアップ、Markdown／SVG の安全性をテストします。CIにもブラウザは不要です。
 
 Google／GitHub／Managed Agents はモック、S3はTLSテストサーバで検証します。実サービスの接続は各アプリの登録と資格情報を設定し、`connect` と手順書の実セッションで検証してください。未設定の資格情報による実接続を「検証済み」とは扱いません。
 
@@ -368,7 +383,7 @@ Named projects use `organization/project`:
 
 ```bash
 kioku org create acme
-kioku create acme/platform
+kioku project create acme/platform
 kioku pull acme/platform
 ```
 
@@ -383,10 +398,9 @@ The web path is `/acme/platform`. The caller chooses a working directory; `.kiok
 - [Generation worker architecture](docs/WORKERS.md): durable queue, one generation worker, and independent cleanup maintenance.
 
 
-`kioku put [URL|FILES...]` saves sources without generating wiki. URL submissions return durable job metadata before retrieval; file submissions return after durable storage. `--wait` on put/source operations waits only for source intake. The server periodically generates changed projects (daily by default, configured with `kiokud --generate-every`). Frequent puts do not postpone the deadline. `kioku generate` requests an earlier refresh, preserving the current revision and making no AI call if sources are unchanged; `kioku generate --wait` waits for publication and pulls the current wiki. Readers can see partial updates while generation runs. `kioku job wait JOB_ID` pulls only when the job is a generation. See [source intake and generation](docs/WORKERS.md) for queues, freshness, limits and recovery.
+`kioku put [URL|FILES...]` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku generate --wait` waits for publication and pulls the wiki. Inspect `kioku status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
 
-
-The default service origin is `https://kioku.magicians.ee`. Source and wiki update timestamps are available through `kioku status`. To use your own generation API key, self-host kiokud and configure its [generation runner](#claude-managed-agents-runner). The hosted service does not accept personal generation keys.
+CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together using the [migration runbook](docs/INBOX_MIGRATION.md). Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 
 ## CLI と skills の責務
 
@@ -399,7 +413,7 @@ kioku pull org/project       # 参加確認後に .kioku/config を作成して�
 kioku pull                   # cwd の設定から同じプロジェクトを取得
 ```
 
-`create NAME` はクラウドにプロジェクトを作成し、`join INVITE_URL` は招待に参加します。どちらも成功時に cwd の設定を保存します。既に設定がある cwd では、クラウド操作を始める前にエラーにします。参加済みのプロジェクトには `pull org/project` を使います。設定作成・取得をまとめる別コマンドはありません。
+`project create NAME` はクラウドにプロジェクトを作成し、`project join INVITE_URL` は招待に参加します。どちらも成功時に cwd の設定を保存します。既に設定がある cwd では、クラウド操作を始める前にエラーにします。参加済みのプロジェクトには `pull org/project` を使います。設定作成・取得をまとめる別コマンドはありません。
 
 認証は CLI が `~/.config/kioku/auth/<server-hash>.json` に接続先別で保存します。プロジェクト設定には認証情報を保存しません。`login` は認証だけを行います。会話の選択状態・保存先の一覧・取得タイミング・複数プロジェクトの巡回・フック重複の抑止・文脈と通知はプラグイン（[plugin/](plugin/README.md)）が担当します。
 
@@ -419,7 +433,7 @@ kioku pull                   # cwd の設定から同じプロジェクトを取
 
 Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。対象の選択と pull はスキルが行い、会話ごとに一度 pull の完了を待ちます。CLI は会話セッションを知りません。
 
-旧コマンドは削除し、互換エイリアス・migration コード・旧設定へのフォールバックは提供しません。
+旧コマンドは削除し、互換エイリアス・旧設定へのフォールバックは提供しません。
 
 Namespaceのorg名・project名はそれぞれ1〜63文字のASCII小文字英数字と単一ハイフンに限定し、先頭・末尾は英数字とします（例: `acme/team-wiki`）。
 
@@ -444,9 +458,7 @@ kiokud
 Agent と Environment は同じ API キーでアクセスできるワークスペースに事前作成します。
 そのワークスペース専用の API キーを使います（サーバー設定には workspace ID の指定はありません）。
 Agent のモデル・ツール設定は [prompts/kioku-wiki.md](prompts/kioku-wiki.md) の
-YAML frontmatter、system prompt はその本文を使用します。Environment は cloud 環境で、
-ネットワークを `KIOKU_BASE_URL` のホストだけに制限し、package managers と MCP servers
-を無効にします。作成した ID を上記の変数へ設定してください。kiokud 起動時の自動作成はしません。
+YAML frontmatter、system prompt はその本文を使用します。Environment は cloud 環境を使い、[取得先のネットワーク方針](docs/WORKERS.md#source-credentials-and-network-policy)を運用者が設定します。package managers と MCP servers は無効にします。作成した ID を上記の変数へ設定してください。kiokud 起動時の自動作成はしません。
 Managed Agents からその HTTPS URL に到達できる必要があります。
 通常の OAuth・ストレージ設定は [Self-hosting](#self-hosting) を参照してください。
 
@@ -468,9 +480,8 @@ The application key needs `api.agents.read`, `api.agents.write`,
 `api.responses.write`, `api.vaults.read`, and `api.vaults.write` permissions.
 `KIOKU_BASE_URL` must use HTTPS on port 443 or 8443 and be reachable from OpenAI.
 
-The runner reuses the wiki prompt body and input/output archive contract, limits
-sandbox egress and vault token injection to the Kioku host, disables subagents,
-and requests a small hosted container. The existing per-job budget is sent as
+The runner reuses the wiki prompt body and input/output archive contract, injects each short-lived vault credential only into headers for its allowed hosts, disables subagents,
+and requests a small hosted container. The operator configures sandbox egress; the runner does not override it with a Kioku-only allowlist. The existing per-job budget is sent as
 `spend_control.limit`; this is not a guarantee that total charges, including
 sandbox compute, cannot exceed that amount. Reported provider spend is provisional,
 so this runner leaves the common settled cost unknown. Inspect billing in OpenAI.

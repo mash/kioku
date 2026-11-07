@@ -9,7 +9,7 @@ kioku account revoke-session SESSION_ID
 kioku account revoke-all --yes
 kioku account disconnect google
 kioku account unlink --yes github
-kioku share transfer --yes ACCOUNT_ID_OR_EMAIL
+kioku project share transfer --yes ACCOUNT_ID_OR_EMAIL
 kioku org transfer --yes ORGANIZATION ACCOUNT_ID_OR_EMAIL
 kioku account delete --yes
 ```
@@ -30,13 +30,19 @@ Design decision confirmed by the project maintainer on 2026-11-07:
 
 - The project owner authorizes source import and wiki generation for the shared project. Google/GitHub document access is evaluated using the owner's authorized provider connection, not the submitter's or the person retrying a job.
 - A member may submit a document URL they cannot personally read. If the owner can read it, importing it and making the resulting source and wiki available to project members is intended behavior. The owner accepts this sharing risk when authorizing import and generation.
-- If the owner cannot read a required document, its import must fail and wiki generation depending on that import must fail. The system must not fall back to another member's credentials to make the operation succeed.
+- If the owner cannot read a document, or has no connection for its provider, fetching that item fails. The runner records its URL, reason and submitter in wiki/log.md and continues with the other items. Successful publication consumes the failed item too. The system never falls back to another member's credentials.
 - Retry follows the same owner-authorized access policy. Restricting URL retries to the original submitter is not the intended remedy for security finding F7.
+
+Google access tokens cannot be restricted to the submitted documents. Source text is untrusted, and prompt injection could make a runner read and publish an owner's document that nobody submitted. The owner also accepts this risk when enabling Google source access. Host restrictions do not enforce a document-level boundary. The prompt instructs the runner to fetch only submitted URLs, but this is not an authorization check.
+
+GitHub credentials are scoped to the owner's installations and the repositories named by the pinned inbox URLs, with `contents: read` only. There is no per-project repository permission list. A submitted repository is a token scope, not a guarantee that the runner will read only the exact submitted file. Endpoints requiring other permissions can fail; Kioku does not broaden the token to make them succeed.
 
 This decision concerns access to external source documents. It does not grant a non-member project access or change how generation runners are authenticated and paid for. Uploaded text/files are already supplied to Kioku; an attached source URL does not itself cause a provider fetch or prove the owner's access to the original document.
 
 ### Implementation status
 
-As inspected at commit `dede359` on 2026-11-07, URL intake still selects `providerCredential(ctx, job.UserID, provider)` in [`processPut`](../internal/server/intake.go), and [`retry`](../internal/server/pipeline.go) replaces `job.UserID` with the retrying user. Owner-based credential selection is therefore **not yet implemented**. Documenting the accepted sharing risk does not certify that the current implementation enforces the owner-only access boundary. This documentation change makes no runtime change.
+Generation selects the current project owner's source connection immediately before starting a managed runner. Google access tokens are refreshed at that point and not during the run; the refresh token stays in kiokud. The attempt vault receives only short-lived access tokens and the job token. Cleanup removes the vault; Google access tokens expire without revoking the owner's reusable Google grant.
 
-Security review disposition: the sharing risk described by F7 in the local report `CLAUDE-SECURITY-20261103-162645/CLAUDE-SECURITY-RESULTS.md` is accepted under the owner-authorized model above. The historical finding remains evidence of the current credential-selection behavior; it is not marked as a completed owner-authorization fix.
+GitHub plumbing is implemented behind `server.GitHubTokenProvider`, including installation selection, repository filtering, 500-repository chunks and attempt-scoped revocation. No GitHub App connection or provider implementation is configured by the shipped server yet. Therefore it supplies no GitHub credential: public repositories are fetched unauthenticated and private ones become per-item fetch failures. The old GitHub OAuth connection is never used as a fallback. Implementing the App authorization/installation flow remains separate work.
+
+Local fake-provider tests verify owner selection, refresh, scopes, cleanup after restart and secret handling. They do not verify real provider access or model compliance with the prompt. The historical F7 report describes the previous submitter-based behavior; the owner-only policy and its broader Google sharing risk above describe this implementation.

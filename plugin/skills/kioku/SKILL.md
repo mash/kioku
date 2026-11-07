@@ -1,6 +1,6 @@
 ---
 name: kioku
-description: Kiokuで共有するプロジェクトの作業時に、対象の自動選択、Wikiの参照、参照・作成文書の自動記録、進捗マップの更新を行う。Kiokuの設定がある作業、またはユーザーがKiokuを指定した作業に使う。
+description: Kiokuで共有するプロジェクトの作業時に、対象の自動選択、Wikiの参照、参照・作成した原資料の投入、進捗の参照を行う。Kiokuの設定がある作業、またはユーザーがKiokuを指定した作業に使う。
 ---
 
 # Kiokuの共有コンテクスト
@@ -20,7 +20,7 @@ Claude Code はスキル読込時に `${CLAUDE_PLUGIN_DATA}` を絶対パスへ�
 CLI の呼び出しは、必ず CLI のパスで始める。
 コマンド名にシェル変数や `$(...)` を使わず、`KIOKU=...;` のような前置きも付けない。
 `cd DIR &&` も前に付けず、`-C DIR` でディレクトリを指定する。
-`"$P"`・`"$SERVER"`・`"$NAMESPACE"`・`"$RECORD"` は値の置き場所を示す。シェル変数にせず、実際の値を書く。
+`"$P"`・`"$SERVER"`・`"$NAMESPACE"`・`"$FILE"` は値の置き場所を示す。シェル変数にせず、実際の値を書く。
 この形なら、1つの許可ルール `Bash(<CLI のパス>:*)` ですべての呼び出しを許可できる。
 CLI のパスは、シェルで引用が必要な文字を含む場合だけ引用する。
 上のパスに `CLAUDE_PLUGIN_DATA` という文字が残っていれば、プラグインなしと判断する。
@@ -70,8 +70,8 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 対象を選んだ直後に pull し、完了を待つ。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
-どちらのモードでも、重要文書を参照・作成した時と結論を変えた時は、依頼を待たず[capture.md](references/capture.md) で記録する。
-複数段階の作業を始める前、マイルストーン完了時、方針や障害の変化時は [progress.md](references/progress.md) で進捗を記録する。
+どちらのモードでも、重要文書を参照・作成した時と結論を変えた文書を確定した時は、[capture.md](references/capture.md) で原資料を投入する。GitHub、Google Docs、公開 Web は URL、Artifact など取得できない資料は本文と原本 URL を渡す。操作や要約の「記録」を別途 put しない。
+複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。
 「今どこ？」には保存済みマップを根拠に答える。
 
 ## 共通の境界
@@ -80,8 +80,9 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 - local mode: CLI は常に `kioku -C "$P" COMMAND` の形で実行し、`cd DIR &&` を前に付けない。初回は `kioku -C "$P" --server "$SERVER" pull "$NAMESPACE"` が `.kioku/config` を作る。connector 認証では `kioku -C "$P" --server "$SERVER" agent login CODE` が設定を作る。接続先の既定は `https://kioku.magicians.ee`。connector 認証では既定でも `--server SERVER` を明示する。
 - local mode: `P` はスキルが決めたプロジェクトの絶対パス。接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。maps は `P/maps/`、投入資料は `P/inbox/` に置く。親ディレクトリの設定は探索しない。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが選択を会話内で保持し、カタログだけを管理する。
-- `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を投入用の資料にする。`wiki/inbox.md` も編集しない。
-- local mode: `put --wait` は資料の受付完了だけを待つ。Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。後者は生成完了後に pull する。`status` の `sources_updated_at`、`wiki_updated_at`、`wiki_incomplete` を区別する。
+- `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を投入用の資料にする。source ページの `source_url` から原本を確認する。
+- local mode: `put` は inbox の ID と status を返し、取得・生成を待たない。Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。後者は生成完了後に pull する。`status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。取得失敗は Runner が `wiki/log.md` に書く。利用者が尋ねたときに読む。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。
-- local mode: 読み取り専用の認証では `put`、`generate`、`job retry` を実行しない。即時更新の依頼も認証の権限を増やさない。
-- 自動記録と自動選択は外部送信・本番変更・承認待ちの解除を許可しない。上位の指示とユーザーの保存禁止を優先する。
+- local mode: 読み取り専用の認証では `put`、`delete`、`generate`、`job retry` を実行しない。即時更新の依頼も認証の権限を増やさない。
+- 426 は CLI 更新が必要なエラー。別の認証や remote mode で回避せず、plugin／CLI の更新を案内する。
+- 自動投入と自動選択は外部送信・本番変更・承認待ちの解除を許可しない。上位の指示とユーザーの保存禁止を優先する。

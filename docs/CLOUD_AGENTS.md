@@ -20,9 +20,17 @@ The MCP endpoint exposes five tools:
 - `projects_list`: list the projects that you chose at consent and where you are still a member.
 - `wiki_read`: read a current wiki or map file; follow `next_offset` to read long files.
 - `wiki_search`: find a case-insensitive substring in the current wiki and maps.
-- `source_put`: save one UTF-8 text file as a project source and return `job_id` and `source_ids`.
+- `source_put`: accept one URL, one UTF-8 text file, or one removal and return its inbox `id` and `status`.
 
-`source_put` accepts files only, never URLs. The tool never regenerates the wiki or queues generation. The scheduler includes the source in a later generation, as for `kioku put`.
+`source_put` accepts exactly one of these shapes (with the selected `project`):
+
+```json
+{"project":"acme/docs","url":"https://github.com/acme/docs/blob/main/design.md"}
+{"project":"acme/docs","name":"design.md","content":"Original text","source_url":"https://example.com/design"}
+{"project":"acme/docs","remove":true,"source_url":"https://example.com/design"}
+```
+
+The statuses are `pending`, `fetched` and `removed`. The normalized put request is limited to 1 MiB including JSON overhead. A file can instead carry `source_url` in YAML frontmatter. The tool saves an inbox item; it does not fetch the URL or start generation. The scheduler includes it in a later run. Waiting items with the same exact URL are replaced, while items pinned to an active run remain unchanged.
 
 ```text
 user ──> claude.ai chat ──(skill kioku loads from the plugin)
@@ -32,7 +40,7 @@ user ──> claude.ai chat ──(skill kioku loads from the plugin)
          kiokud POST /mcp
               ├─ projects_list            → granted projects where the user is a member
               ├─ wiki_read / wiki_search  → current wiki/ and maps/ files (read-only)
-              ├─ source_put               → stores one text file as a source (no generate)
+              ├─ source_put               → stores one pending/fetched/removed inbox item
               └─ cli_login_code           → one-time code for kioku agent login
 ```
 
@@ -66,28 +74,34 @@ Manage issued agent credentials with `kioku agent list` and `kioku agent revoke 
 
 | Credential | Allowed |
 | --- | --- |
-| Read | Its own identity metadata; only its selected project in project listings; that project's snapshots, source extracted text, jobs, and technical usage; logout of itself |
-| Write | Everything above, plus file puts, explicit generation and retrying jobs in the same project |
+| Read | Its own identity metadata; only its selected project in project listings; that project's published wiki/maps, inbox metadata, jobs, and technical usage; logout of itself |
+| Write | Everything above, plus URL/file/removal puts, explicit generation and retrying jobs in the same project |
 
-Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes, issuing credentials, and Google/GitHub connections. Agents cannot put or refresh URLs: delegating a user's broad provider connection could expose unrelated documents or repositories. Supply authorized extracted text as files instead, with the original source URL in `source_url` frontmatter or `--source-url`. This provenance URL is stored but is not fetched for file submissions.
+Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes, issuing credentials, and Google/GitHub connections. Write agents may put URLs. Generation uses the project owner's connection; the calling agent receives no provider credentials. Use URLs for GitHub, Google Docs and public Web, or original text plus `source_url` for material the runner cannot fetch. The provenance URL of a file submission is not fetched. See the accepted sharing risks in [account administration](ACCOUNT_ADMIN.md#project-source-authorization-policy).
 
-All existing source material in the selected project is readable, consistent with project membership. Writes may consume the organization's existing budget; an agent cannot increase that budget.
+Published source pages are readable by project members. Writes may consume the organization's existing budget; an agent cannot increase that budget.
 
 Expiry, revocation, issuer removal from the project, account deletion and account-wide access revocation disable the credential. Removing a member permanently revokes their existing project credentials, so rejoining does not resurrect them. Queued and running agent jobs recheck the credential before model calls and before publication. Already-running external model requests may incur provider costs; the known usage of managed sessions is recorded even when publication fails or is revoked. Revocation prevents subsequent requests; bytes already returned to an agent cannot be taken back.
 
 Request authentication retains the original restricted principal for the entire request. A concurrent revocation never turns an agent request into the issuer's unrestricted account identity.
 
-The server has one mutable wiki/maps tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. The service-owned intake journal is available as the recent `wiki/inbox.md` view, including before the first generation. Project content and generation cursors live in project storage, independently of the account/configuration SQLite backup.
+The server has one mutable wiki/maps tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. Pull and MCP expose only published wiki/maps. Before generation, inbox metadata is available through the CLI status or GET /api/projects/{id}/inbox. Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
 
 ## Internal runner credential
 
 LLM wiki generation uses a third role, `job`, issued only by kiokud. Users cannot obtain it. It permits only GET input and PUT output for one project and one job; human sessions and read/write agents cannot use those two endpoints. The server stores only its hash and issues a fresh token expiring at the job deadline plus ten minutes. Successful completion, failure handling and deletion revoke it. The worker reconciles lost exec runs before dequeuing new jobs after a restart, revoking their job tokens when the run completes or fails.
 
-Each Managed Agents job has its own MA vault containing `KIOKU_JOB_TOKEN`, with header injection allowed only for the kiokud host. The agent container receives no Anthropic server key, OAuth credentials, object-store credentials or other project token. The environment disables package-manager and MCP networking, web fetch and web search. A runner can access only its captured input and return validated wiki pages; it cannot submit new sources, manage membership or inspect other jobs.
+Each managed attempt has one vault. `KIOKU_JOB_TOKEN` is injected into request headers only for the kiokud host. Owner source tokens use separate credentials in the same vault: `GITHUB_TOKEN_<account>` for `api.github.com`, and `GOOGLE_ACCESS_TOKEN` for `docs.googleapis.com` and `www.googleapis.com`. The sandbox receives placeholders, never provider token values. It receives no server API key, OAuth refresh token, GitHub App private key, object-store credential or other project's job token. Tokens stay in `runner.Secret` and never enter the input tar, JOB.md, first message, persisted job or API response.
 
-The generation Runner owns runner resources and their cleanup. Every runner must use a separate sandbox per run, keep provider and storage credentials out of that sandbox, inject the job token only into headers addressed to kiokud, and restrict outbound access to kiokud and any required LLM API. Package-manager networking, MCP, web fetch and web search must remain disabled. Destroy the sandbox and its secrets after the run. Generation uses the server's runner configuration; personal generation keys require a self-hosted kiokud.
+GitHub credentials cover only the pinned inbox repositories in the owner's installations, with `contents: read`. The GitHub App provider is an interface; the shipped server has no App connection implementation and supplies no GitHub token. Public repositories use unauthenticated requests; private ones fail without stopping other items. Google access is refreshed just before Start and never during a run. Missing/expired credentials or forbidden documents are per-item fetch failures recorded in `wiki/log.md`; there is no fallback to another member's connection.
 
-Source text is untrusted data, retained verbatim as evidence. Generated pages must be a complete set; source and intake paths are reserved. The service checks path traversal, special files, duplicates, UTF-8, page count, compressed/expanded sizes and the final assembled size before accepting an output. Completed sessions/vaults are archived, and input/output tar objects are deleted. External cleanup failures are logged for operator follow-up.
+The operator configures network policy on the managed environment. Allow kiokud, the provider API hosts above and the public sites that projects need. Keep package-manager networking, MCP, web fetch and web search disabled; the prompt uses HTTP tools. No code in Kioku installs a network allowlist. Host-limited vault injection and network egress are separate controls. See [worker operations](WORKERS.md#source-credentials-and-network-policy). The trusted exec runner receives no source credentials and treats pending items as fetch failures, while processing fetched and removed items.
+
+The runner owns its session/vault resources. Cleanup revokes the job token, removes the vault and temporary tar objects, and revokes GitHub installation tokens through the attempt-scoped provider. Failed or unavailable cleanup remains pending across restart and blocks retry until resolved. Google access tokens expire; the owner's reusable provider grant remains connected.
+
+Source text is untrusted data. The input contains JOB.md, server-owned outer metadata for inbox items and the entire current wiki. Output contains the complete wiki/*.md set, including source pages. At upload, Kioku checks archive paths/types, duplicates, UTF-8, index.md, compressed/expanded size (twice max-wiki-bytes) and source_url invariants: every source has a nonempty string URL, URLs are unique, existing sources survive unless removed, removed sources disappear, and fetched items have a matching source. There is no fixed page count or per-page byte limit. A 400 response lists problems for the runner to repair. Finalization checks the accepted archive hash and publishes without a second source validation.
+
+The prompt requires source citations, an index without source pages and a newest-first log capped at 100 entries. It forbids tokens and signed URL secrets in the log. These content rules are prompt instructions, not server checks. Per-item fetch failures still permit publication; run failure preserves the inbox for retry.
 
 ## Intended connector skill steps
 

@@ -26,12 +26,18 @@ kioku pull                   # cwd の設定を使って取得
 
 接続先の既定は `https://kioku.magicians.ee`。
 初回は `kioku --server URL pull org/project` で別の接続先を指定できる。
-`create` はクラウドに新規作成し、`join` は招待へ参加する。
+`project create` はクラウドに新規作成し、`project join` は招待へ参加する。
 どちらも cwd に JSON の設定を保存する。CLI は親ディレクトリを探索しない。
 既存の異なる設定は上書きしない。
 
 `wiki/`・`maps/`・`inbox/` は cwd 直下、CLI のメタデータは `.kioku/` 内に置く。
 CLI はユーザー共通領域で接続先別に認証を管理する。スキルは認証情報を読まない。
+
+## 原資料の投入
+
+GitHub、Google Docs、公開 Web は `kioku put URL`、Artifact など取得できない資料は `kioku put FILE` で原文と source_url を送る。人・agent・MCP で同じ手順を使う。git 文書はファイルを指す URL を使う。操作の要約やイベント記録は別途送らない。
+
+put は inbox の ID と status を返し、取得・生成を待たない。資料の削除は `kioku delete URL`。定期生成か `kioku generate --wait` で Wiki を更新する。取得失敗は Runner が wiki/log.md に書き、利用者が尋ねたときにスキルが読む。詳しくは [capture.md](skills/kioku/references/capture.md) を参照する。
 
 ## Claude Code
 
@@ -62,8 +68,7 @@ compact ではフックが CLI を取得せず、文を出すだけにする。
 フックは SHA-256 を検証したファイルを一時ディレクトリに置き、1回の `mv -f` で `bin/kioku` へ差し替える。
 既存のファイルには書き込まないので、実行中のプロセスは古いファイルを使い続ける。
 プラグインの更新前に始めたセッションも、次のコマンドから新しい CLI を使う。
-そのため CLI は、スキルが使うコマンド（whoami、pull、put、logout、login、agent login、list、status、version）の後方互換を保つ。
-古い CLI に足りないのは新しい機能だけになる。
+コマンドの後方互換は提供しない。このリリースは CLI 0.1.0 以上を要求し、サーバーは古い版や版ヘッダーのない API 要求を426で拒否する。更新後は新しいセッションで現在のスキルと CLI を使う。
 
 初回取得には curl、tar、sha256sum または shasum が必要。
 対応環境は macOS と Linux の amd64・arm64。
@@ -104,7 +109,7 @@ Claude Code の sandbox を有効にしている場合は、sandbox の設定で
 指定がなければ `~/.local/share/kioku/projects/<organization>/<project>` を使う。
 プロジェクトはプラグインのデータ領域の外に置き、アンインストール後も inbox を残す。
 
-人の `kioku login` が成功したら、スキルが `list` を確認し、各 path を直列に pull する。
+人の `kioku login` が成功したら、スキルが `project list` を確認し、各 path を直列に pull する。
 1件失敗しても残りを続行し、結果をまとめて伝える。CLI の login 自体は取得しない。
 選択中のプロジェクトの pull は会話の初回取得を兼ねる。重ねて pull しない。
 
@@ -113,7 +118,7 @@ Claude Code の sandbox を有効にしている場合は、sandbox の設定で
 対象サーバーの `/mcp` を Claude の connector に接続する。
 既定は `https://kioku.magicians.ee/mcp`。
 local mode の namespace はユーザー指定、repository、カタログから確定する。
-認証前の `list` は不要。
+認証前の `project list` は不要。
 
 スキルは `whoami` の `agent_id` を確認する。人の認証が有効なら使い続ける。
 人の認証がなく、有効な agent 認証があれば、agent 認証を使う。
@@ -164,5 +169,5 @@ python3 -m unittest discover -s tests
 KIOKU_TEST_BINARY=/absolute/path/to/kioku python3 -m unittest discover -s tests
 ```
 
-旧コマンド・互換エイリアス・migration コードは用意しない。
+旧コマンド・互換エイリアスは用意しない。
 プラグインは自分と同じバージョンの CLI を使う。

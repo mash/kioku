@@ -166,6 +166,8 @@ kioku connect github
 
 `kioku login` は CLI と同じ端末のブラウザで認証する必要があります（SSH 先や別端末で開く使い方には対応しません）。
 
+`login`・`connect`・`agent login` では、標準サーバー（`https://kioku.magicians.ee`）以外への初回認証時に接続先を表示し、信頼するか確認します。承認はユーザーの `~/.config/kioku/auth/` に接続先ごとに保存し、次回から確認を省略します。別の接続先には改めて承認が必要です。未承認の接続先は、`--server ORIGIN` や `KIOKU_SERVER` で指定した場合も端末での承認が必要です。非対話実行で未承認の接続先を選ぶと、通信前に終了します。明示した接続先と `.kioku/config` が異なる場合は拒否します。通常の `pull` などは引き続き `.kioku/config` の接続先を使用します。
+
 ログインと原資料への認可は別です。Google の接続は Docs／Drive の読み取りスコープを使います。既存の GitHub OAuth App 接続は `read:user user:email repo` を要求しますが、生成 Runner にはこの OAuth トークンを渡しません。GitHub App の接続・インストール機能は未実装です。`connect github` だけでは、生成時に非公開リポジトリを取得できません。
 
 `connect` は原資料の取得権限だけを接続します。ログイン方法の追加、プロフィールの変更、ブラウザへのKiokuログインは行いません。既存のログイン用の紐付けは維持します。既存アカウントでCLIにログインしてから実行してください。login／connect は同じ端末のブラウザとloopback、state、PKCEを使用します。connect はOAuthの承認後も、認証済みCLIが単回・短命のコードを交換するまで接続を確定しません。旧CLIのチケット方式は受け付けないため、サーバー更新時にはCLIも更新してください。

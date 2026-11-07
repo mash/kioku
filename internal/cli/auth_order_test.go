@@ -68,6 +68,20 @@ func newOrderFixture(t *testing.T) *orderFixture {
 	return f
 }
 
+func seedTrustedOrigin(t *testing.T, credentialPath, origin string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(credentialPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialPath+".trusted", data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *orderFixture) run(args ...string) error {
 	f.out.Reset()
 	f.err.Reset()
@@ -145,6 +159,7 @@ func TestHumanCredentialWinsOverAgentCredential(t *testing.T) {
 
 func TestExpiredAgentCredentialNeedsAgentLogin(t *testing.T) {
 	f := newOrderFixture(t)
+	seedTrustedOrigin(t, f.app.credentialPath(), f.server.URL)
 	f.bind()
 	path := f.writeAgent("expired")
 	if err := f.run("whoami"); err == nil || !strings.Contains(err.Error(), "run kioku agent login") {
@@ -205,6 +220,7 @@ func TestLogoutAcceptsRevokedHumanSession(t *testing.T) {
 
 func TestDamagedHumanCredentialAllowsOnlyLogin(t *testing.T) {
 	f := newOrderFixture(t)
+	seedTrustedOrigin(t, f.app.credentialPath(), f.server.URL)
 	f.writeHuman(orderHumanToken)
 	if err := os.WriteFile(f.app.credentialPath(), []byte("{not json"), 0600); err != nil {
 		t.Fatal(err)
@@ -231,6 +247,7 @@ func TestDamagedHumanCredentialAllowsOnlyLogin(t *testing.T) {
 
 func TestLoginSendsNoStoredHumanCredential(t *testing.T) {
 	f := newOrderFixture(t)
+	seedTrustedOrigin(t, f.app.credentialPath(), f.server.URL)
 	f.writeHuman(orderHumanToken)
 	if err := f.run("login"); err == nil {
 		t.Fatal("login ignored the 400 reply")

@@ -26,7 +26,6 @@ import (
 
 type Config struct {
 	TrustedProxy               *net.IPNet
-	MABaseURL                  string // Used only by BYOK connection setup handlers.
 	AnthropicWebhookSigningKey string
 	AgentMaxSessions           int
 	AgentJobTimeout            time.Duration
@@ -165,12 +164,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /oauth/authorize", s.wrap(s.oauthAuthorize, false))
 	s.mux.HandleFunc("POST /oauth/authorize", s.wrap(s.oauthAuthorize, false))
 	s.mux.HandleFunc("POST /oauth/token", s.wrap(s.oauthToken, false))
-
-	s.mux.HandleFunc("GET /settings/anthropic", s.wrap(s.anthropicPage, true))
-	s.mux.HandleFunc("POST /settings/anthropic", s.wrap(s.saveAnthropic, true))
-	s.mux.HandleFunc("POST /settings/anthropic/disconnect", s.wrap(s.disconnectAnthropic, true))
-	s.mux.HandleFunc("PUT /api/account/anthropic", s.wrap(s.saveAnthropic, true))
-	s.mux.HandleFunc("DELETE /api/account/anthropic", s.wrap(s.disconnectAnthropic, true))
 
 	s.mux.HandleFunc(agentInputRoute, s.wrap(s.agentInput, true))
 	s.mux.HandleFunc(agentOutputRoute, s.wrap(s.agentOutput, true))

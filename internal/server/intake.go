@@ -143,7 +143,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	s.notify()
 	if form {
-		return render(w, "生成開始", struct{ ProjectID, JobID string }{job.ProjectID, job.ID}, `{{define "body"}}<h1>生成ジョブを開始しました</h1><p>API 利用料金は接続した Console ワークスペースに請求されます。</p><p><a href="/api/projects/{{.ProjectID}}/jobs/{{.JobID}}">ジョブの状態を確認</a></p><p><a href="/">プロジェクト一覧へ</a></p>{{end}}`)
+		return render(w, "生成開始", struct{ ProjectID, JobID string }{job.ProjectID, job.ID}, `{{define "body"}}<h1>生成ジョブを開始しました</h1><p>サーバーに設定された生成処理を使用します。</p><p><a href="/api/projects/{{.ProjectID}}/jobs/{{.JobID}}">ジョブの状態を確認</a></p><p><a href="/">プロジェクト一覧へ</a></p>{{end}}`)
 	}
 	jsonOut(w, http.StatusAccepted, job)
 	return nil
@@ -151,18 +151,6 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 
 func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID string, automatic, full bool, now time.Time) (model.Job, error) {
 	job := model.Job{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, UserID: uid, AgentID: agentID, Status: "queued", Created: now, Automatic: automatic, Full: full}
-	if !automatic {
-		if c := st.Users[uid].Anthropic; c != nil {
-			if agentID != "" {
-				return job, fail(403, "BYOK generation requires a human session")
-			}
-			if c.State != "ready" {
-				return job, fail(409, "Anthropic connection is not ready")
-			}
-			job.AnthropicConnectionID = c.ID
-			job.AgentBudgetCents = s.Config.AgentMaxSessionCents
-		}
-	}
 	pending := 0
 	for _, j := range st.Jobs {
 		if j.ProjectID != p.ID || (j.Status != "queued" && j.Status != "running") {
@@ -244,7 +232,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 					break
 				}
 			}
-			if uid == "" || st.Users[uid].Anthropic != nil {
+			if uid == "" {
 				continue
 			}
 			if _, err := s.queueGeneration(st, p, uid, "", true, false, now); err != nil {

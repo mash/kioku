@@ -591,8 +591,8 @@ func (s *Server) retry(w http.ResponseWriter, r *http.Request, uid string) error
 		if principal.AgentID != "" && j.Kind == "put" && j.InputURL != "" {
 			return fail(403, "agents cannot retry URL intake")
 		}
-		if j.AnthropicConnectionID != "" && (j.UserID != uid || principal.AgentID != "") {
-			return fail(403, "only the user whose Anthropic connection runs this BYOK job can retry it")
+		if j.AnthropicConnectionID != "" {
+			return fail(409, "BYOK has been removed; create a new generation job")
 		}
 		if j.Status != "failed" {
 			return fail(409, "only failed jobs can be retried")

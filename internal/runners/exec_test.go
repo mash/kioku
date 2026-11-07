@@ -19,7 +19,7 @@ func TestExecStartupValidation(t *testing.T) {
 	for _, command := range [][]string{nil, {}, {""}, {"relative-command"}} {
 		c := execConfig(t)
 		c.Command = command
-		_, err := Load(c, nil, nil, nil)
+		_, err := Load(c, nil)
 		if err == nil {
 			t.Fatal(command)
 		}
@@ -27,28 +27,28 @@ func TestExecStartupValidation(t *testing.T) {
 	for _, origin := range []string{"", "not a URL", "http://user@host", "http://host/path", "http://host?q=x", "http://host#fragment", "//host", "file://host", "http://host?"} {
 		c := execConfig(t)
 		c.BaseURL = origin
-		_, err := Load(c, nil, nil, nil)
+		_, err := Load(c, nil)
 		if err == nil {
 			t.Fatal(origin)
 		}
 	}
 	c := execConfig(t)
 	c.AnthropicAPIKey = "partial"
-	if _, err := Load(c, nil, nil, nil); err == nil {
+	if _, err := Load(c, nil); err == nil {
 		t.Fatal("exec bypassed claudemanaged configuration validation")
 	}
 	c = execConfig(t)
 	if err := os.WriteFile(filepath.Join(c.DataDir, "exec-runs"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(c, nil, nil, nil); err == nil {
+	if _, err := Load(c, nil); err == nil {
 		t.Fatal("invalid root accepted")
 	}
 	original := prompts.WikiDefinition
 	defer func() { prompts.WikiDefinition = original }()
 	for _, definition := range []string{"invalid", "---\nmodel: [unterminated\n---\nprompt", "---\nname: no-model\n---\nprompt", "---\nmodel: ''\n---\nprompt"} {
 		prompts.WikiDefinition = definition
-		if _, err := Load(execConfig(t), nil, nil, nil); err == nil {
+		if _, err := Load(execConfig(t), nil); err == nil {
 			t.Fatal("invalid definition accepted")
 		}
 	}
@@ -59,7 +59,7 @@ func TestExecStartupRootAndReconcileOnly(t *testing.T) {
 	if err == nil {
 		c.DataDir = relative
 	}
-	s, err := Load(c, nil, nil, nil)
+	s, err := Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestExecStartupRootAndReconcileOnly(t *testing.T) {
 		t.Fatal(info, err)
 	}
 	c = Config{DataDir: filepath.Join(t.TempDir(), "must-not-create")}
-	s, err = Load(c, nil, nil, nil)
+	s, err = Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +89,14 @@ func TestBaseOriginUsesManagedRule(t *testing.T) {
 		t.Run(origin, func(t *testing.T) {
 			c := execConfig(t)
 			c.BaseURL = origin
-			s, err := Load(c, nil, nil, nil)
+			s, err := Load(c, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close(t.Context())
 			c.Type = "claudemanaged"
 			c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "environment", "key"
-			if _, err := Load(c, nil, nil, nil); err != nil {
+			if _, err := Load(c, nil); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -105,7 +105,7 @@ func TestBaseOriginUsesManagedRule(t *testing.T) {
 
 func TestManagedConfigurationCleansExecWorkdir(t *testing.T) {
 	c := execConfig(t)
-	s, err := Load(c, nil, nil, nil)
+	s, err := Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestManagedConfigurationCleansExecWorkdir(t *testing.T) {
 	}
 	c.Type = "claudemanaged"
 	c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "environment", "key"
-	s, err = Load(c, nil, nil, nil)
+	s, err = Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestManagedConfigurationCleansExecWorkdir(t *testing.T) {
 
 func TestRunnerOwnsCommandAndClose(t *testing.T) {
 	c := execConfig(t)
-	g, err := Load(c, nil, nil, nil)
+	g, err := Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestRunnerOwnsCommandAndClose(t *testing.T) {
 
 func TestNewUsesCurrentRunnerType(t *testing.T) {
 	c := execConfig(t)
-	s, err := Load(c, nil, nil, nil)
+	s, err := Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,14 +201,14 @@ func TestExecStartupRequiresRunnableCommand(t *testing.T) {
 				}
 			}
 			c.Command = []string{path}
-			if _, err := Load(c, nil, nil, nil); err == nil || err.Error() != "KIOKU_RUNNER_COMMAND executable is not runnable" {
+			if _, err := Load(c, nil); err == nil || err.Error() != "KIOKU_RUNNER_COMMAND executable is not runnable" {
 				t.Fatal("unrunnable command accepted or path leaked", err)
 			}
 			if _, err := os.Stat(filepath.Join(c.DataDir, "exec-runs")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("invalid command created run root", err)
 			}
 			c.Type = ""
-			s, err := Load(c, nil, nil, nil)
+			s, err := Load(c, nil)
 			if err != nil {
 				t.Fatal("inactive exec command was validated", err)
 			}
@@ -216,7 +216,7 @@ func TestExecStartupRequiresRunnableCommand(t *testing.T) {
 		})
 	}
 	c := execConfig(t)
-	s, err := Load(c, nil, nil, nil)
+	s, err := Load(c, nil)
 	if err != nil {
 		t.Fatal("runnable command rejected", err)
 	}

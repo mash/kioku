@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// WikiDefinition is shared by the CLI provisioning manifest and BYOK setup.
+// WikiDefinition contains the generation agent manifest and system prompt.
 //
 //go:embed kioku-wiki.md
 var WikiDefinition string

@@ -25,7 +25,6 @@ func managedFixture(t *testing.T) (*fixture, string, model.Project, *fake.Server
 	f, token, p := orgProject(t)
 	ma := fake.New()
 	t.Cleanup(ma.Close)
-	f.s.Config.MABaseURL = ma.URL()
 	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: managedagents.New(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 	return f, token, p, ma

@@ -134,15 +134,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		return err
 	}
 	budgetLimit := s.Config.AgentMaxSessionCents
-	if job.AnthropicConnectionID != "" {
-		c, err := s.jobConnection(job)
-		if err != nil {
-			return err
-		}
-		if c.State != "ready" {
-			return errors.New("Anthropic connection is not ready")
-		}
-
+	if job.AgentBudgetCents > 0 && job.AgentBudgetCents < budgetLimit {
 		budgetLimit = job.AgentBudgetCents
 	}
 
@@ -223,12 +215,6 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 			return err
 		}
 		now := time.Now().UTC()
-		if job.AnthropicConnectionID != "" {
-			c := st.Users[job.UserID].Anthropic
-			if c == nil || c.ID != job.AnthropicConnectionID || c.State != "ready" {
-				return errors.New("Anthropic connection is not ready")
-			}
-		}
 		// The budget caps the managed agent session. It is not a charge.
 		budget := budgetLimit
 		if budget < 50 {

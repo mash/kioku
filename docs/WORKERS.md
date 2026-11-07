@@ -53,11 +53,11 @@ Source `updated_at` and project `sources_updated_at` advance only for material a
 
 ## Generation runner type
 
-`KIOKU_RUNNER` selects the operator's LLM generation runner type. Leave it unset to keep the existing behavior: `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` together enable Managed Agents; with none configured, generation produces a deterministic source wiki. Partial Managed Agents settings fail startup. An explicit `KIOKU_RUNNER=claudemanaged` requires all three settings. Set `KIOKU_RUNNER=exec` for a trusted external command as described below. Unknown runner names fail startup. Changing `KIOKU_RUNNER` while operator-key jobs run makes those jobs fail; wait until running jobs finish before switching. BYOK jobs are not affected.
+`KIOKU_RUNNER` selects the operator's LLM generation runner type. Leave it unset to keep the existing behavior: `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` together enable Managed Agents; with none configured, generation produces a deterministic source wiki. Partial Managed Agents settings fail startup. An explicit `KIOKU_RUNNER=claudemanaged` requires all three settings. Set `KIOKU_RUNNER=exec` for a trusted external command as described below. Unknown runner names fail startup. Changing `KIOKU_RUNNER` while operator-key jobs run makes those jobs fail; wait until running jobs finish before switching.
 
-BYOK jobs always use the owner's Managed Agents connection, regardless of the operator's runner type selection. Production uses only BYOK keys for LLM generation and leaves `ANTHROPIC_API_KEY` empty.
+Generation uses the server's runner configuration. To use your own API key, self-host kiokud. The server does not store personal generation keys.
 
-Each attempt persists `Job.Run` (JSON `run`) with attempt ID, phase, budget, deadline and job token identity before creating external resources. `Start` returns the runner-neutral `ref`, which is saved after creation. Runner selection uses the job’s BYOK connection and current configuration; the runner type is not persisted. Fingerprints include source IDs and hashes.
+Each attempt persists `Job.Run` (JSON `run`) with attempt ID, phase, budget, deadline and job token identity before creating external resources. `Start` returns the runner-neutral `ref`, which is saved after creation. Runner selection uses the server configuration and existing run reference; the runner type is not persisted. Fingerprints include source IDs and hashes.
 
 ## Storage selection and recovery
 
@@ -88,7 +88,7 @@ KIOKU_RUNNER_COMMAND='["/usr/local/bin/kioku-gen", "--config", "/etc/kioku-gen.j
 
 `KIOKU_RUNNER_COMMAND` is a JSON array of strings passed directly as argv, without a shell. Put the command's provider credentials and settings in a file referenced by an absolute argv path, or in its wrapper script. Do not put credentials in argv. kiokud passes only `PATH` from its own environment, `HOME` set to the attempt's working directory, and `TMPDIR` set to that directory's `tmp` subdirectory. It does not pass LLM keys, `DOCKER_HOST`, or the job token as environment variables.
 
-Startup validates the command array and that argv[0] is executable, the `KIOKU_BASE_URL` origin, and the embedded prompt's model, then creates `<DATA>/exec-runs` with mode 0700. Each attempt uses `<job-id>-<attempt-id>` and its `tmp` subdirectory, also mode 0700. `DATA` is the `--data` directory (default `./data`). A missing or non-executable command prevents kiokud from starting. BYOK selects `claudemanaged` regardless of these operator settings.
+Startup validates the command array and that argv[0] is executable, the `KIOKU_BASE_URL` origin, and the embedded prompt's model, then creates `<DATA>/exec-runs` with mode 0700. Each attempt uses `<job-id>-<attempt-id>` and its `tmp` subdirectory, also mode 0700. `DATA` is the `--data` directory (default `./data`). A missing or non-executable command prevents kiokud from starting.
 
 ### JSON contract v1
 

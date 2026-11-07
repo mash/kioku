@@ -14,7 +14,7 @@ func TestManagedConfigRequiresCompleteSettings(t *testing.T) {
 		if mask&4 != 0 {
 			c.AnthropicAPIKey = "key"
 		}
-		if _, err := Load(c, nil, nil, nil); err == nil {
+		if _, err := Load(c, nil); err == nil {
 			t.Fatal(mask)
 		}
 	}

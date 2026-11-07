@@ -380,7 +380,7 @@ The web path is `/acme/platform`. The caller chooses a working directory; `.kiok
 `kioku put [URL|FILES...]` saves sources without generating wiki. URL submissions return durable job metadata before retrieval; file submissions return after durable storage. `--wait` on put/source operations waits only for source intake. The server periodically generates changed projects (daily by default, configured with `kiokud --generate-every`). Frequent puts do not postpone the deadline. `kioku generate` requests an earlier refresh, preserving the current revision and making no AI call if sources are unchanged; `kioku generate --wait` waits for publication and pulls the current wiki. Readers can see partial updates while generation runs. `kioku job wait JOB_ID` pulls only when the job is a generation. See [source intake and generation](docs/WORKERS.md) for queues, freshness, limits and recovery.
 
 
-The default service origin is `https://kioku.magicians.ee`. Source and wiki update timestamps are available through `kioku status`. For Managed Agents with a user's own API key, see the [BYOK runbook](docs/runbooks/byok.md).
+The default service origin is `https://kioku.magicians.ee`. Source and wiki update timestamps are available through `kioku status`. To use your own generation API key, self-host kiokud and configure its [generation runner](#claude-managed-agents-runner). The hosted service does not accept personal generation keys.
 
 ## CLI と skills の責務
 
@@ -423,6 +423,37 @@ Namespaceのorg名・project名はそれぞれ1〜63文字のASCII小文字英�
 operator-key generation and requires `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID`,
 and `KIOKU_MA_ENVIRONMENT_ID`. See [runner configuration](docs/WORKERS.md#generation-runner-type).
 
+自分の生成用 API キーを使う場合は kiokud をセルフホストします。利用者ごとの
+キー登録画面・API はありません。サーバー設定例:
+
+```bash
+export KIOKU_RUNNER=claudemanaged
+export ANTHROPIC_API_KEY=...
+export KIOKU_MA_AGENT_ID=agent_...
+export KIOKU_MA_ENVIRONMENT_ID=env_...
+export KIOKU_BASE_URL=https://kioku.example.com
+kiokud
+```
+
+Agent と Environment は同じ API キーでアクセスできるワークスペースに事前作成します。
+そのワークスペース専用の API キーを使います（サーバー設定には workspace ID の指定はありません）。
+Agent のモデル・ツール設定は [prompts/kioku-wiki.md](prompts/kioku-wiki.md) の
+YAML frontmatter、system prompt はその本文を使用します。Environment は cloud 環境で、
+ネットワークを `KIOKU_BASE_URL` のホストだけに制限し、package managers と MCP servers
+を無効にします。作成した ID を上記の変数へ設定してください。kiokud 起動時の自動作成はしません。
+Managed Agents からその HTTPS URL に到達できる必要があります。
+通常の OAuth・ストレージ設定は [Self-hosting](#self-hosting) を参照してください。
+
+CLI は `kioku --server https://kioku.example.com login` で接続し、
+`kioku --server https://kioku.example.com pull org/project` で作業先を設定します。
+生成予算はサーバーのセッション上限以内で指定できます。指定しない場合はサーバー上限を使います。
+
+BYOK 対応版から更新する場合は、先に旧版で新規投入を止め、接続解除で既存ジョブの
+停止・session/vault cleanup・保存キー削除を完了させてください。未完了のまま更新しません。
+旧 BYOK ジョブは更新後に実行・再試行できません。生成が必要なら新規ジョブを作成します。
+既存バックアップからのキー消去やプロバイダー側のキー失効は自動では行いません。
+従来 BYOK 接続によって停止していた定期生成も通常の対象になるため、再開前に対象と予算を確認します。
+
 ### OpenAI Agents API runner
 
 `KIOKU_RUNNER=openai` selects the OpenAI-managed agent and hosted sandbox for
@@ -430,8 +461,6 @@ operator-key generation. Set `OPENAI_API_KEY` and `KIOKU_OPENAI_MODEL` explicitl
 The application key needs `api.agents.read`, `api.agents.write`,
 `api.responses.write`, `api.vaults.read`, and `api.vaults.write` permissions.
 `KIOKU_BASE_URL` must use HTTPS on port 443 or 8443 and be reachable from OpenAI.
-Existing Anthropic BYOK jobs continue using their original Anthropic connection.
-OpenAI BYOK is not implemented.
 
 The runner reuses the wiki prompt body and input/output archive contract, limits
 sandbox egress and vault token injection to the Kioku host, disables subagents,

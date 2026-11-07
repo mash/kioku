@@ -380,7 +380,7 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
 	s := server.New(server.Config{Providers: map[string]auth.Provider{"google": provider}}, db, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
-	set, err := runners.Load(runners.Config{}, db, cipher, nil)
+	set, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

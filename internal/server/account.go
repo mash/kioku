@@ -222,9 +222,6 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 			}
 		}
 		revokeAccountAccess(st, uid)
-		if connectionBusy(*st, uid) {
-			return fail(409, "disconnect Anthropic before deleting your account")
-		}
 		delete(st.Users, uid)
 		return nil
 	}); err != nil {

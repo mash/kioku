@@ -43,7 +43,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 		t.Fatal(err)
 	}
 	s := New(Config{BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, local.Store{Dir: dir + "/objects"}, key)
-	g, err := runners.Load(runners.Config{}, db, key, nil)
+	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestNoUnauthenticatedEmailLogin(t *testing.T) {
 func (f *fixture) setRunners() {
 	f.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	g, err := runners.Load(f.runnerConfig, f.db, f.s.Cipher, func(jobID, attemptID string) { f.s.ReconcileJob(ctx, jobID, attemptID) })
+	g, err := runners.Load(f.runnerConfig, func(jobID, attemptID string) { f.s.ReconcileJob(ctx, jobID, attemptID) })
 	if err != nil {
 		f.t.Fatal(err)
 	}

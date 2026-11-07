@@ -46,7 +46,7 @@ var ErrTemporary = runner.ErrTemporary
 
 type API struct{ sdk anthropic.BetaService }
 
-func New(baseURL, apiKey string, client *http.Client, workspace ...string) *API {
+func New(baseURL, apiKey string, client *http.Client) *API {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}
@@ -58,9 +58,6 @@ func New(baseURL, apiKey string, client *http.Client, workspace ...string) *API 
 	// Service construction deliberately avoids SDK environment credential/header
 	// discovery. Only the configured server key and explicit origin are used.
 	opts := []option.RequestOption{option.WithBaseURL(baseURL), option.WithAPIKey(apiKey), option.WithHTTPClient(&copyClient), option.WithMaxRetries(0), option.WithHeader("anthropic-version", "2023-06-01")}
-	if len(workspace) > 0 && workspace[0] != "" {
-		opts = append(opts, option.WithHeader("anthropic-workspace-id", workspace[0]))
-	}
 	sdk := anthropic.NewBetaService(opts...)
 	return &API{sdk: sdk}
 }

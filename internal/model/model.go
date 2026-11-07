@@ -9,16 +9,6 @@ import (
 	"github.com/mash/kioku/internal/blob"
 )
 
-type AnthropicConnection struct {
-	ID            string `json:"id"`
-	EncryptedKey  string `json:"encrypted_key"`
-	WorkspaceID   string `json:"workspace_id"`
-	AgentID       string `json:"agent_id"`
-	AgentVersion  int64  `json:"agent_version"`
-	EnvironmentID string `json:"environment_id"`
-	State         string `json:"state"`
-}
-
 type Organization struct {
 	ID      string            `json:"id"`
 	Slug    string            `json:"slug"`
@@ -72,12 +62,11 @@ func (o Organization) MarshalJSON() ([]byte, error) {
 }
 
 type User struct {
-	Anthropic   *AnthropicConnection `json:"anthropic,omitempty"`
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Email       string               `json:"email"`
-	Identities  map[string]string    `json:"identities,omitempty"`
-	Connections map[string]string    `json:"connections,omitempty"` // encrypted OAuth credentials
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Email       string            `json:"email"`
+	Identities  map[string]string `json:"identities,omitempty"`
+	Connections map[string]string `json:"connections,omitempty"` // encrypted OAuth credentials
 }
 type Project struct {
 	StorageBucket           string            `json:"storage_bucket,omitempty"`
@@ -179,6 +168,7 @@ type Revision struct {
 	SourceIDs        []string            `json:"source_ids"`
 }
 type Job struct {
+	// Retained only to reject execution/retry of retired BYOK jobs.
 	AnthropicConnectionID string    `json:"anthropic_connection_id,omitempty"`
 	AgentBudgetCents      int64     `json:"agent_budget_cents,omitempty"`
 	Run                   *AgentRun `json:"run,omitempty"`

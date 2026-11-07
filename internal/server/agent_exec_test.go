@@ -181,7 +181,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				f.runnerConfig.Command = []string{os.Args[0]}
 				f.runnerConfig.DataDir = t.TempDir()
 				restored := New(f.s.Config, f.db, f.s.Blobs, f.s.Cipher)
-				g, err := runners.Load(f.runnerConfig, f.db, f.s.Cipher, nil)
+				g, err := runners.Load(f.runnerConfig, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

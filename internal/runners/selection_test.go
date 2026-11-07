@@ -3,9 +3,6 @@ package runners
 import (
 	"fmt"
 	"testing"
-
-	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/store"
 )
 
 func TestRunnerStartupSelection(t *testing.T) {
@@ -22,7 +19,7 @@ func TestRunnerStartupSelection(t *testing.T) {
 				if mask&4 != 0 {
 					c.MAEnvironmentID = "environment"
 				}
-				s, err := Load(c, nil, nil, nil)
+				s, err := Load(c, nil)
 				wantOK := mask == 7 || runner == "" && mask == 0
 				if (err == nil) != wantOK {
 					t.Fatal(err)
@@ -34,14 +31,14 @@ func TestRunnerStartupSelection(t *testing.T) {
 		}
 	}
 	for _, runner := range []string{"exec", "invalid"} {
-		if _, err := Load(Config{Type: runner}, nil, nil, nil); err == nil {
+		if _, err := Load(Config{Type: runner}, nil); err == nil {
 			t.Fatal(err)
 		}
 	}
 	for _, change := range []func(*Config){func(c *Config) { c.MAAgentVersion = -1 }, func(c *Config) { c.BaseURL = "https://kioku.test/path" }, func(c *Config) { c.AgentMaxSessionCents = 49 }} {
 		c := Config{Type: "claudemanaged", AnthropicAPIKey: "key", MAAgentID: "agent", MAEnvironmentID: "environment", BaseURL: "https://kioku.test"}
 		change(&c)
-		if _, err := Load(c, nil, nil, nil); err == nil {
+		if _, err := Load(c, nil); err == nil {
 			t.Fatal("invalid claudemanaged settings accepted")
 		}
 	}
@@ -55,34 +52,8 @@ func TestLegacyManagedRunnerRejected(t *testing.T) {
 			c.MAAgentID = "agent"
 			c.MAEnvironmentID = "environment"
 		}
-		if _, err := Load(c, nil, nil, nil); err == nil || err.Error() != "unknown KIOKU_RUNNER" {
+		if _, err := Load(c, nil); err == nil || err.Error() != "unknown KIOKU_RUNNER" {
 			t.Fatalf("configured=%t: expected unknown runner error, got %v", configured, err)
-		}
-	}
-}
-
-func TestBYOKIgnoresRunnerSelection(t *testing.T) {
-	db, err := store.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.Update(func(st *model.State) error {
-		st.Users["user"] = model.User{ID: "user", Anthropic: &model.AnthropicConnection{ID: "connection", AgentID: "agent", EnvironmentID: "env"}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	g, err := Load(Config{}, db, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, selection := range []string{"", "claudemanaged", "exec", "openai", "invalid"} {
-		// Saved BYOK jobs must not depend on the operator's current selection.
-		g.config.Type = selection
-		r, err := g.New(model.Job{UserID: "user", AnthropicConnectionID: "connection"})
-		if err != nil || r == nil {
-			t.Fatal(selection, err)
 		}
 	}
 }

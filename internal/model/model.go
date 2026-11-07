@@ -173,6 +173,12 @@ type Job struct {
 	Created               time.Time `json:"created"`
 }
 type State struct {
+	GitHubAppConnections        map[string]GitHubAppConnection        `json:"github_app_connections"`
+	GitHubAppConnectAttempts    map[string]GitHubAppConnectAttempt    `json:"github_app_connect_attempts"`
+	GitHubAttemptAuthorizations map[string]GitHubAttemptAuthorization `json:"github_attempt_authorizations"`
+	GitHubTokenAttempts         map[string]GitHubTokenAttempt         `json:"github_token_attempts"`
+	GitHubMetrics               map[string]GitHubMetrics              `json:"github_metrics"`
+
 	Inbox         map[string]InboxItem    `json:"inbox"`
 	OAuthClients  map[string]OAuthClient  `json:"oauth_clients"`
 	OAuthCodes    map[string]OAuthCode    `json:"oauth_codes"`
@@ -200,7 +206,7 @@ type Audit struct {
 }
 
 func NewState() State {
-	return State{Inbox: map[string]InboxItem{}, OAuthClients: map[string]OAuthClient{}, OAuthCodes: map[string]OAuthCode{}, OAuthTokens: map[string]OAuthGrant{}, LoginCodes: map[string]LoginCode{}, AgentTokens: map[string]AgentToken{}, Organizations: map[string]Organization{}, Audit: map[string]Audit{}, Users: map[string]User{}, Projects: map[string]Project{}, Invites: map[string]Invite{}, Sessions: map[string]Session{}, OAuth: map[string]OAuthState{}, Devices: map[string]Device{}, Revisions: map[string]Revision{}, Jobs: map[string]Job{}}
+	return State{GitHubAppConnections: map[string]GitHubAppConnection{}, GitHubAppConnectAttempts: map[string]GitHubAppConnectAttempt{}, GitHubAttemptAuthorizations: map[string]GitHubAttemptAuthorization{}, GitHubTokenAttempts: map[string]GitHubTokenAttempt{}, GitHubMetrics: map[string]GitHubMetrics{}, Inbox: map[string]InboxItem{}, OAuthClients: map[string]OAuthClient{}, OAuthCodes: map[string]OAuthCode{}, OAuthTokens: map[string]OAuthGrant{}, LoginCodes: map[string]LoginCode{}, AgentTokens: map[string]AgentToken{}, Organizations: map[string]Organization{}, Audit: map[string]Audit{}, Users: map[string]User{}, Projects: map[string]Project{}, Invites: map[string]Invite{}, Sessions: map[string]Session{}, OAuth: map[string]OAuthState{}, Devices: map[string]Device{}, Revisions: map[string]Revision{}, Jobs: map[string]Job{}}
 }
 
 type FileInput struct {

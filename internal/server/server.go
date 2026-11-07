@@ -18,12 +18,14 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
 )
 
 type Config struct {
+	GitHubApp                  githubapp.Config
 	TrustedProxy               *net.IPNet
 	AnthropicWebhookSigningKey string
 	AgentMaxSessions           int
@@ -47,6 +49,7 @@ type Runners interface {
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
+	GitHubApp    *githubapp.Service
 	GitHubTokens GitHubTokenProvider
 	runners      Runners
 	Config       Config
@@ -90,6 +93,7 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 		c.RatePerMinute = 600
 	}
 	s := &Server{Config: c, DB: db, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
+	s.GitHubApp = githubapp.NewService(&githubapp.Client{Config: c.GitHubApp}, db, key)
 	s.routes()
 	return s
 }

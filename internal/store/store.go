@@ -364,7 +364,7 @@ func writeRecords(db *sql.DB, st model.State) error {
 	groups := []struct {
 		kind  string
 		value any
-	}{{"oauth_clients", st.OAuthClients}, {"oauth_codes", st.OAuthCodes}, {"oauth_tokens", st.OAuthTokens}, {"login_codes", st.LoginCodes}, {"agent_tokens", st.AgentTokens}, {"users", st.Users}, {"projects", projectConfigs(st)}, {"invites", st.Invites}, {"sessions", st.Sessions}, {"oauth", st.OAuth}, {"devices", st.Devices}, {"organizations", st.Organizations}}
+	}{{"github_app_connections", st.GitHubAppConnections}, {"github_app_connect_attempts", st.GitHubAppConnectAttempts}, {"github_attempt_authorizations", st.GitHubAttemptAuthorizations}, {"github_token_attempts", st.GitHubTokenAttempts}, {"github_metrics", st.GitHubMetrics}, {"oauth_clients", st.OAuthClients}, {"oauth_codes", st.OAuthCodes}, {"oauth_tokens", st.OAuthTokens}, {"login_codes", st.LoginCodes}, {"agent_tokens", st.AgentTokens}, {"users", st.Users}, {"projects", projectConfigs(st)}, {"invites", st.Invites}, {"sessions", st.Sessions}, {"oauth", st.OAuth}, {"devices", st.Devices}, {"organizations", st.Organizations}}
 	for _, g := range groups {
 		b, _ := json.Marshal(g.value)
 		var items map[string]json.RawMessage

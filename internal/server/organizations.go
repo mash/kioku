@@ -206,6 +206,9 @@ func (s *Server) namespacePage(w http.ResponseWriter, r *http.Request, uid strin
 
 func (s *Server) Prepare() error {
 	s.prepareOnce.Do(func() {
+		if s.prepareErr = s.GitHubApp.Recover(); s.prepareErr != nil {
+			return
+		}
 		if s.runners == nil {
 			s.prepareErr = errors.New("runners are not configured")
 			return

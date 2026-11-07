@@ -91,7 +91,7 @@ func projectConfigs(st model.State) map[string]projectConfig {
 }
 func controlJSON(st model.State) ([]byte, error) {
 	return json.Marshal(map[string]any{
-		"oauth_clients": st.OAuthClients, "oauth_codes": st.OAuthCodes, "oauth_tokens": st.OAuthTokens, "login_codes": st.LoginCodes,
+		"github_app_connections": st.GitHubAppConnections, "github_app_connect_attempts": st.GitHubAppConnectAttempts, "github_attempt_authorizations": st.GitHubAttemptAuthorizations, "github_token_attempts": st.GitHubTokenAttempts, "github_metrics": st.GitHubMetrics, "oauth_clients": st.OAuthClients, "oauth_codes": st.OAuthCodes, "oauth_tokens": st.OAuthTokens, "login_codes": st.LoginCodes,
 		"users": st.Users, "projects": projectConfigs(st), "organizations": st.Organizations,
 		"agent_tokens": st.AgentTokens, "invites": st.Invites, "sessions": st.Sessions, "oauth": st.OAuth, "devices": st.Devices,
 	})

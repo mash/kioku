@@ -20,6 +20,7 @@ import (
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/config"
 	"github.com/mash/kioku/internal/connector/registry"
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
@@ -110,6 +111,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	githubConfig, err := githubapp.LoadConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
 	providers := map[string]auth.Provider{}
 	for _, name := range registry.Names() {
 		prefix := strings.ToUpper(name)
@@ -131,7 +136,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(server.Config{TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
+	app := server.New(server.Config{GitHubApp: githubConfig, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
 	set, err := runners.Load(runners.Config{Type: selection, OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), OpenAIModel: os.Getenv("KIOKU_OPENAI_MODEL"), Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, func(jobID, attemptID string) { app.ReconcileJob(ctx, jobID, attemptID) })
 	if err != nil {
 		return err

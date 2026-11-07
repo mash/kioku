@@ -29,7 +29,7 @@ func acceptsAgentIO(job model.Job) bool {
 	return false
 }
 func agentIOJob(st model.State, principal model.Session, pid, jid string) (model.Job, error) {
-	if err := checkGenerator(st, principal, pid, jid); err != nil {
+	if err := checkJobToken(st, principal, pid, jid); err != nil {
 		return model.Job{}, err
 	}
 	job, ok := st.Jobs[jid]

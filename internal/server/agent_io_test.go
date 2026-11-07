@@ -77,7 +77,7 @@ func setManagedPhase(t *testing.T, f *fixture, job model.Job, phase model.Manage
 	}
 }
 func TestAgentIOPhasesAndResend(t *testing.T) {
-	f, raw, job, _, human := generatorFixture(t)
+	f, raw, job, _, human := jobTokenFixture(t)
 	input := []byte("saved input archive")
 	if err := f.s.Blobs.Put(context.Background(), agentJobKey(job, "input.tar.gz"), input); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 			t.Fatal(c)
 		}
 	}
-	if err := f.db.Update(func(st *model.State) error { revokeGeneratorToken(st, job.ID); return nil }); err != nil {
+	if err := f.db.Update(func(st *model.State) error { revokeJobToken(st, job.ID); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if c, _ := agentRequest(t, f, job, raw, "GET", "input", nil); c != 403 {
@@ -129,7 +129,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 	}
 }
 func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
-	f, raw, job, _, _ := generatorFixture(t)
+	f, raw, job, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
 	for _, pages := range []map[string]string{{"wiki/index.md": "ok", "wiki/../../x.md": "bad"}, {"wiki/index.md": "ok", "wiki/source-x.md": "bad"}, {"wiki/a.md": "no index"}, {"wiki/index.md": string([]byte{0xff})}} {
 		if code, b := agentRequest(t, f, job, raw, "PUT", "output", outputArchive(t, pages)); code != 400 || !bytes.Contains(b, []byte(`"problems"`)) {
@@ -151,7 +151,7 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 	})
 }
 func TestAgentOutputIncludesSourcePagesInSizeLimit(t *testing.T) {
-	f, raw, job, _, _ := generatorFixture(t)
+	f, raw, job, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
 	src := model.Source{ID: "large", ProjectID: job.ProjectID, TextKey: blob.Key("projects/" + job.ProjectID + "/sources/large/extracted.md")}
 	if err := f.s.Blobs.Put(context.Background(), src.TextKey, bytes.Repeat([]byte("x"), 64<<20)); err != nil {
@@ -179,7 +179,7 @@ func TestAgentOutputIncludesSourcePagesInSizeLimit(t *testing.T) {
 func TestAgentIORejectsTerminalStatusIndependently(t *testing.T) {
 	for _, status := range []string{"completed", "failed"} {
 		t.Run(status, func(t *testing.T) {
-			f, raw, job, _, _ := generatorFixture(t)
+			f, raw, job, _, _ := jobTokenFixture(t)
 			setManagedPhase(t, f, job, model.PhaseOutputReceived, status)
 			body := outputArchive(t, map[string]string{"wiki/index.md": "# Late replacement"})
 			if code, b := agentRequest(t, f, job, raw, "PUT", "output", body); code != 409 {

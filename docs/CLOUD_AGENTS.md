@@ -79,11 +79,11 @@ Request authentication retains the original restricted principal for the entire 
 
 The server has one mutable wiki/maps tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. The service-owned intake journal is available as the recent `wiki/inbox.md` view, including before the first generation. Project content and generation cursors live in project storage, independently of the account/configuration SQLite backup.
 
-## Internal generator credential
+## Internal job credential
 
-Managed wiki generation uses a third role, `generator`, issued only by kiokud. Users cannot obtain it. It permits only GET input and PUT output for one project and one job; human sessions and read/write agents cannot use those two endpoints. The server stores only its hash and issues a fresh token expiring at the job deadline plus ten minutes. Successful completion, failure and deletion revoke it.
+Managed wiki generation uses a third role, `job`, issued only by kiokud. Users cannot obtain it. It permits only GET input and PUT output for one project and one job; human sessions and read/write agents cannot use those two endpoints. The server stores only its hash and issues a fresh token expiring at the job deadline plus ten minutes. Successful completion, failure and deletion revoke it.
 
-Each job has its own MA vault containing `KIOKU_GENERATOR_TOKEN`, with header injection allowed only for the kiokud host. The agent container receives no Anthropic server key, OAuth credentials, object-store credentials or other project token. The environment disables package-manager and MCP networking, web fetch and web search. A generator can access only its captured input and return validated wiki pages; it cannot submit new sources, manage membership or inspect other jobs.
+Each job has its own MA vault containing `KIOKU_JOB_TOKEN`, with header injection allowed only for the kiokud host. The agent container receives no Anthropic server key, OAuth credentials, object-store credentials or other project token. The environment disables package-manager and MCP networking, web fetch and web search. A job credential can access only its captured input and return validated wiki pages; it cannot submit new sources, manage membership or inspect other jobs.
 
 Source text is untrusted data, retained verbatim as evidence. Generated pages must be a complete set; source and intake paths are reserved. The service checks path traversal, special files, duplicates, UTF-8, page count, compressed/expanded sizes and the final assembled size before accepting an output. Completed sessions/vaults are archived, and input/output tar objects are deleted. External cleanup failures are logged for operator follow-up.
 

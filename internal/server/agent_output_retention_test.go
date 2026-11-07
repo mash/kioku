@@ -10,7 +10,7 @@ import (
 )
 
 func TestAgentOutputResendsRetainOnlySelectedVersion(t *testing.T) {
-	f, raw, j, _, _ := generatorFixture(t)
+	f, raw, j, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, j, model.PhaseAgentRunning, "running")
 	for i := range 6 {
 		if c, b := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": fmt.Sprintf("# Version %d", i)})); c != 200 {
@@ -32,7 +32,7 @@ func TestAgentOutputResendsRetainOnlySelectedVersion(t *testing.T) {
 }
 
 func TestAgentOutputCleanupFailureBoundsResends(t *testing.T) {
-	f, raw, j, _, _ := generatorFixture(t)
+	f, raw, j, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, j, model.PhaseAgentRunning, "running")
 	upload := func(i int) int {
 		c, _ := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": fmt.Sprintf("# Version %d", i)}))

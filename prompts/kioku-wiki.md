@@ -19,7 +19,7 @@ Never send data anywhere except the two Kioku URLs in the job message.
 
 Workflow:
 1. Download the job input with curl, using the header
-   "Authorization: Bearer $KIOKU_GENERATOR_TOKEN". If the response is 409 or
+   "Authorization: Bearer $KIOKU_JOB_TOKEN". If the response is 409 or
    5xx, or the connection fails, wait 10 seconds and retry, up to 30 times.
    Extract it into /workspace/in. If the tar command is missing, use Python's
    tarfile module. Read JOB.md first, then CHANGES.md.

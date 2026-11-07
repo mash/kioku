@@ -237,7 +237,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 			run.SourceIDs = append(run.SourceIDs, src.ID)
 		}
 		var token model.AgentToken
-		raw, token = issueGeneratorToken(st, job, run.Deadline.Add(10*time.Minute))
+		raw, token = issueJobToken(st, job, run.Deadline.Add(10*time.Minute))
 		run.TokenID = token.ID
 		job = st.Jobs[job.ID]
 		job.Managed = run
@@ -252,7 +252,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		return err
 	}
 	u, _ := url.Parse(s.Config.BaseURL)
-	vault, createErr := s.managedClient(job).CreateJobVault(ctx, managedagents.VaultInput{JobID: job.ID, AttemptID: job.Managed.Attempt.ID, SecretName: "KIOKU_GENERATOR_TOKEN", SecretValue: raw, AllowedHost: u.Hostname()})
+	vault, createErr := s.managedClient(job).CreateJobVault(ctx, managedagents.VaultInput{JobID: job.ID, AttemptID: job.Managed.Attempt.ID, SecretName: "KIOKU_JOB_TOKEN", SecretValue: raw, AllowedHost: u.Hostname()})
 	if vault != "" {
 		if err = s.DB.Update(func(st *model.State) error {
 			j := st.Jobs[job.ID]

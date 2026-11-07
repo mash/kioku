@@ -49,7 +49,7 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 			t.Errorf("prompt lacks %q", rule)
 		}
 	}
-	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_GENERATOR_TOKEN", "diff -u", "400 or 413", "16 MiB"} {
+	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_JOB_TOKEN", "diff -u", "400 or 413", "16 MiB"} {
 		if !strings.Contains(system, text) {
 			t.Error("prompt missing", text)
 		}

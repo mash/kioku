@@ -12,10 +12,10 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func generatorFixture(t *testing.T) (*fixture, string, model.Job, model.AgentToken, string) {
+func jobTokenFixture(t *testing.T) (*fixture, string, model.Job, model.AgentToken, string) {
 	t.Helper()
 	f := setupWithWorker(t, false)
-	human := f.login("generator-owner@example.com")
+	human := f.login("job-owner@example.com")
 	p := securityProject(t, f, human)
 	var job model.Job
 	var token model.AgentToken
@@ -23,16 +23,16 @@ func generatorFixture(t *testing.T) (*fixture, string, model.Job, model.AgentTok
 	if err := f.db.Update(func(st *model.State) error {
 		job = model.Job{ID: "job", ProjectID: p.ID, UserID: st.Sessions[auth.Hash(human)].UserID, Kind: "generate", Status: "running", Created: time.Now().UTC()}
 		st.Jobs[job.ID] = job
-		raw, token = issueGeneratorToken(st, job, time.Now().Add(time.Hour))
+		raw, token = issueJobToken(st, job, time.Now().Add(time.Hour))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return f, raw, job, token, human
 }
-func TestGeneratorOnlyPermitsJobRoutes(t *testing.T) {
-	f, raw, job, token, human := generatorFixture(t)
-	if token.TokenHash != auth.Hash(raw) || token.TokenHash == raw || token.Name != "generator:"+job.ID {
+func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
+	f, raw, job, token, human := jobTokenFixture(t)
+	if token.TokenHash != auth.Hash(raw) || token.TokenHash == raw || token.Name != "job:"+job.ID {
 		t.Fatal("bad token metadata")
 	}
 	for _, pattern := range []string{agentInputRoute, agentOutputRoute} {
@@ -76,7 +76,7 @@ func TestGeneratorOnlyPermitsJobRoutes(t *testing.T) {
 			} else {
 				x.Expires = time.Now().Add(time.Hour)
 				st.AgentTokens[token.ID] = x
-				revokeGeneratorToken(st, job.ID)
+				revokeJobToken(st, job.ID)
 				return nil
 			}
 			st.AgentTokens[token.ID] = x
@@ -99,8 +99,8 @@ func TestGeneratorOnlyPermitsJobRoutes(t *testing.T) {
 }
 
 // This table is deliberately explicit: adding a route must update the audit.
-func TestGeneratorRouteAudit(t *testing.T) {
-	f, raw, job, _, _ := generatorFixture(t)
+func TestJobTokenRouteAudit(t *testing.T) {
+	f, raw, job, _, _ := jobTokenFixture(t)
 	routes := []string{
 		"POST /api/agent/login",
 		"GET /.well-known/oauth-protected-resource",
@@ -178,7 +178,7 @@ func TestGeneratorRouteAudit(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			parts := strings.SplitN(route, " ", 2)
 			if c := f.request(parts[0], replace.Replace(parts[1]), raw, nil, nil); c != 403 {
-				t.Fatalf("generator escaped route: %s returned %d", route, c)
+				t.Fatalf("job credential escaped route: %s returned %d", route, c)
 			}
 		})
 	}

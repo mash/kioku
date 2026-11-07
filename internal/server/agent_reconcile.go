@@ -215,7 +215,7 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job) erro
 		sources = append(sources, in.Source)
 	}
 	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Sources: sources, Files: files, Fingerprint: agentFingerprint(inputs, job.Managed), Validate: func(st model.State) error { return validateGeneration(st, job, sources) }, Finish: func(st *model.State, now time.Time) error {
-		revokeGeneratorToken(st, job.ID)
+		revokeJobToken(st, job.ID)
 		j := st.Jobs[job.ID]
 		j.Managed.ListCostCents = session.ListCostCents
 		st.Jobs[j.ID] = j
@@ -303,13 +303,13 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job model.Job, 
 		if live {
 			// An accepted interrupt can also be asynchronous. Preserve the durable
 			// stop intent until an observed terminal cost can be recorded.
-			revokeGeneratorToken(st, j.ID)
+			revokeJobToken(st, j.ID)
 			j.Managed.AbortReason = reason
 			st.Jobs[j.ID] = j
 			waitingForStop = true
 			return nil
 		}
-		revokeGeneratorToken(st, j.ID)
+		revokeJobToken(st, j.ID)
 		j.Status = "failed"
 		j.Error = reason
 		if j.Managed != nil {

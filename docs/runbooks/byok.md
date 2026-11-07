@@ -14,7 +14,7 @@ Each user has one connection. The API key is encrypted with the server key from
 with authenticated context binding it to the user and connection. Keep that
 server key stable and protected alongside the encrypted database backups.
 The provider key is never returned by an API or given to the agent sandbox.
-The existing job-scoped Kioku generator token is delivered through the job vault.
+The existing job-scoped Kioku job token is delivered through the job vault.
 
 Manual generation uses the requesting user's connection. The request accepts
 `budget_cents` (minimum 50, maximum the server's configured session limit).
@@ -64,7 +64,7 @@ publication to object storage and browser rendering succeeded.
 
 - Session budget: $0.50; Anthropic-reported list cost: $0.07.
 - Provider session terminated and archived; job vault archived.
-- Kioku generator token revoked; durable cleanup marked complete.
+- Kioku job token revoked; durable cleanup marked complete.
 - HTTPS health and isolated catalog restore/SQLite integrity checks passed.
 
 The real test exposed SDK request unmarshalling dropping model/tool fields.

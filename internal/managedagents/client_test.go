@@ -31,7 +31,7 @@ func createSession(t *testing.T, a *managedagents.API, job string) string {
 func TestClientLifecycleAndWireContract(t *testing.T) {
 	a, f := newClient(t)
 	ctx := context.Background()
-	vault, err := a.CreateJobVault(ctx, managedagents.VaultInput{JobID: "job", SecretName: "KIOKU_GENERATOR_TOKEN", SecretValue: "test-generator-secret", AllowedHost: "kioku.test"})
+	vault, err := a.CreateJobVault(ctx, managedagents.VaultInput{JobID: "job", SecretName: "KIOKU_JOB_TOKEN", SecretValue: "test-job-secret", AllowedHost: "kioku.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestClientLifecycleAndWireContract(t *testing.T) {
 			auth := r.Body["auth"].(map[string]any)
 			network := auth["networking"].(map[string]any)
 			injection := auth["injection_location"].(map[string]any)
-			if auth["type"] != "environment_variable" || auth["secret_name"] != "KIOKU_GENERATOR_TOKEN" || auth["secret_value"] != "test-generator-secret" || network["type"] != "limited" || !reflect.DeepEqual(network["allowed_hosts"], []any{"kioku.test"}) || !reflect.DeepEqual(injection, map[string]any{"header": true}) {
+			if auth["type"] != "environment_variable" || auth["secret_name"] != "KIOKU_JOB_TOKEN" || auth["secret_value"] != "test-job-secret" || network["type"] != "limited" || !reflect.DeepEqual(network["allowed_hosts"], []any{"kioku.test"}) || !reflect.DeepEqual(injection, map[string]any{"header": true}) {
 				t.Fatal(r.Body)
 			}
 		case r.Path == "/v1/sessions" && r.Method == "POST":

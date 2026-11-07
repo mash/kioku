@@ -9,7 +9,7 @@ import (
 )
 
 func TestManagedIOBoundsConcurrentBodyReads(t *testing.T) {
-	f, raw, j, _, _ := generatorFixture(t)
+	f, raw, j, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, j, model.PhaseAgentRunning, "running")
 	first := &pausedReader{make(chan struct{}), make(chan struct{})}
 	second := &pausedReader{make(chan struct{}), make(chan struct{})}

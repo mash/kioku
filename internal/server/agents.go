@@ -34,17 +34,17 @@ func agentFromBearer(st model.State, raw string) (model.Session, bool) {
 	return model.Session{JobID: token.JobID, AgentID: token.ID, ProjectID: token.ProjectID, Role: token.Role, UserID: token.UserID, Created: token.Created, Expires: token.Expires}, true
 }
 func (s *Server) authorizeAgent(r *http.Request, principal model.Session) error {
-	generatorRoute := r.Pattern == agentInputRoute || r.Pattern == agentOutputRoute
-	if principal.Role == "generator" {
-		if !generatorRoute {
-			return fail(403, "generator credential permits only job input and output")
+	jobRoute := r.Pattern == agentInputRoute || r.Pattern == agentOutputRoute
+	if principal.Role == "job" {
+		if !jobRoute {
+			return fail(403, "job credential permits only job input and output")
 		}
 		return s.DB.View(func(st model.State) error {
-			return checkGenerator(st, principal, r.PathValue("project"), r.PathValue("job"))
+			return checkJobToken(st, principal, r.PathValue("project"), r.PathValue("job"))
 		})
 	}
-	if generatorRoute {
-		return fail(403, "job generator credential required")
+	if jobRoute {
+		return fail(403, "job credential required")
 	}
 
 	if principal.AgentID == "" {
@@ -156,28 +156,28 @@ func checkJobAgent(st model.State, job model.Job) error {
 const agentInputRoute = "GET /api/projects/{project}/jobs/{job}/agent/input"
 const agentOutputRoute = "PUT /api/projects/{project}/jobs/{job}/agent/output"
 
-func issueGeneratorToken(st *model.State, job model.Job, expires time.Time) (string, model.AgentToken) {
+func issueJobToken(st *model.State, job model.Job, expires time.Time) (string, model.AgentToken) {
 	id := auth.Token()[:20]
 	raw := "kioku_agent." + id + "." + auth.Token()
-	token := model.AgentToken{ID: id, JobID: job.ID, ProjectID: job.ProjectID, UserID: job.UserID, Name: "generator:" + job.ID, Role: "generator", Created: time.Now().UTC(), Expires: expires, TokenHash: auth.Hash(raw)}
+	token := model.AgentToken{ID: id, JobID: job.ID, ProjectID: job.ProjectID, UserID: job.UserID, Name: "job:" + job.ID, Role: "job", Created: time.Now().UTC(), Expires: expires, TokenHash: auth.Hash(raw)}
 	if st.AgentTokens == nil {
 		st.AgentTokens = map[string]model.AgentToken{}
 	}
 	st.AgentTokens[id] = token
 	return raw, token
 }
-func revokeGeneratorToken(st *model.State, jobID string) {
+func revokeJobToken(st *model.State, jobID string) {
 	for id, t := range st.AgentTokens {
-		if t.Role == "generator" && t.JobID == jobID && t.RevokedAt.IsZero() {
+		if t.Role == "job" && t.JobID == jobID && t.RevokedAt.IsZero() {
 			t.RevokedAt = time.Now().UTC()
 			st.AgentTokens[id] = t
 		}
 	}
 }
-func checkGenerator(st model.State, p model.Session, pid, jobID string) error {
+func checkJobToken(st model.State, p model.Session, pid, jobID string) error {
 	t, ok := activeAgent(st, p.AgentID, time.Now())
-	if !ok || t.Role != "generator" || t.ProjectID != pid || t.JobID != jobID || p.ProjectID != pid || p.JobID != jobID {
-		return fail(403, "invalid job generator credential")
+	if !ok || t.Role != "job" || t.ProjectID != pid || t.JobID != jobID || p.ProjectID != pid || p.JobID != jobID {
+		return fail(403, "invalid job credential")
 	}
 	return nil
 }

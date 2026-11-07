@@ -62,15 +62,15 @@ Each attempt persists Job.Run with attempt ID, pinned inbox IDs, phase, budget, 
 
 Managed runners create one vault per attempt, with one credential per token/destination. All values use runner.Secret. Injection is header-only: KIOKU_JOB_TOKEN to the Kioku host, GITHUB_TOKEN_<account> to api.github.com, and GOOGLE_ACCESS_TOKEN to docs.googleapis.com and www.googleapis.com. Neither the model's input tar/JOB.md/first message nor logs/API responses contain token values. The first message may contain repository-to-placeholder names, which are not secrets. Refresh tokens and GitHub App keys never enter a vault.
 
-Immediately before Start, kiokud selects the project owner's connections. It refreshes Google's access token even if the stored token has not yet expired, and never refreshes it during the run. GitHubTokenProvider resolves only the owner's installations, intersects them with pinned pending URLs and issues tokens with repository_ids and contents:read, splitting at 500 repositories per token. The interface requires attempt-scoped durable revocation, including ambiguous issuance and restart. Cleanup failure keeps the attempt pending for retry. Google access tokens expire; cleanup removes the vault without disconnecting the owner's grant.
+Immediately before Start, kiokud selects the project owner's connections. It refreshes Google's access token even if the stored token has not yet expired, and never refreshes it during the run. GitHubTokenProvider resolves only the owner's installations, intersects them with pinned pending URLs and issues tokens with repository_ids and contents:read, metadata:read, issues:read, splitting at 500 repositories per token. The provider persists issuance intent before sending. Known tokens are encrypted before entering the vault. Lost issuance responses are retained until JWT expiry + one hour + 60 seconds; expiry is not proof of revocation. Cleanup failure keeps the attempt pending for retry. Google access tokens expire; cleanup removes the vault without disconnecting the owner's grant.
 
-The shipped server does not implement/configure the GitHub App connection provider. It therefore puts no GitHub credential in the vault. Public GitHub repositories are fetched unauthenticated and private ones fail. Google connection/refresh failures also omit the credential. Never fall back to another member's credential or the legacy GitHub OAuth token. See [accepted source-access risks](ACCOUNT_ADMIN.md#project-source-authorization-policy).
+The server implements the GitHub App provider, disabled by default. Each repo has token, unauthenticated or blocked mode in the first message. Unconnected or outside-installation repos use unauthenticated requests; disabled, expired authorization, suspended installations and other authorization/issuance failures are blocked. Google connection/refresh failures also omit the credential. Never fall back to another member's credential or the legacy GitHub OAuth token. See [accepted source-access risks](ACCOUNT_ADMIN.md#project-source-authorization-policy).
 
-**The operator must configure runner networking outside Kioku.** Permit the Kioku origin, GitHub/Google API hosts above and the public websites the project needs; allow a model API only if the environment requires it. Decide how redirects, private/reserved addresses and outbound destinations are restricted in the provider environment. Kioku no longer performs server-side DNS-pinned URL fetching and does not install an allowlist. Vault host restrictions limit secret injection, not network egress. In particular, the OpenAI runner does not set a Kioku-only networking override. Disable package managers, MCP servers, web_fetch and web_search; use the approved HTTP tooling for source retrieval. The checked-in environments/kioku-wiki.yaml starts with only the Kioku host; extend that operator-owned configuration for the required source hosts before using pending items. Kioku does not apply that file at startup. Validate the deployed policy before production use.
+**The operator must configure runner networking outside Kioku.** Permit the Kioku origin, GitHub/Google API hosts above and the public websites the project needs; allow a model API only if the environment requires it. Decide how redirects, private/reserved addresses and outbound destinations are restricted in the provider environment. Kioku no longer performs server-side DNS-pinned URL fetching and does not install an allowlist. Vault host restrictions limit secret injection, not network egress. In particular, the OpenAI runner does not set a Kioku-only networking override. Disable package managers, MCP servers, web_fetch and web_search; use the approved HTTP tooling for source retrieval. The checked-in environments/kioku-wiki.yaml includes the Kioku and GitHub/Google API hosts; extend that operator-owned configuration for any additional public source hosts before using pending items. Kioku does not apply that file at startup. Validate the deployed policy before production use.
 
 Exec receives no GitHub/Google source credential and sets fetch_allowed=false in JOB.md. It must log each pending item as a fetch failure and still process fetched/removed items. This is a prompt contract for the trusted command, not an OS network sandbox.
 
-Provider APIs and secret isolation are covered with local fakes. A real managed sandbox, Google refresh/access, GitHub App connection and model behavior remain operator smoke-test requirements; the current repository cannot exercise a real GitHub App flow until that separate implementation exists.
+Provider APIs and secret isolation are covered with local fakes. A real managed sandbox, Google refresh/access, GitHub App connection and model behavior remain operator smoke-test requirements; real-service tests require an operator-created App and explicitly authorized test repositories.
 
 ## Storage selection and recovery
 
@@ -173,3 +173,34 @@ SQLite backups do not restore old wiki page contents. Published source pages and
 Content schema 1 cannot be served by this version. The operator must stop kiokud and manually delete old project content before starting the new version. Upgrade the server, CLI and plugin together, then ask users to put their sources again.
 
 See [implementation decisions and test coverage](INBOX_IMPLEMENTATION.md) for the explicit interpretations and remaining live verification.
+
+### GitHub attempt authorization and recovery
+
+The control catalog holds the owner/version for every managed attempt, including
+attempts with no token. Reconnect, disconnect, GitHub identity unlink and account
+delete invalidate the owner's attempts; project transfer invalidates only that
+project. The same project publication lock covers invalidation. Check the binding
+when saving issuance, before Start and at every publication write. A user-token
+refresh is serialized per owner and records intent before POST; restart or a lost
+rotation response clears the user credential and requires reconnect. No POST is
+retried automatically. Installation/repository authorization reads all pages;
+partial page results never authorize a token. Failures in one installation leave
+other installations usable. Renamed/transferred URLs must be resubmitted when
+they no longer match the current repository names.
+
+A separate 30-second cleanup worker operates even with App settings disabled or
+removed and never waits for runner Stop. Known tokens authenticate their own
+DELETE /installation/token. Only 204 confirms revocation; 401 means unusable,
+not necessarily expired. 403/429/5xx remain pending. Retry-After/reset and
+persisted exponential secondary-limit delays survive restarts. Terminal tokens
+lose ciphertext; records are removed after cleanup and aggregation. Unknown
+issuance has no recoverable token and waits for conservative expiry.
+
+`kioku_github_api_total` measures server requests directly. The separate
+`kioku_github_fetch_report_total` counts model reports from the current attempt's
+pinned inbox IDs in wiki/log.md (success/403/404/expired/other/unreported), once in
+the publication transaction. Old logs are not recounted. Counters persist in the
+catalog independently of wiki retention. Labels contain fixed classifications,
+never repo names, user IDs, URLs or secrets. Cleanup/unknown age, authorization
+age, selected repository count, selection results, list pages and minimum observed
+user/installation rate budgets support operations. See [App operations](GITHUB_APP.md).

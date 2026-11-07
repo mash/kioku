@@ -193,7 +193,7 @@ func (c *Client) request(ctx context.Context, op, method, endpoint string, token
 		}
 	}
 	b, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || readErr != nil {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || (op == "revoke" && resp.StatusCode != http.StatusNoContent) || readErr != nil {
 		f := &Failure{Status: resp.StatusCode, Reason: "temporary", Unknown: method == "POST" && (resp.StatusCode >= 500 || resp.StatusCode < 400 || readErr != nil)}
 		var message struct{ Message string }
 		_ = json.Unmarshal(b, &message)

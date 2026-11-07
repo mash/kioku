@@ -13,6 +13,7 @@ import (
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/wiki"
@@ -177,6 +178,7 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 	}
 	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Files: files, Validate: func(st model.State) error { return validateGeneration(st, job) }, Finish: func(st *model.State, now time.Time) error {
 		revokeJobToken(st, job.ID)
+		countGitHubFetchReports(st, job, pages["wiki/log.md"])
 		for _, id := range job.Run.InboxIDs {
 			if item, ok := st.Inbox[id]; ok && item.RunID == job.Run.Attempt.ID {
 				delete(st.Inbox, id)
@@ -367,6 +369,12 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 			j := st.Jobs[job.ID]
 			if sameManagedRun(j, job) && (j.Status == "completed" || j.Status == "failed") {
 				j.Run.CleanupComplete = true
+				delete(st.GitHubAttemptAuthorizations, githubapp.Key(attempt(j).Key))
+				for id, token := range st.GitHubTokenAttempts {
+					if token.Key == attempt(j).Key {
+						delete(st.GitHubTokenAttempts, id)
+					}
+				}
 				st.Jobs[j.ID] = j
 			}
 			return nil

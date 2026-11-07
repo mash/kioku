@@ -142,6 +142,9 @@ func (s *Server) githubFailure(w http.ResponseWriter, r *http.Request, id, reaso
 	return nil
 }
 func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request, _ string) error {
+	if err := s.githubAvailable(); err != nil {
+		return err
+	}
 	id, a, err := s.githubBrowser(r)
 	if err != nil {
 		return err
@@ -251,9 +254,15 @@ func (s *Server) githubInstallations(w http.ResponseWriter, r *http.Request, _ s
 var githubSelectionPage = template.Must(template.New("github-app").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Connect GitHub sources</title><h1>Connect {{.App}}</h1><p>Kioku server: {{.Origin}}. GitHub user: {{.Login}}.</p>{{if .OldLogin}}<p>This replaces the existing connection for {{.OldLogin}} after the CLI completes.</p>{{end}}<p>Select installations to read with Contents, Metadata and Issues read-only access. No installation is selected by default. Expires 10 minutes after starting; finish in the CLI within 1 minute after selection.</p>{{if .Approval}}<p>approval_required: ask your organization administrator to approve installation, then run kioku connect github again.</p>{{end}}{{if .Installations}}<form method="post" action="/auth/github-app/installations"><input type="hidden" name="csrf" value="{{.CSRF}}">{{range .Installations}}<p><label><input type="checkbox" name="installation" value="{{.ID}}">{{.Account.Login}}</label></p>{{end}}<button type="submit">Connect selected installations</button></form>{{else}}<p>needs_installation: install the App, or ask your administrator to approve it, then reconnect.</p>{{end}}<p><a href="{{.InstallURL}}">Install or update the App</a></p><form method="post" action="/auth/github-app/installations"><input type="hidden" name="csrf" value="{{.CSRF}}"><button name="cancel" value="true">Cancel</button></form></html>`))
 
 func (s *Server) githubSetup(w http.ResponseWriter, r *http.Request, _ string) error {
+	if err := s.githubAvailable(); err != nil {
+		return err
+	}
+	if _, err := r.Cookie("kioku_github_app"); err != nil {
+		return fail(410, "no live connection ticket; run kioku connect github")
+	}
 	id, a, err := s.githubBrowser(r)
 	if err != nil {
-		return fail(410, "no live connection ticket; run kioku connect github")
+		return err
 	}
 	state := r.URL.Query().Get("state")
 	if state == "" || a.SetupHash == "" || a.SetupHash != auth.Hash(state) {
@@ -333,7 +342,7 @@ func (s *Server) githubSelect(w http.ResponseWriter, r *http.Request, id string,
 		if e != nil {
 			return fail(503, "GitHub installation verification failed")
 		}
-		if e = githubapp.ValidateInstallation(verified, s.Config.GitHubApp.ID, v.Account.ID); e != nil {
+		if e = githubapp.ValidateInstallation(verified, s.Config.GitHubApp.ID, v.Account.ID); e != nil || verified.ID != v.ID {
 			return fail(403, "installation permissions unavailable")
 		}
 		if _, e = s.GitHubApp.Client.Repositories(r.Context(), token, v.ID); e != nil {
@@ -404,6 +413,7 @@ func (s *Server) completeGitHub(w http.ResponseWriter, r *http.Request, uid stri
 		case a.Status != "staged" || !d.Expires.After(time.Now()) || d.LoopbackCodeHash != auth.Hash(req.Code) || !validVerifier(req.Verifier) || auth.Challenge(req.Verifier) != d.LoopbackChallenge:
 			problem = fail(410, "connection proof invalid or expired; reconnect")
 		case st.GitHubAppConnections[uid].Version != a.Version:
+			githubapp.Count(st, "kioku_github_version_conflicts_total", 1)
 			problem = fail(409, "connection changed; run kioku connect github again")
 		case !s.Config.GitHubApp.Enabled:
 			problem = fail(503, "GitHub App disabled")

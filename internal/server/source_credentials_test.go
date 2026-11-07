@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 )
@@ -41,12 +42,12 @@ func (f *fakeGitHubTokens) Installations(_ context.Context, owner string, repos 
 	}
 	return f.installations, nil
 }
-func (f *fakeGitHubTokens) Issue(_ context.Context, key runner.AttemptKey, id int64, request GitHubTokenRequest) (runner.Secret, error) {
-	f.issues = append(f.issues, tokenIssue{key, id, request})
+func (f *fakeGitHubTokens) Issue(_ context.Context, key runner.AttemptKey, scope githubapp.AuthorizedRepositorySet) (runner.Secret, error) {
+	f.issues = append(f.issues, tokenIssue{key, scope.InstallationID, GitHubTokenRequest{RepositoryIDs: scope.RepositoryIDs, Permissions: githubapp.Permissions()}})
 	if f.failIssue {
 		return "", errors.New("ambiguous issuance github-secret")
 	}
-	return runner.Secret(fmt.Sprintf("github-secret-%d", id)), nil
+	return runner.Secret(fmt.Sprintf("github-secret-%d", scope.InstallationID)), nil
 }
 func (f *fakeGitHubTokens) Revoke(_ context.Context, key runner.AttemptKey) error {
 	f.revoked = append(f.revoked, key)
@@ -129,7 +130,7 @@ func TestOwnerSourceCredentialsStayInVaultAndRevokeByAttempt(t *testing.T) {
 		t.Fatal("did not use owner credentials", *calls, provider.owner, provider.issues)
 	}
 	for _, issue := range provider.issues {
-		if len(issue.request.RepositoryIDs) != 1 || issue.request.RepositoryIDs[0] == 999 || !reflect.DeepEqual(issue.request.Permissions, map[string]string{"contents": "read"}) {
+		if len(issue.request.RepositoryIDs) != 1 || issue.request.RepositoryIDs[0] == 999 || !reflect.DeepEqual(issue.request.Permissions, githubapp.Permissions()) {
 			t.Fatal(issue)
 		}
 	}
@@ -168,6 +169,7 @@ func TestOwnerSourceCredentialsStayInVaultAndRevokeByAttempt(t *testing.T) {
 		t.Fatal("failed revocation forgotten", j.Run)
 	}
 	restartManagedFixture(t, f)
+	f.s.GitHubTokens = nil // Simulate a missing revocation dependency.
 	j = reconcileManaged(t, f, j)
 	if j.Run.CleanupComplete {
 		t.Fatal("missing provider forgot revocation")
@@ -250,7 +252,10 @@ func TestGitHubTokensAreSplitAndRestrictedToInboxRepositories(t *testing.T) {
 	installation.Repositories = append(installation.Repositories, GitHubRepository{Account: "acme", Name: "unrequested", ID: 9999})
 	provider.installations = []GitHubInstallation{installation}
 	s := &Server{GitHubTokens: provider}
-	credentials := s.githubCredentials(t.Context(), "owner", runner.AttemptKey{JobID: "job", AttemptID: "attempt"}, requested)
+	credentials, _, err := s.githubCredentials(t.Context(), "owner", runner.AttemptKey{JobID: "job", AttemptID: "attempt"}, 0, requested)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(credentials) != 3 || len(provider.issues) != 3 {
 		t.Fatal(len(credentials), provider.issues)
 	}

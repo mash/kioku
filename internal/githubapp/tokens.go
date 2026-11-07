@@ -45,6 +45,9 @@ func NewService(client *Client, db *store.Store, cipher *auth.Cipher) *Service {
 	client.Observe = func(o Observation) {
 		_ = db.Update(func(st *model.State) error {
 			Count(st, fmt.Sprintf(`kioku_github_api_total{operation=%q,status_class=%q,reason=%q}`, o.Operation, o.Class, o.Reason), 1)
+			if o.Operation == "installations" || o.Operation == "repositories" {
+				Count(st, fmt.Sprintf(`kioku_github_list_pages_total{operation=%q}`, o.Operation), 1)
+			}
 			if o.Remaining >= 0 {
 				m := st.GitHubMetrics["cumulative"]
 				if m.RateRemaining == nil {
@@ -135,7 +138,10 @@ func (s *Service) Issue(ctx context.Context, key runner.AttemptKey, scope Author
 		old = st.GitHubTokenAttempts[id]
 		return nil
 	}); err != nil {
-		return "", err
+		if errors.Is(err, ErrAuthorization) {
+			return "", err
+		}
+		return "", PersistenceError{}
 	}
 	if old.Status != "" {
 		if old.Status != "active" || !old.ExpiresAt.After(s.Client.now()) {
@@ -303,7 +309,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 	keys := map[string]runner.AttemptKey{}
 	if err := s.DB.View(func(st model.State) error {
 		for _, t := range st.GitHubTokenAttempts {
-			if !terminal(t.Status) && (!Authorized(st, t.Key, t.OwnerID, t.ConnectionVersion) || !t.RevocationRequestedAt.IsZero()) {
+			if !terminal(t.Status) && (!s.Client.Config.Enabled || !Authorized(st, t.Key, t.OwnerID, t.ConnectionVersion) || !t.RevocationRequestedAt.IsZero() || (!t.ExpiresAt.IsZero() && !t.ExpiresAt.After(s.Client.now()))) {
 				keys[Key(t.Key)] = t.Key
 			}
 		}

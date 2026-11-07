@@ -25,6 +25,11 @@ func (s *Server) RunWorker(ctx context.Context) error {
 	if err := s.Prepare(); err != nil {
 		return err
 	}
+	// GitHub revocation is independent of runner inspection/stop and the job queue.
+	githubCtx, stopGitHub := context.WithCancel(ctx)
+	githubDone := make(chan struct{})
+	go func() { defer close(githubDone); s.runGitHubCleanup(githubCtx) }()
+	defer func() { stopGitHub(); <-githubDone }()
 	// Recover existing runs before dequeuing any new job.
 	if err := s.reconcileAgentJobs(ctx); err != nil {
 		if ctx.Err() != nil {

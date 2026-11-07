@@ -94,6 +94,7 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 	}
 	s := &Server{Config: c, DB: db, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
 	s.GitHubApp = githubapp.NewService(&githubapp.Client{Config: c.GitHubApp}, db, key)
+	s.GitHubTokens = &githubAppProvider{service: s.GitHubApp}
 	s.routes()
 	return s
 }

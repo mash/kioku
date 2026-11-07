@@ -11,6 +11,7 @@ import (
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 )
@@ -25,6 +26,11 @@ func validateGeneration(st model.State, job model.Job) error {
 	current, ok := st.Jobs[job.ID]
 	if !ok || current.Status != "running" || !sameManagedRun(current, job) {
 		return fail(409, "generation job was canceled")
+	}
+	if job.Run != nil {
+		if a, ok := st.GitHubAttemptAuthorizations[githubapp.Key(attempt(job).Key)]; ok && !githubapp.Authorized(st, a.Key, a.OwnerID, a.ConnectionVersion) {
+			return githubapp.ErrAuthorization
+		}
 	}
 	return nil
 }
@@ -67,6 +73,10 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	r, err := s.runners.New(job)
 	if err != nil {
 		return err
+	}
+	fetchAllowed := false
+	if capable, ok := r.(interface{ SupportsSourceCredentials() bool }); ok {
+		fetchAllowed = capable.SupportsSourceCredentials()
 	}
 	var items []model.InboxItem
 	var published model.Revision
@@ -119,16 +129,15 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		run.TokenID = token.ID
 		job.Run = run
 		st.Jobs[job.ID] = job
+		if fetchAllowed {
+			pinGitHubAuthorization(st, job)
+		}
 		return nil
 	})
 	if err != nil || job.Run == nil {
 		return err
 	}
 	base := s.Config.BaseURL + "/api/projects/" + job.ProjectID + "/jobs/" + job.ID + "/agent/"
-	fetchAllowed := false
-	if capable, ok := r.(interface{ SupportsSourceCredentials() bool }); ok {
-		fetchAllowed = capable.SupportsSourceCredentials()
-	}
 	spec := agentgen.InputSpec{JobID: job.ID, ProjectID: job.ProjectID, InputURL: base + "input", OutputURL: base + "output", FetchAllowed: fetchAllowed, Wiki: map[string]string{}}
 	for _, item := range items {
 		in := agentgen.InboxText{Item: item}
@@ -153,13 +162,17 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		return err
 	}
 	var credentials []runner.Credential
+	var selections []model.GitHubRepositorySelection
 	if fetchAllowed {
-		credentials, err = s.sourceCredentials(ctx, &job, items)
+		credentials, selections, err = s.sourceCredentials(ctx, &job, items)
 		if err != nil {
 			return err
 		}
 	}
-	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec) + credentialHints(credentials), SourceCredentials: credentials, BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
+	if err = s.DB.View(func(st model.State) error { return validateGeneration(st, job) }); err != nil {
+		return err
+	}
+	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec) + credentialHints(credentials, selections) + "\nGitHub fetch report attempt: " + job.Run.Attempt.ID + "\n", SourceCredentials: credentials, BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
 	if errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}

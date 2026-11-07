@@ -35,7 +35,7 @@ Design decision confirmed by the project maintainer on 2026-11-07:
 
 Google access tokens cannot be restricted to the submitted documents. Source text is untrusted, and prompt injection could make a runner read and publish an owner's document that nobody submitted. The owner also accepts this risk when enabling Google source access. Host restrictions do not enforce a document-level boundary. The prompt instructs the runner to fetch only submitted URLs, but this is not an authorization check.
 
-GitHub credentials are scoped to the owner's installations and the repositories named by the pinned inbox URLs, with `contents: read` only. There is no per-project repository permission list. A submitted repository is a token scope, not a guarantee that the runner will read only the exact submitted file. Endpoints requiring other permissions can fail; Kioku does not broaden the token to make them succeed.
+GitHub credentials are scoped to the owner's installations and the repositories named by the pinned inbox URLs, with `contents: read`, `metadata: read`, and `issues: read`. There is no per-project repository permission list. A submitted repository is a token scope, not a guarantee that the runner will read only the exact submitted file. Endpoints requiring other permissions can fail; Kioku does not broaden the token to make them succeed.
 
 This decision concerns access to external source documents. It does not grant a non-member project access or change how generation runners are authenticated and paid for. Uploaded text/files are already supplied to Kioku; an attached source URL does not itself cause a provider fetch or prove the owner's access to the original document.
 
@@ -43,6 +43,17 @@ This decision concerns access to external source documents. It does not grant a 
 
 Generation selects the current project owner's source connection immediately before starting a managed runner. Google access tokens are refreshed at that point and not during the run; the refresh token stays in kiokud. The attempt vault receives only short-lived access tokens and the job token. Cleanup removes the vault; Google access tokens expire without revoking the owner's reusable Google grant.
 
-GitHub plumbing is implemented behind `server.GitHubTokenProvider`, including installation selection, repository filtering, 500-repository chunks and attempt-scoped revocation. No GitHub App connection or provider implementation is configured by the shipped server yet. Therefore it supplies no GitHub credential: public repositories are fetched unauthenticated and private ones become per-item fetch failures. The old GitHub OAuth connection is never used as a fallback. Implementing the App authorization/installation flow remains separate work.
+GitHub plumbing is implemented behind `server.GitHubTokenProvider`, including installation selection, repository filtering, 500-repository chunks and attempt-scoped revocation. The GitHub App is disabled by default. An operator configures it, then the project owner runs `kioku connect github` and selects installations. A Google login can connect a GitHub App without changing login identities. The server intersects the owner's current GitHub user access, selected installations and pinned inbox repositories. Outside-installation or unconnected repositories use unauthenticated requests; authorization or issuance failures are blocked and never fall back. The old GitHub OAuth connection is never used. See [operator settings](GITHUB_APP.md).
 
 Local fake-provider tests verify owner selection, refresh, scopes, cleanup after restart and secret handling. They do not verify real provider access or model compliance with the prompt. The historical F7 report describes the previous submitter-based behavior; the owner-only policy and its broader Google sharing risk above describe this implementation.
+
+GitHub App connection status is projected consistently into `account status` and
+`whoami`. `account status` also shows configured/enabled, the GitHub login, and
+last-checked installation status (active/suspended/inaccessible); it does not
+call GitHub. Reconnect and disconnect invalidate all old attempts of that owner.
+Transferring a project invalidates only that project's attempts. Publication is
+checked against the pinned owner/version. Disconnect clears encrypted user and
+staging credentials, leaves a version tombstone, and returns `cleanup_pending`;
+installation-token cleanup continues even if the runner cannot stop. This does
+not uninstall the GitHub App. User refresh rotates a separate credential generation
+without changing the connection version. An uncertain refresh requires reconnect.

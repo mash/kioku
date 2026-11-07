@@ -2,26 +2,25 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 )
 
-// GitHubTokenProvider is the boundary to the separately implemented App
-// connection. Installations resolves only installations connected to ownerID.
-// Issue must retain revocation identity durably by attempt, including ambiguous
-// issuance responses. Revoke must be idempotent and revoke every token for that
-// attempt after restarts. Implementations must never persist plaintext tokens.
-// A nil provider means no App is configured; OAuth user tokens are never used.
+// GitHubTokenProvider issues only authorized, nonempty repo scopes. Known tokens
+// are revoked durably; lost issuance responses must wait for conservative expiry.
 type GitHubTokenProvider interface {
 	Installations(context.Context, string, []GitHubRepository) ([]GitHubInstallation, error)
-	Issue(context.Context, runner.AttemptKey, int64, GitHubTokenRequest) (runner.Secret, error)
+	Issue(context.Context, runner.AttemptKey, githubapp.AuthorizedRepositorySet) (runner.Secret, error)
 	Revoke(context.Context, runner.AttemptKey) error
 }
 type GitHubRepository struct {
@@ -29,9 +28,11 @@ type GitHubRepository struct {
 	ID            int64
 }
 type GitHubInstallation struct {
-	ID           int64
-	Account      string
-	Repositories []GitHubRepository
+	ID                       int64
+	Account, OwnerID, Reason string
+	ConnectionVersion        uint64
+	CheckedAt                time.Time
+	Repositories             []GitHubRepository
 }
 type GitHubTokenRequest struct {
 	RepositoryIDs []int64           `json:"repository_ids"`
@@ -74,69 +75,143 @@ func pendingProviders(items []model.InboxItem) ([]GitHubRepository, bool) {
 	return out, google
 }
 
-func (s *Server) sourceCredentials(ctx context.Context, job *model.Job, items []model.InboxItem) ([]runner.Credential, error) {
-	var ownerID string
-	if err := s.DB.View(func(st model.State) error {
-		for id, role := range st.Projects[job.ProjectID].Members {
-			if role == "owner" {
-				ownerID = id
-				break
-			}
+func pinGitHubAuthorization(st *model.State, job model.Job) {
+	ownerID := ""
+	for uid, role := range st.Projects[job.ProjectID].Members {
+		if role == "owner" {
+			ownerID = uid
+			break
 		}
+	}
+	key := attempt(job).Key
+	st.GitHubAttemptAuthorizations[githubapp.Key(key)] = model.GitHubAttemptAuthorization{Key: key, OwnerID: ownerID, ConnectionVersion: st.GitHubAppConnections[ownerID].Version}
+}
+func (s *Server) sourceCredentials(ctx context.Context, job *model.Job, items []model.InboxItem) ([]runner.Credential, []model.GitHubRepositorySelection, error) {
+	startedAt := time.Now()
+	var authorization model.GitHubAttemptAuthorization
+	if err := s.DB.View(func(st model.State) error {
+		authorization = st.GitHubAttemptAuthorizations[githubapp.Key(attempt(*job).Key)]
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if ownerID == "" {
-		return nil, nil
+	if authorization.OwnerID == "" {
+		return nil, nil, githubapp.ErrAuthorization
 	}
 	repos, google := pendingProviders(items)
 	var credentials []runner.Credential
-	if len(repos) > 0 && s.GitHubTokens != nil {
-		// Persist the cleanup obligation before any token can be issued remotely.
+	var selections []model.GitHubRepositorySelection
+	if len(repos) > 0 {
 		if err := s.DB.Update(func(st *model.State) error {
 			j := st.Jobs[job.ID]
-			if !sameManagedRun(j, *job) || j.Status != "running" {
-				return fail(409, "generation ended")
+			if !githubapp.Authorized(*st, authorization.Key, authorization.OwnerID, authorization.ConnectionVersion) {
+				return githubapp.ErrAuthorization
 			}
 			j.Run.GitHubCredentials = true
 			st.Jobs[j.ID] = j
 			*job = j
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		credentials = s.githubCredentials(ctx, ownerID, attempt(*job).Key, repos)
+		var err error
+		credentials, selections, err = s.githubCredentials(ctx, authorization.OwnerID, authorization.Key, authorization.ConnectionVersion, repos)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	// Refresh last, immediately before Start. No refresh token enters the vault.
 	if google {
-		token, err := s.providerCredential(ctx, ownerID, "google")
+		token, err := s.providerCredential(ctx, authorization.OwnerID, "google")
 		if err == nil && token != "" {
 			credentials = append(credentials, runner.Credential{Name: "GOOGLE_ACCESS_TOKEN", Value: token, AllowedHosts: []string{"docs.googleapis.com", "www.googleapis.com"}})
 		}
 	}
-	return credentials, nil
-}
-func (s *Server) githubCredentials(ctx context.Context, ownerID string, key runner.AttemptKey, repos []GitHubRepository) []runner.Credential {
-	installations, err := s.GitHubTokens.Installations(ctx, ownerID, repos)
-	if err != nil {
-		slog.Warn("GitHub source credentials unavailable", "job", key.JobID)
+	if err := s.DB.Update(func(st *model.State) error {
+		if !githubapp.Authorized(*st, authorization.Key, authorization.OwnerID, authorization.ConnectionVersion) {
+			return githubapp.ErrAuthorization
+		}
+		githubapp.Count(st, "kioku_github_authorization_duration_milliseconds_total", uint64(time.Since(startedAt).Milliseconds()))
+		githubapp.Count(st, "kioku_github_authorization_duration_count", 1)
+		a := st.GitHubAttemptAuthorizations[githubapp.Key(authorization.Key)]
+		a.Selections = selections
+		if !a.SelectionCounted {
+			for _, v := range selections {
+				githubapp.Count(st, fmt.Sprintf(`kioku_github_credential_selection_total{mode=%q,reason=%q}`, v.Mode, v.Reason), 1)
+			}
+			a.SelectionCounted = true
+		}
+		st.GitHubAttemptAuthorizations[githubapp.Key(a.Key)] = a
 		return nil
+	}); err != nil {
+		return nil, nil, err
 	}
-	wanted := map[string]bool{}
+	return credentials, selections, nil
+}
+func selectionFailure(err error) (string, string) {
+	reason := githubapp.Reason(err)
+	if reason == "not_connected" {
+		return "unauthenticated", reason
+	}
+	switch reason {
+	case "disabled", "reauthorization_required", "suspended", "inaccessible", "configuration_error", "forbidden", "rate_limited", "temporary", "issuance_unknown":
+	default:
+		reason = "temporary"
+	}
+	return "blocked", reason
+}
+func (s *Server) githubCredentials(ctx context.Context, ownerID string, key runner.AttemptKey, version uint64, repos []GitHubRepository) ([]runner.Credential, []model.GitHubRepositorySelection, error) {
+	results := map[string]model.GitHubRepositorySelection{}
 	for _, repo := range repos {
-		wanted[repositoryName(repo)] = true
+		name := repositoryName(repo)
+		results[name] = model.GitHubRepositorySelection{Repository: name, Mode: "unauthenticated", Reason: "outside_installation"}
+	}
+	finish := func(credentials []runner.Credential) ([]runner.Credential, []model.GitHubRepositorySelection, error) {
+		out := make([]model.GitHubRepositorySelection, 0, len(results))
+		for _, v := range results {
+			out = append(out, v)
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Repository < out[j].Repository })
+		return credentials, out, nil
+	}
+	var installations []GitHubInstallation
+	var err error
+	if s.GitHubTokens == nil {
+		err = &githubapp.Failure{Reason: "not_connected"}
+	} else {
+		installations, err = s.GitHubTokens.Installations(ctx, ownerID, repos)
+	}
+	if err != nil {
+		var persistence githubapp.PersistenceError
+		if errors.As(err, &persistence) || errors.Is(err, githubapp.ErrAuthorization) {
+			return nil, nil, err
+		}
+		mode, reason := selectionFailure(err)
+		for k, v := range results {
+			v.Mode, v.Reason = mode, reason
+			results[k] = v
+		}
+		return finish(nil)
 	}
 	sort.Slice(installations, func(i, j int) bool { return installations[i].ID < installations[j].ID })
 	var credentials []runner.Credential
 	counters := map[string]int{}
 	for _, installation := range installations {
+		if installation.Reason != "" {
+			_, reason := selectionFailure(&githubapp.Failure{Reason: installation.Reason})
+			for k, v := range results {
+				if strings.EqualFold(strings.Split(k, "/")[0], installation.Account) && v.Mode != "token" {
+					v.Mode, v.Reason = "blocked", reason
+					results[k] = v
+				}
+			}
+			continue
+		}
 		if installation.ID <= 0 || !githubAccount.MatchString(installation.Account) {
 			continue
 		}
 		selected := map[int64]GitHubRepository{}
 		for _, repo := range installation.Repositories {
-			if repo.ID > 0 && strings.EqualFold(repo.Account, installation.Account) && wanted[repositoryName(repo)] {
+			if v, ok := results[repositoryName(repo)]; ok && v.Mode != "token" && repo.ID > 0 && strings.EqualFold(repo.Account, installation.Account) {
 				selected[repo.ID] = repo
 			}
 		}
@@ -148,9 +223,21 @@ func (s *Server) githubCredentials(ctx context.Context, ownerID string, key runn
 		for len(ids) > 0 {
 			chunk := append([]int64(nil), ids[:min(500, len(ids))]...)
 			ids = ids[len(chunk):]
-			token, err := s.GitHubTokens.Issue(ctx, key, installation.ID, GitHubTokenRequest{RepositoryIDs: chunk, Permissions: map[string]string{"contents": "read"}})
+			scope := githubapp.AuthorizedRepositorySet{OwnerID: ownerID, ConnectionVersion: version, InstallationID: installation.ID, RepositoryIDs: chunk, CheckedAt: installation.CheckedAt}
+			if installation.OwnerID != "" && (installation.OwnerID != ownerID || installation.ConnectionVersion != version) {
+				return nil, nil, githubapp.ErrAuthorization
+			}
+			token, err := s.GitHubTokens.Issue(ctx, key, scope)
 			if err != nil || token == "" {
-				slog.Warn("GitHub installation token unavailable", "job", key.JobID)
+				var persistence githubapp.PersistenceError
+				if errors.As(err, &persistence) || errors.Is(err, githubapp.ErrAuthorization) {
+					return nil, nil, err
+				}
+				mode, reason := selectionFailure(err)
+				for _, id := range chunk {
+					name := repositoryName(selected[id])
+					results[name] = model.GitHubRepositorySelection{Repository: name, Mode: mode, Reason: reason}
+				}
 				continue
 			}
 			account := strings.ReplaceAll(strings.ToUpper(installation.Account), "-", "_")
@@ -161,18 +248,26 @@ func (s *Server) githubCredentials(ctx context.Context, ownerID string, key runn
 			}
 			c := runner.Credential{Name: name, Value: token, AllowedHosts: []string{"api.github.com"}}
 			for _, id := range chunk {
-				c.Repositories = append(c.Repositories, repositoryName(selected[id]))
+				repo := repositoryName(selected[id])
+				c.Repositories = append(c.Repositories, repo)
+				results[repo] = model.GitHubRepositorySelection{Repository: repo, Mode: "token", Reason: "authorized", Placeholder: name}
 			}
 			credentials = append(credentials, c)
 		}
 	}
-	return credentials
+	return finish(credentials)
 }
-func credentialHints(credentials []runner.Credential) string {
+func credentialHints(credentials []runner.Credential, selections []model.GitHubRepositorySelection) string {
 	var b strings.Builder
+	b.WriteString("\nGitHub source selection (use token mode from the first request; blocked mode must not fall back to unauthenticated):\n")
+	for _, v := range selections {
+		data, _ := json.Marshal(v)
+		b.Write(data)
+		b.WriteByte('\n')
+	}
 	for _, c := range credentials {
 		if len(c.Repositories) > 0 {
-			fmt.Fprintf(&b, "\nUse the vault placeholder $%s in the Authorization header for these GitHub repositories only: %s.\n", c.Name, strings.Join(c.Repositories, ", "))
+			fmt.Fprintf(&b, "Use the vault placeholder $%s in the Authorization header for these GitHub repositories only: %s.\n", c.Name, strings.Join(c.Repositories, ", "))
 		}
 	}
 	return b.String()

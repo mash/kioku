@@ -22,14 +22,31 @@ Workflow:
 2. Fetch pending items first because credentials expire. If fetch_allowed is
    false (exec), do not fetch: record a failure for each pending item instead.
    Use only the owner's vault placeholders in request headers. Never print them.
-   For github.com URLs, call api.github.com using GITHUB_TOKEN_<account> when
-   supplied; use the repository-to-placeholder mapping in the first message. Public repositories outside
-   installations are fetched unauthenticated. No GitHub credential means private
-   repositories fail; do not use ambient git or other members' credentials.
-   GitHub tokens have contents:read only. If an endpoint needs another permission,
-   record a fetch failure; never seek broader credentials. Fetch PR descriptions
-   and the first 100 issue comments, not diffs or inline review threads. For Google Docs
-   use GOOGLE_ACCESS_TOKEN with docs.googleapis.com or www.googleapis.com.
+   For github.com URLs, follow each repo's mode/reason/placeholder in the first
+   message. token: authenticate from the first request, for public and private
+   repos alike. unauthenticated: fetch without credentials (not_connected or
+   outside_installation). blocked: record a failure and do not make a request or
+   fall back to unauthenticated. Never use ambient git or other members' credentials.
+   Use the named GITHUB_TOKEN_<account> placeholder only in the Authorization
+   header to api.github.com; never print/expand it or forward it across redirects.
+   Send X-GitHub-Api-Version: 2026-03-10. Tokens have contents:read, metadata:read
+   and issues:read only; never seek additional permissions. Fetch these endpoints:
+   - repo URL: GET /repos/{owner}/{repo}/readme
+   - blob URL: GET /repos/{owner}/{repo}/contents/{path}?ref={ref}
+     Preserve the submitted ref and path; refs can contain slashes. If ambiguous,
+     resolve the ref without fetching unrelated repository contents, or fail it.
+   - Issue URL: GET /repos/{owner}/{repo}/issues/{number}
+   - PR URL: GET /repos/{owner}/{repo}/pulls/{number}
+   - Issue/PR comments: GET /repos/{owner}/{repo}/issues/{number}/comments?per_page=100
+     Read only this first page, never PR diffs or inline review threads.
+   For README and files use Accept: application/vnd.github.raw+json, stream at
+   most 1,048,576 bytes, close the response at that limit and truncate on a UTF-8
+   boundary. Do not treat an empty JSON content field as successful retrieval.
+   Do not use download_url or raw.githubusercontent.com with the credential.
+   For other endpoints use Accept: application/vnd.github+json. A rejected large
+   file, 403, 404 or expired token is an individual fetch failure. No mid-run token
+   refresh is available. A 404 does not prove that a private repository is absent.
+   For Google Docs use GOOGLE_ACCESS_TOKEN with docs.googleapis.com or www.googleapis.com.
    Missing Google credentials, forbidden access, 404 or expired credentials are
    per-item fetch failures. Do not stop other items or retry failed items later.
    Public Web requires no credentials. Never send a provider placeholder to a
@@ -51,6 +68,12 @@ Workflow:
    Describe changes, truncations, and every fetch failure with URL, reason and
    submitter. Never write tokens, authorization headers or signed URL secrets
    to log.md. Strip secret query values from logged URLs and error messages.
+   For each pending GitHub item also write exactly one standalone report line:
+   KIOKU_GITHUB_FETCH {"attempt":"<first-message attempt>","item":"<inbox ID>","mode":"token|unauthenticated|blocked","reason":"success|403|404|expired|other"}
+   Copy the assigned mode exactly. Use expired only when expiration is known;
+   401 alone is not proof of expiration. Blocked items use reason other. These
+   are model-reported results, not direct server HTTP measurements. Retain old
+   entries but never change their attempt IDs or reuse an old report for this run.
 6. Write the complete wiki/ output, copying unchanged pages. Do not write inbox/.
    Tar and gzip wiki/ only, upload to the output URL with the same two Kioku
    headers. On 400 read the problems, fix the output and upload again. On 409

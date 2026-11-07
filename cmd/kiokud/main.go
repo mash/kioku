@@ -96,11 +96,6 @@ func run() error {
 	if err = os.MkdirAll(*dir, 0700); err != nil {
 		return err
 	}
-	key := config.Env("KIOKU_ENCRYPTION_KEY", "")
-	cipher, err := auth.NewCipher(key)
-	if err != nil {
-		return err
-	}
 	objects, err := openStorage(blob.Backend(*storage), *dir, os.Getenv)
 	if err != nil {
 		return err
@@ -111,6 +106,11 @@ func run() error {
 		return err
 	}
 	defer db.Close()
+	// The catalog lock prevents concurrent startups from generating different keys.
+	cipher, err := loadCipher(*dir, config.Env("KIOKU_ENCRYPTION_KEY", ""))
+	if err != nil {
+		return err
+	}
 	providers := map[string]auth.Provider{}
 	for _, name := range []string{"google", "github"} {
 		prefix := strings.ToUpper(name)

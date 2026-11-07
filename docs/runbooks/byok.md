@@ -9,7 +9,8 @@ Setup creates one Agent and one Environment in that workspace using the embedded
 Kioku HTTPS host. Retrying partial setup reuses saved IDs or discovers resources
 by a stable connection metadata tag. Setup does not start a generation session.
 
-Each user has one connection. The API key is encrypted with `KIOKU_ENCRYPTION_KEY`,
+Each user has one connection. The API key is encrypted with the server key from
+`KIOKU_ENCRYPTION_KEY` or, when unset, the generated `DATA/encryption.key`,
 with authenticated context binding it to the user and connection. Keep that
 server key stable and protected alongside the encrypted database backups.
 The provider key is never returned by an API or given to the agent sandbox.

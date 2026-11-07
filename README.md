@@ -48,7 +48,7 @@ In Claude Desktop or Cowork, add the marketplace `mash/kioku` and install `kioku
 You can run your own server, but self-hosting is not supported. There is no compatibility promise between versions, and no help for operations. The minimal start uses the `final` target of the `Dockerfile`:
 
 1. Register a Google or GitHub OAuth app with the callback `<KIOKU_BASE_URL>/auth/google/callback` or `<KIOKU_BASE_URL>/auth/github/callback`.
-2. Copy `.env.example` to `.env`. Set `KIOKU_BASE_URL`, the OAuth client ID and secret, and `KIOKU_ENCRYPTION_KEY` from `openssl rand -base64 32`. Keep the key; the server cannot read its data without it.
+2. Copy `.env.example` to `.env`. Set `KIOKU_BASE_URL` and at least one Google or GitHub OAuth client ID and secret. `KIOKU_ENCRYPTION_KEY` is optional: when unset, the server generates and persists a key at `<KIOKU_DATA>/encryption.key` (0600) and reuses it on restart. Preserve this file with your deployment; encrypted credentials cannot be recovered without the same key.
 3. Build and start the server with a persistent volume:
 
    ```sh
@@ -90,10 +90,11 @@ go build -o bin/kiokud ./cmd/kiokud
 # GoogleまたはGitHubのOAuthアプリを登録して設定（callback URLは下記参照）
 export GOOGLE_CLIENT_ID=...
 export GOOGLE_CLIENT_SECRET=...
-# 暗号化キーは初回だけ生成し、以後も同じ値を安全に保存して使う
-export KIOKU_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+# 暗号鍵は未設定なら ./data/encryption.key に自動生成・保存される
 ./bin/kiokud
 ```
+
+`KIOKU_ENCRYPTION_KEY` を指定した場合は、その値を優先しファイルには書き出しません。未指定なら保存済みの鍵を読み、初回だけ暗号学的乱数で32バイトの鍵を生成します。保存済みの鍵が壊れている場合は再生成せず起動エラーにします。
 
 API／HTTPで原資料を取得します。クラウドから本文を取得できない場合は、その内容をMarkdownなどのファイルに書いて投入します。ローカルでもGoogle／GitHub認証を使い、認証を省略する起動モードはありません。
 
@@ -140,7 +141,7 @@ kioku share remove bob@example.com
 
 ```bash
 export KIOKU_BASE_URL=https://kioku.example.com
-export KIOKU_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+# KIOKU_ENCRYPTION_KEY は任意。未設定なら KIOKU_DATA/encryption.key を使用
 export GOOGLE_CLIENT_ID=...
 export GOOGLE_CLIENT_SECRET=...
 export GITHUB_CLIENT_ID=...
@@ -258,6 +259,7 @@ kiokud は原資料・差分・既存 Wiki をジョブ専用の tar にまと�
 ```text
 KIOKU_DATA/
   catalog.sqlite       # アカウント・組織・権限・プロジェクト設定
+  encryption.key       # 暗号鍵の環境変数が未設定なら初回生成、0600
   admin.sock           # オペレーター専用、0600
   objects/projects/    # KIOKU_STORAGE=local の場合のみ
 ```
@@ -305,7 +307,7 @@ kiokud --data /var/lib/kioku --online-backup /var/backups/kioku/config-2026-10-3
 kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
 ```
 
-バックアップは設定・アカウントのSQLiteのみです。本文やジョブはS3に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとS3接続設定は別途復元してください。保存先はサービスアカウントが書き込める新規ディレクトリにします。バックアップの定期実行・暗号化・S3転送はまだ構成していません。
+バックアップは設定・アカウントのSQLiteのみです。本文やジョブはS3に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとS3接続設定は別途復元してください。自動生成した `encryption.key` もSQLiteバックアップには含まれないため、別途保管・復元が必要です。保存先はサービスアカウントが書き込める新規ディレクトリにします。バックアップの定期実行・暗号化・S3転送はまだ構成していません。
 
 詳しい保存境界、障害復旧、移行、オンラインバックアップは [WORKERS.md](docs/WORKERS.md) を参照してください。
 

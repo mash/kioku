@@ -140,6 +140,7 @@ func TestJobTokenRouteAudit(t *testing.T) {
 		"POST /api/logout",
 		"GET /api/me",
 		"POST /api/connect/{provider}",
+		"POST /api/connect/{provider}/complete",
 		"GET /api/projects",
 		"POST /api/projects",
 		"POST /api/join",

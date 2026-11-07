@@ -9,7 +9,7 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   account status|sessions|revoke-session|revoke-all|disconnect|unlink|delete
   login [--provider google|github]      Browser login
   logout | whoami
-  connect google|github                Authorize source access / link identity
+  connect google|github                Authorize source access
   org create SLUG | org list
   create ORG/PROJECT | join INVITE_URL        Create or join a project
   list                                List participating projects

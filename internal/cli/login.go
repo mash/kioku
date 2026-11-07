@@ -8,6 +8,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -21,6 +22,17 @@ func (a *App) login(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	return a.loopback(*provider, false)
+}
+
+func (a *App) loopback(provider string, connect bool) error {
+	startPath, finishPath := "/api/auth/loopback", "/api/auth/loopback/token"
+	action, label := "login", "ログイン"
+	if connect {
+		startPath = "/api/connect/" + url.PathEscape(provider)
+		finishPath = startPath + "/complete"
+		action, label = "connect "+provider, "接続"
+	}
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Minute)
 	defer cancel()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -29,12 +41,12 @@ func (a *App) login(args []string) error {
 	}
 	defer listener.Close()
 	verifier, state := auth.Token(), auth.Token()
-	// Keep the attempt's deadline and credential writes local to this login.
+	// Keep the attempt's deadline and credential writes local to this flow.
 	attempt := *a
 	attempt.ctx = ctx
 	var device struct{ Device, URL string }
-	if _, err := attempt.request("POST", "/api/auth/loopback", map[string]string{
-		"provider": *provider, "code_challenge": auth.Challenge(verifier), "code_challenge_method": "S256",
+	if _, err := attempt.request("POST", startPath, map[string]string{
+		"provider": provider, "code_challenge": auth.Challenge(verifier), "code_challenge_method": "S256",
 		"redirect_uri": "http://" + listener.Addr().String() + "/callback", "state": state,
 	}, &device); err != nil {
 		return err
@@ -44,7 +56,7 @@ func (a *App) login(args []string) error {
 		return err
 	}
 	if device.Device == "" {
-		return errors.New("server returned an empty login request; run kioku login again")
+		return fmt.Errorf("server returned an empty %s request; run kioku %s again", action, action)
 	}
 	result := make(chan error, 1)
 	var accountMessage string
@@ -57,12 +69,12 @@ func (a *App) login(args []string) error {
 		}
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
-			loginPage(w, http.StatusMethodNotAllowed, "ログインを確認できませんでした", "認証を始めたブラウザに戻ってください。")
+			loginPage(w, http.StatusMethodNotAllowed, label+"を確認できませんでした", "認証を始めたブラウザに戻ってください。")
 			return
 		}
 		q := r.URL.Query()
 		if q.Get("state") != state {
-			loginPage(w, http.StatusBadRequest, "ログインを確認できませんでした", "現在のログイン要求と一致しません。認証を始めたブラウザに戻ってください。")
+			loginPage(w, http.StatusBadRequest, label+"を確認できませんでした", "現在のログイン要求と一致しません。認証を始めたブラウザに戻ってください。")
 			return
 		}
 		mu.Lock()
@@ -70,37 +82,46 @@ func (a *App) login(args []string) error {
 		handled = true
 		mu.Unlock()
 		if alreadyHandled {
-			loginPage(w, http.StatusOK, "このログインは終わりました", "CLI に戻って結果を確認してください。")
+			loginPage(w, http.StatusOK, "この"+label+"は終わりました", "CLI に戻って結果を確認してください。")
 			return
 		}
 		var err error
-		var response struct{ Token, Provider, Name, Email string }
+		var response struct {
+			Token, Provider, Name, Email string
+			Connected                    bool
+		}
 		switch {
 		case q.Has("error"):
 			if q.Get("error") == "access_denied" {
-				err = errors.New("login was cancelled in the browser")
+				err = fmt.Errorf("%s was cancelled in the browser", action)
 			} else {
-				err = errors.New("login failed on the server; run kioku login again")
+				err = fmt.Errorf("%s failed on the server; run kioku %s again", action, action)
 			}
 		case q.Get("code") == "":
-			err = errors.New("login callback did not include a code")
+			err = fmt.Errorf("%s callback did not include a code", action)
 		default:
-			_, err = attempt.request("POST", "/api/auth/loopback/token", map[string]string{"device": device.Device, "code": q.Get("code"), "code_verifier": verifier}, &response)
-			if err == nil && response.Token == "" {
+			_, err = attempt.request("POST", finishPath, map[string]string{"device": device.Device, "code": q.Get("code"), "code_verifier": verifier}, &response)
+			if err == nil && connect && (!response.Connected || response.Provider != provider) {
+				err = errors.New("server did not confirm the connection")
+			}
+			if err == nil && !connect && response.Token == "" {
 				err = errors.New("server returned an empty login token")
 			}
 			if err == nil {
 				err = ctx.Err()
 			}
-			if err == nil {
+			if err == nil && !connect {
 				attempt.Config.Token = response.Token
 				err = attempt.saveCredentials()
 			}
 		}
 		if err != nil {
-			loginPage(w, http.StatusBadRequest, "ログインに失敗しました", err.Error()+"\nkioku login をもう一度実行してください。")
+			loginPage(w, http.StatusBadRequest, label+"に失敗しました", err.Error()+"\nkioku "+action+" をもう一度実行してください。")
 		} else {
 			accountMessage = fmt.Sprintf("ログインしました: %s (%s)", response.Email, response.Provider)
+			if connect {
+				accountMessage = fmt.Sprintf("接続しました: %s", response.Provider)
+			}
 			loginPage(w, http.StatusOK, accountMessage, response.Name+"\nこのタブを閉じて CLI に戻ってください。")
 		}
 		result <- err
@@ -116,7 +137,7 @@ func (a *App) login(args []string) error {
 			_ = server.Close()
 		}
 	}()
-	fmt.Fprintf(a.Out, "ログイン先: %s\n同じ端末のブラウザで認証してください:\n%s\n中断は Ctrl-C\n", origin, device.URL)
+	fmt.Fprintf(a.Out, "%s先: %s\n同じ端末のブラウザで認証してください:\n%s\n中断は Ctrl-C\n", label, origin, device.URL)
 	if err := openBrowser(a.Config.Server, device.URL); err != nil {
 		fmt.Fprintf(a.Err, "ブラウザを開けませんでした。表示された URL を同じ端末のブラウザに貼り付けてください: %v\n", err)
 	}
@@ -130,7 +151,7 @@ func (a *App) login(args []string) error {
 		return nil
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return errors.New("login timed out; run kioku login again")
+			return fmt.Errorf("%s timed out; run kioku %s again", action, action)
 		}
 		return ctx.Err()
 	case err := <-serveErr:

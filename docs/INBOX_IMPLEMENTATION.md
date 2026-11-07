@@ -4,6 +4,8 @@
 
 ## 設計を具体化した箇所
 
+- 追加の設計変更により inbox GET を削除した。既存の GET /api/projects の各項目に inbox_count と inbox（source_url・status のみ）を含め、CLI status がその応答を表示する。
+
 - 最低 CLI バージョンと plugin の版を0.1.0にそろえた。Bearer の API 要求を版ヘッダーで確認し、Web と MCP を除外する。既存の開発用 `dev` は許可する。リリースの bump は PR-6 に含める。
 - 新しい put は待機中の同じ source_url を置き換える。古い項目を固定した実行が失敗した場合も、新しい待機項目があれば古い項目を戻さない。同じ URL の fetched と removed が次回に同時に入る矛盾を防ぐ。
 - inbox の200件には固定中の項目も数える。同じ URL の待機項目の置き換えは件数を増やさないため、満杯でも受け付ける。公開容量超過時は removed だけを許可する。

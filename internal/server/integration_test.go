@@ -219,11 +219,11 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if !strings.Contains(snap.Files["maps/graph.json"], "links-to") {
 		t.Fatal("map missing edges")
 	}
-	srcPath := base + "/inbox"
-	if code := f.request("GET", srcPath, eve, nil, nil); code != 404 {
-		t.Fatalf("source isolation: %d", code)
+	var projects []model.ProjectEntry
+	if code := f.request("GET", "/api/projects", eve, nil, &projects); code != 200 || len(projects) != 0 {
+		t.Fatalf("project and inbox isolation: %d %+v", code, projects)
 	}
-	resp, err := f.client.Get(f.url + srcPath)
+	resp, err := f.client.Get(f.url + "/api/projects")
 	if err != nil {
 		t.Fatal(err)
 	}

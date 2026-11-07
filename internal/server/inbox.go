@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
@@ -115,27 +114,4 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		return nil
 	})
 	return item, err
-}
-
-func (s *Server) inbox(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.DB.View(func(st model.State) error {
-		pid := r.PathValue("project")
-		if _, err := member(st, pid, uid); err != nil {
-			return err
-		}
-		items := []model.InboxItem{}
-		for _, item := range st.Inbox {
-			if item.ProjectID == pid {
-				items = append(items, item)
-			}
-		}
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].Created.Equal(items[j].Created) {
-				return items[i].ID < items[j].ID
-			}
-			return items[i].Created.Before(items[j].Created)
-		})
-		jsonOut(w, 200, items)
-		return nil
-	})
 }

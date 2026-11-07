@@ -62,9 +62,9 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	p := securityProject(t, f, token)
 	base := "/api/projects/" + p.ID
 	putFile(t, f, token, p.ID, "first.md", "First source")
-	var inbox []model.InboxItem
-	if c := f.request("GET", base+"/inbox", token, nil, &inbox); c != 200 || len(inbox) != 1 {
-		t.Fatal(c, inbox)
+	var projects []model.ProjectEntry
+	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 1 {
+		t.Fatal(c, projects)
 	}
 	runGeneration(t, f, token, p.ID)
 	backup := filepath.Join(t.TempDir(), "backup")

@@ -54,13 +54,15 @@ func (a *App) status() error {
 		}
 	}
 	result := map[string]any{"namespace": a.Config.Namespace, "server": a.Config.Server, "local_revision": local.Revision, "local_sync_incomplete": local.Incomplete, "pending_files": changed}
-	var projects []model.Project
+	var projects []model.ProjectEntry
 	if _, err = a.request("GET", "/api/projects", nil, &projects); err != nil {
 		return err
 	}
 	found := false
 	for _, p := range projects {
 		if p.ID == a.Config.Project {
+			result["inbox"] = p.Inbox
+			result["inbox_count"] = p.InboxCount
 			result["remote_revision"] = p.Revision
 			result["wiki_updated_at"] = p.WikiUpdatedAt
 			result["wiki_incomplete"] = p.WikiIncomplete
@@ -71,15 +73,5 @@ func (a *App) status() error {
 	if !found {
 		return errors.New("project no longer accessible")
 	}
-	p, err := a.projectPath()
-	if err != nil {
-		return err
-	}
-	var items []model.InboxItem
-	if _, err = a.request("GET", p+"/inbox", nil, &items); err != nil {
-		return err
-	}
-	result["inbox"] = items
-	result["inbox_count"] = len(items)
 	return a.print(result)
 }

@@ -154,9 +154,9 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("GET", "/api/me", human, nil, nil); c != 401 {
 		t.Fatal("deleted account session active", c)
 	}
-	var sources []model.InboxItem
-	if c := f.request("GET", "/api/projects/"+p.ID+"/inbox", other, nil, &sources); c != 200 || len(sources) != 1 {
-		t.Fatal("team evidence lost", c, sources)
+	var projects []model.ProjectEntry
+	if c := f.request("GET", "/api/projects", other, nil, &projects); c != 200 || len(projects) != 1 || projects[0].ID != p.ID || projects[0].InboxCount != 1 {
+		t.Fatal("team evidence lost", c, projects)
 	}
 	_ = f.db.View(func(st model.State) error {
 		if _, ok := st.Users[uid]; ok {

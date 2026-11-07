@@ -46,9 +46,9 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	if c := f.request("POST", base+"/put", token, model.PutRequest{URL: "https://example.com/a"}, nil); c != 202 {
 		t.Fatal(c)
 	}
-	var items []model.InboxItem
-	if c := f.request("GET", base+"/inbox", token, nil, &items); c != 200 || len(items) != 2 {
-		t.Fatal(c, items)
+	var projects []model.ProjectEntry
+	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 2 || len(projects[0].Inbox) != 2 {
+		t.Fatal(c, projects)
 	}
 	f.db.Update(func(st *model.State) error {
 		for i := len(st.Inbox); i < 200; i++ {

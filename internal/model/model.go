@@ -86,6 +86,19 @@ type Project struct {
 	Created                 time.Time         `json:"created"`
 	Deleting                bool              `json:"deleting,omitempty"`
 }
+
+// ProjectEntry adds current inbox state to a project listing without persisting it.
+type ProjectEntry struct {
+	Project
+	InboxCount int          `json:"inbox_count"`
+	Inbox      []InboxEntry `json:"inbox"`
+}
+
+type InboxEntry struct {
+	SourceURL string `json:"source_url"`
+	Status    string `json:"status"`
+}
+
 type Invite struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`

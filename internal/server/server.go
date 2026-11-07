@@ -201,7 +201,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{project}/members", s.wrap(s.members, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/invites", s.wrap(s.invite, true))
 	s.mux.HandleFunc("DELETE /api/projects/{project}/members/{member}", s.wrap(s.removeMember, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/inbox", s.wrap(s.inbox, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/put", s.wrap(s.put, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/generate", s.wrap(s.generate, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/jobs/{job}", s.wrap(s.job, true))
@@ -351,10 +350,23 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
 func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) error {
 	_, principal := s.session(r)
 	return s.DB.View(func(st model.State) error {
-		out := []model.Project{}
+		out := []model.ProjectEntry{}
 		for _, p := range st.Projects {
 			if p.Members[uid] != "" && (principal.AgentID == "" || p.ID == principal.ProjectID) {
-				out = append(out, p)
+				entry := model.ProjectEntry{Project: p, Inbox: []model.InboxEntry{}}
+				for _, item := range st.Inbox {
+					if item.ProjectID == p.ID {
+						entry.Inbox = append(entry.Inbox, model.InboxEntry{SourceURL: item.SourceURL, Status: item.Status})
+					}
+				}
+				sort.Slice(entry.Inbox, func(i, j int) bool {
+					if entry.Inbox[i].SourceURL == entry.Inbox[j].SourceURL {
+						return entry.Inbox[i].Status < entry.Inbox[j].Status
+					}
+					return entry.Inbox[i].SourceURL < entry.Inbox[j].SourceURL
+				})
+				entry.InboxCount = len(entry.Inbox)
+				out = append(out, entry)
 			}
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })

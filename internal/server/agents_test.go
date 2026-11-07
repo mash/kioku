@@ -63,7 +63,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 	if c := f.request("GET", "/api/projects/"+a.ID+"/snapshot", token, nil, nil); c != 200 {
 		t.Fatal("selected project unavailable", c)
 	}
-	for _, suffix := range []string{"/snapshot", "/inbox", "/usage", "/jobs/unknown"} {
+	for _, suffix := range []string{"/snapshot", "/usage", "/jobs/unknown"} {
 		if c := f.request("GET", "/api/projects/"+b.ID+suffix, token, nil, nil); c != 404 {
 			t.Fatal("cross-project access", suffix, c)
 		}

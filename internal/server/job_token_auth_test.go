@@ -145,7 +145,6 @@ func TestJobTokenRouteAudit(t *testing.T) {
 		"POST /api/projects/{project}/invites",
 		"DELETE /api/projects/{project}/members/{member}",
 		"POST /api/projects/{project}/put",
-		"GET /api/projects/{project}/inbox",
 		"POST /api/projects/{project}/generate",
 		"GET /api/projects/{project}/jobs/{job}",
 		"POST /api/projects/{project}/jobs/{job}/retry",

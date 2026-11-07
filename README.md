@@ -82,7 +82,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## ローカル起動
 
-Linux / macOS、Go 1.26以上。ブラウザの実行環境は不要です。
+Linux / macOS、Go 1.27.3以上。ブラウザの実行環境は不要です。
 
 ```bash
 go build -o bin/kioku ./cmd/kioku

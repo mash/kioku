@@ -135,8 +135,7 @@ func (s *Server) authorizationRequest(q url.Values) (model.OAuthClient, error) {
 	if err != nil {
 		return client, err
 	}
-	challenge, err := base64.RawURLEncoding.DecodeString(q.Get("code_challenge"))
-	if err != nil || len(challenge) != 32 || q.Get("code_challenge_method") != "S256" || q.Get("response_type") != "code" {
+	if !validChallenge(q.Get("code_challenge")) || q.Get("code_challenge_method") != "S256" || q.Get("response_type") != "code" {
 		return client, fail(400, "authorization code with PKCE S256 required")
 	}
 	if scope := q.Get("scope"); scope != "" && scope != connectorScope {
@@ -292,9 +291,7 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 			code, ok := st.OAuthCodes[key]
 			delete(st.OAuthCodes, key)
 			verifier := r.Form.Get("code_verifier")
-			if !ok || !code.Expires.After(time.Now()) || code.ClientID != clientID || code.RedirectURI != r.Form.Get("redirect_uri") || len(verifier) < 43 || len(verifier) > 128 || strings.IndexFunc(verifier, func(c rune) bool {
-				return !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~", c))
-			}) >= 0 || auth.Challenge(verifier) != code.Challenge {
+			if !ok || !code.Expires.After(time.Now()) || code.ClientID != clientID || code.RedirectURI != r.Form.Get("redirect_uri") || !validVerifier(verifier) || auth.Challenge(verifier) != code.Challenge {
 				return nil
 			}
 			uid = code.UserID
@@ -340,4 +337,19 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 	}
 	jsonOut(w, 200, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 3600, "refresh_token": refresh, "scope": connectorScope})
 	return nil
+}
+
+func validChallenge(value string) bool {
+	challenge, err := base64.RawURLEncoding.DecodeString(value)
+	return len(value) == 43 && err == nil && len(challenge) == 32
+}
+
+func unreserved(value string) bool {
+	return strings.IndexFunc(value, func(c rune) bool {
+		return !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~", c))
+	}) < 0
+}
+
+func validVerifier(value string) bool {
+	return len(value) >= 43 && len(value) <= 128 && unreserved(value)
 }

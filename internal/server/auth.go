@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,9 +14,22 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func (s *Server) deviceStart(w http.ResponseWriter, r *http.Request, _ string) error {
+func loopbackRedirect(value string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.User != nil || u.Path != "/callback" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(value, "#") || u.Opaque != "" {
+		return false
+	}
+	port, err := strconv.Atoi(u.Port())
+	return err == nil && port >= 1 && port <= 65535 && u.Host == "127.0.0.1:"+u.Port()
+}
+
+func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string) error {
 	var req struct {
-		Provider string `json:"provider"`
+		Provider    string `json:"provider"`
+		Challenge   string `json:"code_challenge"`
+		Method      string `json:"code_challenge_method"`
+		RedirectURI string `json:"redirect_uri"`
+		State       string `json:"state"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		return err
@@ -23,55 +38,101 @@ func (s *Server) deviceStart(w http.ResponseWriter, r *http.Request, _ string) e
 	if !ok || p.ClientID == "" {
 		return fail(400, "provider is not configured")
 	}
-	id, secret := auth.Token(), auth.Token()
+	if req.Method != "S256" || !validChallenge(req.Challenge) {
+		return fail(400, "PKCE S256 required")
+	}
+	if !loopbackRedirect(req.RedirectURI) {
+		return fail(400, "redirect_uri must be http://127.0.0.1:PORT/callback")
+	}
+	if len(req.State) < 1 || len(req.State) > 128 || !unreserved(req.State) {
+		return fail(400, "invalid state")
+	}
+	id := auth.Token()
 	err := s.DB.Update(func(st *model.State) error {
 		prune(st)
-		if len(st.Devices) > 10000 {
+		if len(st.Devices) >= 10000 {
 			return fail(429, "too many login attempts")
 		}
-		st.Devices[id] = model.Device{SecretHash: auth.Hash(secret), Expires: time.Now().Add(10 * time.Minute)}
+		st.Devices[id] = model.Device{LoopbackChallenge: req.Challenge, LoopbackRedirectURI: req.RedirectURI, LoopbackState: req.State, Expires: time.Now().Add(10 * time.Minute)}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	jsonOut(w, 201, map[string]string{"device": id, "secret": secret, "url": s.Config.BaseURL + "/auth/" + req.Provider + "/start?device=" + id})
+	jsonOut(w, 201, map[string]string{"device": id, "url": s.Config.BaseURL + "/auth/" + req.Provider + "/start?device=" + id})
 	return nil
 }
-func (s *Server) devicePoll(w http.ResponseWriter, r *http.Request, _ string) error {
-	var req struct {
-		Device string `json:"device"`
-		Secret string `json:"secret"`
+
+func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string) error {
+	var req *struct {
+		Device   string `json:"device"`
+		Code     string `json:"code"`
+		Verifier string `json:"code_verifier"`
 	}
-	if err := decode(w, r, &req); err != nil {
-		return err
+	if err := decode(w, r, &req); err != nil || req == nil {
+		return fail(400, "invalid request")
 	}
 	token := auth.Token()
-	ready := false
+	var problem error
+	var account model.User
+	var provider string
 	err := s.DB.Update(func(st *model.State) error {
 		d, ok := st.Devices[req.Device]
-		if !ok || d.SecretHash != auth.Hash(req.Secret) || d.Used || d.Expires.Before(time.Now()) {
-			return fail(410, "login request expired")
+		// Persist consumption even on failure; returning an error here rolls it back.
+		if ok {
+			used := d
+			used.Used = true
+			st.Devices[req.Device] = used
 		}
-		if d.UserID == "" {
+		if !ok || d.Used || !d.Expires.After(time.Now()) || d.LoopbackChallenge == "" || d.UserID == "" || d.LoopbackCodeHash == "" || d.LoopbackCodeHash != auth.Hash(req.Code) || !validVerifier(req.Verifier) || auth.Challenge(req.Verifier) != d.LoopbackChallenge {
+			problem = fail(410, "login request expired; run kioku login again")
 			return nil
 		}
-		d.Used = true
-		st.Devices[req.Device] = d
+		account = st.Users[d.UserID]
+		provider = d.IdentityProvider
 		st.Sessions[auth.Hash(token)] = model.Session{Created: time.Now().UTC(), UserID: d.UserID, Expires: time.Now().Add(30 * 24 * time.Hour), IdentityProvider: d.IdentityProvider, IdentityID: d.IdentityID, IdentityCredential: d.IdentityCredential}
-		ready = true
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if !ready {
-		jsonOut(w, 202, map[string]string{"status": "pending"})
-	} else {
-		jsonOut(w, 200, map[string]string{"token": token})
+	if problem != nil {
+		return problem
 	}
+	jsonOut(w, 200, map[string]string{"token": token, "provider": provider, "name": account.Name, "email": account.Email})
 	return nil
 }
+
+// Only an unbound, live loopback request may receive a callback.
+func pendingLoopback(d model.Device) bool {
+	return d.LoopbackChallenge != "" && !d.Used && d.UserID == "" && d.Expires.After(time.Now())
+}
+
+func loopbackExpired(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusGone)
+	return render(w, "CLI login expired", struct{ Message string }{"CLI login expired; run kioku login again"}, messageTemplate)
+}
+
+func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, reason string) error {
+	var target string
+	err := s.DB.Update(func(st *model.State) error {
+		d := st.Devices[id]
+		if pendingLoopback(d) {
+			target = d.LoopbackRedirectURI + "?" + url.Values{"error": {reason}, "state": {d.LoopbackState}}.Encode()
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if target == "" {
+		return loopbackExpired(w)
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+	return nil
+}
+
 func (s *Server) connect(w http.ResponseWriter, r *http.Request, uid string) error {
 	provider := r.PathValue("provider")
 	p, ok := s.Config.Providers[provider]
@@ -126,7 +187,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, uid string) 
 
 		if pending.Device != "" {
 			d, ok := st.Devices[pending.Device]
-			if !ok || d.Used || d.Expires.Before(time.Now()) || d.UserID != "" {
+			if !ok || !pendingLoopback(d) {
 				return fail(410, "login request expired")
 			}
 		}
@@ -159,18 +220,33 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	if err != nil {
 		return err
 	}
+	if pending.Device != "" && r.URL.Query().Has("error") {
+		return s.loopbackFailure(w, r, pending.Device, "access_denied")
+	}
 	p := s.Config.Providers[pending.Provider]
 	credential, err := p.Exchange(r.Context(), r.URL.Query().Get("code"), pending.Verifier)
 	if err != nil {
+		if pending.Device != "" {
+			return s.loopbackFailure(w, r, pending.Device, "server_error")
+		}
 		return fail(502, "OAuth exchange failed; restart login")
 	}
 	identity, err := p.Identity(r.Context(), credential.AccessToken)
 	if err != nil {
+		if pending.Device != "" {
+			return s.loopbackFailure(w, r, pending.Device, "server_error")
+		}
 		return fail(502, "could not verify provider identity and primary email")
 	}
-	var uid string
+	var uid, loopbackURL string
 	token := auth.Token()
+	code := "kioku_loopback." + auth.Token()
+	var expired bool
 	err = s.DB.Update(func(st *model.State) error {
+		if pending.Device != "" && !pendingLoopback(st.Devices[pending.Device]) {
+			expired = true
+			return nil
+		}
 		for id, u := range st.Users {
 			if u.Identities[pending.Provider] == identity.ID {
 				uid = id
@@ -213,15 +289,15 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		credentialJSON, _ := json.Marshal(credential)
 		sealedIdentity := s.Cipher.Seal(string(credentialJSON), identityContext(uid, pending.Provider, identity.ID))
 		if pending.Device != "" {
-			d, ok := st.Devices[pending.Device]
-			if !ok || d.Used || d.UserID != "" || d.Expires.Before(time.Now()) {
-				return fail(410, "CLI login expired; restart login")
-			}
+			d := st.Devices[pending.Device]
 			d.UserID = uid
 			d.IdentityProvider = pending.Provider
 			d.IdentityID = identity.ID
 			d.IdentityCredential = sealedIdentity
+			d.LoopbackCodeHash = auth.Hash(code)
+			d.Expires = time.Now().Add(time.Minute)
 			st.Devices[pending.Device] = d
+			loopbackURL = d.LoopbackRedirectURI + "?" + url.Values{"code": {code}, "state": {d.LoopbackState}}.Encode()
 		}
 		st.Sessions[auth.Hash(token)] = model.Session{Created: time.Now().UTC(), UserID: uid, Expires: time.Now().Add(30 * 24 * time.Hour), IdentityProvider: pending.Provider, IdentityID: identity.ID, IdentityCredential: sealedIdentity}
 		return nil
@@ -229,10 +305,14 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	if err != nil {
 		return err
 	}
+	if expired {
+		return loopbackExpired(w)
+	}
 	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: token, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
 	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: "", Path: "/auth/", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode})
 	if pending.Device != "" {
-		return render(w, "CLI login complete", struct{ Message string }{"認証が完了しました。CLIに戻ってください。"}, messageTemplate)
+		http.Redirect(w, r, loopbackURL, http.StatusFound)
+		return nil
 	}
 	if pending.ReturnPath != "" {
 		target, err := authorizeReturn(pending.ReturnPath)
@@ -273,7 +353,7 @@ func prune(st *model.State) {
 		}
 	}
 	for k, v := range st.Devices {
-		if v.Expires.Before(now) {
+		if v.Used || !v.Expires.After(now) {
 			delete(st.Devices, k)
 		}
 	}

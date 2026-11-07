@@ -202,8 +202,8 @@ func (s *Server) routes() {
 		}
 		jsonOut(w, 200, map[string]string{"status": "ok"})
 	})
-	s.mux.HandleFunc("POST /api/auth/device", s.wrap(s.deviceStart, false))
-	s.mux.HandleFunc("POST /api/auth/device/poll", s.wrap(s.devicePoll, false))
+	s.mux.HandleFunc("POST /api/auth/loopback", s.wrap(s.loopbackStart, false))
+	s.mux.HandleFunc("POST /api/auth/loopback/token", s.wrap(s.loopbackToken, false))
 	s.mux.HandleFunc("GET /auth/{provider}/start", s.wrap(s.oauthStart, false))
 	s.mux.HandleFunc("GET /auth/{provider}/callback", s.wrap(s.oauthCallback, false))
 	s.mux.HandleFunc("POST /api/logout", s.wrap(s.logout, true))

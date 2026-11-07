@@ -14,7 +14,7 @@ import (
 type oauthTransport func(*http.Request) (*http.Response, error)
 
 func (f oauthTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func TestOAuthDeviceFlowPKCEAndAccountIsolation(t *testing.T) {
+func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 	f := setup(t)
 	f.s.Config.Providers["google"] = auth.Provider{Name: "google", ClientID: "id", ClientSecret: "secret", RedirectURL: f.url + "/auth/google/callback"}
 	old := auth.Client
@@ -43,11 +43,9 @@ func TestOAuthDeviceFlowPKCEAndAccountIsolation(t *testing.T) {
 	login := func(identity string) string {
 		t.Helper()
 		var d map[string]string
-		if code := f.request("POST", "/api/auth/device", "", map[string]string{"provider": "google"}, &d); code != 201 {
-			t.Fatal(code)
-		}
-		var pending map[string]string
-		if code := f.request("POST", "/api/auth/device/poll", "", map[string]string{"device": d["device"], "secret": d["secret"]}, &pending); code != 202 {
+		verifier, cliState := auth.Token(), auth.Token()
+		redirectURI := "http://127.0.0.1:5000/callback"
+		if code := f.request("POST", "/api/auth/loopback", "", map[string]string{"provider": "google", "code_challenge": auth.Challenge(verifier), "code_challenge_method": "S256", "redirect_uri": redirectURI, "state": cliState}, &d); code != 201 {
 			t.Fatal(code)
 		}
 		client := *f.client
@@ -82,14 +80,22 @@ func TestOAuthDeviceFlowPKCEAndAccountIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != 302 {
 			t.Fatalf("callback: %d", resp.StatusCode)
 		}
-		var result map[string]string
-		if code := f.request("POST", "/api/auth/device/poll", "", map[string]string{"device": d["device"], "secret": d["secret"]}, &result); code != 200 || result["token"] == "" {
-			t.Fatalf("poll %d %v", code, result)
+		callback, err := url.Parse(resp.Header.Get("Location"))
+		if err != nil || callback.Scheme+"://"+callback.Host+callback.Path != redirectURI || callback.Query().Get("state") != cliState || !strings.HasPrefix(callback.Query().Get("code"), "kioku_loopback.") {
+			t.Fatalf("loopback callback: %v %v", callback, err)
 		}
-		if code := f.request("POST", "/api/auth/device/poll", "", map[string]string{"device": d["device"], "secret": d["secret"]}, nil); code != 410 {
+		exchange := map[string]string{"device": d["device"], "code": callback.Query().Get("code"), "code_verifier": verifier}
+		var result map[string]string
+		if code := f.request("POST", "/api/auth/loopback/token", "", exchange, &result); code != 200 || result["token"] == "" {
+			t.Fatalf("exchange %d %v", code, result)
+		}
+		if result["provider"] != "google" || result["name"] != "Same email" || result["email"] != providerEmail {
+			t.Fatalf("exchange returned the wrong account: %v", result)
+		}
+		if code := f.request("POST", "/api/auth/loopback/token", "", exchange, nil); code != 410 {
 			t.Fatal("device was reusable")
 		}
 		return result["token"]
@@ -99,8 +105,9 @@ func TestOAuthDeviceFlowPKCEAndAccountIsolation(t *testing.T) {
 		ID    string `json:"id"`
 		Email string `json:"email"`
 	}
-	f.request("GET", "/api/me", first, nil, &a)
-	f.request("GET", "/api/me", second, nil, &b)
+	if f.request("GET", "/api/me", first, nil, &a) != 200 || f.request("GET", "/api/me", second, nil, &b) != 200 {
+		t.Fatal("loopback sessions cannot authenticate")
+	}
 	if a.ID == b.ID || a.Email != b.Email {
 		t.Fatal("accounts merged by email")
 	}

@@ -42,7 +42,7 @@ func (s *Server) allow(r *http.Request) bool {
 		}
 	}
 	limit := s.Config.RatePerMinute
-	if strings.HasPrefix(r.URL.Path, "/auth/") || r.URL.Path == "/api/auth/device" {
+	if strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/api/auth/") {
 		host += "/auth"
 		limit = 20
 	}

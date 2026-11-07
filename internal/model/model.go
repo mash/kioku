@@ -134,13 +134,17 @@ type OAuthState struct {
 	Expires    time.Time `json:"expires"`
 }
 type Device struct {
-	IdentityProvider   string    `json:"identity_provider,omitempty"`
-	IdentityID         string    `json:"identity_id,omitempty"`
-	IdentityCredential string    `json:"identity_credential,omitempty"`
-	UserID             string    `json:"user_id,omitempty"`
-	SecretHash         string    `json:"secret_hash"`
-	Expires            time.Time `json:"expires"`
-	Used               bool      `json:"used"`
+	LoopbackChallenge   string    `json:"loopback_challenge,omitempty"`
+	LoopbackRedirectURI string    `json:"loopback_redirect_uri,omitempty"`
+	LoopbackState       string    `json:"loopback_state,omitempty"`
+	LoopbackCodeHash    string    `json:"loopback_code_hash,omitempty"`
+	IdentityProvider    string    `json:"identity_provider,omitempty"`
+	IdentityID          string    `json:"identity_id,omitempty"`
+	IdentityCredential  string    `json:"identity_credential,omitempty"`
+	UserID              string    `json:"user_id,omitempty"`
+	SecretHash          string    `json:"secret_hash"`
+	Expires             time.Time `json:"expires"`
+	Used                bool      `json:"used"`
 }
 type Source struct {
 	UpdatedAt   time.Time `json:"updated_at,omitempty"`

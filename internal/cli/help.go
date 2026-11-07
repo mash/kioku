@@ -22,7 +22,6 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   generate [--full] [--wait]         Generate wiki from saved sources (wait also pulls)
   pull [ORG/PROJECT]          Bind cwd on first pull; fetch one project
   status | open
-  doctor [--llm]                      Check storage/providers and optional agent configuration
   usage | audit
   maintenance                          Collect unreferenced project objects
   source remove --yes [--wait] SOURCE_ID        Delete source and invalidate generated pages

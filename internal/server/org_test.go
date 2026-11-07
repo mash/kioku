@@ -74,17 +74,6 @@ func TestManagedFingerprintIncludesAgentAndSourceVersion(t *testing.T) {
 		t.Fatal("fingerprint missed configuration or content")
 	}
 }
-func TestDoctorChecksManagedConfigurationWithoutAPI(t *testing.T) {
-	f, token, p, ma := managedFixture(t)
-	before := len(ma.Requests())
-	var out struct{ Checks map[string]string }
-	if c := f.request("POST", "/api/projects/"+p.ID+"/doctor", token, map[string]bool{"llm": true}, &out); c != 200 {
-		t.Fatal(c)
-	}
-	if !strings.Contains(out.Checks["managed_agents"], "API not called") || len(ma.Requests()) != before {
-		t.Fatal(out)
-	}
-}
 func TestDeterministicFallbackPublishes(t *testing.T) {
 	f, token, p := orgProject(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")

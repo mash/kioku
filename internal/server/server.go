@@ -187,7 +187,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/orgs", s.wrap(s.organizations, true))
 	s.mux.HandleFunc("GET /{org}/{slug}", s.wrap(s.namespacePage, true))
 
-	s.mux.HandleFunc("POST /api/projects/{project}/doctor", s.wrap(s.doctor, true))
 	s.mux.HandleFunc("GET /metrics", s.metrics)
 	s.mux.HandleFunc("GET /api/projects/{project}/usage", s.wrap(s.usage, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/audit", s.wrap(s.audit, true))

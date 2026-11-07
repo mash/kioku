@@ -177,8 +177,6 @@ func (a *App) dispatch(args []string) error {
 		return a.pullCommand(args[1:])
 	case "status":
 		return a.status()
-	case "doctor":
-		return a.doctor(args[1:])
 	case "usage":
 		return a.usage()
 	case "audit":

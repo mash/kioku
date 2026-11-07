@@ -74,7 +74,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{"POST", "/api/projects"}, {"GET", "/api/orgs"}, {"GET", "/api/account"}, {"POST", "/api/account/revoke-all"}, {"POST", "/api/connect/github"},
 		{"POST", "/api/projects/" + a.ID + "/invites"}, {"DELETE", "/api/projects/" + a.ID},
-		{"POST", "/api/projects/" + a.ID + "/put"}, {"POST", "/api/projects/" + a.ID + "/doctor"},
+		{"POST", "/api/projects/" + a.ID + "/put"},
 	} {
 		if c := f.request(route.method, route.path, token, nil, nil); c != 403 {
 			t.Fatal("agent escaped scope", route, c)

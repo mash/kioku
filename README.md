@@ -319,8 +319,6 @@ kioku audit                             # ownerのみ
 kioku maintenance             # owner: currentを含む20リビジョンを保持、GC
 kioku source remove --yes <source-id>   # owner: 保存した資料と旧生成物を削除し再生成
 kioku delete --yes                      # owner: プロジェクトと専用バケットを削除
-kioku doctor                            # ストレージ往復とGoogle/GitHub接続確認
-kioku doctor --llm                      # Managed Agents の設定確認（API 呼出しなし）
 ```
 
 資料削除では、削除した内容が旧Wikiに残らないようそのプロジェクトの全生成履歴を破棄して再生成します。プロジェクト削除は途中失敗時にも同じコマンドで再実行できます。メンバーが既に取得したローカルコピーや外部バックアップまでは遠隔消去できません。
@@ -356,7 +354,7 @@ go build ./cmd/...
 
 CLI/APIの連携、取得不能なURLのファイル投入案内、SQLiteの分離・移行・障害復旧・バックアップ、署名付きバケット操作、同時投入、招待・権限剥奪、OAuth/PKCE、暗号化、削除・容量制限・GC、Markdown／SVGの安全性をテストします。CIにもブラウザは不要です。
 
-Google／GitHub／Managed Agents はモック、S3はTLSテストサーバで検証します。実サービスの接続は各アプリの登録と資格情報を設定し、`connect` と手順書の実セッションで検証してください。`doctor --llm` は設定の確認だけです。未設定の資格情報による実接続を「検証済み」とは扱いません。
+Google／GitHub／Managed Agents はモック、S3はTLSテストサーバで検証します。実サービスの接続は各アプリの登録と資格情報を設定し、`connect` と手順書の実セッションで検証してください。未設定の資格情報による実接続を「検証済み」とは扱いません。
 
 ## Organizations
 

@@ -356,12 +356,6 @@ func prune(st *model.State) {
 		}
 	}
 }
-func (s *Server) credential(r *http.Request, uid, provider string) (string, error) {
-	if _, p := s.session(r); p.AgentID != "" {
-		return "", fail(403, "agent credentials cannot use personal provider connections")
-	}
-	return s.providerCredential(r.Context(), uid, provider)
-}
 
 func (s *Server) providerCredential(ctx context.Context, uid, provider string) (string, error) {
 	var sealed string

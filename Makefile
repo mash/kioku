@@ -2,7 +2,7 @@
 BUILDINFO := github.com/mash/kioku/internal/buildinfo
 build:
 	@set -eu; \
-	ldflags="-X $(BUILDINFO).Version=$$(git describe --tags --always) -X $(BUILDINFO).Commit=$$(git rev-parse HEAD)"; \
+	ldflags="-X $(BUILDINFO).Version=$(or $(VERSION),dev) -X $(BUILDINFO).Commit=$$(git rev-parse HEAD)"; \
 	go build -trimpath -ldflags "$$ldflags" -o bin/kioku ./cmd/kioku; \
 	go build -trimpath -ldflags "$$ldflags" -o bin/kiokud ./cmd/kiokud
 test:

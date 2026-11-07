@@ -13,7 +13,7 @@ import (
 	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
-	"github.com/mash/kioku/internal/runner/managed"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 	openairunner "github.com/mash/kioku/internal/runner/openai"
 	"github.com/mash/kioku/internal/store"
 )
@@ -106,13 +106,13 @@ func (s *Set) New(job model.Job) (runner.Runner, error) {
 		if s.config.ManagedAgents == nil {
 			return nil, runner.ErrNotConfigured
 		}
-		return managed.New(func() (managedagents.Client, error) { return s.config.ManagedAgents, nil }, s.config.MAAgentID, s.config.MAAgentVersion, s.config.MAEnvironmentID), nil
+		return claudemanaged.New(func() (managedagents.Client, error) { return s.config.ManagedAgents, nil }, s.config.MAAgentID, s.config.MAAgentVersion, s.config.MAEnvironmentID), nil
 	}
 	c, err := s.jobConnection(job)
 	if err != nil {
 		return nil, err
 	}
-	return managed.New(func() (managedagents.Client, error) {
+	return claudemanaged.New(func() (managedagents.Client, error) {
 		c, err := s.jobConnection(job)
 		if err != nil {
 			return nil, err

@@ -417,6 +417,12 @@ Claude Code のプラグインは [plugin/](plugin/README.md) にあります。
 
 Namespaceのorg名・project名はそれぞれ1〜63文字のASCII小文字英数字と単一ハイフンに限定し、先頭・末尾は英数字とします（例: `acme/team-wiki`）。
 
+### Claude Managed Agents runner
+
+`KIOKU_RUNNER=claudemanaged` explicitly selects Anthropic Managed Agents for
+operator-key generation and requires `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID`,
+and `KIOKU_MA_ENVIRONMENT_ID`. See [runner configuration](docs/WORKERS.md#generation-runner-type).
+
 ### OpenAI Agents API runner
 
 `KIOKU_RUNNER=openai` selects the OpenAI-managed agent and hosted sandbox for

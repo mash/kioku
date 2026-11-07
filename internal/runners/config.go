@@ -58,9 +58,9 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 	config := execrunner.Config{Root: root}
 	switch s.config.Type {
 	case "":
-	case "managed":
+	case "claudemanaged":
 		if s.config.ManagedAgents == nil {
-			return errors.New("KIOKU_RUNNER=managed requires Managed Agents configuration")
+			return errors.New("KIOKU_RUNNER=claudemanaged requires Managed Agents configuration")
 		}
 	case "openai":
 		if strings.TrimSpace(s.config.OpenAIAPIKey) == "" || strings.TrimSpace(s.config.OpenAIModel) == "" {

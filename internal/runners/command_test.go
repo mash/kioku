@@ -19,7 +19,7 @@ func TestCommandJSON(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, argv) {
 		t.Fatal(got, err)
 	}
-	if got, err := ParseCommand("managed", "invalid unused command"); err != nil || got != nil {
+	if got, err := ParseCommand("claudemanaged", "invalid unused command"); err != nil || got != nil {
 		t.Fatal(got, err)
 	}
 }

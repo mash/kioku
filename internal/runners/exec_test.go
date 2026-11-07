@@ -35,7 +35,7 @@ func TestExecStartupValidation(t *testing.T) {
 	c := execConfig(t)
 	c.AnthropicAPIKey = "partial"
 	if _, err := Load(c, nil, nil, nil); err == nil {
-		t.Fatal("exec bypassed managed configuration validation")
+		t.Fatal("exec bypassed claudemanaged configuration validation")
 	}
 	c = execConfig(t)
 	if err := os.WriteFile(filepath.Join(c.DataDir, "exec-runs"), nil, 0600); err != nil {
@@ -94,7 +94,7 @@ func TestBaseOriginUsesManagedRule(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close(t.Context())
-			c.Type = "managed"
+			c.Type = "claudemanaged"
 			c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "environment", "key"
 			if _, err := Load(c, nil, nil, nil); err != nil {
 				t.Fatal(err)
@@ -121,7 +121,7 @@ func TestManagedConfigurationCleansExecWorkdir(t *testing.T) {
 	if err := s.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	c.Type = "managed"
+	c.Type = "claudemanaged"
 	c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "environment", "key"
 	s, err = Load(c, nil, nil, nil)
 	if err != nil {

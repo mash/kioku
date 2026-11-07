@@ -1,5 +1,5 @@
-// Package managed implements generation with Anthropic Managed Agents.
-package managed
+// Package claudemanaged implements generation with Anthropic Managed Agents.
+package claudemanaged
 
 import (
 	"context"

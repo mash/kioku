@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/ory/fosite"
 )
 
 const connectorScope = "cli_login"
@@ -122,29 +125,43 @@ func (s *Server) browserSession(r *http.Request) (string, model.Session) {
 	})
 	return key, session
 }
-func (s *Server) authorizationRequest(q url.Values) (model.OAuthClient, error) {
-	var client model.OAuthClient
-	err := s.DB.View(func(st model.State) error {
-		var ok bool
-		client, ok = st.OAuthClients[q.Get("client_id")]
-		if !ok || !slices.Contains(client.RedirectURIs, q.Get("redirect_uri")) {
-			return fail(400, "invalid client or redirect URI")
+
+// Resource indicators are an MCP adapter around Fosite's audience handling.
+// Kioku exposes one protected resource; never silently accept another audience.
+func (s *Server) oauthResource(form url.Values) error {
+	target := s.Config.BaseURL + "/mcp"
+	for _, name := range []string{"resource", "audience"} {
+		if values := form[name]; len(values) > 1 || len(values) == 1 && values[0] != target {
+			return &fosite.RFC6749Error{ErrorField: "invalid_target", DescriptionField: "The resource must be this server's MCP endpoint.", CodeField: http.StatusBadRequest}
 		}
-		return nil
-	})
-	if err != nil {
+	}
+	form.Set("audience", target)
+	return nil
+}
+
+func (s *Server) authorizationRequest(r *http.Request) (model.OAuthClient, error) {
+	var client model.OAuthClient
+	if err := s.oauthResource(r.Form); err != nil {
 		return client, err
 	}
-	if !validChallenge(q.Get("code_challenge")) || q.Get("code_challenge_method") != "S256" || q.Get("response_type") != "code" {
-		return client, fail(400, "authorization code with PKCE S256 required")
+	if r.Form.Get("scope") == "" {
+		r.Form.Set("scope", connectorScope)
 	}
-	if scope := q.Get("scope"); scope != "" && scope != connectorScope {
-		return client, fail(400, "invalid scope")
+	// Reject malformed PKCE inputs before showing consent. The actual verifier
+	// validation and binding to the issued code belong to Fosite.
+	if !validChallenge(r.Form.Get("code_challenge")) || r.Form.Get("code_challenge_method") != "S256" {
+		return client, fosite.ErrInvalidRequest
 	}
-	if resource := q.Get("resource"); resource != "" && resource != s.Config.BaseURL+"/mcp" {
-		return client, fail(400, "invalid resource")
-	}
-	return client, nil
+	err := s.DB.View(func(st model.State) error {
+		provider, _ := s.connectorOAuth(&st)
+		request, err := provider.NewAuthorizeRequest(r.Context(), r)
+		if err != nil {
+			return err
+		}
+		client = st.OAuthClients[request.GetClient().GetID()]
+		return nil
+	})
+	return client, err
 }
 
 const connectorConsent = `{{define "body"}}<h1>Authorize Kioku connector</h1>
@@ -164,7 +181,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	if err := r.ParseForm(); err != nil {
 		return fail(400, "invalid authorization request")
 	}
-	client, err := s.authorizationRequest(r.Form)
+	client, err := s.authorizationRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return nil
@@ -230,7 +247,9 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 		}
 		return render(w, "Authorize connector", data, connectorConsent)
 	}
-	raw := "kioku_auth." + auth.Token()
+	var provider fosite.OAuth2Provider
+	var request fosite.AuthorizeRequester
+	var response fosite.AuthorizeResponder
 	if err := s.DB.Update(func(st *model.State) error {
 		prune(st)
 		current, ok := st.Sessions[key]
@@ -244,20 +263,25 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 				return fail(400, "selected project is unavailable; reopen the consent page")
 			}
 		}
-		if len(st.OAuthCodes) >= 10000 {
-			return fail(429, "too many authorization attempts")
+		provider, _ = s.connectorOAuth(st)
+		request, err = provider.NewAuthorizeRequest(r.Context(), r)
+		if err != nil {
+			return err
 		}
-		st.OAuthCodes[auth.Hash(raw)] = model.OAuthCode{ClientID: client.ID, UserID: current.UserID, ProjectIDs: projectIDs, RedirectURI: r.Form.Get("redirect_uri"), Challenge: r.Form.Get("code_challenge"), Expires: time.Now().Add(time.Minute)}
+		request.GrantScope(connectorScope)
+		request.GrantAudience(s.Config.BaseURL + "/mcp")
+		response, err = provider.NewAuthorizeResponse(r.Context(), request, &connectorSession{
+			DefaultSession: fosite.DefaultSession{Subject: current.UserID}, ProjectIDs: projectIDs,
+		})
+		if err != nil {
+			return err
+		}
+
 		return nil
 	}); err != nil {
 		return err
 	}
-	target, _ := url.Parse(r.Form.Get("redirect_uri"))
-	q := target.Query()
-	q.Set("code", raw)
-	q.Set("state", r.Form.Get("state"))
-	target.RawQuery = q.Encode()
-	http.Redirect(w, r, target.String(), http.StatusFound)
+	provider.WriteAuthorizeResponse(r.Context(), w, request, response)
 	return nil
 }
 
@@ -267,75 +291,40 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 		jsonOut(w, 400, map[string]string{"error": "invalid_request"})
 		return nil
 	}
-	access, refresh := "kioku_oauth."+auth.Token(), "kioku_oauth."+auth.Token()
-	problem := "invalid_grant"
+	var provider fosite.OAuth2Provider
+	var request fosite.AccessRequester
+	var response fosite.AccessResponder
+	var problem error
 	err := s.DB.Update(func(st *model.State) error {
 		prune(st)
-		clientID := r.Form.Get("client_id")
-		if _, ok := st.OAuthClients[clientID]; !ok {
-			return nil
+		var storage *oauthStorage
+		provider, storage = s.connectorOAuth(st)
+		// On ordinary errors roll back every partial Fosite mutation. Replay errors
+		// must instead commit family revocation, even though the HTTP request fails.
+		codes, tokens := maps.Clone(st.OAuthCodes), maps.Clone(st.OAuthTokens)
+		problem = s.oauthResource(r.PostForm)
+		if problem == nil {
+			request, problem = provider.NewAccessRequest(r.Context(), r, &connectorSession{})
 		}
-		if resource := r.Form.Get("resource"); resource != "" && resource != s.Config.BaseURL+"/mcp" {
-			problem = "invalid_target"
-			return nil
+		if problem == nil {
+			response, problem = provider.NewAccessResponse(r.Context(), request)
 		}
-		if scope := r.Form.Get("scope"); scope != "" && scope != connectorScope {
-			problem = "invalid_scope"
-			return nil
+		if problem != nil && !storage.replay {
+			st.OAuthCodes, st.OAuthTokens = codes, tokens
 		}
-		var uid, refreshKey string
-		var projectIDs []string
-		switch r.Form.Get("grant_type") {
-		case "authorization_code":
-			key := auth.Hash(r.Form.Get("code"))
-			code, ok := st.OAuthCodes[key]
-			delete(st.OAuthCodes, key)
-			verifier := r.Form.Get("code_verifier")
-			if !ok || !code.Expires.After(time.Now()) || code.ClientID != clientID || code.RedirectURI != r.Form.Get("redirect_uri") || !validVerifier(verifier) || auth.Challenge(verifier) != code.Challenge {
-				return nil
-			}
-			uid = code.UserID
-			projectIDs = code.ProjectIDs
-		case "refresh_token":
-			key := auth.Hash(r.Form.Get("refresh_token"))
-			grant, ok := st.OAuthTokens[key]
-			if !ok || grant.Kind != "refresh" || grant.ClientID != clientID || !grant.Expires.After(time.Now()) {
-				return nil
-			}
-			refreshKey = key
-			uid = grant.UserID
-			projectIDs = grant.ProjectIDs
-		default:
-			problem = "unsupported_grant_type"
-			return nil
+		if errors.Is(problem, errOAuthCapacity) {
+			problem = fosite.ErrTemporarilyUnavailable
 		}
-		if _, ok := st.Users[uid]; !ok || len(projectIDs) == 0 {
-			return nil
-		}
-		count := len(st.OAuthTokens)
-		if refreshKey != "" {
-			count--
-		}
-		if count > 19998 {
-			problem = "temporarily_unavailable"
-			return nil
-		}
-		if refreshKey != "" {
-			delete(st.OAuthTokens, refreshKey)
-		}
-		st.OAuthTokens[auth.Hash(access)] = model.OAuthGrant{Kind: "access", ClientID: clientID, UserID: uid, ProjectIDs: projectIDs, Expires: time.Now().Add(time.Hour)}
-		st.OAuthTokens[auth.Hash(refresh)] = model.OAuthGrant{Kind: "refresh", ClientID: clientID, UserID: uid, ProjectIDs: projectIDs, Expires: time.Now().Add(30 * 24 * time.Hour)}
-		problem = ""
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if problem != "" {
-		jsonOut(w, 400, map[string]string{"error": problem})
+	if problem != nil {
+		provider.WriteAccessError(r.Context(), w, request, problem)
 		return nil
 	}
-	jsonOut(w, 200, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 3600, "refresh_token": refresh, "scope": connectorScope})
+	provider.WriteAccessResponse(r.Context(), w, request, response)
 	return nil
 }
 

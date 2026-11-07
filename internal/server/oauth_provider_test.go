@@ -91,7 +91,7 @@ func connectorAuthCode(t *testing.T, f *fixture, client, human string, projectID
 	}
 	fields["project_id"] = projectIDs
 	result := connectorForm(f, "POST", action, human, fields)
-	if result.Code != 302 {
+	if result.Code != 303 {
 		t.Fatal(result.Code, result.Body.String())
 	}
 	target, err := url.Parse(result.Header().Get("Location"))
@@ -120,7 +120,7 @@ func connectorTokenPair(t *testing.T, f *fixture, form url.Values) (string, stri
 	if result.Code != 200 || json.Unmarshal(result.Body.Bytes(), &tokens) != nil {
 		t.Fatal(result.Code, result.Body.String())
 	}
-	if !strings.HasPrefix(tokens.Access, "kioku_oauth.") || tokens.Refresh == "" {
+	if !strings.HasPrefix(tokens.Access, "ory_at_") || tokens.Refresh == "" {
 		t.Fatal("missing OAuth tokens")
 	}
 	return tokens.Access, tokens.Refresh
@@ -151,7 +151,7 @@ func TestConnectorOAuthPKCEAndSingleUse(t *testing.T) {
 func TestConnectorRejectsUnregisteredRedirect(t *testing.T) {
 	f := setupWithWorker(t, false)
 	client := connectorClient(t, f)
-	form := url.Values{"client_id": {client}, "redirect_uri": {"https://attacker.example/callback"}, "response_type": {"code"}, "code_challenge_method": {"S256"}, "code_challenge": {auth.Challenge(auth.Token())}}
+	form := url.Values{"client_id": {client}, "redirect_uri": {"https://attacker.example/callback"}, "response_type": {"code"}, "state": {"test-client-state"}, "code_challenge_method": {"S256"}, "code_challenge": {auth.Challenge(auth.Token())}}
 	result := connectorForm(f, "GET", "/oauth/authorize", "", form)
 	if result.Code != 400 || result.Header().Get("Location") != "" {
 		t.Fatal("untrusted redirect", result.Code, result.Header())
@@ -169,7 +169,7 @@ func TestConnectorBrowserConsentPolicy(t *testing.T) {
 	if status := f.request("POST", "/oauth/register", "", map[string]any{"client_name": "Claude", "redirect_uris": []string{callback}}, &client); status != 201 {
 		t.Fatal("client registration", status)
 	}
-	form := url.Values{"client_id": {client.ID}, "redirect_uri": {callback}, "response_type": {"code"}, "code_challenge_method": {"S256"}, "code_challenge": {auth.Challenge(auth.Token())}}
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {callback}, "response_type": {"code"}, "state": {"test-client-state"}, "code_challenge_method": {"S256"}, "code_challenge": {auth.Challenge(auth.Token())}}
 	page := connectorForm(f, "GET", "/oauth/authorize", human, form)
 	if page.Code != 200 || page.Header().Get("Referrer-Policy") != "same-origin" {
 		t.Fatal("consent page must preserve the Origin of its own form POST", page.Code, page.Header())
@@ -187,7 +187,7 @@ func TestConnectorBrowserConsentPolicy(t *testing.T) {
 		t.Fatal("project missing from consent form")
 	}
 	fields.Set("project_id", project.ID)
-	if valid := connectorForm(f, "POST", action, human, fields); valid.Code != 302 {
+	if valid := connectorForm(f, "POST", action, human, fields); valid.Code != 303 {
 		t.Fatal("same-origin control submission failed", valid.Code)
 	}
 	for _, origin := range []string{"null", "https://client.example:8443"} {
@@ -245,6 +245,7 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 		grant := st.OAuthTokens[auth.Hash(tokens.Refresh)]
 		grant.Kind, grant.Expires = "access", time.Now().Add(time.Hour)
 		for i := 0; len(st.OAuthTokens) < 20000; i++ {
+			grant.RequestID = "capacity-test-" + strconv.Itoa(i)
 			st.OAuthTokens[auth.Hash("capacity-test-"+strconv.Itoa(i))] = grant
 		}
 		return nil
@@ -253,7 +254,7 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 	}
 	form = url.Values{"grant_type": {"refresh_token"}, "client_id": {client}, "refresh_token": {tokens.Refresh}}
 	response = connectorForm(f, "POST", "/oauth/token", "", form)
-	if response.Code != 400 || !strings.Contains(response.Body.String(), "temporarily_unavailable") {
+	if response.Code != 503 || !strings.Contains(response.Body.String(), "temporarily_unavailable") {
 		t.Fatal("expected capacity failure", response.Code)
 	}
 	if err := f.db.Update(func(st *model.State) error { delete(st.OAuthTokens, auth.Hash("capacity-test-0")); return nil }); err != nil {

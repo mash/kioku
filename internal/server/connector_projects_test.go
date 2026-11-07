@@ -113,7 +113,7 @@ func TestConnectorConsentRequiresTheDisplayedAccount(t *testing.T) {
 		t.Fatal("shared project missing on Bob's consent page")
 	}
 	fields.Set("project_id", shared.ID)
-	if res := connectorForm(f, "POST", action, bob, fields); res.Code != 302 {
+	if res := connectorForm(f, "POST", action, bob, fields); res.Code != 303 {
 		t.Fatal("Bob could not consent from the new form", res.Code)
 	}
 }

@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,7 +24,10 @@ func Challenge(s string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-type Cipher struct{ aead cipher.AEAD }
+type Cipher struct {
+	aead        cipher.AEAD
+	oauthSecret []byte
+}
 
 func NewCipher(key string) (*Cipher, error) {
 	b, err := base64.StdEncoding.DecodeString(key)
@@ -35,7 +39,14 @@ func NewCipher(key string) (*Cipher, error) {
 		return nil, err
 	}
 	a, err := cipher.NewGCM(block)
-	return &Cipher{a}, err
+	if err != nil {
+		return nil, err
+	}
+	secret, err := hkdf.Key(sha256.New, b, nil, "kioku/fosite/oauth2", 32)
+	if err != nil {
+		return nil, err
+	}
+	return &Cipher{aead: a, oauthSecret: secret}, nil
 }
 func (c *Cipher) Seal(value, context string) string {
 	n := make([]byte, c.aead.NonceSize())
@@ -56,3 +67,6 @@ func (c *Cipher) Open(value, context string) (string, error) {
 	v, err := c.aead.Open(nil, b[:n], b[n:], []byte(context))
 	return string(v), err
 }
+
+// OAuthSecret returns a domain-separated signing key for the OAuth server.
+func (c *Cipher) OAuthSecret() []byte { return append([]byte(nil), c.oauthSecret...) }

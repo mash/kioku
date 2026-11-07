@@ -25,3 +25,32 @@ func TestCredentialEncryptionIsBoundToUserAndProvider(t *testing.T) {
 		t.Fatal("cross-provider credential accepted")
 	}
 }
+
+func TestOAuthSecretIsStableAndSeparated(t *testing.T) {
+	raw := make([]byte, 32)
+	key := base64.StdEncoding.EncodeToString(raw)
+	first, err := NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := first.OAuthSecret()
+	if len(secret) != 32 || string(secret) == string(raw) || string(secret) != string(second.OAuthSecret()) {
+		t.Fatal("invalid or unstable derived key")
+	}
+	secret[0] ^= 0xff
+	if string(first.OAuthSecret()) != string(second.OAuthSecret()) {
+		t.Fatal("caller mutated signing key")
+	}
+	raw[0] = 1
+	other, err := NewCipher(base64.StdEncoding.EncodeToString(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.OAuthSecret()) == string(other.OAuthSecret()) {
+		t.Fatal("different encryption keys produced same signing key")
+	}
+}

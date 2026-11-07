@@ -15,7 +15,7 @@ import (
 func connectorGrant(st model.State, key string) (model.OAuthGrant, bool) {
 	grant, ok := st.OAuthTokens[key]
 	_, userExists := st.Users[grant.UserID]
-	return grant, ok && userExists && grant.Kind == "access" && len(grant.ProjectIDs) > 0 && grant.Expires.After(time.Now())
+	return grant, ok && grant.Active && userExists && grant.Kind == "access" && len(grant.ProjectIDs) > 0 && grant.Expires.After(time.Now())
 }
 
 // connectorProject resolves namespace for a connector request. It returns the
@@ -202,7 +202,7 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 			return nil
 		}
 		grant := st.OAuthTokens[code.GrantKey]
-		if grant.Kind != "access" || grant.UserID != code.UserID || !slices.Contains(grant.ProjectIDs, code.ProjectID) {
+		if !grant.Active || grant.Kind != "access" || grant.UserID != code.UserID || !slices.Contains(grant.ProjectIDs, code.ProjectID) {
 			problem = fail(404, "project not found")
 			return nil
 		}

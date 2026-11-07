@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type OAuthClient struct {
 	ID           string    `json:"client_id"`
@@ -8,20 +11,25 @@ type OAuthClient struct {
 	RedirectURIs []string  `json:"redirect_uris"`
 	Created      time.Time `json:"created"`
 }
+
+// OAuth records contain sanitized Fosite requests, never bearer tokens.
 type OAuthCode struct {
-	ClientID    string    `json:"client_id"`
-	UserID      string    `json:"user_id"`
-	ProjectIDs  []string  `json:"project_ids"`
-	RedirectURI string    `json:"redirect_uri"`
-	Challenge   string    `json:"challenge"`
-	Expires     time.Time `json:"expires"`
+	UserID     string          `json:"user_id"`
+	ProjectIDs []string        `json:"project_ids"`
+	Expires    time.Time       `json:"expires"`
+	Active     bool            `json:"active"`
+	Request    json.RawMessage `json:"request"`
+	PKCE       json.RawMessage `json:"pkce,omitempty"`
 }
 type OAuthGrant struct {
-	Kind       string    `json:"kind"`
-	ClientID   string    `json:"client_id"`
-	UserID     string    `json:"user_id"`
-	ProjectIDs []string  `json:"project_ids"`
-	Expires    time.Time `json:"expires"`
+	Kind       string          `json:"kind"`
+	ClientID   string          `json:"client_id"`
+	UserID     string          `json:"user_id"`
+	ProjectIDs []string        `json:"project_ids"`
+	Expires    time.Time       `json:"expires"`
+	Active     bool            `json:"active"`
+	RequestID  string          `json:"request_id"`
+	Request    json.RawMessage `json:"request"`
 }
 type LoginCode struct {
 	UserID    string    `json:"user_id"`

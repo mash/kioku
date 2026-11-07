@@ -25,7 +25,10 @@ type Client interface {
 	Interrupt(context.Context, string) error
 	ArchiveSession(context.Context, string) error
 }
-type VaultInput struct{ JobID, AttemptID, ProjectID, SecretName, SecretValue, AllowedHost string }
+type VaultInput struct {
+	JobID, AttemptID, ProjectID string
+	Credentials                 []runner.Credential
+}
 type SessionInput struct {
 	MAAgentID              string
 	MAAgentVersion         int64
@@ -87,9 +90,13 @@ func (a *API) CreateJobVault(ctx context.Context, in VaultInput) (string, error)
 	if v.ID == "" {
 		return "", errors.New("managed agents: missing vault ID")
 	}
-	_, err = a.sdk.Vaults.Credentials.New(ctx, v.ID, anthropic.BetaVaultCredentialNewParams{Auth: anthropic.BetaVaultCredentialNewParamsAuthUnion{OfEnvironmentVariable: &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{SecretName: in.SecretName, SecretValue: in.SecretValue, Networking: anthropic.BetaManagedAgentsCredentialNetworkingParamsOfLimited([]string{in.AllowedHost}), InjectionLocation: anthropic.BetaManagedAgentsInjectionLocationParams{Header: anthropic.Bool(true)}}}})
-	// Return the vault even on credential failure so the caller can persist and archive it.
-	return v.ID, apiError(err)
+	for _, c := range in.Credentials {
+		_, err = a.sdk.Vaults.Credentials.New(ctx, v.ID, anthropic.BetaVaultCredentialNewParams{Auth: anthropic.BetaVaultCredentialNewParamsAuthUnion{OfEnvironmentVariable: &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{SecretName: c.Name, SecretValue: string(c.Value), Networking: anthropic.BetaManagedAgentsCredentialNetworkingParamsOfLimited(c.AllowedHosts), InjectionLocation: anthropic.BetaManagedAgentsInjectionLocationParams{Header: anthropic.Bool(true)}}}})
+		if err != nil {
+			return v.ID, apiError(err)
+		}
+	}
+	return v.ID, nil
 }
 
 // FindJobVaults recovers vaults whose create response or local ID commit was lost.

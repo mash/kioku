@@ -155,7 +155,14 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
 		return err
 	}
-	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
+	var credentials []runner.Credential
+	if fetchAllowed {
+		credentials, err = s.sourceCredentials(ctx, &job, items)
+		if err != nil {
+			return err
+		}
+	}
+	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec) + credentialHints(credentials), SourceCredentials: credentials, BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
 	if errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}

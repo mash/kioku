@@ -12,6 +12,7 @@ import (
 
 	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/managedagents/fake"
+	"github.com/mash/kioku/internal/runner"
 )
 
 func newClient(t *testing.T) (*managedagents.API, *fake.Server) {
@@ -31,7 +32,7 @@ func createSession(t *testing.T, a *managedagents.API, job string) string {
 func TestClientLifecycleAndWireContract(t *testing.T) {
 	a, f := newClient(t)
 	ctx := context.Background()
-	vault, err := a.CreateJobVault(ctx, managedagents.VaultInput{JobID: "job", SecretName: "KIOKU_JOB_TOKEN", SecretValue: "test-job-secret", AllowedHost: "kioku.test"})
+	vault, err := a.CreateJobVault(ctx, managedagents.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "test-job-secret", AllowedHosts: []string{"kioku.test"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +165,7 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 		t.Fatal("non-USD cost must remain unknown", got, err)
 	}
 	f.SetError("POST", "/v1/vaults/vault_1/credentials", 503)
-	vault, err := a.CreateJobVault(context.Background(), managedagents.VaultInput{JobID: "job", AllowedHost: "kioku.test"})
+	vault, err := a.CreateJobVault(context.Background(), managedagents.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "secret", AllowedHosts: []string{"kioku.test"}}}})
 	if vault != "vault_1" || !errors.Is(err, managedagents.ErrTemporary) {
 		t.Fatal("lost vault cleanup handle", vault, err)
 	}

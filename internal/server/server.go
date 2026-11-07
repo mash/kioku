@@ -47,6 +47,7 @@ type Runners interface {
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
+	GitHubTokens GitHubTokenProvider
 	runners      Runners
 	Config       Config
 	DB           *store.Store

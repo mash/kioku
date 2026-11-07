@@ -33,6 +33,7 @@ const (
 // Secret never prints its value.
 type Secret string
 
+func (Secret) GoString() string             { return "[redacted]" }
 func (Secret) String() string               { return "[redacted]" }
 func (Secret) LogValue() slog.Value         { return slog.StringValue("[redacted]") }
 func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
@@ -41,6 +42,7 @@ type RunSpec struct {
 	Key                 AttemptKey
 	InputURL, OutputURL string
 	Token               Secret
+	SourceCredentials   []Credential
 	FirstMessage        string
 	BudgetCents         int64
 	Deadline            time.Time

@@ -157,7 +157,9 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 		case len(parts) == 4 && parts[3] == "credentials" && r.Method == "POST":
 			auth, _ := body["auth"].(map[string]any)
 			secret, _ := auth["secret_value"].(string)
-			f.credentials[parts[2]] = secret
+			if auth["secret_name"] == "KIOKU_JOB_TOKEN" {
+				f.credentials[parts[2]] = secret
+			}
 		case len(parts) == 4 && parts[3] == "archive" && r.Method == "POST":
 			f.vaults[parts[2]] = true
 			response = map[string]string{"id": parts[2]}

@@ -23,7 +23,7 @@ Workflow:
    false (exec), do not fetch: record a failure for each pending item instead.
    Use only the owner's vault placeholders in request headers. Never print them.
    For github.com URLs, call api.github.com using GITHUB_TOKEN_<account> when
-   supplied; choose the account from the URL owner. Public repositories outside
+   supplied; use the repository-to-placeholder mapping in the first message. Public repositories outside
    installations are fetched unauthenticated. No GitHub credential means private
    repositories fail; do not use ambient git or other members' credentials.
    Fetch PR descriptions and the first 100 comments, not diffs. For Google Docs

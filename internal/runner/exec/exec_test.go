@@ -184,6 +184,7 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 	defer host.Close()
 	exited := make(chan runner.AttemptKey, 1)
 	r, spec := newRunner(t, "environment", func(job, attempt string) { exited <- runner.AttemptKey{JobID: job, AttemptID: attempt} })
+	spec.SourceCredentials = []runner.Credential{{Name: "GOOGLE_ACCESS_TOKEN", Value: "provider-secret", AllowedHosts: []string{"docs.googleapis.com"}}}
 	spec.InputURL, spec.OutputURL = host.URL+"/input", host.URL+"/output"
 	ref := startExec(t, r, spec)
 	status := awaitExit(t, r, ref)
@@ -202,7 +203,11 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 		Argv, Env []string
 		Input     input
 	}
-	if err := json.Unmarshal(<-uploaded, &report); err != nil {
+	wire := <-uploaded
+	if bytes.Contains(wire, []byte("provider-secret")) || bytes.Contains(wire, []byte("GOOGLE_ACCESS_TOKEN")) {
+		t.Fatal("provider credential in exec input")
+	}
+	if err := json.Unmarshal(wire, &report); err != nil {
 		t.Fatal(err)
 	}
 	if len(report.Env) != 3 || report.Input.JobToken != string(spec.Token) || report.Input.Version != 1 || report.Input.Model != "model" || report.Input.Prompt != "system" || report.Input.BudgetCents != 1000 || !report.Input.Deadline.Equal(spec.Deadline) {

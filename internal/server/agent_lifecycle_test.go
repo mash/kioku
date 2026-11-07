@@ -145,6 +145,11 @@ func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j model.Job, title st
 		}
 	}
 	pages["wiki/log.md"] = "# Log\n" + j.ID + "\n"
+	for _, item := range items {
+		if item.Status == "pending" {
+			pages["wiki/log.md"] += "Fetch failed: " + item.SourceURL + "; reason: unavailable in fixture; submitter: " + item.Submitter + "\n"
+		}
+	}
 	if c, b := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, pages)); c != 200 {
 		t.Fatalf("output %d: %s", c, b)
 	}

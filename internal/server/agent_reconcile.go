@@ -339,6 +339,12 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 		complete = false
 		slog.Warn("agent resource cleanup deferred", "job", job.ID, "error", err)
 	}
+	if job.Run.GitHubCredentials {
+		if s.GitHubTokens == nil || s.GitHubTokens.Revoke(cleanupCtx, attempt(job).Key) != nil {
+			complete = false
+			slog.Warn("GitHub token revocation deferred", "job", job.ID)
+		}
+	}
 	unlock, err := s.lockProject(cleanupCtx, job.ProjectID)
 	if err != nil {
 		return err

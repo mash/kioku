@@ -33,7 +33,11 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 	if err != nil {
 		return runner.RunRef{}, err
 	}
-	vault, err := client.CreateJobVault(ctx, managedagents.VaultInput{JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, ProjectID: spec.Key.ProjectID, SecretName: tokenName, SecretValue: string(spec.Token), AllowedHost: u.Hostname()})
+	credentials, err := runner.VaultCredentials(spec, u.Hostname())
+	if err != nil {
+		return runner.RunRef{}, err
+	}
+	vault, err := client.CreateJobVault(ctx, managedagents.VaultInput{JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, ProjectID: spec.Key.ProjectID, Credentials: credentials})
 	if err == nil {
 		var id string
 		id, err = client.CreateSession(ctx, managedagents.SessionInput{MAAgentID: r.agentID, MAAgentVersion: r.agentVersion, EnvironmentID: r.environmentID, VaultID: vault, BudgetCents: spec.BudgetCents, Title: "Kioku wiki " + spec.Key.JobID, Metadata: map[string]string{"kioku_project_id": spec.Key.ProjectID, "kioku_job_id": spec.Key.JobID, "kioku_attempt_id": spec.Key.AttemptID}, FirstMessage: spec.FirstMessage})

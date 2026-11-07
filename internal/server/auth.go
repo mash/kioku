@@ -12,6 +12,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner"
 )
 
 func loopbackRedirect(value string) bool {
@@ -316,7 +317,12 @@ func prune(st *model.State) {
 	}
 }
 
-func (s *Server) providerCredential(ctx context.Context, uid, provider string) (string, error) {
+func (s *Server) providerCredential(ctx context.Context, uid, provider string) (runner.Secret, error) {
+	unlock, err := s.lockProject(ctx, "provider:"+uid+":"+provider)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	var sealed string
 	if err := s.DB.View(func(st model.State) error { sealed = st.Users[uid].Connections[provider]; return nil }); err != nil {
 		return "", err
@@ -336,11 +342,13 @@ func (s *Server) providerCredential(ctx context.Context, uid, provider string) (
 	if !ok {
 		return "", errors.New("provider unavailable")
 	}
+	original := c
+	c.ExpiresAt = time.Now().Add(-time.Minute)
 	fresh, err := p.Refresh(ctx, c)
 	if err != nil {
 		return "", fail(400, "connection expired; run kioku connect "+provider)
 	}
-	if fresh.AccessToken != c.AccessToken {
+	if fresh != original {
 		b, _ := json.Marshal(fresh)
 		err = s.DB.Update(func(st *model.State) error {
 			u := st.Users[uid]
@@ -355,7 +363,7 @@ func (s *Server) providerCredential(ctx context.Context, uid, provider string) (
 			return "", err
 		}
 	}
-	return fresh.AccessToken, nil
+	return runner.Secret(fresh.AccessToken), nil
 }
 
 func identityContext(uid, provider, id string) string {

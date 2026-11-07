@@ -133,14 +133,20 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 		return empty, fmt.Errorf("%w: missing OpenAI vault ID", runner.ErrTemporary)
 	}
 	empty.Resources["vault_id"] = vault.ID
-	err = r.request(ctx, "POST", "/vaults/"+url.PathEscape(vault.ID)+"/credentials", map[string]any{"name": "Kioku job token", "auth": map[string]any{"type": "environment_variable", "secret_name": "KIOKU_JOB_TOKEN", "secret_value": string(spec.Token), "networking": map[string]any{"type": "limited", "allowed_hosts": []string{u.Hostname()}}}}, nil)
+	credentials, err := runner.VaultCredentials(spec, u.Hostname())
 	if err != nil {
 		return empty, err
+	}
+	for _, c := range credentials {
+		err = r.request(ctx, "POST", "/vaults/"+url.PathEscape(vault.ID)+"/credentials", map[string]any{"name": c.Name, "auth": map[string]any{"type": "environment_variable", "secret_name": c.Name, "secret_value": string(c.Value), "networking": map[string]any{"type": "limited", "allowed_hosts": c.AllowedHosts}, "injection_location": map[string]bool{"header": true}}}, nil)
+		if err != nil {
+			return empty, err
+		}
 	}
 	var session resource
 	err = r.request(ctx, "POST", "/agents/sessions", map[string]any{
 		"agent":       map[string]any{"model": r.config.Model, "instructions": r.config.Prompt, "multi_agent": map[string]bool{"enabled": false}, "tools": []any{}},
-		"environment": map[string]any{"type": "openai_hosted", "container_size": "small", "network": map[string]any{"access": "restricted", "allowed_domains": []string{u.Hostname()}}},
+		"environment": map[string]any{"type": "openai_hosted", "container_size": "small"},
 		"metadata":    metadata(spec.Key), "vault_ids": []string{vault.ID}, "input": spec.FirstMessage, "spend_control": map[string]int64{"limit": spec.BudgetCents}, "stream": false,
 	}, &session)
 	if err != nil {

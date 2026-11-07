@@ -36,11 +36,11 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 	}
 }
 
-func TestMissingSourceDeletionLeavesGenerationRunning(t *testing.T) {
+func TestRemovedSourceDeletionRouteLeavesGenerationRunning(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	if c := f.request("DELETE", "/api/projects/"+p.ID+"/sources/missing", token, nil, nil); c != 404 {
+	if c := f.request("DELETE", "/api/projects/"+p.ID+"/sources/missing", token, nil, nil); c != 404 && c != 405 {
 		t.Fatal(c)
 	}
 	if got := storedJob(t, f, j.ID); got.Status != "running" {

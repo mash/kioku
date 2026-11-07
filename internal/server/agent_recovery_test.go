@@ -178,7 +178,6 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 		second := first
 		second.ID = "queued-same-project"
 		second.Created = first.Created.Add(time.Millisecond)
-		second.Full = true
 		st.Jobs[second.ID] = second
 		return nil
 	})

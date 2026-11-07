@@ -32,18 +32,17 @@ func main() {
 	}
 }
 func run() error {
+	migrateInbox := flag.Bool("migrate-inbox", false, "irreversibly clear old project content for the inbox schema, then exit")
+	confirmMigration := flag.Bool("confirm-delete-project-content", false, "confirm operator approval of the inbox migration")
 	addr := flag.String("addr", env("KIOKU_ADDR", "127.0.0.1:8080"), "listen address")
 	storage := flag.String("storage", env("KIOKU_STORAGE", string(blob.BackendLocal)), "object storage backend: local or s3")
 	dir := flag.String("data", env("KIOKU_DATA", "./data"), "persistent metadata directory")
 	onlineBackup := flag.String("online-backup", "", "request an online configuration backup from the running server")
 	adminSocket := flag.String("admin-socket", "", "operator Unix socket (default DATA/admin.sock)")
 	backup := flag.String("backup", "", "write a configuration-only SQLite backup, then exit (offline operator command)")
-	maxSources := flag.Int("max-sources", 200, "maximum sources per project")
 	maxBytes := flag.Int64("max-wiki-bytes", 64<<20, "maximum published wiki bytes per project")
 	maxJobs := flag.Int("max-jobs", 20, "maximum queued/running generation jobs per project")
 	generateEvery := flag.Duration("generate-every", 24*time.Hour, "periodic generation interval for changed projects; 0 disables scheduling")
-	intakeWorkers := flag.Int("intake-workers", 4, "concurrent URL fetch workers")
-	intakeJobs := flag.Int("max-intake-jobs", 200, "maximum queued/running URL puts per project")
 	rate := flag.Int("rate-per-minute", 600, "maximum requests per source IP per minute")
 	agentMaxSessions := flag.Int("agent-max-sessions", 4, "maximum concurrent managed agent sessions")
 	agentJobTimeout := flag.Duration("agent-job-timeout", time.Hour, "managed generation deadline")
@@ -80,7 +79,7 @@ func run() error {
 		defer db.Close()
 		return db.Backup(*backup)
 	}
-	if *maxSources < 1 || *maxBytes < 1 || *maxJobs < 1 || *rate < 1 || *intakeWorkers < 1 || *intakeJobs < 1 || *generateEvery < 0 || *generateEvery > 0 && *generateEvery < time.Second {
+	if *maxBytes < 1 || *maxJobs < 1 || *rate < 1 || *generateEvery < 0 || *generateEvery > 0 && *generateEvery < time.Second {
 		return errors.New("limits must be positive; generation interval must be zero or at least one second")
 	}
 
@@ -102,6 +101,16 @@ func run() error {
 		return err
 	}
 
+	if *migrateInbox {
+		if !*confirmMigration {
+			return errors.New("migrate-inbox requires confirm-delete-project-content after operator approval")
+		}
+		count, err := store.MigrateInbox(context.Background(), *dir, objects)
+		if err == nil {
+			slog.Info("inbox migration complete", "projects", count)
+		}
+		return err
+	}
 	db, err := store.OpenWithObjects(*dir, objects)
 	if err != nil {
 		return err
@@ -133,7 +142,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(server.Config{TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, IntakeWorkers: *intakeWorkers, MaxIntakeJobs: *intakeJobs, BaseURL: base, Providers: providers, MaxSources: *maxSources, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
+	app := server.New(server.Config{TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
 	set, err := runners.Load(runners.Config{Type: selection, OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), OpenAIModel: os.Getenv("KIOKU_OPENAI_MODEL"), Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, func(jobID, attemptID string) { app.ReconcileJob(ctx, jobID, attemptID) })
 	if err != nil {
 		return err

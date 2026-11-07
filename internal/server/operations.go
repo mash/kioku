@@ -105,29 +105,11 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request, uid string) error
 		if _, err := member(st, pid, uid); err != nil {
 			return err
 		}
-		var bytes int64
-		count, revisions, jobs := 0, 0, 0
-		reservedCount, pendingUploads := 0, 0
-		var reservedBytes int64
-		for _, u := range st.Uploads {
-			if u.ProjectID == pid {
-				pendingUploads++
-				jobs++
-				for _, src := range u.Sources {
-					reservedCount++
-					reservedBytes += src.Bytes
-				}
-			}
-		}
-		for _, v := range st.Sources {
-			if v.ProjectID == pid {
-				bytes += v.Bytes
+		p := st.Projects[pid]
+		count, jobs := 0, 0
+		for _, item := range st.Inbox {
+			if item.ProjectID == pid {
 				count++
-			}
-		}
-		for _, v := range st.Revisions {
-			if v.ProjectID == pid {
-				revisions++
 			}
 		}
 		for _, j := range st.Jobs {
@@ -135,7 +117,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request, uid string) error
 				jobs++
 			}
 		}
-		jsonOut(w, 200, map[string]any{"source_bytes": bytes, "reserved_source_bytes": reservedBytes, "reserved_sources": reservedCount, "pending_uploads": pendingUploads, "sources": count, "revisions": revisions, "pending_jobs": jobs, "limits": map[string]any{"source_bytes": s.Config.MaxBytes, "sources": s.Config.MaxSources, "pending_jobs": s.Config.MaxQueued}})
+		jsonOut(w, 200, map[string]any{"wiki_bytes": st.Revisions[p.Revision].StoredBytes, "inbox_items": count, "pending_jobs": jobs, "limits": map[string]any{"wiki_bytes": s.Config.MaxWikiBytes, "inbox_items": maxInboxItems, "pending_jobs": s.Config.MaxQueued}})
 		return nil
 	})
 }
@@ -220,18 +202,6 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 				live[item.BodyKey()] = true
 			}
 		}
-		for _, src := range st.Sources {
-			if src.ProjectID == pid {
-				live[src.TextKey] = true
-			}
-		}
-		for _, u := range st.Uploads {
-			if u.ProjectID == pid {
-				for _, src := range u.Sources {
-					live[src.TextKey] = true
-				}
-			}
-		}
 		for _, rev := range st.Revisions {
 			if rev.ProjectID == pid {
 				for _, key := range rev.Files {
@@ -249,7 +219,7 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	}
 	removed := 0
 	for _, key := range keys {
-		if strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/") && !strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/inbox/") || strings.HasPrefix(string(key), "projects/"+pid+"/wiki/inbox/") {
+		if strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/") && !strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/inbox/") {
 			continue
 		}
 		if !live[key] {
@@ -260,83 +230,6 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 		}
 	}
 	return removed, nil
-}
-func (s *Server) deleteSource(w http.ResponseWriter, r *http.Request, uid string) error {
-	pid, sid := r.PathValue("project"), r.PathValue("source")
-	if err := s.checkOwner(pid, uid); err != nil {
-		return err
-	}
-	generationUnlock, err := s.lockProject(r.Context(), "generate:"+pid)
-	if err != nil {
-		return err
-	}
-	defer generationUnlock()
-	if err = s.DB.View(func(st model.State) error {
-		if _, err := owner(st, pid, uid); err != nil {
-			return err
-		}
-		src, ok := st.Sources[sid]
-		if !ok || src.ProjectID != pid {
-			return fail(404, "source not found")
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err = s.abortProjectAgentJobs(r.Context(), pid); err != nil {
-		return err
-	}
-	unlock, err := s.lockProject(r.Context(), pid)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	job := model.Job{ID: auth.Token()[:20], ProjectID: pid, UserID: uid, Kind: "put", Status: "completed", Created: time.Now().UTC()}
-	err = s.DB.Update(func(st *model.State) error {
-		p, err := owner(*st, pid, uid)
-		if err != nil {
-			return err
-		}
-		src, ok := st.Sources[sid]
-		if !ok || src.ProjectID != pid {
-			return fail(404, "source not found")
-		}
-		delete(st.Sources, sid)
-		if p.SourceHeads != nil && p.SourceHeads[src.URL] == sid {
-			p.SourceHeads[src.URL] = ""
-		}
-		// Remove every old generated page that may contain the deleted source.
-		for id, rev := range st.Revisions {
-			if rev.ProjectID == pid {
-				delete(st.Revisions, id)
-			}
-		}
-		for id, j := range st.Jobs {
-			if j.ProjectID == pid {
-				delete(st.Jobs, id)
-			}
-		}
-		if p.Revision != "" {
-			p.WikiUpdatedAt = time.Now().UTC()
-		}
-		p.Revision = ""
-		p.JobsValidAfter = job.Created
-		p.SourceVersion++
-		p.SourcesUpdatedAt = time.Now().UTC()
-		job.SourceVersion = p.SourceVersion
-		st.Projects[pid] = p
-		st.Jobs[job.ID] = job
-		recordIntake(st, job, "removed", []model.Source{src})
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if _, err = s.gc(r, pid); err != nil {
-		return err
-	}
-	jsonOut(w, 202, job)
-	return nil
 }
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
@@ -391,16 +284,6 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 				delete(st.Inbox, id)
 			}
 		}
-		for id, u := range st.Uploads {
-			if u.ProjectID == pid {
-				delete(st.Uploads, id)
-			}
-		}
-		for id, v := range st.Sources {
-			if v.ProjectID == pid {
-				delete(st.Sources, id)
-			}
-		}
 		for id, v := range st.Revisions {
 			if v.ProjectID == pid {
 				delete(st.Revisions, id)
@@ -409,11 +292,6 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 		for id, v := range st.Jobs {
 			if v.ProjectID == pid {
 				delete(st.Jobs, id)
-			}
-		}
-		for id, e := range st.Intake {
-			if e.ProjectID == pid {
-				delete(st.Intake, id)
 			}
 		}
 		for id, v := range st.Invites {

@@ -50,7 +50,7 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	operations := []func() error{
 		func() error { return a.put([]string{file}) },
 		func() error { return a.put([]string{"https://example.com/evidence"}) },
-		func() error { return a.source([]string{"remove", "--yes", "source"}) },
+		func() error { return a.deleteSources([]string{"https://example.com/source"}) },
 		func() error { return a.job([]string{"retry", "job"}) },
 		func() error { return a.generate(nil) },
 	}
@@ -103,7 +103,7 @@ func TestWaitingForUnchangedEmptyProjectDoesNotPull(t *testing.T) {
 	if err := a.wait(model.Job{ID: "job", Kind: "generate", Status: "completed", Unchanged: true}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Sources unchanged") {
+	if !strings.Contains(out.String(), "No waiting inbox items") {
 		t.Fatal("missing unchanged result", out.String())
 	}
 }

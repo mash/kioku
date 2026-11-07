@@ -7,14 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/mash/kioku/internal/model"
 )
 
-type Input struct {
-	Source model.Source `json:"source"`
-	Text   string       `json:"text"`
-}
 type Node struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`

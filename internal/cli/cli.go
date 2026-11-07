@@ -173,8 +173,6 @@ func (a *App) dispatch(args []string) error {
 		return a.pullCommand(args[1:])
 	case "status":
 		return a.status()
-	case "source":
-		return a.source(args[1:])
 	case "job":
 		return a.job(args[1:])
 	case "open":

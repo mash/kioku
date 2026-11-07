@@ -21,7 +21,7 @@ func TestFileProvenance(t *testing.T) {
 			if (err == nil) != tc.valid {
 				t.Fatalf("error = %v", err)
 			}
-			if tc.valid && (doc.URL != tc.want || doc.Text != tc.content) {
+			if tc.valid && (doc.URL != tc.want) {
 				t.Fatalf("document = %+v", doc)
 			}
 		})

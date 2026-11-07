@@ -147,7 +147,7 @@ func (s *Server) mcpProjects(key string) (any, error) {
 	return map[string]any{"projects": projects}, err
 }
 
-func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) (model.Revision, map[string]string, func(), error) {
+func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) (model.Revision, func(), error) {
 	var project model.Project
 	var uid string
 	if err := s.DB.View(func(st model.State) error {
@@ -155,13 +155,13 @@ func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) 
 		project, uid, err = connectorProject(st, key, namespace)
 		return err
 	}); err != nil {
-		return model.Revision{}, nil, nil, err
+		return model.Revision{}, nil, err
 	}
 	return s.wikiFiles(ctx, uid, project.ID)
 }
 
 func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, offset int) (any, error) {
-	rev, views, unlock, err := s.connectorWikiFiles(ctx, key, namespace)
+	rev, unlock, err := s.connectorWikiFiles(ctx, key, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -169,19 +169,16 @@ func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, o
 	if !wiki.ValidFile(name) {
 		return nil, fail(400, "invalid wiki path")
 	}
-	_, viewExists := views[name]
 	_, fileExists := rev.Files[name]
-	if !viewExists && !fileExists {
+	if !fileExists {
 		switch {
-		case rev.ID == "" && len(views) == 0:
-			return nil, fail(404, "project has no wiki or intake yet")
 		case rev.ID == "":
-			return nil, fail(404, "wiki not generated yet; read wiki/inbox.md")
+			return nil, fail(404, "project has no wiki yet")
 		default:
 			return nil, fail(404, "wiki file not found; read maps/graph.json for the page list")
 		}
 	}
-	body, err := s.wikiFile(ctx, rev, views, name)
+	body, err := s.wikiFile(ctx, rev, name)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +197,7 @@ func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, o
 }
 
 func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string) (any, error) {
-	rev, views, unlock, err := s.connectorWikiFiles(ctx, key, namespace)
+	rev, unlock, err := s.connectorWikiFiles(ctx, key, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -215,11 +212,6 @@ func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string
 			names[name] = true
 		}
 	}
-	for name := range views {
-		if wiki.ValidFile(name) {
-			names[name] = true
-		}
-	}
 	paths := make([]string, 0, len(names))
 	for name := range names {
 		paths = append(paths, name)
@@ -229,7 +221,7 @@ func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string
 	truncated := false
 	lowerQuery := strings.ToLower(query)
 	for _, name := range paths {
-		body, err := s.wikiFile(ctx, rev, views, name)
+		body, err := s.wikiFile(ctx, rev, name)
 		if err != nil {
 			return nil, err
 		}

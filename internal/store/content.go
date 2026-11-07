@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,38 +99,22 @@ func controlJSON(st model.State) ([]byte, error) {
 
 // projectContent contains no account configuration, membership or credentials.
 type projectContent struct {
-	Inbox                   map[string]model.InboxItem   `json:"inbox"`
-	JobsValidAfter          time.Time                    `json:"jobs_valid_after,omitempty"`
-	Schema                  int                          `json:"schema"`
-	ProjectID               string                       `json:"project_id"`
-	SourceVersion           int64                        `json:"source_version"`
-	WikiSourceVersion       int64                        `json:"wiki_source_version"`
-	SourcesUpdatedAt        time.Time                    `json:"sources_updated_at"`
-	WikiUpdatedAt           time.Time                    `json:"wiki_updated_at"`
-	NextPutSequence         int64                        `json:"next_put_sequence"`
-	NextIntakeSequence      int64                        `json:"next_intake_sequence"`
-	ProcessedIntakeSequence int64                        `json:"processed_intake_sequence"`
-	NextGenerateAt          time.Time                    `json:"next_generate_at"`
-	GenerateIntervalSeconds int64                        `json:"generate_interval_seconds"`
-	SourceHeads             map[string]string            `json:"source_heads"`
-	SourceHeadSequences     map[string]int64             `json:"source_head_sequences"`
-	Incomplete              bool                         `json:"incomplete"`
-	Sources                 map[string]model.Source      `json:"sources"`
-	Wiki                    *model.Revision              `json:"wiki,omitempty"`
-	Jobs                    map[string]model.Job         `json:"jobs"`
-	Uploads                 map[string]model.Upload      `json:"uploads"`
-	Audit                   map[string]model.Audit       `json:"audit"`
-	Intake                  map[string]model.IntakeEntry `json:"intake"`
+	Inbox                   map[string]model.InboxItem `json:"inbox"`
+	JobsValidAfter          time.Time                  `json:"jobs_valid_after,omitempty"`
+	Schema                  int                        `json:"schema"`
+	ProjectID               string                     `json:"project_id"`
+	WikiUpdatedAt           time.Time                  `json:"wiki_updated_at"`
+	NextGenerateAt          time.Time                  `json:"next_generate_at"`
+	GenerateIntervalSeconds int64                      `json:"generate_interval_seconds"`
+	Incomplete              bool                       `json:"incomplete"`
+	Wiki                    *model.Revision            `json:"wiki,omitempty"`
+	Jobs                    map[string]model.Job       `json:"jobs"`
+	Audit                   map[string]model.Audit     `json:"audit"`
 }
 
 func contentFor(st model.State, pid string) projectContent {
 	p := st.Projects[pid]
-	c := projectContent{Inbox: map[string]model.InboxItem{}, JobsValidAfter: p.JobsValidAfter, Schema: 1, ProjectID: pid, SourceVersion: p.SourceVersion, WikiSourceVersion: p.WikiSourceVersion, SourcesUpdatedAt: p.SourcesUpdatedAt, WikiUpdatedAt: p.WikiUpdatedAt, NextPutSequence: p.NextPutSequence, NextIntakeSequence: p.NextIntakeSequence, ProcessedIntakeSequence: p.ProcessedIntakeSequence, NextGenerateAt: p.NextGenerateAt, GenerateIntervalSeconds: p.GenerateIntervalSeconds, SourceHeads: p.SourceHeads, SourceHeadSequences: p.SourceHeadSequences, Incomplete: p.WikiIncomplete, Sources: map[string]model.Source{}, Jobs: map[string]model.Job{}, Uploads: map[string]model.Upload{}, Audit: map[string]model.Audit{}, Intake: map[string]model.IntakeEntry{}}
-	for id, v := range st.Sources {
-		if v.ProjectID == pid {
-			c.Sources[id] = v
-		}
-	}
+	c := projectContent{Inbox: map[string]model.InboxItem{}, JobsValidAfter: p.JobsValidAfter, Schema: 2, ProjectID: pid, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: p.NextGenerateAt, GenerateIntervalSeconds: p.GenerateIntervalSeconds, Incomplete: p.WikiIncomplete, Jobs: map[string]model.Job{}, Audit: map[string]model.Audit{}}
 	if current, ok := st.Revisions[p.Revision]; ok {
 		c.Wiki = &current
 	}
@@ -140,19 +123,9 @@ func contentFor(st model.State, pid string) projectContent {
 			c.Jobs[id] = v
 		}
 	}
-	for id, v := range st.Uploads {
-		if v.ProjectID == pid {
-			c.Uploads[id] = v
-		}
-	}
 	for id, v := range st.Audit {
 		if v.ProjectID == pid {
 			c.Audit[id] = v
-		}
-	}
-	for id, v := range st.Intake {
-		if v.ProjectID == pid {
-			c.Intake[id] = v
 		}
 	}
 	for id, v := range st.Inbox {
@@ -177,8 +150,8 @@ func (s *Store) loadContent(pid string) error {
 	if err = json.Unmarshal(b, &c); err != nil {
 		return err
 	}
-	if c.Schema != 1 || c.ProjectID != pid {
-		return errors.New("invalid project content schema or project identity")
+	if c.Schema != 2 || c.ProjectID != pid {
+		return errors.New("project content requires migrate-inbox or has invalid identity")
 	}
 	for id, v := range c.Inbox {
 		if v.ProjectID != pid || id != v.ID || !validID(id) {
@@ -186,14 +159,6 @@ func (s *Store) loadContent(pid string) error {
 		}
 		if prior, exists := s.state.Inbox[id]; exists && prior.ProjectID != pid {
 			return errors.New("duplicate inbox identity across projects")
-		}
-	}
-	for id, v := range c.Sources {
-		if prior, exists := s.state.Sources[id]; exists && prior.ProjectID != pid {
-			return errors.New("duplicate source identity across projects")
-		}
-		if v.ProjectID != pid || id != v.ID || !validID(id) {
-			return errors.New("cross-project source in content")
 		}
 	}
 	if c.Wiki != nil && c.Wiki.ProjectID != pid {
@@ -204,24 +169,9 @@ func (s *Store) loadContent(pid string) error {
 			return errors.New("cross-project job in content")
 		}
 	}
-	for _, v := range c.Uploads {
-		if v.ProjectID != pid {
-			return errors.New("cross-project upload in content")
-		}
-	}
 	for _, v := range c.Audit {
 		if v.ProjectID != pid {
 			return errors.New("cross-project audit in content")
-		}
-	}
-	for _, v := range c.Intake {
-		if v.ProjectID != pid {
-			return errors.New("cross-project intake in content")
-		}
-	}
-	for _, src := range c.Sources {
-		if src.TextKey != "" && !strings.HasPrefix(string(src.TextKey), "projects/"+pid+"/") {
-			return errors.New("cross-project source object reference")
 		}
 	}
 	if c.Wiki != nil {
@@ -236,74 +186,23 @@ func (s *Store) loadContent(pid string) error {
 	}
 	p := s.state.Projects[pid]
 	p.JobsValidAfter = c.JobsValidAfter
-	p.SourceVersion = c.SourceVersion
-	p.WikiSourceVersion = c.WikiSourceVersion
-	p.SourcesUpdatedAt = c.SourcesUpdatedAt
 	p.WikiUpdatedAt = c.WikiUpdatedAt
-	p.NextPutSequence = c.NextPutSequence
-	p.NextIntakeSequence = c.NextIntakeSequence
-	p.ProcessedIntakeSequence = c.ProcessedIntakeSequence
 	p.NextGenerateAt = c.NextGenerateAt
 	p.GenerateIntervalSeconds = c.GenerateIntervalSeconds
-	p.SourceHeads = c.SourceHeads
-	p.SourceHeadSequences = c.SourceHeadSequences
 	p.Revision = ""
 	if c.Wiki != nil {
 		p.Revision = c.Wiki.ID
 	}
 	p.WikiIncomplete = c.Incomplete
 	s.state.Projects[pid] = p
-	for id, v := range c.Sources {
-		s.state.Sources[id] = v
-	}
 	if c.Wiki != nil {
 		s.state.Revisions[c.Wiki.ID] = *c.Wiki
 	}
 	for id, v := range c.Jobs {
 		s.state.Jobs[id] = v
 	}
-	for id, v := range c.Uploads {
-		s.state.Uploads[id] = v
-	}
 	for id, v := range c.Audit {
 		s.state.Audit[id] = v
-	}
-	for id, v := range c.Intake {
-		s.state.Intake[id] = v
-	}
-	return s.flushIntake(ctx, c)
-}
-func (s *Store) flushIntake(ctx context.Context, c projectContent) error {
-	for id, e := range c.Intake {
-		// Immutable IDs make retrying the exact same object idempotent. The writer is
-		// fenced by the catalog process lock; no other server writes this project.
-		key := blob.Key(fmt.Sprintf("projects/%s/wiki/inbox/%020d-%s.json", c.ProjectID, e.Sequence, id))
-		if !validID(id) {
-			return errors.New("invalid intake id")
-		}
-		if s.logged == nil {
-			s.logged = map[blob.Key]bool{}
-		}
-		if s.logged[key] {
-			continue
-		}
-		b, err := json.Marshal(e)
-		if err != nil {
-			return err
-		}
-		existing, err := s.objects.Get(ctx, key)
-		if err == nil {
-			if !bytes.Equal(existing, b) {
-				return errors.New("append-only intake entry changed")
-			}
-		} else if missingObject(err) {
-			if err = s.objects.Put(ctx, key, b); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-		s.logged[key] = true
 	}
 	return nil
 }
@@ -321,7 +220,7 @@ func (s *Store) saveContent(st model.State, pid string) error {
 	if err = s.objects.Put(ctx, contentKey(pid), b); err != nil {
 		return err
 	}
-	return s.flushIntake(ctx, c)
+	return nil
 }
 
 type controlIntent struct {
@@ -334,25 +233,6 @@ func transactionKey(pid, id string) blob.Key {
 	return blob.Key("projects/" + pid + "/.kioku/transactions/" + id + ".json")
 }
 func (s *Store) persist(st model.State) error {
-	fresh := map[string]model.IntakeEntry{}
-	for id, e := range st.Intake {
-		if _, ok := s.state.Intake[id]; !ok {
-			fresh[id] = e
-		}
-	}
-	flushNew := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		for id, e := range fresh {
-			if err := s.flushIntake(ctx, projectContent{ProjectID: e.ProjectID, Intake: map[string]model.IntakeEntry{id: e}}); err != nil {
-				return err
-			}
-		}
-		if len(s.logged) > 1024 {
-			s.logged = map[blob.Key]bool{}
-		}
-		return nil
-	}
 	if err := s.archiveChangedRecords(st); err != nil {
 		return err
 	}
@@ -377,7 +257,7 @@ func (s *Store) persist(st model.State) error {
 				return err
 			}
 		}
-		return flushNew()
+		return nil
 	}
 	// Control-only redo intent carries references to external content, never its
 	// source URLs, wiki metadata, jobs or processing checkpoints.
@@ -404,7 +284,7 @@ func (s *Store) persist(st model.State) error {
 	if err = s.recoverIntent(raw); err != nil {
 		return err
 	}
-	return flushNew()
+	return nil
 }
 func (s *Store) recoverIntent(raw []byte) error {
 	var in controlIntent
@@ -433,13 +313,10 @@ func (s *Store) recoverIntent(raw []byte) error {
 		if err = json.Unmarshal(b, &c); err != nil {
 			return err
 		}
-		if c.Schema != 1 || c.ProjectID != pid {
+		if c.Schema != 2 || c.ProjectID != pid {
 			return errors.New("invalid transaction content")
 		}
 		if err = s.objects.Put(ctx, contentKey(pid), b); err != nil {
-			return err
-		}
-		if err = s.flushIntake(ctx, c); err != nil {
 			return err
 		}
 	}
@@ -447,63 +324,13 @@ func (s *Store) recoverIntent(raw []byte) error {
 	if err := json.Unmarshal(in.Control, &st); err != nil {
 		return err
 	}
-	if err := writeRecords(s.catalog, st, ""); err != nil {
+	if err := writeRecords(s.catalog, st); err != nil {
 		return err
 	}
 	for _, pid := range in.Projects {
 		_ = s.objects.Delete(ctx, transactionKey(pid, in.Transaction))
 	}
 	return nil
-}
-
-func (s *Store) archiveLegacy() error {
-	root := filepath.Join(s.dir, "migration-backup")
-	if _, err := os.Stat(filepath.Join(root, "COMPLETE")); err == nil {
-		return nil
-	}
-	if _, err := os.Stat(root); err == nil {
-		return errors.New("incomplete legacy migration archive; preserve it and inspect before retry")
-	}
-	staging, err := os.MkdirTemp(s.dir, ".migration-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(staging)
-	catalog := filepath.Join(staging, "catalog.sqlite")
-	if _, err = s.catalog.Exec("VACUUM INTO ?", catalog); err != nil {
-		return err
-	}
-	if err = os.Chmod(catalog, 0600); err != nil {
-		return err
-	}
-	for pid := range s.state.Projects {
-		src := filepath.Join(s.dir, "projects", pid, "project.sqlite")
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue
-		}
-		db, err := s.projectDB(pid, false)
-		if err != nil {
-			return err
-		}
-		dest := filepath.Join(staging, "projects", pid)
-		if err = os.MkdirAll(dest, 0700); err != nil {
-			db.Close()
-			return err
-		}
-		file := filepath.Join(dest, "project.sqlite")
-		_, err = db.Exec("VACUUM INTO ?", file)
-		db.Close()
-		if err != nil {
-			return err
-		}
-		if err = os.Chmod(file, 0600); err != nil {
-			return err
-		}
-	}
-	if err = AtomicWrite(filepath.Join(staging, "COMPLETE"), []byte("legacy archive; content now lives in project storage\n"), 0600); err != nil {
-		return err
-	}
-	return os.Rename(staging, root)
 }
 
 func registerBuckets(objects Objects, st model.State) {
@@ -515,9 +342,8 @@ func registerBuckets(objects Objects, st model.State) {
 }
 
 const hotRecords = 256
-const hotIntake = 64
 
-// The append-only journal and job archive live in S3. Keep only recent records
+// The job and audit archives live in object storage. Keep only recent records
 // in the working index so a busy project's state.json does not grow forever.
 func compactContent(st *model.State) {
 	for pid := range st.Projects {
@@ -536,18 +362,6 @@ func compactContent(st *model.State) {
 		if len(jobs) > hotRecords {
 			for _, j := range jobs[hotRecords:] {
 				delete(st.Jobs, j.ID)
-			}
-		}
-		var intake []model.IntakeEntry
-		for _, e := range st.Intake {
-			if e.ProjectID == pid {
-				intake = append(intake, e)
-			}
-		}
-		sort.Slice(intake, func(i, j int) bool { return intake[i].Sequence > intake[j].Sequence })
-		if len(intake) > hotIntake {
-			for _, e := range intake[hotIntake:] {
-				delete(st.Intake, e.ID)
 			}
 		}
 		var audit []model.Audit

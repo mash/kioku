@@ -55,8 +55,8 @@ func (s *Server) authorizeAgent(r *http.Request, principal model.Session) error 
 	}
 	switch r.Pattern {
 	case "GET /api/me", "GET /api/projects", "POST /api/logout",
-		"GET /api/projects/{project}/snapshot", "GET /api/projects/{project}/inbox", "GET /api/projects/{project}/sources",
-		"GET /api/projects/{project}/sources/{source}/{format}", "GET /api/projects/{project}/jobs/{job}", "GET /api/projects/{project}/usage":
+		"GET /api/projects/{project}/snapshot", "GET /api/projects/{project}/inbox",
+		"GET /api/projects/{project}/jobs/{job}", "GET /api/projects/{project}/usage":
 		return nil
 	case "POST /api/projects/{project}/put", "POST /api/projects/{project}/generate", "POST /api/projects/{project}/jobs/{job}/retry":
 		if principal.Role == "write" {

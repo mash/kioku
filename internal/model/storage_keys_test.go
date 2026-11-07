@@ -7,16 +7,15 @@ import (
 
 func TestStorageKeysKeepExistingJSONRepresentation(t *testing.T) {
 	// Existing records use ordinary JSON strings, not a structured key object.
-	raw := []byte(`{"source":{"text_key":"projects/p/sources/s/extracted.md"},"revision":{"files":{"wiki/index.md":"projects/p/wiki/index.md"}},"run":{"output_key":"projects/p/.kioku/jobs/j/output.tar.gz"}}`)
+	raw := []byte(`{"revision":{"files":{"wiki/index.md":"projects/p/wiki/index.md"}},"run":{"output_key":"projects/p/.kioku/jobs/j/output.tar.gz"}}`)
 	var record struct {
-		Source   Source   `json:"source"`
 		Revision Revision `json:"revision"`
 		Run      AgentRun `json:"run"`
 	}
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
-	if record.Source.TextKey != "projects/p/sources/s/extracted.md" || record.Revision.Files["wiki/index.md"] != "projects/p/wiki/index.md" || record.Run.OutputKey != "projects/p/.kioku/jobs/j/output.tar.gz" {
+	if record.Revision.Files["wiki/index.md"] != "projects/p/wiki/index.md" || record.Run.OutputKey != "projects/p/.kioku/jobs/j/output.tar.gz" {
 		t.Fatal("existing keys not restored")
 	}
 	encoded, err := json.Marshal(record)
@@ -27,7 +26,7 @@ func TestStorageKeysKeepExistingJSONRepresentation(t *testing.T) {
 	if err = json.Unmarshal(encoded, &generic); err != nil {
 		t.Fatal(err)
 	}
-	for section, fields := range map[string][]string{"source": {"text_key"}, "run": {"output_key"}} {
+	for section, fields := range map[string][]string{"run": {"output_key"}} {
 		for _, field := range fields {
 			if _, ok := generic[section][field].(string); !ok {
 				t.Fatalf("%s.%s is no longer a JSON string", section, field)

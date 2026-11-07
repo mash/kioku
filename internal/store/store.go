@@ -3,7 +3,6 @@
 package store
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -19,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	_ "modernc.org/sqlite"
 )
@@ -30,7 +28,6 @@ type Store struct {
 	state    model.State
 	lock     *os.File
 	catalog  *sql.DB
-	logged   map[blob.Key]bool
 	objects  Objects
 	poisoned error
 }
@@ -69,7 +66,7 @@ func openDB(path string, create bool) (*sql.DB, error) {
 		if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 			return fail(err)
 		}
-		if version != 1 && version != 2 {
+		if version != 2 {
 			return fail(fmt.Errorf("unsupported SQLite schema %d: %s", version, path))
 		}
 		var check string
@@ -155,27 +152,16 @@ func openStore(dir string, objects Objects, controlOnly bool) (*Store, error) {
 	if err = s.catalog.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return nil, err
 	}
-	if controlOnly && version != 2 {
-		return nil, errors.New("migrate legacy storage with the server before configuration-only backup")
+	if version != 2 {
+		return nil, errors.New("unsupported legacy SQLite schema; upgrade storage before migrating inbox")
 	}
-	var legacyJournal *model.State
 	var pending []byte
 	err = s.catalog.QueryRow("SELECT payload FROM pending WHERE id=1").Scan(&pending)
 	if err == nil {
 		if controlOnly {
 			return nil, errors.New("unfinished transaction; start server with its object storage to recover before backup")
 		}
-		if version == 1 {
-			var st = model.NewState()
-			if err = json.Unmarshal(pending, &st); err != nil {
-				return nil, err
-			}
-			legacyJournal = &st
-			// Finish the old redo protocol before migrating its databases.
-			if err = s.applyLegacy(st); err != nil {
-				return nil, err
-			}
-		} else if err = s.recoverIntent(pending); err != nil {
+		if err = s.recoverIntent(pending); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -183,9 +169,6 @@ func openStore(dir string, objects Objects, controlOnly bool) (*Store, error) {
 	}
 	if err = readRecords(s.catalog, &s.state); err != nil {
 		return nil, err
-	}
-	if legacyJournal != nil {
-		s.state = *legacyJournal
 	}
 	if controlOnly {
 		failed = false
@@ -197,31 +180,6 @@ func openStore(dir string, objects Objects, controlOnly bool) (*Store, error) {
 		}
 	}
 	registerBuckets(s.objects, s.state)
-	if version == 1 {
-		for pid := range s.state.Projects {
-			db, e := s.projectDB(pid, false)
-			if e != nil {
-				return nil, e
-			}
-			e = readRecords(db, &s.state)
-			db.Close()
-			if e != nil {
-				return nil, e
-			}
-		}
-	}
-	old := filepath.Join(dir, "metadata.json")
-	oldJSON := false
-	if b, e := os.ReadFile(old); e == nil {
-		if len(s.state.Users) == 0 && len(s.state.Projects) == 0 {
-			if err = json.Unmarshal(b, &s.state); err != nil {
-				return nil, err
-			}
-			oldJSON = true
-		}
-	} else if !os.IsNotExist(e) {
-		return nil, e
-	}
 	for id, p := range s.state.Projects {
 		if !validID(id) || p.ID != id {
 			return nil, errors.New("invalid project configuration")
@@ -239,75 +197,18 @@ func openStore(dir string, objects Objects, controlOnly bool) (*Store, error) {
 		}
 		s.state.Projects[id] = p
 	}
-	if version == 1 || oldJSON {
-		if err = s.archiveLegacy(); err != nil {
-			return nil, err
-		}
-		full := s.state
-		s.state = model.NewState() // Force preservation of all legacy job/audit records.
-		exportCtx, cancelExport := context.WithTimeout(context.Background(), time.Hour)
-		err = s.archiveRecords(exportCtx, full)
-		s.state = full
-		if err == nil {
-			for pid := range full.Projects {
-				if err = s.flushIntake(exportCtx, contentFor(full, pid)); err != nil {
-					break
-				}
+	for pid, p := range s.state.Projects {
+		if err = s.loadContent(pid); err != nil {
+			if p.Deleting && missingObject(err) {
+				continue
 			}
-		}
-		cancelExport()
-		if err != nil {
-			return nil, err
-		}
-		compactContent(&s.state)
-		for pid := range s.state.Projects {
-			if err = s.saveContent(s.state, pid); err != nil {
-				return nil, err
-			}
-		}
-		if err = writeRecords(s.catalog, s.state, ""); err != nil {
-			return nil, err
-		}
-		if _, err = s.catalog.Exec("PRAGMA user_version=2"); err != nil {
-			return nil, err
-		}
-		if oldJSON {
-			if err = os.Rename(old, old+".migrated"); err != nil {
-				return nil, err
-			}
-		}
-		if err = os.RemoveAll(filepath.Join(dir, "projects")); err != nil {
-			return nil, err
-		}
-		if _, err = s.catalog.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
-			return nil, err
-		}
-	} else {
-		for pid, p := range s.state.Projects {
-			if err = s.loadContent(pid); err != nil {
-				if p.Deleting && missingObject(err) {
-					continue
-				}
-				return nil, fmt.Errorf("project %s content unavailable: %w", pid, err)
-			}
+			return nil, fmt.Errorf("project %s content unavailable: %w", pid, err)
 		}
 	}
 	failed = false
 	return s, nil
 }
 
-func (s *Store) projectDB(pid string, create bool) (*sql.DB, error) {
-	if !validID(pid) {
-		return nil, errors.New("invalid project ID")
-	}
-	dir := filepath.Join(s.dir, "projects", pid)
-	if create {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return nil, err
-		}
-	}
-	return openDB(filepath.Join(dir, "project.sqlite"), create)
-}
 func (s *Store) Close() error {
 	if s.catalog != nil {
 		_ = s.catalog.Close()
@@ -366,77 +267,6 @@ func (s *Store) Update(fn func(*model.State) error) error {
 	compactContent(&st)
 	s.state = st
 	return nil
-}
-func (s *Store) applyLegacy(st model.State) error {
-	// Each project transaction is atomic. The catalog journal survives until all
-	// project transactions and the catalog transaction have committed.
-	for pid := range st.Projects {
-		if _, exists := s.state.Projects[pid]; exists && projectFingerprint(st, pid) == projectFingerprint(s.state, pid) {
-			continue
-		}
-		_, exists := s.state.Projects[pid]
-		db, err := s.projectDB(pid, !exists)
-		if err != nil {
-			return err
-		}
-		err = writeRecords(db, st, pid)
-		db.Close()
-		if err != nil {
-			return err
-		}
-	}
-	// Remove deleted project databases before committing catalog membership.
-	entries, readErr := os.ReadDir(filepath.Join(s.dir, "projects"))
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return readErr
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, ok := st.Projects[e.Name()]; !ok {
-			if err := os.RemoveAll(filepath.Join(s.dir, "projects", e.Name())); err != nil {
-				return err
-			}
-		}
-	}
-	return writeRecords(s.catalog, st, "", true)
-}
-func projectFingerprint(st model.State, pid string) string {
-	data := struct {
-		Uploads   map[string]model.Upload
-		Sources   map[string]model.Source
-		Revisions map[string]model.Revision
-		Jobs      map[string]model.Job
-		Audit     map[string]model.Audit
-	}{map[string]model.Upload{}, map[string]model.Source{}, map[string]model.Revision{}, map[string]model.Job{}, map[string]model.Audit{}}
-	for id, v := range st.Uploads {
-		if v.ProjectID == pid {
-			data.Uploads[id] = v
-		}
-	}
-	for id, v := range st.Sources {
-		if v.ProjectID == pid {
-			data.Sources[id] = v
-		}
-	}
-	for id, v := range st.Revisions {
-		if v.ProjectID == pid {
-			data.Revisions[id] = v
-		}
-	}
-	for id, v := range st.Jobs {
-		if v.ProjectID == pid {
-			data.Jobs[id] = v
-		}
-	}
-	for id, v := range st.Audit {
-		if v.ProjectID == pid {
-			data.Audit[id] = v
-		}
-	}
-	b, _ := json.Marshal(data)
-	return string(b)
 }
 
 // retiredKinds lists record kinds that earlier versions wrote to the catalog
@@ -512,7 +342,7 @@ func writeRetired(db *sql.DB, rows []retiredRow) error {
 	return tx.Commit()
 }
 
-func writeRecords(db *sql.DB, st model.State, pid string, legacy ...bool) error {
+func writeRecords(db *sql.DB, st model.State) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -531,69 +361,25 @@ func writeRecords(db *sql.DB, st model.State, pid string, legacy ...bool) error 
 		_, err = tx.Exec("INSERT INTO records(kind,id,payload) VALUES(?,?,?)", kind, id, b)
 		return err
 	}
-	if pid == "" {
-		groups := []struct {
-			kind  string
-			value any
-		}{{"oauth_clients", st.OAuthClients}, {"oauth_codes", st.OAuthCodes}, {"oauth_tokens", st.OAuthTokens}, {"login_codes", st.LoginCodes}, {"agent_tokens", st.AgentTokens}, {"users", st.Users}, {"projects", st.Projects}, {"invites", st.Invites}, {"sessions", st.Sessions}, {"oauth", st.OAuth}, {"devices", st.Devices}, {"organizations", st.Organizations}}
-		for _, g := range groups {
-			value := g.value
-			if g.kind == "projects" && len(legacy) == 0 {
-				value = projectConfigs(st)
-			}
-			b, _ := json.Marshal(value)
-			var items map[string]json.RawMessage
-			_ = json.Unmarshal(b, &items)
-			for id, v := range items {
-				if err = add(g.kind, id, v); err != nil {
-					return err
-				}
-			}
-		}
-		if _, err = tx.Exec("DELETE FROM pending"); err != nil {
-			return err
-		}
-	} else {
-		for id, v := range st.Uploads {
-			if v.ProjectID == pid {
-				if err = add("uploads", id, v); err != nil {
-					return err
-				}
-			}
-		}
-		for id, v := range st.Sources {
-			if v.ProjectID == pid {
-				if err = add("sources", id, v); err != nil {
-					return err
-				}
-			}
-		}
-		for id, v := range st.Revisions {
-			if v.ProjectID == pid {
-				if err = add("revisions", id, v); err != nil {
-					return err
-				}
-			}
-		}
-		for id, v := range st.Jobs {
-			if v.ProjectID == pid {
-				if err = add("jobs", id, v); err != nil {
-					return err
-				}
-			}
-		}
-		for id, v := range st.Audit {
-			if v.ProjectID == pid {
-				if err = add("audit", id, v); err != nil {
-					return err
-				}
+	groups := []struct {
+		kind  string
+		value any
+	}{{"oauth_clients", st.OAuthClients}, {"oauth_codes", st.OAuthCodes}, {"oauth_tokens", st.OAuthTokens}, {"login_codes", st.LoginCodes}, {"agent_tokens", st.AgentTokens}, {"users", st.Users}, {"projects", projectConfigs(st)}, {"invites", st.Invites}, {"sessions", st.Sessions}, {"oauth", st.OAuth}, {"devices", st.Devices}, {"organizations", st.Organizations}}
+	for _, g := range groups {
+		b, _ := json.Marshal(g.value)
+		var items map[string]json.RawMessage
+		_ = json.Unmarshal(b, &items)
+		for id, v := range items {
+			if err = add(g.kind, id, v); err != nil {
+				return err
 			}
 		}
 	}
-	if pid == "" && len(legacy) == 0 {
-		if _, err = tx.Exec("PRAGMA user_version=2"); err != nil {
-			return err
-		}
+	if _, err = tx.Exec("DELETE FROM pending"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("PRAGMA user_version=2"); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -651,7 +437,7 @@ func (s *Store) Backup(dest string) error {
 	if err = json.Unmarshal(b, &st); err != nil {
 		return err
 	}
-	if err = writeRecords(db, st, ""); err != nil {
+	if err = writeRecords(db, st); err != nil {
 		return err
 	}
 	if err = writeRetired(db, retired); err != nil {

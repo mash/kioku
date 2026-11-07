@@ -14,96 +14,6 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func TestContentIsolationMigrationAndConfigurationOnlyBackup(t *testing.T) {
-	dir := t.TempDir()
-	st := model.NewState()
-	st.Users["owner"] = model.User{ID: "owner"}
-	for _, pid := range []string{"alpha", "beta"} {
-		st.Projects[pid] = model.Project{ID: pid, Members: map[string]string{"owner": "owner"}, SourceVersion: 1}
-		st.Sources[pid] = model.Source{ID: pid, ProjectID: pid, Title: pid + " secret"}
-	}
-	raw, _ := json.Marshal(st)
-	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, pid := range []string{"alpha", "beta"} {
-		raw, err = os.ReadFile(filepath.Join(dir, "objects", filepath.FromSlash(string(contentKey(pid)))))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var c projectContent
-		if err = json.Unmarshal(raw, &c); err != nil {
-			t.Fatal(err)
-		}
-		if len(c.Sources) != 1 || c.Sources[pid].ProjectID != pid || c.SourceVersion != 1 {
-			t.Fatal("content isolation or migration failed", c)
-		}
-		if _, err = os.Stat(filepath.Join(dir, "projects", pid, "project.sqlite")); !os.IsNotExist(err) {
-			t.Fatal("project SQLite remains active", err)
-		}
-	}
-	var forbidden int
-	if err = s.catalog.QueryRow("SELECT count(*) FROM records WHERE kind IN ('sources','jobs','revisions','uploads','intake','audit')").Scan(&forbidden); err != nil || forbidden != 0 {
-		t.Fatal("content in SQLite", forbidden, err)
-	}
-	rows, err := s.catalog.Query("SELECT payload FROM records WHERE kind='projects'")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var b []byte
-		rows.Scan(&b)
-		var fields map[string]json.RawMessage
-		json.Unmarshal(b, &fields)
-		for _, key := range []string{"source_version", "source_heads", "revision", "next_generate_at", "wiki_updated_at"} {
-			if _, ok := fields[key]; ok {
-				t.Error("content checkpoint in SQLite", key)
-			}
-		}
-	}
-	rows.Close()
-	backup := filepath.Join(t.TempDir(), "backup")
-	if err = s.Backup(backup); err != nil {
-		t.Fatal(err)
-	}
-	var changesBefore, changesAfter int64
-	s.catalog.QueryRow("SELECT total_changes()").Scan(&changesBefore)
-	if err = s.Update(func(st *model.State) error {
-		src := st.Sources["alpha"]
-		src.Title = "Content newer than SQLite backup"
-		st.Sources[src.ID] = src
-		p := st.Projects["alpha"]
-		p.SourceVersion = 2
-		st.Projects[p.ID] = p
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	s.catalog.QueryRow("SELECT total_changes()").Scan(&changesAfter)
-	if changesBefore != changesAfter {
-		t.Error("content-only change wrote SQLite", changesBefore, changesAfter)
-	}
-	s.Close()
-	if _, err = os.Stat(filepath.Join(dir, "metadata.json.migrated")); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := OpenWithObjects(backup, fileObjects{dir: filepath.Join(dir, "objects")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer restored.Close()
-	_ = restored.View(func(st model.State) error {
-		if len(st.Sources) != 2 || st.Sources["alpha"].Title != "Content newer than SQLite backup" || st.Projects["alpha"].SourceVersion != 2 || len(st.Users) != 1 {
-			t.Fatal("restoring config rolled back content", st.Sources)
-		}
-		return nil
-	})
-}
-
 func TestRedoJournalRecoversControlAndExternalContent(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -112,7 +22,7 @@ func TestRedoJournalRecoversControlAndExternalContent(t *testing.T) {
 	}
 	st := model.NewState()
 	st.Projects["p"] = model.Project{ID: "p", Name: "Committed intent"}
-	st.Sources["s"] = model.Source{ID: "s", ProjectID: "p", Title: "Recovered"}
+	st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p", Status: "fetched"}
 	control, _ := controlJSON(st)
 	in := controlIntent{Control: control, Transaction: "transaction", Projects: []string{"p"}}
 	content, _ := json.Marshal(contentFor(st, "p"))
@@ -133,7 +43,7 @@ func TestRedoJournalRecoversControlAndExternalContent(t *testing.T) {
 	}
 	defer s.Close()
 	_ = s.View(func(st model.State) error {
-		if st.Sources["s"].Title != "Recovered" || st.Projects["p"].Name != "Committed intent" {
+		if st.Inbox["s"].Status != "fetched" || st.Projects["p"].Name != "Committed intent" {
 			t.Fatal("incomplete recovery")
 		}
 		return nil
@@ -154,7 +64,7 @@ func TestMissingOrInvalidProjectContentFailsClosed(t *testing.T) {
 			}
 			if err = s.Update(func(st *model.State) error {
 				st.Projects["p"] = model.Project{ID: "p"}
-				st.Sources["s"] = model.Source{ID: "s", ProjectID: "p"}
+				st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p"}
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -238,43 +148,13 @@ func TestConfigurationBackupDoesNotNeedContentStorage(t *testing.T) {
 		if st.Projects["p"].ID != "p" {
 			t.Error("project configuration lost")
 		}
-		if len(st.Sources) != 0 {
+		if len(st.Inbox) != 0 {
 			t.Error("content present in configuration backup")
 		}
 		return nil
 	})
 	if _, err = os.Stat(filepath.Join(backup, "projects")); !os.IsNotExist(err) {
 		t.Fatal("per-project SQLite in config backup")
-	}
-}
-
-func TestUploadReservationPersistsAcrossRestart(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Update(func(st *model.State) error {
-		st.Projects["p"] = model.Project{ID: "p"}
-		st.Uploads["u"] = model.Upload{ID: "u", ProjectID: "p", Sources: []model.Source{{ID: "s", ProjectID: "p", Bytes: 123, TextKey: "projects/p/source/text"}}, Job: model.Job{ID: "j", ProjectID: "p"}, Heads: map[string]string{"https://example.com": "s"}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	s, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if err = s.View(func(st model.State) error {
-		u := st.Uploads["u"]
-		if len(u.Sources) != 1 || u.Sources[0].Bytes != 123 || u.Heads["https://example.com"] != "s" {
-			t.Fatal("pending upload lost on restart")
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -393,57 +273,6 @@ func TestAgentCredentialMetadataSurvivesRestartAndBackup(t *testing.T) {
 	}
 }
 
-func TestLegacySQLiteMigrationPreservesCurrentWikiAndArchivesOldFiles(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := model.NewState()
-	st.Projects["p"] = model.Project{ID: "p", Revision: "selected", SourceVersion: 7, WikiSourceVersion: 7}
-	st.Revisions["selected"] = model.Revision{ID: "selected", ProjectID: "p"}
-	st.Revisions["other"] = model.Revision{ID: "other", ProjectID: "p"}
-	if err = writeRecords(s.catalog, st, "", true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.catalog.Exec("PRAGMA user_version=1"); err != nil {
-		t.Fatal(err)
-	}
-	project, err := s.projectDB("p", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = writeRecords(project, st, "p"); err != nil {
-		t.Fatal(err)
-	}
-	project.Close()
-	s.Close()
-	s, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	_ = s.View(func(st model.State) error {
-		if st.Projects["p"].Revision != "selected" || st.Projects["p"].SourceVersion != 7 {
-			t.Error("migration lost current content state")
-		}
-		return nil
-	})
-	for _, name := range []string{"catalog.sqlite", "projects/p/project.sqlite", "COMPLETE"} {
-		if _, err = os.Stat(filepath.Join(dir, "migration-backup", filepath.FromSlash(name))); err != nil {
-			t.Fatal("legacy archive incomplete", name, err)
-		}
-	}
-	var version int
-	s.catalog.QueryRow("PRAGMA user_version").Scan(&version)
-	if version != 2 {
-		t.Fatal("migration schema not committed", version)
-	}
-	if _, err = os.Stat(filepath.Join(dir, "projects", "p", "project.sqlite")); !os.IsNotExist(err) {
-		t.Fatal("legacy content SQLite still active")
-	}
-}
-
 func TestBusyProjectIndexesStayBoundedAndArchivesRemainAvailable(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -452,10 +281,9 @@ func TestBusyProjectIndexesStayBoundedAndArchivesRemainAvailable(t *testing.T) {
 	}
 	defer s.Close()
 	if err = s.Update(func(st *model.State) error {
-		st.Projects["p"] = model.Project{ID: "p", NextIntakeSequence: 300}
+		st.Projects["p"] = model.Project{ID: "p"}
 		for i := 1; i <= 300; i++ {
 			id := fmt.Sprintf("entry-%03d", i)
-			st.Intake[id] = model.IntakeEntry{ID: id, ProjectID: "p", Sequence: int64(i)}
 			st.Jobs[id] = model.Job{ID: id, ProjectID: "p", Status: "completed", Created: time.Unix(int64(i), 0)}
 		}
 		return nil
@@ -463,62 +291,17 @@ func TestBusyProjectIndexesStayBoundedAndArchivesRemainAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.View(func(st model.State) error {
-		if len(st.Intake) != hotIntake || len(st.Jobs) != hotRecords {
-			t.Error("working index unbounded", len(st.Intake), len(st.Jobs))
+		if len(st.Jobs) != hotRecords {
+			t.Error("working index unbounded", len(st.Jobs))
 		}
 		return nil
 	})
-	keys, err := s.objects.List(context.Background(), "projects/p/wiki/inbox/")
+	keys, err := s.objects.List(context.Background(), "projects/p/.kioku/jobs/")
 	if err != nil || len(keys) != 300 {
-		t.Fatal("append-only entries lost while compacting", len(keys), err)
+		t.Fatal("archived jobs lost while compacting", len(keys), err)
 	}
 	job, err := s.ArchivedJob(context.Background(), "p", "entry-001")
 	if err != nil || job.ID != "entry-001" {
 		t.Fatal("archived job unavailable", job, err)
-	}
-}
-
-func TestInterruptedLegacyRedoMigratesWithoutLosingWikiSelection(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := model.NewState()
-	st.Projects["p"] = model.Project{ID: "p", Revision: "chosen", SourceVersion: 9}
-	st.Revisions["chosen"] = model.Revision{ID: "chosen", ProjectID: "p"}
-	st.Revisions["other"] = model.Revision{ID: "other", ProjectID: "p"}
-	if _, err = s.catalog.Exec("PRAGMA user_version=1"); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(st)
-	if _, err = s.catalog.Exec("INSERT INTO pending(id,payload)VALUES(1,?)", raw); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	s, err = Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	_ = s.View(func(st model.State) error {
-		if st.Projects["p"].Revision != "chosen" || st.Projects["p"].SourceVersion != 9 {
-			t.Error("interrupted migration lost current wiki")
-		}
-		return nil
-	})
-	archived, err := openDB(filepath.Join(dir, "migration-backup", "catalog.sqlite"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer archived.Close()
-	var body []byte
-	if err = archived.QueryRow("SELECT payload FROM records WHERE kind='projects' AND id='p'").Scan(&body); err != nil {
-		t.Fatal(err)
-	}
-	var p model.Project
-	json.Unmarshal(body, &p)
-	if p.Revision != "chosen" {
-		t.Error("legacy archive lost original selection")
 	}
 }

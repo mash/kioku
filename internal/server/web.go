@@ -25,7 +25,7 @@ func render(w http.ResponseWriter, title string, data any, body string) error {
 	}{title, data})
 }
 
-const homeTemplate = `{{define "body"}}<h1>Shared context, grounded in sources.</h1>{{if .LoggedIn}}<p>プロジェクトを選ぶと、原資料と生成Wikiを閲覧できます。</p>{{range .Projects}}<article><a href="/{{.Namespace}}">{{.Name}}</a> <small>{{.ID}}</small></article>{{else}}<p>まだプロジェクトがありません。保存先のディレクトリで <code>kioku create &lt;name&gt;</code> を実行してください。</p>{{end}}{{else}}<p>ログインして、チームのWikiと原資料を閲覧します。</p>{{range .Providers}}<p><a href="/auth/{{.}}/start{{if $.Return}}?return={{$.Return}}{{end}}">{{.}} でログイン</a></p>{{else}}<p>OAuthの設定がありません。サーバーのGoogleまたはGitHub OAuth設定を確認してください。</p>{{end}}{{end}}{{end}}`
+const homeTemplate = `{{define "body"}}<h1>Shared context, grounded in sources.</h1>{{if .LoggedIn}}<p>プロジェクトを選ぶと、原資料と生成Wikiを閲覧できます。</p>{{range .Projects}}<article><a href="/{{.Namespace}}">{{.Name}}</a> <small>{{.ID}}</small></article>{{else}}<p>まだプロジェクトがありません。保存先のディレクトリで <code>kioku project create &lt;name&gt;</code> を実行してください。</p>{{end}}{{else}}<p>ログインして、チームのWikiと原資料を閲覧します。</p>{{range .Providers}}<p><a href="/auth/{{.}}/start{{if $.Return}}?return={{$.Return}}{{end}}">{{.}} でログイン</a></p>{{else}}<p>OAuthの設定がありません。サーバーのGoogleまたはGitHub OAuth設定を確認してください。</p>{{end}}{{end}}{{end}}`
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error {
 	if r.URL.Path != "/" {
@@ -61,12 +61,11 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error 
 	return render(w, "Projects", data, homeTemplate)
 }
 
-const projectTemplate = `{{define "body"}}<h1>{{.Project.Name}}</h1><p><span class="badge">{{len .Sources}} sources</span> <small>{{if .Project.WikiIncomplete}}Updating wiki{{else if .Project.WikiUpdatedAt.IsZero}}Wiki generation pending{{else}}Wiki updated {{.Project.WikiUpdatedAt.Format "2006-01-02 15:04 UTC"}}{{end}}</small></p><h2>Wiki を生成</h2><p>サーバーに設定された生成処理を使用します。</p><form method="post" action="/api/projects/{{.Project.ID}}/generate"><label>セッション予算（USD） <input name="budget_usd" type="number" min="0.50" max="{{.MaxBudget}}" step="0.01" value="0.50" required></label> <label><input type="checkbox" name="full" value="true">全資料から再生成</label> <button>生成する</button></form>{{range .RecentJobs}}<p><a href="/api/projects/{{.ProjectID}}/jobs/{{.ID}}">生成ジョブ</a>: {{.Status}}{{if .Error}} — {{.Error}}{{end}}</p>{{end}}<h2>プロジェクトマップ</h2><form method="get"><input name="q" value="{{.Query}}" placeholder="ページを検索"><button>検索</button></form><div style="overflow:auto">{{.Graph}}</div><h2>原資料</h2><p>取得時点の抽出テキストです。原本は保存せず、出典URLを保持します。</p><table><tr><th>資料</th><th>取得日時</th><th>原本</th></tr>{{range .Sources}}<tr><td><a href="/api/projects/{{.ProjectID}}/sources/{{.ID}}/text">{{.Title}}</a><br><small>{{.Kind}} · {{.CreatedBy}}</small></td><td>{{.Created.Format "2006-01-02 15:04 UTC"}}</td><td>{{if .URL}}<a href="{{.URL}}" rel="noreferrer">原本を開く</a>{{else}}URL未登録{{end}}</td></tr>{{end}}</table><h2>Wiki / Maps</h2>{{range .Files}}<p><a href="?file={{.}}">{{.}}</a></p>{{end}}{{if .Body}}<h2>{{.File}}</h2><article>{{.Markdown}}</article><details><summary>原文を表示</summary><pre>{{.Body}}</pre></details>{{end}}{{end}}`
+const projectTemplate = `{{define "body"}}<h1>{{.Project.Name}}</h1><p><small>{{if .Project.WikiIncomplete}}Updating wiki{{else if .Project.WikiUpdatedAt.IsZero}}Wiki generation pending{{else}}Wiki updated {{.Project.WikiUpdatedAt.Format "2006-01-02 15:04 UTC"}}{{end}}</small></p><h2>Wiki を生成</h2><p>サーバーに設定された生成処理を使用します。</p><form method="post" action="/api/projects/{{.Project.ID}}/generate"><label>セッション予算（USD） <input name="budget_usd" type="number" min="0.50" max="{{.MaxBudget}}" step="0.01" value="0.50" required></label> <button>生成する</button></form>{{range .RecentJobs}}<p><a href="/api/projects/{{.ProjectID}}/jobs/{{.ID}}">生成ジョブ</a>: {{.Status}}{{if .Error}} — {{.Error}}{{end}}</p>{{end}}<h2>プロジェクトマップ</h2><form method="get"><input name="q" value="{{.Query}}" placeholder="ページを検索"><button>検索</button></form><div style="overflow:auto">{{.Graph}}</div><h2>Wiki / Maps</h2>{{range .Files}}<p><a href="?file={{.}}">{{.}}</a></p>{{end}}{{if .Body}}<h2>{{.File}}</h2><article>{{.Markdown}}</article><details><summary>原文を表示</summary><pre>{{.Body}}</pre></details>{{end}}{{end}}`
 
 func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string) error {
 	data := struct {
 		Project         model.Project
-		Sources         []model.Source
 		Files           []string
 		File, Body      string
 		Query           string
@@ -92,11 +91,6 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 			data.RecentJobs = data.RecentJobs[:5]
 		}
 
-		for _, src := range st.Sources {
-			if src.ProjectID == p.ID {
-				data.Sources = append(data.Sources, src)
-			}
-		}
 		rev := st.Revisions[p.Revision]
 		for name := range rev.Files {
 			data.Files = append(data.Files, name)
@@ -106,7 +100,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 			data.File = "wiki/index.md"
 		}
 		key = rev.Files[data.File]
-		if key == "" && data.File != "wiki/inbox.md" && r.URL.Query().Get("file") != "" {
+		if key == "" && r.URL.Query().Get("file") != "" {
 			return fail(404, "file not found")
 		}
 		return nil
@@ -114,18 +108,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	if err != nil {
 		return err
 	}
-	intakeFiles := map[string]string{}
-	if err = s.addIntakeView(r.Context(), uid, data.Project.ID, intakeFiles); err != nil {
-		return err
-	}
-	if inbox, ok := intakeFiles["wiki/inbox.md"]; ok {
-		data.Files = append(data.Files, "wiki/inbox.md")
-		if data.File == "wiki/inbox.md" {
-			data.Body = inbox
-		}
-	}
 	sort.Strings(data.Files)
-	sort.Slice(data.Sources, func(i, j int) bool { return data.Sources[i].Created.Before(data.Sources[j].Created) })
 	if key != "" {
 		b, err := s.Blobs.Get(r.Context(), key)
 		if err != nil {

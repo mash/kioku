@@ -20,7 +20,6 @@ import (
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
-	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -30,18 +29,13 @@ type Config struct {
 	AgentMaxSessions           int
 	AgentJobTimeout            time.Duration
 	AgentMaxSessionCents       int64
-
-	IntakeWorkers int
-	MaxIntakeJobs int
-	GenerateEvery time.Duration
-	BaseURL       string
-	Providers     map[string]auth.Provider
-	MaxSources    int
-	MaxWikiBytes  int64
-	MaxBytes      int64
-	MaxQueued     int
-	RatePerMinute int
-	MetricsToken  string
+	GenerateEvery              time.Duration
+	BaseURL                    string
+	Providers                  map[string]auth.Provider
+	MaxWikiBytes               int64
+	MaxQueued                  int
+	RatePerMinute              int
+	MetricsToken               string
 }
 
 // Runners supplies configured runners.
@@ -58,9 +52,7 @@ type Server struct {
 	DB           *store.Store
 	Blobs        blob.Store
 	Cipher       *auth.Cipher
-	Fetcher      *source.Fetcher
 	wake         chan struct{}
-	intakeWake   chan struct{}
 	mux          *http.ServeMux
 	projectLocks sync.Map
 	prepareOnce  sync.Once
@@ -87,20 +79,8 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 	if c.AgentMaxSessionCents == 0 {
 		c.AgentMaxSessionCents = 1000
 	}
-	if c.IntakeWorkers <= 0 {
-		c.IntakeWorkers = 4
-	}
-	if c.MaxIntakeJobs <= 0 {
-		c.MaxIntakeJobs = 200
-	}
-	if c.MaxSources <= 0 {
-		c.MaxSources = 200
-	}
 	if c.MaxWikiBytes <= 0 {
 		c.MaxWikiBytes = 64 << 20
-	}
-	if c.MaxBytes <= 0 {
-		c.MaxBytes = 64 << 20
 	}
 	if c.MaxQueued <= 0 {
 		c.MaxQueued = 20
@@ -108,7 +88,7 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 	if c.RatePerMinute <= 0 {
 		c.RatePerMinute = 600
 	}
-	s := &Server{Config: c, DB: db, Blobs: b, Cipher: key, Fetcher: source.New(), wake: make(chan struct{}, 1), intakeWake: make(chan struct{}, c.IntakeWorkers), mux: http.NewServeMux()}
+	s := &Server{Config: c, DB: db, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -197,7 +177,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{project}/usage", s.wrap(s.usage, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/audit", s.wrap(s.audit, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/maintenance", s.wrap(s.cleanup, true))
-	s.mux.HandleFunc("DELETE /api/projects/{project}/sources/{source}", s.wrap(s.deleteSource, true))
 	s.mux.HandleFunc("DELETE /api/projects/{project}", s.wrap(s.deleteProject, true))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -226,8 +205,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/projects/{project}/generate", s.wrap(s.generate, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/jobs/{job}", s.wrap(s.job, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/jobs/{job}/retry", s.wrap(s.retry, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/sources", s.wrap(s.sources, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/sources/{source}/{format}", s.wrap(s.sourceContent, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/snapshot", s.wrap(s.snapshot, true))
 	s.mux.HandleFunc("GET /", s.wrap(s.home, false))
 	s.mux.HandleFunc("GET /projects/{project}", s.wrap(s.projectPage, true))

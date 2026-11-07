@@ -86,7 +86,7 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 				t.Helper()
 				putFile(t, f, token, pid, "worker.md", "Evidence")
 				var j model.Job
-				if code := f.request("POST", "/api/projects/"+pid+"/generate", token, map[string]bool{"full": true}, &j); code != 202 {
+				if code := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &j); code != 202 {
 					t.Fatal(code)
 				}
 				select {

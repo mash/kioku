@@ -71,16 +71,9 @@ type User struct {
 type Project struct {
 	StorageBucket           string            `json:"storage_bucket,omitempty"`
 	StorageRoot             string            `json:"storage_root,omitempty"`
-	NextIntakeSequence      int64             `json:"next_intake_sequence,omitempty"`
-	ProcessedIntakeSequence int64             `json:"processed_intake_sequence,omitempty"`
 	JobsValidAfter          time.Time         `json:"jobs_valid_after,omitempty"`
 	WikiIncomplete          bool              `json:"wiki_incomplete,omitempty"`
-	SourcesUpdatedAt        time.Time         `json:"sources_updated_at,omitempty"`
 	WikiUpdatedAt           time.Time         `json:"wiki_updated_at,omitempty"`
-	SourceVersion           int64             `json:"source_version"`
-	WikiSourceVersion       int64             `json:"wiki_source_version"`
-	NextPutSequence         int64             `json:"next_put_sequence"`
-	SourceHeadSequences     map[string]int64  `json:"source_head_sequences,omitempty"`
 	NextGenerateAt          time.Time         `json:"next_generate_at,omitempty"`
 	GenerateIntervalSeconds int64             `json:"generate_interval_seconds,omitempty"`
 	OrgID                   string            `json:"org_id"`
@@ -92,7 +85,6 @@ type Project struct {
 	Revision                string            `json:"revision"`
 	Created                 time.Time         `json:"created"`
 	Deleting                bool              `json:"deleting,omitempty"`
-	SourceHeads             map[string]string `json:"source_heads,omitempty"`
 }
 type Invite struct {
 	ID        string    `json:"id"`
@@ -138,66 +130,31 @@ type Device struct {
 	Expires             time.Time `json:"expires"`
 	Used                bool      `json:"used"`
 }
-type Source struct {
-	UpdatedAt   time.Time `json:"updated_at,omitempty"`
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Title       string    `json:"title"`
-	URL         string    `json:"url,omitempty"`
-	Kind        string    `json:"kind"`
-	Version     string    `json:"version"`
-	ContentHash string    `json:"content_hash"`
-	TextKey     blob.Key  `json:"text_key"`
-	MediaType   string    `json:"media_type"`
-	CreatedBy   string    `json:"created_by"`
-	Created     time.Time `json:"created"`
-	Revision    string    `json:"revision,omitempty"`
-	Bytes       int64     `json:"bytes"`
-	StoredBytes int64     `json:"stored_bytes"`
-}
 type Revision struct {
-	FileBytes        map[string]int64    `json:"file_bytes,omitempty"`
-	FileHashes       map[string]string   `json:"file_hashes,omitempty"`
-	SourcesUpdatedAt time.Time           `json:"sources_updated_at,omitempty"`
-	SourceVersion    int64               `json:"source_version"`
-	Fingerprint      string              `json:"fingerprint,omitempty"`
-	StoredBytes      int64               `json:"stored_bytes"`
-	ID               string              `json:"id"`
-	ProjectID        string              `json:"project_id"`
-	Created          time.Time           `json:"created"`
-	Files            map[string]blob.Key `json:"files"` // relative filename -> current object key
-	SourceIDs        []string            `json:"source_ids"`
+	FileBytes   map[string]int64    `json:"file_bytes,omitempty"`
+	FileHashes  map[string]string   `json:"file_hashes,omitempty"`
+	StoredBytes int64               `json:"stored_bytes"`
+	ID          string              `json:"id"`
+	ProjectID   string              `json:"project_id"`
+	Created     time.Time           `json:"created"`
+	Files       map[string]blob.Key `json:"files"` // relative filename -> current object key
 }
 type Job struct {
 	// Retained only to reject execution/retry of retired BYOK jobs.
 	AnthropicConnectionID string    `json:"anthropic_connection_id,omitempty"`
 	AgentBudgetCents      int64     `json:"agent_budget_cents,omitempty"`
 	Run                   *AgentRun `json:"run,omitempty"`
-	Full                  bool      `json:"full,omitempty"`
 	Unchanged             bool      `json:"unchanged,omitempty"`
 	Kind                  string    `json:"kind,omitempty"`
-	InputURL              string    `json:"input_url,omitempty"`
-	PutSequence           int64     `json:"put_sequence,omitempty"`
-	SourceVersion         int64     `json:"source_version"`
-	Dependencies          []string  `json:"dependencies,omitempty"`
 	Automatic             bool      `json:"automatic,omitempty"`
 	AgentID               string    `json:"agent_id,omitempty"`
-	Fingerprint           string    `json:"fingerprint,omitempty"`
 	ID                    string    `json:"id"`
 	ProjectID             string    `json:"project_id"`
 	UserID                string    `json:"user_id"`
-	SourceIDs             []string  `json:"source_ids"`
 	Status                string    `json:"status"`
 	Error                 string    `json:"error,omitempty"`
 	Revision              string    `json:"revision,omitempty"`
 	Created               time.Time `json:"created"`
-}
-type Upload struct {
-	ID        string            `json:"id"`
-	ProjectID string            `json:"project_id"`
-	Sources   []Source          `json:"sources"`
-	Job       Job               `json:"job"`
-	Heads     map[string]string `json:"heads"`
 }
 type State struct {
 	Inbox         map[string]InboxItem    `json:"inbox"`
@@ -205,21 +162,17 @@ type State struct {
 	OAuthCodes    map[string]OAuthCode    `json:"oauth_codes"`
 	OAuthTokens   map[string]OAuthGrant   `json:"oauth_tokens"`
 	LoginCodes    map[string]LoginCode    `json:"login_codes"`
-	Intake        map[string]IntakeEntry  `json:"intake"`
 	AgentTokens   map[string]AgentToken   `json:"agent_tokens"`
 	Organizations map[string]Organization `json:"organizations"`
-
-	Uploads   map[string]Upload     `json:"uploads"`
-	Audit     map[string]Audit      `json:"audit"`
-	Users     map[string]User       `json:"users"`
-	Projects  map[string]Project    `json:"projects"`
-	Invites   map[string]Invite     `json:"invites"`
-	Sessions  map[string]Session    `json:"sessions"`
-	OAuth     map[string]OAuthState `json:"oauth"`
-	Devices   map[string]Device     `json:"devices"`
-	Sources   map[string]Source     `json:"sources"`
-	Revisions map[string]Revision   `json:"revisions"`
-	Jobs      map[string]Job        `json:"jobs"`
+	Audit         map[string]Audit        `json:"audit"`
+	Users         map[string]User         `json:"users"`
+	Projects      map[string]Project      `json:"projects"`
+	Invites       map[string]Invite       `json:"invites"`
+	Sessions      map[string]Session      `json:"sessions"`
+	OAuth         map[string]OAuthState   `json:"oauth"`
+	Devices       map[string]Device       `json:"devices"`
+	Revisions     map[string]Revision     `json:"revisions"`
+	Jobs          map[string]Job          `json:"jobs"`
 }
 type Audit struct {
 	ID        string    `json:"id"`
@@ -231,7 +184,7 @@ type Audit struct {
 }
 
 func NewState() State {
-	return State{Inbox: map[string]InboxItem{}, OAuthClients: map[string]OAuthClient{}, OAuthCodes: map[string]OAuthCode{}, OAuthTokens: map[string]OAuthGrant{}, LoginCodes: map[string]LoginCode{}, Intake: map[string]IntakeEntry{}, AgentTokens: map[string]AgentToken{}, Organizations: map[string]Organization{}, Uploads: map[string]Upload{}, Audit: map[string]Audit{}, Users: map[string]User{}, Projects: map[string]Project{}, Invites: map[string]Invite{}, Sessions: map[string]Session{}, OAuth: map[string]OAuthState{}, Devices: map[string]Device{}, Sources: map[string]Source{}, Revisions: map[string]Revision{}, Jobs: map[string]Job{}}
+	return State{Inbox: map[string]InboxItem{}, OAuthClients: map[string]OAuthClient{}, OAuthCodes: map[string]OAuthCode{}, OAuthTokens: map[string]OAuthGrant{}, LoginCodes: map[string]LoginCode{}, AgentTokens: map[string]AgentToken{}, Organizations: map[string]Organization{}, Audit: map[string]Audit{}, Users: map[string]User{}, Projects: map[string]Project{}, Invites: map[string]Invite{}, Sessions: map[string]Session{}, OAuth: map[string]OAuthState{}, Devices: map[string]Device{}, Revisions: map[string]Revision{}, Jobs: map[string]Job{}}
 }
 
 type FileInput struct {
@@ -263,21 +216,6 @@ func (i InboxItem) BodyKey() blob.Key {
 type Snapshot struct {
 	Revision string            `json:"revision"`
 	Files    map[string]string `json:"files"`
-}
-
-// IntakeEntry is a service-owned append-only record. Source bodies remain at
-// their immutable object keys and can be read before wiki generation finishes.
-type IntakeEntry struct {
-	ID            string    `json:"id"`
-	ProjectID     string    `json:"project_id"`
-	UserID        string    `json:"user_id"`
-	JobID         string    `json:"job_id"`
-	Sequence      int64     `json:"sequence"`
-	Kind          string    `json:"kind"`
-	URL           string    `json:"url,omitempty"`
-	Sources       []Source  `json:"sources,omitempty"`
-	SourceVersion int64     `json:"source_version"`
-	Created       time.Time `json:"created"`
 }
 
 // SyncManifest describes the current published tree, including partial publication.

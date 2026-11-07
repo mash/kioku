@@ -20,12 +20,11 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove sources at the next generation
   put [URL|FILES...] Save sources, or changed inbox files
-  generate [--full] [--wait]         Generate wiki from saved sources (wait also pulls)
+  generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [ORG/PROJECT]          Bind cwd on first pull; fetch one project
   status | open
   project usage | project audit
   project maintenance                          Collect unreferenced project objects
-  source remove --yes [--wait] SOURCE_ID        Delete source and invalidate generated pages
   project delete --yes                         Delete project and cloud objects
   job status|wait JOB_ID | job retry [--wait] JOB_ID
 

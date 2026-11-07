@@ -129,7 +129,7 @@ func newRunner(t *testing.T, role string, onExit func(string, string)) (*Runner,
 			t.Error(err)
 		}
 	})
-	return r, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Mode: "full", Token: runner.Secret("private-token"), FirstMessage: "first", BudgetCents: 1000, Deadline: time.Now().Add(time.Hour).UTC()}
+	return r, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Token: runner.Secret("private-token"), FirstMessage: "first", BudgetCents: 1000, Deadline: time.Now().Add(time.Hour).UTC()}
 }
 func startExec(t *testing.T, r *Runner, spec runner.RunSpec) runner.RunRef {
 	t.Helper()

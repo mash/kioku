@@ -28,9 +28,9 @@ func managedFixture(t *testing.T) (*fixture, string, model.Project, *fake.Server
 	f.setRunners()
 	return f, token, p, ma
 }
-func managedJob(t *testing.T, f *fixture, token, pid string, full bool) model.Job {
+func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) model.Job {
 	t.Helper()
-	if full {
+	if ensureItem {
 		waiting := false
 		f.db.View(func(st model.State) error {
 			for _, item := range st.Inbox {
@@ -47,7 +47,7 @@ func managedJob(t *testing.T, f *fixture, token, pid string, full bool) model.Jo
 		}
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+pid+"/generate", token, map[string]bool{"full": full}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &job); c != 202 {
 		t.Fatal(c)
 	}
 	if err := f.db.Update(func(st *model.State) error {
@@ -68,9 +68,9 @@ func storedJob(t *testing.T, f *fixture, id string) model.Job {
 	}
 	return j
 }
-func startManaged(t *testing.T, f *fixture, token, pid string, full bool) model.Job {
+func startManaged(t *testing.T, f *fixture, token, pid string, ensureItem bool) model.Job {
 	t.Helper()
-	j := managedJob(t, f, token, pid, full)
+	j := managedJob(t, f, token, pid, ensureItem)
 	if err := f.s.startAgentJob(context.Background(), j); err != nil {
 		t.Fatal(err)
 	}

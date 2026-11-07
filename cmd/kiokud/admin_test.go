@@ -25,7 +25,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	if err = db.Update(func(st *model.State) error {
 		st.Users["u"] = model.User{ID: "u"}
 		st.Projects["p"] = model.Project{ID: "p"}
-		st.Sources["s"] = model.Source{ID: "s", ProjectID: "p", Title: "Content belongs in S3"}
+		st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p", Status: "pending"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	}
 	defer restored.Close()
 	_ = restored.View(func(st model.State) error {
-		if len(st.Sources) != 0 || st.Users["u"].ID != "u" {
+		if len(st.Inbox) != 0 || st.Users["u"].ID != "u" {
 			t.Error("backup did not separate config and content")
 		}
 		return nil

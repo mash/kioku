@@ -14,18 +14,16 @@ import (
 )
 
 type publishInput struct {
-	Job         model.Job
-	Project     model.Project
-	Sources     []model.Source
-	Files       map[string]string
-	Fingerprint string
-	Validate    func(model.State) error
-	Finish      func(*model.State, time.Time) error
+	Job      model.Job
+	Project  model.Project
+	Files    map[string]string
+	Validate func(model.State) error
+	Finish   func(*model.State, time.Time) error
 }
 
 // publishWiki runs with the caller holding the project's generation lock.
 func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, error) {
-	job, project, all, files, fingerprint := in.Job, in.Project, in.Sources, in.Files, in.Fingerprint
+	job, project, files := in.Job, in.Project, in.Files
 	validate := in.Validate
 	if validate == nil {
 		validate = func(model.State) error { return nil }
@@ -35,7 +33,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	if err != nil {
 		return "", err
 	}
-	rev := model.Revision{SourcesUpdatedAt: project.SourcesUpdatedAt, SourceVersion: project.SourceVersion, Fingerprint: fingerprint, ID: auth.Token()[:20], ProjectID: job.ProjectID, Created: time.Now().UTC(), Files: map[string]blob.Key{}, FileBytes: map[string]int64{}, FileHashes: map[string]string{}, SourceIDs: []string{}}
+	rev := model.Revision{ID: auth.Token()[:20], ProjectID: job.ProjectID, Created: time.Now().UTC(), Files: map[string]blob.Key{}, FileBytes: map[string]int64{}, FileHashes: map[string]string{}}
 	for _, body := range files {
 		rev.StoredBytes += int64(len(body))
 	}
@@ -149,7 +147,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	if err = s.DB.View(validate); err != nil {
 		return "", err
 	}
-	// Delete obsolete pages after writing replacements. Intake is service-owned.
+	// Delete obsolete pages after writing replacements.
 	keys, err := s.Blobs.List(ctx, "projects/"+job.ProjectID+"/")
 	if err != nil {
 		return "", err
@@ -163,9 +161,6 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 				}
 			}
 		}
-	}
-	for _, src := range all {
-		rev.SourceIDs = append(rev.SourceIDs, src.ID)
 	}
 	err = s.DB.Update(func(st *model.State) error {
 		if err := validate(*st); err != nil {
@@ -183,8 +178,6 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		st.Revisions[rev.ID] = rev
 		p.Revision = rev.ID
 		p.WikiUpdatedAt = time.Now().UTC()
-		p.WikiSourceVersion = project.SourceVersion
-		p.ProcessedIntakeSequence = project.NextIntakeSequence
 		p.WikiIncomplete = false
 		st.Projects[p.ID] = p
 		if in.Finish != nil {
@@ -195,14 +188,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		j := st.Jobs[job.ID]
 		j.Status = "completed"
 		j.Revision = rev.ID
-		j.Fingerprint = fingerprint
-		j.SourceVersion = project.SourceVersion
 		st.Jobs[job.ID] = j
-		for _, src := range all {
-			v := st.Sources[src.ID]
-			v.Revision = rev.ID
-			st.Sources[v.ID] = v
-		}
 		return nil
 	})
 	return rev.ID, err

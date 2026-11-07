@@ -39,7 +39,6 @@ func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil
 
 type RunSpec struct {
 	Key                 AttemptKey
-	Mode                string
 	InputURL, OutputURL string
 	Token               Secret
 	FirstMessage        string
@@ -63,5 +62,5 @@ type Runner interface {
 	Cleanup(context.Context, Attempt) error
 }
 
-// ErrNotConfigured selects deterministic processing for jobs without a runner.
+// ErrNotConfigured reports that generation has no configured runner.
 var ErrNotConfigured = errors.New("runner is not configured")

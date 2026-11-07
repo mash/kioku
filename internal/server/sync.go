@@ -11,10 +11,10 @@ import (
 )
 
 // wikiFiles holds the project lock until the caller finishes reading files.
-func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision, map[string]string, func(), error) {
+func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision, func(), error) {
 	unlock, err := s.lockProject(ctx, pid)
 	if err != nil {
-		return model.Revision{}, nil, nil, err
+		return model.Revision{}, nil, err
 	}
 	var rev model.Revision
 	err = s.DB.View(func(st model.State) error {
@@ -27,20 +27,12 @@ func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision
 	})
 	if err != nil {
 		unlock()
-		return model.Revision{}, nil, nil, err
+		return model.Revision{}, nil, err
 	}
-	views := map[string]string{}
-	if err = s.addIntakeView(ctx, uid, pid, views); err != nil {
-		unlock()
-		return model.Revision{}, nil, nil, err
-	}
-	return rev, views, unlock, nil
+	return rev, unlock, nil
 }
 
-func (s *Server) wikiFile(ctx context.Context, rev model.Revision, views map[string]string, name string) (string, error) {
-	if body, ok := views[name]; ok {
-		return body, nil
-	}
+func (s *Server) wikiFile(ctx context.Context, rev model.Revision, name string) (string, error) {
 	key, exists := rev.Files[name]
 	if !exists {
 		return "", fail(404, "wiki file not found")
@@ -52,7 +44,7 @@ func (s *Server) wikiFile(ctx context.Context, rev model.Revision, views map[str
 // syncSnapshot exposes the current mutable tree, not historical revisions.
 // Publication and deletion use this same project lock for each file write.
 func (s *Server) syncSnapshot(w http.ResponseWriter, r *http.Request, uid string) error {
-	rev, views, unlock, err := s.wikiFiles(r.Context(), uid, r.PathValue("project"))
+	rev, unlock, err := s.wikiFiles(r.Context(), uid, r.PathValue("project"))
 	if err != nil {
 		return err
 	}
@@ -61,7 +53,7 @@ func (s *Server) syncSnapshot(w http.ResponseWriter, r *http.Request, uid string
 		if !wiki.ValidFile(name) {
 			return fail(400, "invalid wiki filename")
 		}
-		body, err := s.wikiFile(r.Context(), rev, views, name)
+		body, err := s.wikiFile(r.Context(), rev, name)
 		if err != nil {
 			return err
 		}
@@ -80,9 +72,6 @@ func (s *Server) syncSnapshot(w http.ResponseWriter, r *http.Request, uid string
 			size = int64(len(b))
 		}
 		files[name] = model.SyncFile{Hash: hash, Bytes: size}
-	}
-	for name, body := range views {
-		files[name] = model.SyncFile{Hash: auth.Hash(body), Bytes: int64(len(body))}
 	}
 	b, _ := json.Marshal(files)
 	jsonOut(w, 200, model.SyncManifest{Revision: auth.Hash(string(b))[:32], Files: files})

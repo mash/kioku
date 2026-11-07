@@ -20,7 +20,7 @@ func (a *App) wait(j model.Job) error {
 	for {
 		if j.Status == "completed" {
 			if j.Unchanged {
-				fmt.Fprintln(a.Out, "Sources unchanged; wiki is up to date.")
+				fmt.Fprintln(a.Out, "No waiting inbox items; wiki is up to date.")
 			}
 			if j.Kind == "put" || j.Unchanged && j.Revision == "" {
 				return a.print(j)

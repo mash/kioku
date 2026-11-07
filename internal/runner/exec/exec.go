@@ -100,7 +100,7 @@ func (r *Runner) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, e
 	c.pgid = cmd.Process.Pid
 	r.children[ref.ID] = c
 	// The private wire value is written only to stdin, never formatted or logged.
-	wire := input{Version: 1, JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, ProjectID: spec.Key.ProjectID, Mode: spec.Mode, InputURL: spec.InputURL, OutputURL: spec.OutputURL, JobToken: string(spec.Token), Model: r.config.Model, FirstMessage: spec.FirstMessage, Prompt: strings.TrimSpace(r.config.Prompt), BudgetCents: spec.BudgetCents, Deadline: spec.Deadline}
+	wire := input{Version: 1, JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, ProjectID: spec.Key.ProjectID, InputURL: spec.InputURL, OutputURL: spec.OutputURL, JobToken: string(spec.Token), Model: r.config.Model, FirstMessage: spec.FirstMessage, Prompt: strings.TrimSpace(r.config.Prompt), BudgetCents: spec.BudgetCents, Deadline: spec.Deadline}
 	go func() {
 		defer close(c.stdinDone)
 		defer stdin.Close()

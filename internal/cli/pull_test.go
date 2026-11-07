@@ -41,7 +41,7 @@ func TestPullReturnsOrdinaryOutputAndPartialProgress(t *testing.T) {
 
 func TestRemovedPullModesAndCommandsDoNotIssueRequests(t *testing.T) {
 	a, _, hits, _ := syncFixture(t)
-	for _, args := range [][]string{{"pull", "--json"}, {"pull", "--all"}, {"pull", "--due"}, {"pull", "unexpected"}, {"init", "project"}, {"use", "org/project"}, {"hook", "end"}, {"sync"}} {
+	for _, args := range [][]string{{"pull", "--json"}, {"pull", "--all"}, {"pull", "--due"}, {"pull", "unexpected"}, {"init", "project"}, {"use", "org/project"}, {"hook", "end"}, {"sync"}, {"source", "remove", "--yes", "id"}, {"generate", "--full"}} {
 		if err := a.dispatch(args); err == nil {
 			t.Fatalf("removed operation accepted: %v", args)
 		}

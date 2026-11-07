@@ -161,11 +161,11 @@ func (f *fixture) wait(pid, token, id string) model.Job {
 	return model.Job{}
 }
 
-// generate queues wiki generation explicitly after source intake.
-func (f *fixture) generate(pid, token string, full bool) model.Job {
+// generate queues wiki generation explicitly for waiting inbox items.
+func (f *fixture) generate(pid, token string, _ bool) model.Job {
 	f.t.Helper()
 	var job model.Job
-	if code := f.request("POST", "/api/projects/"+pid+"/generate", token, map[string]bool{"full": full}, &job); code != 202 {
+	if code := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &job); code != 202 {
 		f.t.Fatalf("generate: %d", code)
 	}
 	return job

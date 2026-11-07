@@ -16,7 +16,7 @@ func TestServerGenerationBudget(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
 			putFile(t, f, token, p.ID, "budget.md", "Evidence")
 			var j model.Job
-			if code := f.request("POST", "/api/projects/"+p.ID+"/generate", token, map[string]any{"full": true, "budget_cents": budget}, &j); code != 202 {
+			if code := f.request("POST", "/api/projects/"+p.ID+"/generate", token, map[string]any{"budget_cents": budget}, &j); code != 202 {
 				t.Fatal(code)
 			}
 			if err := f.db.Update(func(st *model.State) error {
@@ -87,7 +87,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "budget_usd") || strings.Contains(string(body), "/settings/anthropic") {
 		t.Fatal(resp.StatusCode, string(body))
 	}
-	req, _ = http.NewRequest("POST", f.url+"/api/projects/"+p.ID+"/generate", strings.NewReader("budget_usd=0.50&full=true"))
+	req, _ = http.NewRequest("POST", f.url+"/api/projects/"+p.ID+"/generate", strings.NewReader("budget_usd=0.50"))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -108,7 +108,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 		for _, j := range st.Jobs {
 			if j.ProjectID == p.ID && j.Kind == "generate" {
 				found = true
-				if j.AgentBudgetCents != 50 || !j.Full || j.AnthropicConnectionID != "" {
+				if j.AgentBudgetCents != 50 || j.AnthropicConnectionID != "" {
 					t.Fatal(j)
 				}
 			}

@@ -64,7 +64,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	project := securityProject(t, f, human)
 	access := connectorAccessToken(t, f, human, project.ID)
 	args := map[string]any{"project": project.Namespace}
-	if msg := connectorTool(t, f, access, "wiki_read", args, nil); msg != "project has no wiki or intake yet" {
+	if msg := connectorTool(t, f, access, "wiki_read", args, nil); msg != "project has no wiki yet" {
 		t.Fatal("empty project", msg)
 	}
 	var search connectorSearchResult
@@ -321,7 +321,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		}
 	}
 	if err := f.db.View(func(st model.State) error {
-		if len(st.Jobs) != 0 || len(st.Sources) != 0 || len(st.Audit) != 0 {
+		if len(st.Jobs) != 0 || len(st.Inbox) != 0 || len(st.Audit) != 0 {
 			t.Error("rejected source changed state")
 		}
 		return nil

@@ -6,7 +6,7 @@ import (
 )
 
 func TestHomeProjectOnboardingUsesCurrentCLI(t *testing.T) {
-	if !strings.Contains(homeTemplate, "kioku create &lt;name&gt;") {
+	if !strings.Contains(homeTemplate, "kioku project create &lt;name&gt;") {
 		t.Fatal("new users have no create instruction")
 	}
 	for _, removed := range []string{"kioku init", "kioku use", "kioku hook"} {

@@ -1,24 +1,19 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/usd"
 )
 
 func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) error {
 	var req struct {
-		Full        bool  `json:"full"`
 		BudgetCents int64 `json:"budget_cents,omitempty"`
 	}
 	form := strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded")
@@ -32,9 +27,8 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 			return fail(400, "invalid generation budget")
 		}
 		req.BudgetCents = micros / 10000
-		req.Full = r.FormValue("full") == "true"
 	}
-	// A missing body retains the original incremental request semantics.
+	// A missing body retains the default budget.
 	if !form && r.Body != nil && r.Body != http.NoBody {
 		r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 		d := json.NewDecoder(r.Body)
@@ -56,7 +50,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 		if req.BudgetCents != 0 && (req.BudgetCents < 50 || req.BudgetCents > s.Config.AgentMaxSessionCents) {
 			return fail(400, "budget is outside the allowed range")
 		}
-		job, err = s.queueGeneration(st, p, uid, principal.AgentID, false, req.Full, time.Now().UTC())
+		job, err = s.queueGeneration(st, p, uid, principal.AgentID, false, time.Now().UTC())
 		if err == nil && req.BudgetCents != 0 {
 			job.AgentBudgetCents = req.BudgetCents
 			st.Jobs[job.ID] = job
@@ -74,29 +68,24 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 	return nil
 }
 
-func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID string, automatic, full bool, now time.Time) (model.Job, error) {
-	job := model.Job{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, UserID: uid, AgentID: agentID, Status: "queued", Created: now, Automatic: automatic, Full: full}
+func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID string, automatic bool, now time.Time) (model.Job, error) {
+	job := model.Job{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, UserID: uid, AgentID: agentID, Status: "queued", Created: now, Automatic: automatic}
 	pending := 0
 	for _, j := range st.Jobs {
 		if j.ProjectID != p.ID || (j.Status != "queued" && j.Status != "running") {
 			continue
 		}
-		if j.Kind == "put" {
-			job.Dependencies = append(job.Dependencies, j.ID)
-		} else {
-			pending++
-		}
+		pending++
 	}
 	if pending >= s.Config.MaxQueued {
 		return job, fail(429, "project generation queue is full")
 	}
-	sort.Strings(job.Dependencies)
 	st.Jobs[job.ID] = job
 	return job, nil
 }
 
 // Deadlines are fixed intervals, not a debounce: frequent puts never postpone a
-// project's next run. Dirty versions survive restarts and failed generations.
+// project's next run. Waiting items survive restarts and failed generations.
 func (s *Server) scheduleGenerations(now time.Time) error {
 	if s.Config.GenerateEvery <= 0 {
 		return s.DB.Update(func(st *model.State) error {
@@ -153,7 +142,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			if uid == "" {
 				continue
 			}
-			if _, err := s.queueGeneration(st, p, uid, "", true, false, now); err != nil {
+			if _, err := s.queueGeneration(st, p, uid, "", true, now); err != nil {
 				return err
 			}
 		}
@@ -163,108 +152,4 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 		s.notify()
 	}
 	return err
-}
-
-func (s *Server) notifyIntake() {
-	for i := 0; i < s.Config.IntakeWorkers; i++ {
-		select {
-		case s.intakeWake <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (s *Server) runIntake(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.intakeWake:
-		case <-ticker.C:
-		}
-		for ctx.Err() == nil {
-			var job model.Job
-			err := s.DB.Update(func(st *model.State) error {
-				for _, j := range st.Jobs {
-					if j.Kind == "put" && j.Status == "queued" && (job.ID == "" || j.Created.Before(job.Created) || j.Created.Equal(job.Created) && j.ID < job.ID) {
-						job = j
-					}
-				}
-				if job.ID != "" {
-					job.Status = "running"
-					st.Jobs[job.ID] = job
-				}
-				return nil
-			})
-			if err != nil {
-				slog.Error("intake queue deferred", "error", err)
-				break
-			}
-			if job.ID == "" {
-				break
-			}
-			jobCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			err = s.processPut(jobCtx, job)
-			cancel()
-			if ctx.Err() != nil {
-				return
-			}
-			if err != nil {
-				updateErr := s.DB.Update(func(st *model.State) error {
-					j, ok := st.Jobs[job.ID]
-					if !ok || j.Status != "running" {
-						return nil
-					}
-					j.Status = "failed"
-					j.Error = err.Error()
-					st.Jobs[j.ID] = j
-					return nil
-				})
-				if updateErr != nil {
-					slog.Error("intake result deferred", "error", updateErr)
-				}
-			}
-			s.notify()
-		}
-	}
-}
-
-func (s *Server) processPut(ctx context.Context, job model.Job) error {
-	if err := s.check(job.ProjectID, job.UserID); err != nil {
-		return err
-	}
-	if job.AgentID != "" {
-		return fail(403, "agents cannot fetch URLs")
-	}
-	provider := source.Kind(job.InputURL)
-	token := ""
-	if provider != "web" {
-		var err error
-		token, err = s.providerCredential(ctx, job.UserID, provider)
-		if err != nil {
-			return err
-		}
-	}
-	doc, err := s.Fetcher.Fetch(ctx, job.InputURL, token)
-	if err != nil {
-		return err
-	}
-	_, err = s.storeSources(ctx, []source.Document{doc}, job)
-	return err
-}
-
-func recordIntake(st *model.State, job model.Job, kind string, sources []model.Source) {
-	id := job.ID + "-" + kind
-	if st.Intake == nil {
-		st.Intake = map[string]model.IntakeEntry{}
-	}
-	if _, ok := st.Intake[id]; ok {
-		return
-	}
-	p := st.Projects[job.ProjectID]
-	p.NextIntakeSequence++
-	st.Intake[id] = model.IntakeEntry{ID: id, ProjectID: p.ID, JobID: job.ID, UserID: job.UserID, Sequence: p.NextIntakeSequence, Kind: kind, URL: job.InputURL, Sources: sources, SourceVersion: p.SourceVersion, Created: time.Now().UTC()}
-	st.Projects[p.ID] = p
 }

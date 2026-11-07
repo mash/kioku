@@ -107,7 +107,7 @@ func TestProviderAuthorizationOptions(t *testing.T) {
 				t.Fatal("missing state or PKCE")
 			}
 			if name == "google" {
-				if q.Get("nonce") != loginNonce(verifier) || q.Get("nonce") == q.Get("code_challenge") {
+				if q.Get("nonce") != Challenge("kioku-oidc-nonce:"+verifier) || q.Get("nonce") == q.Get("code_challenge") {
 					t.Fatal("invalid nonce")
 				}
 				if purpose == "connect" && (q.Get("access_type") != "offline" || q.Get("prompt") != "consent" || !strings.Contains(q.Get("scope"), "drive.readonly")) {
@@ -165,5 +165,24 @@ func TestGitHubExchangeWithoutIDToken(t *testing.T) {
 	c, identity, err := p.Exchange(context.Background(), "code", Token())
 	if err != nil || identity.ID != "123" || c.AccessToken != "github-token" {
 		t.Fatalf("GitHub exchange: %+v %v", identity, err)
+	}
+}
+
+func TestUnknownProviderDoesNotUseAnotherProvider(t *testing.T) {
+	p := Provider{Name: "unknown", Client: &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("unknown provider made a request")
+		return nil, nil
+	})}}
+	if p.URL("state", "verifier", "login") != "" {
+		t.Fatal("unknown provider produced an authorization URL")
+	}
+	if _, _, err := p.Exchange(context.Background(), "code", "verifier"); err == nil {
+		t.Fatal("unknown provider exchanged a code")
+	}
+	if _, err := p.Identity(context.Background(), "token"); err == nil {
+		t.Fatal("unknown provider fetched an identity")
+	}
+	if _, err := p.Refresh(context.Background(), Credential{RefreshToken: "refresh", ExpiresAt: time.Now().Add(-time.Hour)}); err == nil {
+		t.Fatal("unknown provider refreshed a token")
 	}
 }

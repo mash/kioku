@@ -19,6 +19,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/config"
+	"github.com/mash/kioku/internal/connector/registry"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
@@ -122,7 +123,7 @@ func run() error {
 		return err
 	}
 	providers := map[string]auth.Provider{}
-	for _, name := range []string{"google", "github"} {
+	for _, name := range registry.Names() {
 		prefix := strings.ToUpper(name)
 		id, secret := os.Getenv(prefix+"_CLIENT_ID"), os.Getenv(prefix+"_CLIENT_SECRET")
 		if id != "" || secret != "" {

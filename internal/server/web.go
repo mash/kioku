@@ -135,7 +135,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	return render(w, data.Project.Name, data, projectTemplate)
 }
 
-const inviteTemplate = `{{define "body"}}<h1>プロジェクトへの招待</h1><p>参加すると、このプロジェクトの原資料とWikiを閲覧・取得・更新できます。</p><p>CLIで実行してください。</p><pre>kioku join {{.URL}}</pre>{{end}}`
+const inviteTemplate = `{{define "body"}}<h1>プロジェクトへの招待</h1><p>参加すると、このプロジェクトの原資料とWikiを閲覧・取得・更新できます。</p><p>CLIで実行してください。</p><pre>kioku project join {{.URL}}</pre>{{end}}`
 
 func (s *Server) invitePage(w http.ResponseWriter, r *http.Request, _ string) error {
 	return render(w, "Invitation", struct{ URL string }{s.Config.BaseURL + "/invite/" + r.PathValue("invite")}, inviteTemplate)

@@ -218,3 +218,57 @@ func TestReauthorizationDoesNotAbortAlreadyIssuedAttempts(t *testing.T) {
 		t.Fatal("already issued scope should remain usable", err, calls)
 	}
 }
+
+func TestSweepDoesNotRevokeOtherLiveScopes(t *testing.T) {
+	for _, cause := range []string{"expired", "late authorization failure"} {
+		t.Run(cause, func(t *testing.T) {
+			s, key, scope := tokenFixture(t)
+			now := time.Now()
+			s.Client.Now = func() time.Time { return now }
+			posts := 0
+			var revoked []string
+			s.Client.HTTP = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "DELETE" {
+					revoked = append(revoked, r.Header.Get("Authorization"))
+					return response(204, ""), nil
+				}
+				posts++
+				if posts == 2 && cause == "late authorization failure" {
+					if err := s.RequireAuthorization(scope.OwnerID, scope.ConnectionVersion, 0); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return response(201, fmt.Sprintf(`{"token":"scope-%d","expires_at":%q}`, posts, now.Add(time.Duration(posts)*time.Hour).Format(time.RFC3339))), nil
+			})}
+			if _, err := s.Issue(t.Context(), key, scope); err != nil {
+				t.Fatal(err)
+			}
+			other := scope
+			other.RepositoryIDs = []int64{11}
+			_, err := s.Issue(t.Context(), key, other)
+			live := scope
+			if cause == "expired" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(time.Hour + time.Minute)
+				live = other
+			} else if Reason(err) != "reauthorization_required" {
+				t.Fatal(err)
+			}
+			if err := s.Sweep(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if cause == "expired" && len(revoked) != 0 || cause != "expired" && (len(revoked) != 1 || revoked[0] != "Bearer scope-2") {
+				t.Fatalf("cleanup revoked an unrelated live scope: %d requests", len(revoked))
+			}
+			if token, err := s.Issue(t.Context(), key, live); err != nil || token == "" || posts != 2 {
+				t.Fatal("live scope was not preserved", err)
+			}
+			before := len(revoked)
+			if err := s.Revoke(t.Context(), key); err != nil || len(revoked) != before+1 {
+				t.Fatal("attempt cleanup did not revoke the remaining live scope", err)
+			}
+		})
+	}
+}

@@ -237,6 +237,12 @@ func terminal(status string) bool {
 // Revoke can revoke only known tokens. Unknown issuance is retained until its
 // conservative expiry; expired_unobserved is not evidence of remote revocation.
 func (s *Service) Revoke(ctx context.Context, key runner.AttemptKey) error {
+	return s.revoke(ctx, key, false)
+}
+
+// The sweeper only retires due tokens while an attempt remains authorized.
+// Explicit attempt cleanup still revokes every scope, including live tokens.
+func (s *Service) revoke(ctx context.Context, key runner.AttemptKey, onlyDue bool) error {
 	s.issueMu.Lock()
 	defer s.issueMu.Unlock()
 	var records map[string]model.GitHubTokenAttempt
@@ -244,6 +250,9 @@ func (s *Service) Revoke(ctx context.Context, key runner.AttemptKey) error {
 		records = map[string]model.GitHubTokenAttempt{}
 		for id, t := range st.GitHubTokenAttempts {
 			if t.Key != key || terminal(t.Status) {
+				continue
+			}
+			if onlyDue && !s.cleanupDue(*st, t) {
 				continue
 			}
 			if t.RevocationRequestedAt.IsZero() {
@@ -315,11 +324,14 @@ func (s *Service) Revoke(ctx context.Context, key runner.AttemptKey) error {
 	}
 	return nil
 }
+func (s *Service) cleanupDue(st model.State, t model.GitHubTokenAttempt) bool {
+	return !s.Client.Config.Enabled || !Authorized(st, t.Key, t.OwnerID, t.ConnectionVersion) || !t.RevocationRequestedAt.IsZero() || (!t.ExpiresAt.IsZero() && !t.ExpiresAt.After(s.Client.now()))
+}
 func (s *Service) Sweep(ctx context.Context) error {
 	keys := map[string]runner.AttemptKey{}
 	if err := s.DB.View(func(st model.State) error {
 		for _, t := range st.GitHubTokenAttempts {
-			if !terminal(t.Status) && (!s.Client.Config.Enabled || !Authorized(st, t.Key, t.OwnerID, t.ConnectionVersion) || !t.RevocationRequestedAt.IsZero() || (!t.ExpiresAt.IsZero() && !t.ExpiresAt.After(s.Client.now()))) {
+			if !terminal(t.Status) && s.cleanupDue(st, t) {
 				keys[Key(t.Key)] = t.Key
 			}
 		}
@@ -328,7 +340,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 		return err
 	}
 	for _, k := range keys {
-		if err := s.Revoke(ctx, k); err != nil && !errors.Is(err, ErrPending) {
+		if err := s.revoke(ctx, k, true); err != nil && !errors.Is(err, ErrPending) {
 			return err
 		}
 	}

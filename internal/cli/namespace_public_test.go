@@ -42,7 +42,7 @@ func TestNamespaceSelectionAndCLIOutput(t *testing.T) {
 		err := Run(context.Background(), append([]string{"-C", dir, "--server", server.URL}, args...), &out, &stderr)
 		return out.String(), err
 	}
-	for _, args := range [][]string{{"list"}, {"usage"}} {
+	for _, args := range [][]string{{"project", "list"}, {"project", "usage"}} {
 		output, err := run(args...)
 		if err != nil {
 			t.Fatal(args, err)

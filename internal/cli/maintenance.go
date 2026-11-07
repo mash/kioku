@@ -18,7 +18,7 @@ func (a *App) maintenance(args []string) error {
 		return err
 	}
 	if f.NArg() != 0 {
-		return errors.New("usage: kioku maintenance")
+		return errors.New("usage: kioku project maintenance")
 	}
 	_, err = a.request("POST", p+"/maintenance", map[string]int{"keep": *keep}, &out)
 

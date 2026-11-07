@@ -8,7 +8,7 @@ import (
 
 func (a *App) join(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: kioku join <invite-url>")
+		return errors.New("usage: kioku project join <invite-url>")
 	}
 	unlock, err := a.localLock()
 	if err != nil {

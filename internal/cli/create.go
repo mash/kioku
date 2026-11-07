@@ -8,7 +8,7 @@ import (
 
 func (a *App) createProject(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: kioku create <name>")
+		return errors.New("usage: kioku project create <name>")
 	}
 	unlock, err := a.localLock()
 	if err != nil {

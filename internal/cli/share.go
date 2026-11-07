@@ -8,7 +8,7 @@ func (a *App) share(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("usage: kioku share list|invite [email]|remove <email-or-id>")
+		return errors.New("usage: kioku project share list|invite [email]|remove <email-or-id>")
 	}
 	switch args[0] {
 	case "transfer":

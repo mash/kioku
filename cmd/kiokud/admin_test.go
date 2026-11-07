@@ -30,7 +30,13 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join(t.TempDir(), "admin.sock")
+	// Unix socket paths have a small OS limit, even in deeply nested worktrees.
+	socketDir, err := os.MkdirTemp(".", ".admin-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "admin.sock")
 	stop, err := serveAdmin(context.Background(), socket, db)
 	if err != nil {
 		t.Fatal(err)

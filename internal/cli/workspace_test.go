@@ -173,7 +173,7 @@ func TestCreateAndJoinPreflightBeforePOST(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(a.Dir, "wiki"), []byte("private"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := a.dispatch([]string{command, "org/p"}); err == nil {
+		if err := a.dispatch([]string{"project", command, "org/p"}); err == nil {
 			t.Fatal("invalid path accepted")
 		}
 		if calls != 0 {

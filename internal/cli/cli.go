@@ -161,14 +161,8 @@ func (a *App) dispatch(args []string) error {
 		return a.connect(args[1:])
 	case "org":
 		return a.organization(args[1:])
-	case "create":
-		return a.createProject(args[1:])
-	case "join":
-		return a.join(args[1:])
-	case "list":
-		return a.list()
-	case "share":
-		return a.share(args[1:])
+	case "project":
+		return a.project(args[1:])
 	case "put":
 		return a.put(args[1:])
 	case "generate":
@@ -177,14 +171,6 @@ func (a *App) dispatch(args []string) error {
 		return a.pullCommand(args[1:])
 	case "status":
 		return a.status()
-	case "usage":
-		return a.usage()
-	case "audit":
-		return a.audit()
-	case "maintenance":
-		return a.maintenance(args[1:])
-	case "delete":
-		return a.deleteProject(args[1:])
 	case "source":
 		return a.source(args[1:])
 	case "job":

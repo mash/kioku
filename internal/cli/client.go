@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/mash/kioku/internal/buildinfo"
 )
 
 func (a *App) request(method, path string, input, output any) (int, error) {
@@ -22,6 +24,7 @@ func (a *App) request(method, path string, input, output any) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Kioku-Client-Version", buildinfo.Version)
 	if token := a.authToken(); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

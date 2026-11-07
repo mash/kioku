@@ -11,21 +11,21 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   logout | whoami
   connect google|github                Authorize source access
   org create SLUG | org list
-  create ORG/PROJECT | join INVITE_URL        Create or join a project
-  list                                List participating projects
-  share list
-  share invite [EMAIL]                 Single-use invite; expires in 7 days
-  share transfer --yes EMAIL_OR_ID     Transfer project ownership
+  project create ORG/PROJECT | project join INVITE_URL        Create or join a project
+  project list                                List participating projects
+  project share list
+  project share invite [EMAIL]                 Single-use invite; expires in 7 days
+  project share transfer --yes EMAIL_OR_ID     Transfer project ownership
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
-  share remove EMAIL_OR_ID
+  project share remove EMAIL_OR_ID
   put [--wait] [URL|FILES...] Save sources, or changed inbox files
   generate [--full] [--wait]         Generate wiki from saved sources (wait also pulls)
   pull [ORG/PROJECT]          Bind cwd on first pull; fetch one project
   status | open
-  usage | audit
-  maintenance                          Collect unreferenced project objects
+  project usage | project audit
+  project maintenance                          Collect unreferenced project objects
   source remove --yes [--wait] SOURCE_ID        Delete source and invalidate generated pages
-  delete --yes                         Delete project and cloud objects
+  project delete --yes                         Delete project and cloud objects
   job status|wait JOB_ID | job retry [--wait] JOB_ID
 
 put saves sources; --wait waits for intake only. Changed projects generate periodically.

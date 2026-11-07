@@ -6,7 +6,7 @@ func (a *App) shareInvite(args []string, p string) error {
 	var v any
 	email := ""
 	if len(args) > 2 {
-		return errors.New("usage: kioku share invite [email]")
+		return errors.New("usage: kioku project share invite [email]")
 	}
 	if len(args) == 2 {
 		email = args[1]

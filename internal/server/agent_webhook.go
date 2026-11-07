@@ -28,7 +28,7 @@ func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
 		var job model.Job
 		err = s.DB.View(func(st model.State) error {
 			for _, j := range st.Jobs {
-				if j.Status == "running" && j.Managed != nil && j.Managed.SessionID == id && id != "" {
+				if j.Status == "running" && j.Run != nil && j.Run.Ref.ID == id && id != "" {
 					job = j
 					break
 				}

@@ -19,6 +19,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/config"
+	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/usd"
@@ -125,7 +126,19 @@ func run() error {
 	if len(providers) == 0 {
 		return errors.New("configure at least one Google or GitHub OAuth provider")
 	}
-	app := server.New(server.Config{TrustedProxy: trustedNetwork, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, IntakeWorkers: *intakeWorkers, MaxIntakeJobs: *intakeJobs, BaseURL: base, Providers: providers, MaxSources: *maxSources, MaxBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
+	runnersSet, err := runners.Load(runners.Config{AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, db, cipher)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := runnersSet.Close(ctx); err != nil {
+			slog.Error("runner shutdown incomplete", "error", err)
+		}
+	}()
+	app := server.New(server.Config{TrustedProxy: trustedNetwork, MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, IntakeWorkers: *intakeWorkers, MaxIntakeJobs: *intakeJobs, BaseURL: base, Providers: providers, MaxSources: *maxSources, MaxBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
+	app.SetRunners(runnersSet)
 	if err = app.Prepare(); err != nil {
 		return err
 	}

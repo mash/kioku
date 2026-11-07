@@ -128,11 +128,11 @@ func TestPutDuringGenerationDoesNotBlockAndRemainsDirty(t *testing.T) {
 	job := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, job, "First revision")
 	job = storedJob(t, f, job.ID)
-	ma.SetStatus(job.Managed.SessionID, "idle", "end_turn", 123)
-	b := &pauseOutputRead{Store: f.s.Blobs, key: job.Managed.OutputKey, entered: make(chan struct{}), release: make(chan struct{})}
+	ma.SetStatus(job.Run.Ref.ID, "idle", "end_turn", 123)
+	b := &pauseOutputRead{Store: f.s.Blobs, key: job.Run.OutputKey, entered: make(chan struct{}), release: make(chan struct{})}
 	f.s.Blobs = b
 	done := make(chan error, 1)
-	go func() { done <- f.s.finalizeAgentJob(context.Background(), job) }()
+	go func() { done <- f.s.reconcileAgentJob(context.Background(), job) }()
 	<-b.entered
 	started := time.Now()
 	putFile(t, f, token, p.ID, "two.md", "Arrived during generation")

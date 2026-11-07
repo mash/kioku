@@ -186,7 +186,7 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) err
 			}
 		}
 		for id, j := range st.Jobs {
-			if j.ProjectID == pid && j.Status != "running" && j.Status != "queued" && (j.Managed == nil || j.Managed.CleanupComplete) && time.Since(j.Created) > 30*24*time.Hour {
+			if j.ProjectID == pid && j.Status != "running" && j.Status != "queued" && (j.Run == nil || j.Run.CleanupComplete) && time.Since(j.Created) > 30*24*time.Hour {
 				delete(st.Jobs, id)
 			}
 		}

@@ -157,7 +157,9 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runners := f.s.runners
 	f.s = New(f.s.Config, db, f.s.Blobs, cipher)
+	f.s.SetRunners(runners)
 	f.db = db
 	access, refresh := connectorTokenPair(t, f, form)
 	assertConnectorAccess(t, f, access, true)

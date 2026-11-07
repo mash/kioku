@@ -39,7 +39,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	for _, body := range files {
 		rev.StoredBytes += int64(len(body))
 	}
-	if job.Managed != nil && rev.StoredBytes > wiki.MaxSnapshotBytes {
+	if job.Run != nil && rev.StoredBytes > wiki.MaxSnapshotBytes {
 		return "", fail(413, "generated storage exceeds its reserved maximum")
 	}
 	// This token is for synchronization only. It does not create a build directory

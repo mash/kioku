@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/wiki"
 )
@@ -229,9 +231,16 @@ func (s *Server) notify() {
 }
 
 // RunWorker uses a durable queue. One worker serializes publication in this
-// initial backend, so concurrent submissions cannot overwrite each other.
+// queue, so concurrent submissions cannot overwrite each other.
 func (s *Server) RunWorker(ctx context.Context) error {
 	if err := s.Prepare(); err != nil {
+		return err
+	}
+	// Recover existing runs before dequeuing any new job.
+	if err := s.reconcileAgentJobs(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
 	maintenanceCtx, stopMaintenance := context.WithCancel(ctx)
@@ -261,16 +270,16 @@ func (s *Server) RunWorker(ctx context.Context) error {
 				running := map[string]bool{}
 				sessions := 0
 				for _, j := range st.Jobs {
-					if (j.Status == "running" || j.Managed != nil && j.Managed.StopPending) && j.Kind != "put" {
+					if j.Status == "running" && j.Kind != "put" {
 						running[j.ProjectID] = true
-						if j.Managed != nil {
+						if j.Run != nil {
 							sessions++
 						}
 					}
 				}
 				for _, j := range st.Jobs {
 					if j.Status == "queued" && j.Kind != "put" {
-						if running[j.ProjectID] || (j.AnthropicConnectionID != "" || s.Config.managedEnabled()) && sessions >= s.Config.AgentMaxSessions {
+						if running[j.ProjectID] || sessions >= s.Config.AgentMaxSessions {
 							continue
 						}
 						ready := true
@@ -313,13 +322,16 @@ func (s *Server) RunWorker(ctx context.Context) error {
 				break
 			}
 			jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			if job.AnthropicConnectionID != "" || s.Config.managedEnabled() {
+			_, runnerErr := s.runners.New(job)
+			if !errors.Is(runnerErr, runner.ErrNotConfigured) {
 				err := s.startAgentJob(jobCtx, job)
 				cancel()
 				if ctx.Err() != nil {
 					return nil
 				}
-				if err != nil {
+				if errors.Is(err, runner.ErrTemporary) {
+					slog.Warn("agent start awaits reconciliation", "job", job.ID, "error", err)
+				} else if err != nil {
 					return err
 				}
 				continue
@@ -585,7 +597,7 @@ func (s *Server) retry(w http.ResponseWriter, r *http.Request, uid string) error
 		if j.Status != "failed" {
 			return fail(409, "only failed jobs can be retried")
 		}
-		if j.Managed != nil && !j.Managed.CleanupComplete {
+		if j.Run != nil && !j.Run.CleanupComplete {
 			return fail(503, "agent cleanup pending; retry after reconciliation")
 		}
 
@@ -608,7 +620,7 @@ func (s *Server) retry(w http.ResponseWriter, r *http.Request, uid string) error
 			return fail(429, "project job queue is full")
 		}
 		j.Status = "queued"
-		j.Managed = nil
+		j.Run = nil
 		j.Unchanged = false
 		j.Dependencies = nil
 		if j.Kind != "put" {

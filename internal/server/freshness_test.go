@@ -25,9 +25,9 @@ func TestManualGenerateSkipsUnchangedSourcesAndPreservesTimestamps(t *testing.T)
 	generate := func() model.Job {
 		t.Helper()
 		job := startManaged(t, f, token, p.ID, false)
-		if job.Managed != nil {
+		if job.Run != nil {
 			sendOutput(t, f, ma, job, "Fresh wiki")
-			ma.SetStatus(job.Managed.SessionID, "idle", "end_turn", 123)
+			ma.SetStatus(job.Run.Ref.ID, "idle", "end_turn", 123)
 			job = reconcileManaged(t, f, job)
 		}
 		return job
@@ -53,7 +53,8 @@ func TestManualGenerateSkipsUnchangedSourcesAndPreservesTimestamps(t *testing.T)
 	f.s.Blobs = noGenerationObjects{objects}
 	// Changing provider settings is not a source change and must not force a
 	// regeneration.
-	f.s.Config.MAAgentID = "different-model"
+	f.runnerConfig.MAAgentID = "different-model"
+	f.setRunners()
 	for range 2 {
 		job := generate()
 		if !job.Unchanged || job.Status != "completed" || job.Revision != first.Revision {
@@ -75,7 +76,8 @@ func TestManualGenerateSkipsUnchangedSourcesAndPreservesTimestamps(t *testing.T)
 		t.Fatal("unchanged generate called model", len(ma.Requests()))
 	}
 	f.s.Blobs = objects
-	f.s.Config.MAAgentID = "test-model"
+	f.runnerConfig.MAAgentID = "test-model"
+	f.setRunners()
 	putFile(t, f, token, p.ID, "new.md", "Changed inputs")
 	changed := generate()
 	if changed.Unchanged || changed.Revision == first.Revision || len(ma.Requests()) <= initialCalls {

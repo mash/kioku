@@ -65,10 +65,10 @@ func setManagedPhase(t *testing.T, f *fixture, job model.Job, phase model.Manage
 	t.Helper()
 	if err := f.db.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
-		if j.Managed == nil {
-			j.Managed = &model.ManagedRun{}
+		if j.Run == nil {
+			j.Run = &model.AgentRun{}
 		}
-		j.Managed.Phase = phase
+		j.Run.Phase = phase
 		j.Status = status
 		st.Jobs[j.ID] = j
 		return nil
@@ -93,8 +93,8 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 		}
 		_ = f.db.View(func(st model.State) error {
 			j := st.Jobs[job.ID]
-			if j.Managed.Phase != model.PhaseOutputReceived || j.Managed.OutputHash != auth.Hash(string(body)) {
-				t.Error(j.Managed)
+			if j.Run.Phase != model.PhaseOutputReceived || j.Run.OutputHash != auth.Hash(string(body)) {
+				t.Error(j.Run)
 			}
 			return nil
 		})
@@ -144,7 +144,7 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 		t.Fatal(keys, err)
 	}
 	_ = f.db.View(func(st model.State) error {
-		if st.Jobs[job.ID].Managed.Phase != model.PhasePreparing {
+		if st.Jobs[job.ID].Run.Phase != model.PhasePreparing {
 			t.Error("invalid output advanced phase")
 		}
 		return nil
@@ -160,7 +160,7 @@ func TestAgentOutputIncludesSourcePagesInSizeLimit(t *testing.T) {
 	if err := f.db.Update(func(st *model.State) error {
 		st.Sources[src.ID] = src
 		j := st.Jobs[job.ID]
-		j.Managed.SourceIDs = []string{src.ID}
+		j.Run.SourceIDs = []string{src.ID}
 		st.Jobs[j.ID] = j
 		return nil
 	}); err != nil {

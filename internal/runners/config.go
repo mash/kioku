@@ -1,4 +1,4 @@
-package server
+package runners
 
 import (
 	"errors"
@@ -7,11 +7,8 @@ import (
 	"github.com/mash/kioku/internal/managedagents"
 )
 
-func (c Config) managedEnabled() bool {
-	return c.MAAgentID != "" && c.MAEnvironmentID != "" && c.AnthropicAPIKey != ""
-}
-func (s *Server) prepareManaged() error {
-	c := &s.Config
+func (s *Set) prepareManaged() error {
+	c := &s.config
 	count := 0
 	for _, v := range []string{c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey} {
 		if v != "" {

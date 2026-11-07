@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mash/kioku/internal/model"
 
 	"github.com/mash/kioku/internal/blob"
 )
@@ -35,11 +38,20 @@ func TestManagedInputWriteCrashRetainsCleanupIdentity(t *testing.T) {
 	}()
 	f.s.Blobs = objects
 	restartManagedFixture(t, f)
-	if code := f.request("DELETE", "/api/projects/"+p.ID+"/sources/"+put.SourceIDs[0], token, nil, nil); code != 202 {
+	if code := f.request("DELETE", "/api/projects/"+p.ID+"/sources/"+put.SourceIDs[0], token, nil, nil); code != 503 {
 		t.Fatal(code)
 	}
+	_ = f.db.Update(func(st *model.State) error {
+		j := st.Jobs[j.ID]
+		j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
+		st.Jobs[j.ID] = j
+		return nil
+	})
 	if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if code := f.request("DELETE", "/api/projects/"+p.ID+"/sources/"+put.SourceIDs[0], token, nil, nil); code != 202 {
+		t.Fatal(code)
 	}
 	keys, err := objects.List(context.Background(), agentJobPrefix(j))
 	if err != nil {

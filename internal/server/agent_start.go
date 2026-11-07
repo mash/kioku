@@ -5,14 +5,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/url"
+
 	"sort"
 	"time"
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner"
 )
 
 type generationSnapshot struct {
@@ -98,10 +98,10 @@ func sameManagedRun(a, b model.Job) bool {
 	if a.ID != b.ID {
 		return false
 	}
-	if b.Managed == nil {
-		return a.Managed == nil
+	if b.Run == nil {
+		return a.Run == nil
 	}
-	return a.Managed != nil && a.Managed.Attempt.ID == b.Managed.Attempt.ID
+	return a.Run != nil && a.Run.Attempt.ID == b.Run.Attempt.ID
 }
 func (s *Server) startAgentJob(ctx context.Context, job model.Job) error {
 	unlock, err := s.lockProject(ctx, "generate:"+job.ProjectID)
@@ -121,7 +121,7 @@ func (s *Server) startAgentJob(ctx context.Context, job model.Job) error {
 	if viewErr := s.DB.View(func(st model.State) error { job = st.Jobs[job.ID]; return nil }); viewErr != nil {
 		return viewErr
 	}
-	return s.failAgentJobLocked(cleanupCtx, job, err.Error(), false)
+	return s.failAgentJobLocked(cleanupCtx, job, err.Error(), nil)
 }
 func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	in, err := s.agentSnapshot(job)
@@ -129,7 +129,10 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		return err
 	}
 	p := in.project
-	agentID, agentVersion, environmentID := s.Config.MAAgentID, s.Config.MAAgentVersion, s.Config.MAEnvironmentID
+	r, err := s.runners.New(job)
+	if err != nil {
+		return err
+	}
 	budgetLimit := s.Config.AgentMaxSessionCents
 	if job.AnthropicConnectionID != "" {
 		c, err := s.jobConnection(job)
@@ -139,7 +142,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		if c.State != "ready" {
 			return errors.New("Anthropic connection is not ready")
 		}
-		agentID, agentVersion, environmentID = c.AgentID, c.AgentVersion, c.EnvironmentID
+
 		budgetLimit = job.AgentBudgetCents
 	}
 
@@ -232,7 +235,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 			return errAgentBudgetTooSmall
 		}
 		attempt := model.Attempt{ID: auth.Token()[:20]}
-		run := &model.ManagedRun{Phase: model.PhasePreparing, Mode: mode, PreparedAt: now, Deadline: now.Add(s.Config.AgentJobTimeout), Attempt: attempt, BudgetCents: budget, MAEnvironmentID: environmentID, MAAgentID: agentID, MAAgentVersion: agentVersion, BaseRevision: p.Revision, SourceVersion: p.SourceVersion, NextIntakeSequence: p.NextIntakeSequence, SourcesUpdatedAt: p.SourcesUpdatedAt}
+		run := &model.AgentRun{Phase: model.PhasePreparing, Mode: mode, PreparedAt: now, Deadline: now.Add(s.Config.AgentJobTimeout), Attempt: attempt, BudgetCents: budget, BaseRevision: p.Revision, SourceVersion: p.SourceVersion, NextIntakeSequence: p.NextIntakeSequence, SourcesUpdatedAt: p.SourcesUpdatedAt}
 		for _, src := range in.sources {
 			run.SourceIDs = append(run.SourceIDs, src.ID)
 		}
@@ -240,7 +243,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		raw, token = issueJobToken(st, job, run.Deadline.Add(10*time.Minute))
 		run.TokenID = token.ID
 		job = st.Jobs[job.ID]
-		job.Managed = run
+		job.Run = run
 		st.Jobs[job.ID] = job
 		return nil
 	})
@@ -251,55 +254,28 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
 		return err
 	}
-	u, _ := url.Parse(s.Config.BaseURL)
-	vault, createErr := s.managedClient(job).CreateJobVault(ctx, managedagents.VaultInput{JobID: job.ID, AttemptID: job.Managed.Attempt.ID, SecretName: "KIOKU_JOB_TOKEN", SecretValue: raw, AllowedHost: u.Hostname()})
-	if vault != "" {
-		if err = s.DB.Update(func(st *model.State) error {
-			j := st.Jobs[job.ID]
-			if !sameManagedRun(j, job) || j.Status != "running" {
-				return fail(409, "generation job was canceled")
-			}
-			j.Managed.VaultID = vault
-			st.Jobs[j.ID] = j
-			return nil
-		}); err != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			_ = s.managedClient(job).ArchiveVault(cleanupCtx, vault)
-			cancel()
-			return err
-		}
+
+	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, Mode: string(mode), InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
+	if errors.Is(err, runner.ErrTemporary) {
+		return nil
 	}
-	if createErr != nil {
-		return createErr
-	}
-	id, err := s.managedClient(job).CreateSession(ctx, managedagents.SessionInput{MAAgentID: agentID, MAAgentVersion: agentVersion, EnvironmentID: environmentID, VaultID: vault, BudgetCents: job.Managed.BudgetCents, Title: "Kioku wiki " + job.ID, Metadata: map[string]string{"kioku_project_id": p.ID, "kioku_job_id": job.ID, "kioku_attempt_id": job.Managed.Attempt.ID}, FirstMessage: agentgen.FirstMessage(spec)})
 	if err != nil {
-		if errors.Is(err, managedagents.ErrTemporary) {
-			slog.Warn("agent session creation uncertain; reconciliation will locate it", "job", job.ID)
-			return nil
-		}
 		return err
 	}
-	accepted := false
 	err = s.DB.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
-		if !sameManagedRun(j, job) || j.Status != "running" || j.Managed.Phase != model.PhasePreparing && j.Managed.Phase != model.PhaseOutputReceived {
+		if !sameManagedRun(j, job) || j.Status != "running" {
 			return nil
 		}
-		j.Managed.SessionID = id
-		if j.Managed.Phase == model.PhasePreparing {
-			j.Managed.Phase = model.PhaseAgentRunning
+		j.Run.Ref = ref
+		if j.Run.Phase == model.PhasePreparing {
+			j.Run.Phase = model.PhaseAgentRunning
 		}
 		st.Jobs[j.ID] = j
-		accepted = true
 		return nil
 	})
-	if !accepted {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		_ = s.managedClient(job).Interrupt(cleanupCtx, id)
-		_ = s.managedClient(job).ArchiveSession(cleanupCtx, id)
-		_ = s.managedClient(job).ArchiveVault(cleanupCtx, vault)
+	if err != nil {
+		slog.Warn("agent run save failed; reconciliation will locate it", "job", job.ID, "error", err)
 	}
-	return err
+	return nil
 }

@@ -152,16 +152,16 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 		s := f.Session(id)
 		s.CostAmount = cost
 		f.SetSession(s)
-		if _, err := a.GetSession(context.Background(), id); err == nil {
-			t.Fatal("accepted invalid cost", cost)
+		if got, err := a.GetSession(context.Background(), id); err != nil || got.CostKnown {
+			t.Fatal("invalid cost must remain unknown", got, err)
 		}
 	}
 	s := f.Session(id)
 	s.CostAmount = "123"
 	s.Currency = "EUR"
 	f.SetSession(s)
-	if _, err := a.GetSession(context.Background(), id); err == nil {
-		t.Fatal("accepted non-USD")
+	if got, err := a.GetSession(context.Background(), id); err != nil || got.CostKnown {
+		t.Fatal("non-USD cost must remain unknown", got, err)
 	}
 	f.SetError("POST", "/v1/vaults/vault_1/credentials", 503)
 	vault, err := a.CreateJobVault(context.Background(), managedagents.VaultInput{JobID: "job", AllowedHost: "kioku.test"})

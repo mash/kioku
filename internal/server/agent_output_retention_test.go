@@ -25,8 +25,8 @@ func TestAgentOutputResendsRetainOnlySelectedVersion(t *testing.T) {
 		t.Fatal("superseded outputs accumulate", len(keys))
 	}
 	current := storedJob(t, f, j.ID)
-	b, err := f.s.Blobs.Get(context.Background(), current.Managed.OutputKey)
-	if err != nil || auth.Hash(string(b)) != current.Managed.OutputHash {
+	b, err := f.s.Blobs.Get(context.Background(), current.Run.OutputKey)
+	if err != nil || auth.Hash(string(b)) != current.Run.OutputHash {
 		t.Fatal("selected output lost", err)
 	}
 }

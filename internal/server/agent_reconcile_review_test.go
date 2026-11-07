@@ -22,13 +22,14 @@ func TestManagedOutputArrivingDuringSessionInspectionIsPublished(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	c := &pauseSessionClient{Client: f.s.Config.ManagedAgents, entered: make(chan struct{}), release: make(chan struct{})}
-	f.s.Config.ManagedAgents = c
+	c := &pauseSessionClient{Client: f.runnerConfig.ManagedAgents, entered: make(chan struct{}), release: make(chan struct{})}
+	f.runnerConfig.ManagedAgents = c
+	f.setRunners()
 	done := make(chan error, 1)
 	go func() { done <- f.s.reconcileAgentJob(context.Background(), j) }()
 	<-c.entered
 	sendOutput(t, f, ma, j, "Accepted output")
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	close(c.release)
 	if err := <-done; err != nil {
 		t.Fatal(err)

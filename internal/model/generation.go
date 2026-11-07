@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/runner"
 )
 
 type GenerationMode string
@@ -22,22 +23,18 @@ const (
 	PhaseFinalizing     ManagedPhase = "finalizing"
 )
 
-type ManagedRun struct {
-	StopPending        bool           `json:"stop_pending,omitempty"`
+type AgentRun struct {
+	Ref                runner.RunRef  `json:"ref"`
+	CostCents          *int64         `json:"cost_cents,omitempty"`
 	CleanupComplete    bool           `json:"cleanup_complete,omitempty"`
 	AbortReason        string         `json:"abort_reason,omitempty"`
 	Phase              ManagedPhase   `json:"phase"`
 	Mode               GenerationMode `json:"mode"`
 	PreparedAt         time.Time      `json:"prepared_at"`
 	Deadline           time.Time      `json:"deadline"`
-	SessionID          string         `json:"session_id,omitempty"`
-	VaultID            string         `json:"vault_id,omitempty"`
 	TokenID            string         `json:"token_id,omitempty"`
-	Attempt            Attempt        `json:"hold"`
+	Attempt            Attempt        `json:"attempt"`
 	BudgetCents        int64          `json:"budget_cents"`
-	MAEnvironmentID    string         `json:"ma_environment_id,omitempty"`
-	MAAgentID          string         `json:"ma_agent_id"`
-	MAAgentVersion     int64          `json:"ma_agent_version,omitempty"`
 	BaseRevision       string         `json:"base_revision,omitempty"`
 	SourceIDs          []string       `json:"source_ids"`
 	SourceVersion      int64          `json:"source_version"`
@@ -45,12 +42,9 @@ type ManagedRun struct {
 	SourcesUpdatedAt   time.Time      `json:"sources_updated_at"`
 	OutputKey          blob.Key       `json:"output_key,omitempty"`
 	OutputHash         string         `json:"output_hash,omitempty"`
-	ListCostCents      int64          `json:"list_cost_cents,omitempty"`
 }
 
-// Attempt identifies one managed agent run. Its ID tags the vault and the
-// session so that recovery finds the resources of this run only. The JSON
-// name "hold" matches records that earlier versions stored.
+// Attempt identifies one run and its resources during recovery.
 type Attempt struct {
 	ID string `json:"id"`
 }

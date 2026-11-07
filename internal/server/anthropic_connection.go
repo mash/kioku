@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -132,7 +134,7 @@ func (s *Server) saveAnthropic(w http.ResponseWriter, r *http.Request, uid strin
 }
 func connectionBusy(st model.State, uid string) bool {
 	for _, j := range st.Jobs {
-		if j.UserID == uid && j.AnthropicConnectionID != "" && (j.Status == "queued" || j.Status == "running" || j.Managed != nil && !j.Managed.CleanupComplete) {
+		if j.UserID == uid && j.AnthropicConnectionID != "" && (j.Status == "queued" || j.Status == "running" || j.Run != nil && !j.Run.CleanupComplete) {
 			return true
 		}
 	}
@@ -163,7 +165,7 @@ func (s *Server) disconnectAnthropic(w http.ResponseWriter, r *http.Request, uid
 				j.Error = "Anthropic connection disconnected"
 				st.Jobs[id] = j
 			}
-			if j.Managed != nil && !j.Managed.CleanupComplete {
+			if j.Run != nil && !j.Run.CleanupComplete {
 				jobs = append(jobs, j)
 			}
 		}
@@ -179,16 +181,20 @@ func (s *Server) disconnectAnthropic(w http.ResponseWriter, r *http.Request, uid
 		if j.Status == "running" {
 			err = s.abortAgentJob(r.Context(), j)
 		} else {
-			err = s.cleanupAgentJob(r.Context(), j)
+			if _, err = s.runners.New(j); err != nil {
+				err = fail(503, "managed agents unavailable; retry deletion after restoring configuration")
+			} else if err = s.cleanupAgentJob(r.Context(), j, nil); err != nil {
+				err = fail(503, "agent cleanup pending; retry deletion")
+			}
 		}
 		release()
 		if err != nil {
-			return fail(409, "Anthropic shutdown pending; restore a valid key or stop the session in Console, then retry")
+			return err
 		}
 	}
 	if err = s.updateAccount(r, uid, func(st *model.State) error {
 		if connectionBusy(*st, uid) {
-			return fail(409, "Anthropic cleanup pending; retry shortly")
+			return fail(503, "agent cleanup pending; retry deletion")
 		}
 		u := st.Users[uid]
 		u.Anthropic = nil
@@ -203,4 +209,24 @@ func (s *Server) disconnectAnthropic(w http.ResponseWriter, r *http.Request, uid
 		jsonOut(w, 200, map[string]bool{"disconnected": true})
 	}
 	return nil
+}
+
+func (s *Server) jobConnection(job model.Job) (model.AnthropicConnection, error) {
+	var out model.AnthropicConnection
+	err := s.DB.View(func(st model.State) error {
+		c := st.Users[job.UserID].Anthropic
+		if c == nil || c.ID != job.AnthropicConnectionID {
+			return errors.New("Anthropic connection unavailable; reconnect the original workspace")
+		}
+		out = *c
+		return nil
+	})
+	return out, err
+}
+func (s *Server) connectionClient(uid string, c model.AnthropicConnection) (*managedagents.API, error) {
+	key, err := s.Cipher.Open(c.EncryptedKey, "anthropic:"+uid+":"+c.ID)
+	if err != nil {
+		return nil, errors.New("could not decrypt Anthropic connection")
+	}
+	return managedagents.New(s.Config.MABaseURL, key, nil, c.WorkspaceID), nil
 }

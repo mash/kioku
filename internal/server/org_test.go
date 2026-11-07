@@ -61,17 +61,14 @@ func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testi
 		t.Fatal(p.Namespace)
 	}
 }
-func TestManagedFingerprintIncludesAgentAndSourceVersion(t *testing.T) {
+func TestAgentFingerprintIncludesSources(t *testing.T) {
 	inputs := []wiki.Input{{Source: model.Source{ID: "source", ContentHash: "hash"}}}
-	run := &model.ManagedRun{MAAgentID: "agent", MAAgentVersion: 1}
-	a := agentFingerprint(inputs, run)
-	run.MAAgentVersion++
-	b := agentFingerprint(inputs, run)
-	run.MAAgentID = "other"
-	c := agentFingerprint(inputs, run)
+	a := agentFingerprint(inputs)
+	inputs[0].Source.ID = "other"
+	b := agentFingerprint(inputs)
 	inputs[0].Source.ContentHash = "changed"
-	if a == b || b == c || c == agentFingerprint(inputs, run) {
-		t.Fatal("fingerprint missed configuration or content")
+	if a == b || b == agentFingerprint(inputs) {
+		t.Fatal("fingerprint missed sources or content")
 	}
 }
 func TestDeterministicFallbackPublishes(t *testing.T) {
@@ -93,8 +90,8 @@ func TestManagedBudgetCapsTheSession(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	if j.Managed.BudgetCents != f.s.Config.AgentMaxSessionCents || j.Managed.Attempt.ID == "" {
-		t.Fatal("budget or attempt", j.Managed.BudgetCents, j.Managed.Attempt.ID)
+	if j.Run.BudgetCents != f.s.Config.AgentMaxSessionCents || j.Run.Attempt.ID == "" {
+		t.Fatal("budget or attempt", j.Run.BudgetCents, j.Run.Attempt.ID)
 	}
 	f, token, p, ma = managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")

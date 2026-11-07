@@ -18,24 +18,19 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/store"
 )
 
 type Config struct {
 	TrustedProxy               *net.IPNet
-	AnthropicAPIKey            string
-	MAAgentID                  string
-	MAAgentVersion             int64
-	MAEnvironmentID            string
 	MABaseURL                  string
 	AnthropicWebhookSigningKey string
 	AgentMaxSessions           int
 	AgentJobTimeout            time.Duration
 	AgentMaxSessionCents       int64
-	ManagedAgents              managedagents.Client
 
 	IntakeWorkers int
 	MaxIntakeJobs int
@@ -48,7 +43,17 @@ type Config struct {
 	RatePerMinute int
 	MetricsToken  string
 }
+
+// Runners supplies configured runners.
+type Runners interface {
+	New(model.Job) (runner.Runner, error)
+}
+
+// SetRunners injects generation services before serving requests or starting workers.
+func (s *Server) SetRunners(g Runners) { s.runners = g }
+
 type Server struct {
+	runners      Runners
 	Config       Config
 	DB           *store.Store
 	Blobs        blob.Store

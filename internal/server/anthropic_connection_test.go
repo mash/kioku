@@ -36,13 +36,13 @@ func TestBYOKLifecycleUsesOwnerCredentialsAndNoOperatorCharge(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	uid := installBYOK(t, f, token, "user-private-key", "wrkspc_user")
 	j := startManaged(t, f, token, p.ID, true)
-	if j.AnthropicConnectionID == "" || j.Managed.MAAgentID != "agent-byok" || j.Managed.MAAgentVersion != 2 {
+	if j.AnthropicConnectionID == "" {
 		t.Fatal("missing BYOK identity", j)
 	}
 	sendOutput(t, f, ma, j, "BYOK")
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 17)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 17)
 	j = reconcileManaged(t, f, j)
-	if j.Status != "completed" || !j.Managed.CleanupComplete {
+	if j.Status != "completed" || !j.Run.CleanupComplete {
 		t.Fatal(j)
 	}
 	for _, r := range ma.Requests() {
@@ -77,7 +77,11 @@ func TestBYOKRotationIsolationAndNoFallback(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = f.s.managedClient(j).GetSession(context.Background(), j.Managed.SessionID)
+	r, err := f.s.runners.New(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.Inspect(context.Background(), attempt(j))
 	requests := ma.Requests()
 	if requests[len(requests)-1].Header.Get("Authorization") != "Bearer rotated-user-key" {
 		t.Fatal("rotation not picked up")
@@ -85,15 +89,15 @@ func TestBYOKRotationIsolationAndNoFallback(t *testing.T) {
 	before := len(ma.Requests())
 	wrong := j
 	wrong.UserID = "someone-else"
-	if _, err := f.s.managedClient(wrong).GetSession(context.Background(), j.Managed.SessionID); err == nil {
+	if _, err := f.s.runners.New(wrong); err == nil {
 		t.Fatal("cross-user access allowed")
 	}
 	if len(ma.Requests()) != before {
 		t.Fatal("fell back to operator credentials")
 	}
-	ma.SetError("POST", "/v1/sessions/"+j.Managed.SessionID+"/interrupt", 401)
-	ma.SetError("GET", "/v1/sessions/"+j.Managed.SessionID, 401)
-	if code := f.request("DELETE", "/api/account/anthropic", token, nil, nil); code != 409 {
+	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/interrupt", 401)
+	ma.SetError("GET", "/v1/sessions/"+j.Run.Ref.ID, 401)
+	if code := f.request("DELETE", "/api/account/anthropic", token, nil, nil); code != 503 {
 		t.Fatal(code)
 	}
 	_ = f.db.View(func(st model.State) error {

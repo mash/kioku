@@ -17,15 +17,17 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
 type fixture struct {
-	t      *testing.T
-	s      *Server
-	url    string
-	client *http.Client
-	db     *store.Store
+	runnerConfig runners.Config
+	t            *testing.T
+	s            *Server
+	url          string
+	client       *http.Client
+	db           *store.Store
 }
 
 func setup(t *testing.T) *fixture { return setupWithWorker(t, true) }
@@ -41,6 +43,11 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 		t.Fatal(err)
 	}
 	s := New(Config{BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, local.Store{Dir: dir + "/objects"}, key)
+	g, err := runners.Load(runners.Config{}, db, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetRunners(g)
 	s.Config.Providers["google"] = auth.Provider{Name: "google", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		uid := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var u model.User
@@ -65,7 +72,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 		ts.Close()
 		db.Close()
 	})
-	return &fixture{t, s, ts.URL, ts.Client(), db}
+	return &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), db: db}
 }
 func (f *fixture) request(method, path, token string, in, out any) int {
 	f.t.Helper()
@@ -304,4 +311,18 @@ func TestNoUnauthenticatedEmailLogin(t *testing.T) {
 	if code = f.request("GET", "/api/me", "", nil, nil); code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated request returned %d", code)
 	}
+}
+
+func (f *fixture) setRunners() {
+	f.t.Helper()
+	g, err := runners.Load(f.runnerConfig, f.db, f.s.Cipher)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.s.SetRunners(g)
+	f.t.Cleanup(func() {
+		if err := g.Close(context.Background()); err != nil {
+			f.t.Error(err)
+		}
+	})
 }

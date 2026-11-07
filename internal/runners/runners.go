@@ -1,0 +1,95 @@
+// Package runners configures and selects generation runners.
+package runners
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/managedagents"
+	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/runner/managed"
+	"github.com/mash/kioku/internal/store"
+)
+
+type Config struct {
+	AnthropicAPIKey      string
+	MAAgentID            string
+	MAAgentVersion       int64
+	MAEnvironmentID      string
+	MABaseURL            string
+	ManagedAgents        managedagents.Client
+	BaseURL              string
+	AgentMaxSessions     int
+	AgentJobTimeout      time.Duration
+	AgentMaxSessionCents int64
+}
+
+type Set struct {
+	config Config
+	db     *store.Store
+	cipher *auth.Cipher
+}
+
+func Load(c Config, db *store.Store, cipher *auth.Cipher) (*Set, error) {
+	if c.AgentMaxSessions == 0 {
+		c.AgentMaxSessions = 4
+	}
+	if c.AgentJobTimeout == 0 {
+		c.AgentJobTimeout = time.Hour
+	}
+	if c.AgentMaxSessionCents == 0 {
+		c.AgentMaxSessionCents = 1000
+	}
+	s := &Set{config: c, db: db, cipher: cipher}
+	if err := s.prepareManaged(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Set) Close(context.Context) error { return nil }
+
+func (s *Set) jobConnection(job model.Job) (model.AnthropicConnection, error) {
+	var out model.AnthropicConnection
+	err := s.db.View(func(st model.State) error {
+		c := st.Users[job.UserID].Anthropic
+		if c == nil || c.ID != job.AnthropicConnectionID {
+			return errors.New("Anthropic connection unavailable; reconnect the original workspace")
+		}
+		out = *c
+		return nil
+	})
+	return out, err
+}
+func (s *Set) connectionClient(uid string, c model.AnthropicConnection) (*managedagents.API, error) {
+	key, err := s.cipher.Open(c.EncryptedKey, "anthropic:"+uid+":"+c.ID)
+	if err != nil {
+		return nil, errors.New("could not decrypt Anthropic connection")
+	}
+	return managedagents.New(s.config.MABaseURL, key, nil, c.WorkspaceID), nil
+}
+
+// Resolve credentials on each operation so revoked BYOK connections never
+// fall back to the operator's key.
+func (s *Set) New(job model.Job) (runner.Runner, error) {
+	if job.AnthropicConnectionID == "" {
+		if s.config.ManagedAgents == nil {
+			return nil, runner.ErrNotConfigured
+		}
+		return managed.New(func() (managedagents.Client, error) { return s.config.ManagedAgents, nil }, s.config.MAAgentID, s.config.MAAgentVersion, s.config.MAEnvironmentID), nil
+	}
+	c, err := s.jobConnection(job)
+	if err != nil {
+		return nil, err
+	}
+	return managed.New(func() (managedagents.Client, error) {
+		c, err := s.jobConnection(job)
+		if err != nil {
+			return nil, err
+		}
+		return s.connectionClient(job.UserID, c)
+	}, c.AgentID, c.AgentVersion, c.EnvironmentID), nil
+}

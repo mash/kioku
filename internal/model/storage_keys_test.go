@@ -9,9 +9,9 @@ func TestStorageKeysKeepExistingJSONRepresentation(t *testing.T) {
 	// Existing records use ordinary JSON strings, not a structured key object.
 	raw := []byte(`{"source":{"text_key":"projects/p/sources/s/extracted.md"},"revision":{"files":{"wiki/index.md":"projects/p/wiki/index.md"}},"run":{"output_key":"projects/p/.kioku/jobs/j/output.tar.gz"}}`)
 	var record struct {
-		Source   Source     `json:"source"`
-		Revision Revision   `json:"revision"`
-		Run      ManagedRun `json:"run"`
+		Source   Source   `json:"source"`
+		Revision Revision `json:"revision"`
+		Run      AgentRun `json:"run"`
 	}
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -26,15 +27,15 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			}
 			_ = f.db.Update(func(st *model.State) error {
 				x := st.Jobs[j.ID]
-				x.Managed.Phase = phase
+				x.Run.Phase = phase
 				if phase == model.PhasePreparing {
-					x.Managed.SessionID = ""
-					x.Managed.PreparedAt = time.Now().Add(-6 * time.Minute)
+					x.Run.Ref.ID = ""
+					x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 				}
 				st.Jobs[j.ID] = x
 				return nil
 			})
-			ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
+			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 			old := f.s
 			dir := filepath.Dir(old.Blobs.(local.Store).Dir)
 			if err := f.db.Close(); err != nil {
@@ -46,6 +47,11 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			}
 			t.Cleanup(func() { db.Close() })
 			restored := New(old.Config, db, old.Blobs, old.Cipher)
+			g, err := runners.Load(f.runnerConfig, db, old.Cipher)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored.SetRunners(g)
 			if err := restored.Prepare(); err != nil {
 				t.Fatal(err)
 			}
@@ -57,7 +63,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			f.client = ts.Client()
 			_ = db.View(func(st model.State) error {
 				got := st.Jobs[j.ID]
-				if got.Status != "running" || got.Managed.Phase != phase {
+				if got.Status != "running" || got.Run.Phase != phase {
 					t.Error("restart changed run", got)
 				}
 				return nil
@@ -72,7 +78,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			}
 			assertAgentCleanup(t, f, ma, got)
 			_ = db.View(func(st model.State) error {
-				if st.Jobs[j.ID].Managed.ListCostCents != 123 {
+				if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
 					t.Error("restart lost cost")
 				}
 				return nil
@@ -100,13 +106,13 @@ func TestManagedFinalizingPinsOutputHash(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Selected version")
 	j = storedJob(t, f, j.ID)
-	b := &pauseOutputRead{Store: f.s.Blobs, key: j.Managed.OutputKey, entered: make(chan struct{}), release: make(chan struct{})}
+	b := &pauseOutputRead{Store: f.s.Blobs, key: j.Run.OutputKey, entered: make(chan struct{}), release: make(chan struct{})}
 	f.s.Blobs = b
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	done := make(chan error, 1)
-	go func() { done <- f.s.finalizeAgentJob(context.Background(), j) }()
+	go func() { done <- f.s.reconcileAgentJob(context.Background(), j) }()
 	<-b.entered
-	c, body := agentRequest(t, f, j, ma.Credential(j.Managed.VaultID), "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "Replacement"}))
+	c, body := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "Replacement"}))
 	close(b.release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -125,12 +131,12 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	ma.SetError("POST", "/v1/sessions", 503)
 	j := startManaged(t, f, token, p.ID, false)
-	if j.Managed.Phase != model.PhasePreparing {
+	if j.Run.Phase != model.PhasePreparing {
 		t.Fatal(j)
 	}
 	_ = f.db.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
-		x.Managed.PreparedAt = time.Now().Add(-6 * time.Minute)
+		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = x
 		return nil
 	})
@@ -140,7 +146,7 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	ma.SetError("POST", "/v1/sessions", 0)
 	j = startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Wiki")
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	reconcileManaged(t, f, j)
 	n := len(ma.Requests())
 	j = startManaged(t, f, token, p.ID, false)
@@ -148,7 +154,7 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 		t.Fatal("unchanged invoked agent", j)
 	}
 	j = startManaged(t, f, token, p.ID, true)
-	if j.Unchanged || j.Managed == nil {
+	if j.Unchanged || j.Run == nil {
 		t.Fatal("full skipped agent", j)
 	}
 }
@@ -204,7 +210,7 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 		running := 0
 		seen := map[string]bool{}
 		for _, j := range st.Jobs {
-			if j.Status == "running" && j.Managed != nil {
+			if j.Status == "running" && j.Run != nil {
 				running++
 				if seen[j.ProjectID] {
 					t.Error("same project concurrent")

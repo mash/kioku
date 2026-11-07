@@ -506,7 +506,7 @@ func compactContent(st *model.State) {
 	for pid := range st.Projects {
 		var jobs []model.Job
 		for _, j := range st.Jobs {
-			if j.ProjectID == pid && j.Status != "running" && j.Status != "queued" && (j.Managed == nil || j.Managed.CleanupComplete) {
+			if j.ProjectID == pid && j.Status != "running" && j.Status != "queued" && (j.Run == nil || j.Run.CleanupComplete) {
 				jobs = append(jobs, j)
 			}
 		}

@@ -13,6 +13,7 @@ import (
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -46,6 +47,11 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 	}
 	t.Cleanup(func() { db.Close() })
 	restored := New(old.Config, db, old.Blobs, old.Cipher)
+	g, err := runners.Load(f.runnerConfig, db, old.Cipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored.SetRunners(g)
 	if err := restored.Prepare(); err != nil {
 		t.Fatal(err)
 	}
@@ -66,9 +72,10 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 			if success {
 				sendOutput(t, f, ma, j, "Complete")
 			}
-			ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
-			client, objects := f.s.Config.ManagedAgents, f.s.Blobs
-			f.s.Config.ManagedAgents = unavailableCleanupClient{client}
+			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+			client, objects := f.runnerConfig.ManagedAgents, f.s.Blobs
+			f.runnerConfig.ManagedAgents = unavailableCleanupClient{client}
+			f.setRunners()
 			f.s.Blobs = unavailableCleanupStore{objects}
 			j = reconcileManaged(t, f, j)
 			want := "completed"
@@ -78,7 +85,8 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 			if j.Status != want {
 				t.Fatal(j)
 			}
-			f.s.Config.ManagedAgents = client
+			f.runnerConfig.ManagedAgents = client
+			f.setRunners()
 			f.s.Blobs = objects
 			restartManagedFixture(t, f)
 			if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
@@ -86,7 +94,7 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 			}
 			assertAgentCleanup(t, f, ma, j)
 			_ = f.db.View(func(st model.State) error {
-				if st.Jobs[j.ID].Status != want || st.Jobs[j.ID].Managed.ListCostCents != 123 {
+				if st.Jobs[j.ID].Status != want || costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
 					t.Error("cleanup changed outcome")
 				}
 				return nil
@@ -99,10 +107,10 @@ func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	put := putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 100)
-	ma.SetError("POST", "/v1/sessions/"+j.Managed.SessionID+"/archive", 503)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 100)
+	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 503)
 	j = reconcileManaged(t, f, j)
-	if j.Managed.CleanupComplete {
+	if j.Run.CleanupComplete {
 		t.Fatal("failed cleanup marked complete")
 	}
 	if c := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, nil); c != 503 {
@@ -112,15 +120,15 @@ func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 		t.Fatal("deletion lost cleanup", c)
 	}
 	_ = f.db.View(func(st model.State) error {
-		if st.Jobs[j.ID].Managed == nil || st.Sources[put.SourceIDs[0]].ID == "" {
+		if st.Jobs[j.ID].Run == nil || st.Sources[put.SourceIDs[0]].ID == "" {
 			t.Error("cleanup state discarded")
 		}
 		return nil
 	})
-	ma.SetError("POST", "/v1/sessions/"+j.Managed.SessionID+"/archive", 0)
+	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 0)
 	reconcileManaged(t, f, j)
 	next := retryManagedJob(t, f, token, j)
-	if next.Status != "running" || next.Managed.Attempt.ID == j.Managed.Attempt.ID {
+	if next.Status != "running" || next.Run.Attempt.ID == j.Run.Attempt.ID {
 		t.Fatal(next)
 	}
 }

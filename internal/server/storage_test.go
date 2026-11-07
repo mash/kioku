@@ -15,6 +15,7 @@ import (
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -29,6 +30,11 @@ func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 		t.Fatal(err)
 	}
 	s := New(Config{}, db, objects, key)
+	g, err := runners.Load(runners.Config{}, db, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetRunners(g)
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
 	t.Cleanup(func() { ts.Close(); db.Close() })

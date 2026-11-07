@@ -358,8 +358,8 @@ func TestStoreLoadsAndKeepsRecordsOfRetiredBilling(t *testing.T) {
 		t.Fatal("backup lost retired billing records", retired, ledger, org)
 	}
 	var job model.Job
-	if err = json.Unmarshal([]byte(`{"id":"j","managed":{"hold":{"id":"attempt","org_id":"org","maximum_micros":100,"price":{}}}}`), &job); err != nil || job.Managed.Attempt.ID != "attempt" {
-		t.Fatal("stored hold did not decode as the attempt", job.Managed, err)
+	if err = json.Unmarshal([]byte(`{"id":"j","run":{"attempt":{"id":"attempt","org_id":"org","maximum_micros":100,"price":{}}}}`), &job); err != nil || job.Run.Attempt.ID != "attempt" {
+		t.Fatal("stored hold did not decode as the attempt", job.Run, err)
 	}
 }
 

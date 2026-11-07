@@ -45,7 +45,7 @@ func signedAgentWebhook(t *testing.T, f *fixture, body []byte, at time.Time, key
 	return resp.StatusCode
 }
 func webhookBody(j model.Job) []byte {
-	return []byte(fmt.Sprintf(`{"id":"event_test","type":"event","data":{"type":"session.status_idled","id":%q}}`, j.Managed.SessionID))
+	return []byte(fmt.Sprintf(`{"id":"event_test","type":"event","data":{"type":"session.status_idled","id":%q}}`, j.Run.Ref.ID))
 }
 func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
@@ -53,7 +53,7 @@ func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Signed completion")
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	body := webhookBody(j)
 	before := len(ma.Requests())
 	for _, tc := range []struct {
@@ -113,7 +113,7 @@ func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 	}
 	assertAgentCleanup(t, f, ma, j)
 	_ = f.db.View(func(st model.State) error {
-		if cost := st.Jobs[j.ID].Managed.ListCostCents; cost != 123 {
+		if cost := costOf(st.Jobs[j.ID].Run.CostCents); cost != 123 {
 			t.Error("cost", cost)
 		}
 		return nil
@@ -124,19 +124,19 @@ func TestManagedWebhookDisabledAndTemporaryReconciliation(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Poll completion")
-	ma.SetStatus(j.Managed.SessionID, "idle", "end_turn", 123)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	if c := signedAgentWebhook(t, f, webhookBody(j), time.Now(), webhookTestSecret, nil); c != 404 {
 		t.Fatal(c)
 	}
 	f.s.Config.AnthropicWebhookSigningKey = "whsec_" + base64.StdEncoding.EncodeToString(webhookTestSecret)
-	ma.SetError("GET", "/v1/sessions/"+j.Managed.SessionID, 503)
+	ma.SetError("GET", "/v1/sessions/"+j.Run.Ref.ID, 503)
 	if c := signedAgentWebhook(t, f, webhookBody(j), time.Now(), webhookTestSecret, nil); c != 204 {
 		t.Fatal(c)
 	}
 	if storedJob(t, f, j.ID).Status != "running" {
 		t.Fatal("temporary error failed job")
 	}
-	ma.SetError("GET", "/v1/sessions/"+j.Managed.SessionID, 0)
+	ma.SetError("GET", "/v1/sessions/"+j.Run.Ref.ID, 0)
 	if got := reconcileManaged(t, f, j); got.Status != "completed" {
 		t.Fatal(got)
 	}

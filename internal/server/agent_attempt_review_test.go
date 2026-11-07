@@ -31,13 +31,13 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	first := startManaged(t, f, token, p.ID, false)
-	ma.SetStatus(first.Managed.SessionID, "idle", "retries_exhausted", 100)
-	ma.SetError("POST", "/v1/sessions/"+first.Managed.SessionID+"/archive", 503)
+	ma.SetStatus(first.Run.Ref.ID, "idle", "retries_exhausted", 100)
+	ma.SetError("POST", "/v1/sessions/"+first.Run.Ref.ID+"/archive", 503)
 	reconcileManaged(t, f, first)
-	oldSession := ma.Session(first.Managed.SessionID)
-	ma.SetError("POST", "/v1/sessions/"+first.Managed.SessionID+"/archive", 0)
+	oldSession := ma.Session(first.Run.Ref.ID)
+	ma.SetError("POST", "/v1/sessions/"+first.Run.Ref.ID+"/archive", 0)
 	reconcileManaged(t, f, first)
-	if got := storedJob(t, f, first.ID).Managed.ListCostCents; got != 100 {
+	if got := costOf(storedJob(t, f, first.ID).Run.CostCents); got != 100 {
 		t.Fatal("first attempt cost lost", got)
 	}
 	ma.SetError("POST", "/v1/sessions", 503)
@@ -45,20 +45,20 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	// A stale list entry from a previous attempt must remain harmless even
 	// after the prior attempt's cleanup was acknowledged.
 	ma.SetSession(oldSession)
-	if second.Managed.SessionID != "" {
-		t.Fatal(second.Managed)
+	if second.Run.Ref.ID != "" {
+		t.Fatal(second.Run)
 	}
 	_ = f.db.Update(func(st *model.State) error {
 		j := st.Jobs[second.ID]
-		j.Managed.PreparedAt = time.Now().Add(-6 * time.Minute)
+		j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = j
 		return nil
 	})
 	reconcileManaged(t, f, second)
 	_ = f.db.View(func(st model.State) error {
 		j := st.Jobs[second.ID]
-		if j.Managed.Attempt.ID != second.Managed.Attempt.ID || j.Managed.SessionID == first.Managed.SessionID || j.Managed.ListCostCents != 0 {
-			t.Error("previous attempt's session or cost reached the retry", j.Managed)
+		if j.Run.Attempt.ID != second.Run.Attempt.ID || j.Run.Ref.ID == first.Run.Ref.ID || costOf(j.Run.CostCents) != 0 {
+			t.Error("previous attempt's session or cost reached the retry", j.Run)
 		}
 		return nil
 	})

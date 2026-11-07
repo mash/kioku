@@ -19,10 +19,10 @@ func agentJobPrefix(job model.Job) string {
 	return "projects/" + job.ProjectID + "/.kioku/jobs/" + job.ID + "/"
 }
 func acceptsAgentIO(job model.Job) bool {
-	if job.Status != "running" || job.Managed == nil {
+	if job.Status != "running" || job.Run == nil {
 		return false
 	}
-	switch job.Managed.Phase {
+	switch job.Run.Phase {
 	case model.PhasePreparing, model.PhaseAgentRunning, model.PhaseOutputReceived:
 		return true
 	}
@@ -66,10 +66,10 @@ func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) 
 func (s *Server) managedInputs(ctx context.Context, job model.Job) ([]wiki.Input, error) {
 	var sources []model.Source
 	if err := s.DB.View(func(st model.State) error {
-		if job.Managed == nil {
+		if job.Run == nil {
 			return fail(409, "managed job missing")
 		}
-		for _, id := range job.Managed.SourceIDs {
+		for _, id := range job.Run.SourceIDs {
 			src, ok := st.Sources[id]
 			if !ok || src.ProjectID != job.ProjectID {
 				return fail(409, "generation inputs were removed")
@@ -156,7 +156,7 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	if err = s.DB.View(func(st model.State) error {
 		current, e := agentIOJob(st, principal, job.ProjectID, job.ID)
 		if e == nil {
-			selectedKey = current.Managed.OutputKey
+			selectedKey = current.Run.OutputKey
 		}
 		return e
 	}); err != nil {
@@ -184,15 +184,15 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	var previousKey blob.Key
 	err = s.DB.Update(func(st *model.State) error {
 		current := st.Jobs[job.ID]
-		selected = current.Managed != nil && current.Managed.OutputKey == key
+		selected = current.Run != nil && current.Run.OutputKey == key
 		current, e := agentIOJob(*st, principal, job.ProjectID, job.ID)
 		if e != nil {
 			return e
 		}
-		previousKey = current.Managed.OutputKey
-		current.Managed.OutputKey = key
-		current.Managed.OutputHash = hash
-		current.Managed.Phase = model.PhaseOutputReceived
+		previousKey = current.Run.OutputKey
+		current.Run.OutputKey = key
+		current.Run.OutputHash = hash
+		current.Run.Phase = model.PhaseOutputReceived
 		st.Jobs[job.ID] = current
 		return nil
 	})

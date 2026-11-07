@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -205,7 +206,8 @@ func (s *Server) namespacePage(w http.ResponseWriter, r *http.Request, uid strin
 
 func (s *Server) Prepare() error {
 	s.prepareOnce.Do(func() {
-		if s.prepareErr = s.prepareManaged(); s.prepareErr != nil {
+		if s.runners == nil {
+			s.prepareErr = errors.New("runners are not configured")
 			return
 		}
 		if s.prepareErr = s.migrateWikiStorage(); s.prepareErr != nil {
@@ -216,7 +218,7 @@ func (s *Server) Prepare() error {
 		}
 		s.prepareErr = s.DB.Update(func(st *model.State) error {
 			for id, job := range st.Jobs {
-				if job.Status == "running" && job.Managed == nil {
+				if job.Status == "running" && job.Run == nil {
 					job.Status = "queued"
 					st.Jobs[id] = job
 				}

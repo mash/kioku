@@ -179,27 +179,27 @@ type Revision struct {
 	SourceIDs        []string            `json:"source_ids"`
 }
 type Job struct {
-	AnthropicConnectionID string      `json:"anthropic_connection_id,omitempty"`
-	AgentBudgetCents      int64       `json:"agent_budget_cents,omitempty"`
-	Managed               *ManagedRun `json:"managed,omitempty"`
-	Full                  bool        `json:"full,omitempty"`
-	Unchanged             bool        `json:"unchanged,omitempty"`
-	Kind                  string      `json:"kind,omitempty"`
-	InputURL              string      `json:"input_url,omitempty"`
-	PutSequence           int64       `json:"put_sequence,omitempty"`
-	SourceVersion         int64       `json:"source_version"`
-	Dependencies          []string    `json:"dependencies,omitempty"`
-	Automatic             bool        `json:"automatic,omitempty"`
-	AgentID               string      `json:"agent_id,omitempty"`
-	Fingerprint           string      `json:"fingerprint,omitempty"`
-	ID                    string      `json:"id"`
-	ProjectID             string      `json:"project_id"`
-	UserID                string      `json:"user_id"`
-	SourceIDs             []string    `json:"source_ids"`
-	Status                string      `json:"status"`
-	Error                 string      `json:"error,omitempty"`
-	Revision              string      `json:"revision,omitempty"`
-	Created               time.Time   `json:"created"`
+	AnthropicConnectionID string    `json:"anthropic_connection_id,omitempty"`
+	AgentBudgetCents      int64     `json:"agent_budget_cents,omitempty"`
+	Run                   *AgentRun `json:"run,omitempty"`
+	Full                  bool      `json:"full,omitempty"`
+	Unchanged             bool      `json:"unchanged,omitempty"`
+	Kind                  string    `json:"kind,omitempty"`
+	InputURL              string    `json:"input_url,omitempty"`
+	PutSequence           int64     `json:"put_sequence,omitempty"`
+	SourceVersion         int64     `json:"source_version"`
+	Dependencies          []string  `json:"dependencies,omitempty"`
+	Automatic             bool      `json:"automatic,omitempty"`
+	AgentID               string    `json:"agent_id,omitempty"`
+	Fingerprint           string    `json:"fingerprint,omitempty"`
+	ID                    string    `json:"id"`
+	ProjectID             string    `json:"project_id"`
+	UserID                string    `json:"user_id"`
+	SourceIDs             []string  `json:"source_ids"`
+	Status                string    `json:"status"`
+	Error                 string    `json:"error,omitempty"`
+	Revision              string    `json:"revision,omitempty"`
+	Created               time.Time `json:"created"`
 }
 type Upload struct {
 	ID        string            `json:"id"`

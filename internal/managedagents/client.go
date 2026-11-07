@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mash/kioku/internal/runner"
+
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
 )
@@ -23,7 +25,7 @@ type Client interface {
 	Interrupt(context.Context, string) error
 	ArchiveSession(context.Context, string) error
 }
-type VaultInput struct{ JobID, AttemptID, SecretName, SecretValue, AllowedHost string }
+type VaultInput struct{ JobID, AttemptID, ProjectID, SecretName, SecretValue, AllowedHost string }
 type SessionInput struct {
 	MAAgentID              string
 	MAAgentVersion         int64
@@ -36,10 +38,11 @@ type SessionInput struct {
 type Session struct {
 	ID, Status, LastStopReason string
 	ListCostCents              int64
+	CostKnown                  bool
 	Metadata                   map[string]string
 }
 
-var ErrTemporary = errors.New("managed agents: temporary failure")
+var ErrTemporary = runner.ErrTemporary
 
 type API struct{ sdk anthropic.BetaService }
 
@@ -80,7 +83,7 @@ func apiError(err error) error {
 	return fmt.Errorf("%w: request failed", ErrTemporary)
 }
 func (a *API) CreateJobVault(ctx context.Context, in VaultInput) (string, error) {
-	v, err := a.sdk.Vaults.New(ctx, anthropic.BetaVaultNewParams{DisplayName: "kioku-job-" + in.JobID, Metadata: map[string]string{"kioku_job_id": in.JobID, "kioku_attempt_id": in.AttemptID}})
+	v, err := a.sdk.Vaults.New(ctx, anthropic.BetaVaultNewParams{DisplayName: "kioku-job-" + in.JobID, Metadata: map[string]string{"kioku_job_id": in.JobID, "kioku_attempt_id": in.AttemptID, "kioku_project_id": in.ProjectID}})
 	if err != nil {
 		return "", apiError(err)
 	}
@@ -154,10 +157,10 @@ func (a *API) GetSession(ctx context.Context, id string) (Session, error) {
 	s := Session{ID: v.ID, Status: string(v.Status), Metadata: v.Metadata}
 	amount := v.Usage.ListCost.Amount
 	cost, err := strconv.ParseInt(amount, 10, 64)
-	if err != nil || cost < 0 || v.Usage.ListCost.Currency != "USD" || cost > math.MaxInt64/20000 {
-		return s, fmt.Errorf("%w: unavailable or invalid USD list cost", ErrTemporary)
+	if err == nil && cost >= 0 && v.Usage.ListCost.Currency == "USD" && cost <= math.MaxInt64/20000 {
+		s.ListCostCents = cost
+		s.CostKnown = true
 	}
-	s.ListCostCents = cost
 	var latest time.Time
 	latestID := ""
 	cursor := ""
@@ -169,7 +172,7 @@ func (a *API) GetSession(ctx context.Context, id string) (Session, error) {
 		}
 		page, err := a.sdk.Sessions.Events.List(ctx, id, params)
 		if err != nil {
-			return s, apiError(err)
+			return s, fmt.Errorf("%w: session events unavailable", ErrTemporary)
 		}
 		for _, event := range page.Data {
 			if event.Type == "session.status_idle" && (latestID == "" || event.ProcessedAt.After(latest) || event.ProcessedAt.Equal(latest) && event.ID > latestID) {

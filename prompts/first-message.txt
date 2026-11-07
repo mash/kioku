@@ -1,4 +1,5 @@
-Job {{.JobID}} for project {{.ProjectID}}. Mode: {{.Mode}}.
+Job {{.JobID}} for project {{.ProjectID}}.
 Input:  {{.InputURL}}
 Output: {{.OutputURL}}
-Changes: {{len .Changes.Added}} added, {{len .Changes.Updated}} updated, {{len .Changes.Removed}} removed.
+Process all {{len .Inbox}} inbox items and preserve the existing wiki.
+Use Kioku-Client-Version: 0.1.0 on Kioku requests. Read JOB.md for fetch availability.

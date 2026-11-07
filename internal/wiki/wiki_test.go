@@ -1,10 +1,7 @@
 package wiki
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/mash/kioku/internal/model"
 )
 
 func TestAssemblePreservesSourcesAndPathsRemainRestricted(t *testing.T) {
@@ -12,12 +9,5 @@ func TestAssemblePreservesSourcesAndPathsRemainRestricted(t *testing.T) {
 		if ValidFile(p) {
 			t.Errorf("accepted %s", p)
 		}
-	}
-	files, err := Assemble([]Input{{Source: model.Source{ID: "src1", Title: "Evidence", ProjectID: "p1"}, Text: "A decision"}}, map[string]string{"wiki/index.md": "# Overview\n[Evidence](source-src1.md)", "wiki/decisions.md": "# Decisions\n[Evidence](source-src1.md)"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(files["wiki/source-src1.md"], "A decision") || !strings.Contains(files["wiki/decisions.md"], "Source snapshots") {
-		t.Fatal(files)
 	}
 }

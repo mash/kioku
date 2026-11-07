@@ -16,7 +16,7 @@ func TestAssembleBoundsGraphAmplification(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	files, err := Assemble(nil, pages)
+	files, err := Assemble(pages)
 	runtime.ReadMemStats(&after)
 	allocated := after.TotalAlloc - before.TotalAlloc
 	t.Logf("4 MiB page payload allocated %d bytes", allocated)

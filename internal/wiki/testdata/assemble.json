@@ -1,6 +1,0 @@
-{
-  "maps/graph.json": "{\n  \"nodes\": [\n    {\n      \"id\": \"wiki/index.md\",\n      \"title\": \"Project wiki\",\n      \"kind\": \"page\"\n    },\n    {\n      \"id\": \"wiki/source-src1.md\",\n      \"title\": \"Evidence\",\n      \"kind\": \"page\"\n    }\n  ],\n  \"edges\": [\n    {\n      \"from\": \"wiki/index.md\",\n      \"to\": \"wiki/source-src1.md\",\n      \"kind\": \"links-to\"\n    }\n  ]\n}",
-  "maps/graph.mmd": "graph TD\n  n0[\"Project wiki\"]\n  n1[\"Evidence\"]\n  n0 --\u003e n1\n",
-  "wiki/index.md": "# Project wiki\n\nGenerated from shared project sources.\n\n- [Evidence](source-src1.md)\n",
-  "wiki/source-src1.md": "# Evidence\n\nA decision\n\n## Source\n\n- [Evidence](/api/projects/p1/sources/src1/text) — snapshot ``, contributor ``, 0001-01-01T00:00:00Z\n"
-}

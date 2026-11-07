@@ -13,22 +13,23 @@ import (
 func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	f := setup(t)
 	token := f.login("owner@example.com")
-	f.s.Config.MaxSources = 1
+
 	f.s.Config.MetricsToken = "metrics-secret"
 	var p model.Project
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Operations"}, &p)
 	base := "/api/projects/" + p.ID
 	var job model.Job
 	input := model.PutRequest{File: &model.FileInput{Name: "one.md", Content: "One source", SourceURL: testSourceURL("one.md", "One source")}}
-	if c := f.seedSource("POST", base+"/put", token, input, &job); c != 202 {
+	if c := f.request("POST", base+"/put", token, input, &job); c != 202 {
 		t.Fatal(c)
 	}
 	f.wait(p.ID, token, f.generate(p.ID, token, false).ID)
 	var second model.Job
-	f.seedSource("POST", base+"/put", token, input, &second)
+	f.request("POST", base+"/put", token, input, &second)
 	f.wait(p.ID, token, f.generate(p.ID, token, true).ID)
+	f.s.Config.MaxWikiBytes = 1
 	input.File.Name = "two.md"
-	if c := f.seedSource("POST", base+"/put", token, input, nil); c != 413 {
+	if c := f.request("POST", base+"/put", token, input, nil); c != 413 {
 		t.Fatalf("quota: %d", c)
 	}
 	if err := f.s.Blobs.Put(context.Background(), blob.Key("projects/"+p.ID+"/orphan"), []byte("orphan")); err != nil {
@@ -63,14 +64,10 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 		t.Fatal(c)
 	}
 	var deletion model.Job
-	if c := f.request("DELETE", base+"/sources/"+job.SourceIDs[0], token, nil, &deletion); c != 202 {
+	if c := f.request("POST", base+"/put", token, model.PutRequest{Remove: true, SourceURL: input.File.SourceURL}, &deletion); c != 202 {
 		t.Fatal(c)
 	}
-	f.wait(p.ID, token, deletion.ID)
-	var afterDelete model.Snapshot
-	if c := f.request("GET", base+"/snapshot", token, nil, &afterDelete); c != 200 || strings.Contains(afterDelete.Files["wiki/inbox.md"], "One source") {
-		t.Fatal("deleted source still exposed", c)
-	}
+	f.s.Config.MaxWikiBytes = 64 << 20
 	var regenerate model.Job
 	f.request("POST", base+"/generate", token, nil, &regenerate)
 	f.wait(p.ID, token, regenerate.ID)

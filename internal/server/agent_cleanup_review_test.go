@@ -105,7 +105,7 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 
 func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
-	put := putFile(t, f, token, p.ID, "x.md", "evidence")
+	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 100)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 503)
@@ -116,11 +116,11 @@ func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, nil); c != 503 {
 		t.Fatal("retry lost cleanup", c)
 	}
-	if c := f.request("DELETE", "/api/projects/"+p.ID+"/sources/"+put.SourceIDs[0], token, nil, nil); c != 503 {
+	if c := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); c != 503 {
 		t.Fatal("deletion lost cleanup", c)
 	}
 	_ = f.db.View(func(st model.State) error {
-		if st.Jobs[j.ID].Run == nil || st.Sources[put.SourceIDs[0]].ID == "" {
+		if st.Jobs[j.ID].Run == nil || len(st.Inbox) == 0 {
 			t.Error("cleanup state discarded")
 		}
 		return nil

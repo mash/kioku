@@ -20,15 +20,14 @@ func (e *OutputError) Error() string { return "invalid output: " + strings.Join(
 
 type OutputLimits struct {
 	MaxCompressed, MaxUncompressed int64
-	MaxPages                       int
 }
 
-func DefaultOutputLimits() OutputLimits { return OutputLimits{16 << 20, 64 << 20, 300} }
+func DefaultOutputLimits() OutputLimits { return OutputLimits{128 << 20, 128 << 20} }
 
 var outputName = regexp.MustCompile(`^wiki/[a-z0-9][a-z0-9-]*\.md$`)
 
 func ReadOutput(r io.Reader, lim OutputLimits) (map[string]string, error) {
-	if lim.MaxCompressed <= 0 || lim.MaxUncompressed <= 0 || lim.MaxPages <= 0 {
+	if lim.MaxCompressed <= 0 || lim.MaxUncompressed <= 0 {
 		return nil, &OutputError{[]string{"invalid output limits"}}
 	}
 	compressed := &io.LimitedReader{R: r, N: lim.MaxCompressed + 1}
@@ -81,12 +80,6 @@ func ReadOutput(r io.Reader, lim OutputLimits) (map[string]string, error) {
 		if !outputName.MatchString(name) {
 			return invalid(name, "invalid wiki filename")
 		}
-		if h.Size > 256<<10 {
-			return invalid(name, "page exceeds 256 KiB")
-		}
-		if len(pages) >= lim.MaxPages {
-			return invalid(name, "too many pages")
-		}
 		b, err := io.ReadAll(tr)
 		if err != nil {
 			return readError(err)
@@ -109,8 +102,36 @@ func ReadOutput(r io.Reader, lim OutputLimits) (map[string]string, error) {
 	if compressed.N == 0 {
 		return nil, ErrOutputTooLarge
 	}
-	if err = wiki.ValidatePages(pages, wiki.PageLimits{MaxPages: lim.MaxPages}); err != nil {
+	if err = wiki.ValidatePages(pages); err != nil {
 		return invalid("pages", err.Error())
 	}
 	return pages, nil
+}
+
+// ReadAcceptedOutput reads only archives already validated and matched by hash.
+func ReadAcceptedOutput(r io.Reader) (map[string]string, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	pages := map[string]string{}
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return pages, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, err
+		}
+		pages[h.Name] = string(b)
+	}
 }

@@ -32,23 +32,5 @@ var OutputRules string
 //go:embed first-message.txt
 var FirstMessage string
 
-// Templates for the generation agent's input archive.
-var (
-	//go:embed job.txt
-	Job string
-
-	//go:embed changes-header.txt
-	ChangesHeader string
-
-	//go:embed changes-source.txt
-	ChangesSource string
-
-	//go:embed changes-updated-header.txt
-	ChangesUpdatedHeader string
-
-	//go:embed changes-updated-source.txt
-	ChangesUpdatedSource string
-
-	//go:embed changes-removed-header.txt
-	ChangesRemovedHeader string
-)
+//go:embed job.txt
+var Job string

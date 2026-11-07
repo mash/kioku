@@ -127,24 +127,17 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			}
 			p.NextGenerateAt = now.Add(interval)
 			st.Projects[id] = p
-			dirty := p.SourceVersion > p.WikiSourceVersion
-			// Pre-versioning projects may have accepted sources but no published wiki.
-			if p.SourceVersion == 0 && p.Revision == "" {
-				for _, src := range st.Sources {
-					if src.ProjectID == id {
-						dirty = true
-						break
-					}
+			dirty := false
+			over := st.Revisions[p.Revision].StoredBytes > s.Config.MaxWikiBytes
+			for _, item := range st.Inbox {
+				if item.ProjectID == id && item.RunID == "" && (!over || item.Status == "removed") {
+					dirty = true
 				}
 			}
 			pendingGeneration := false
 			for _, j := range st.Jobs {
-				if j.ProjectID == id && (j.Status == "queued" || j.Status == "running") {
-					if j.Kind == "put" {
-						dirty = true
-					} else {
-						pendingGeneration = true
-					}
+				if j.ProjectID == id && j.Kind == "generate" && (j.Status == "queued" || j.Status == "running") {
+					pendingGeneration = true
 				}
 			}
 			if !dirty || pendingGeneration {

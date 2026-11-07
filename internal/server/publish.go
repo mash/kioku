@@ -39,9 +39,6 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	for _, body := range files {
 		rev.StoredBytes += int64(len(body))
 	}
-	if job.Run != nil && rev.StoredBytes > wiki.MaxSnapshotBytes {
-		return "", fail(413, "generated storage exceeds its reserved maximum")
-	}
 	// This token is for synchronization only. It does not create a build directory
 	// or retain old pages. Mark incomplete before the first mutable object write.
 	err = s.DB.Update(func(st *model.State) error {
@@ -61,7 +58,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	}
 	names := make([]string, 0, len(files))
 	for name := range files {
-		if !wiki.ValidFile(name) || (strings.HasPrefix(name, "wiki/inbox/") || name == "wiki/inbox.md") {
+		if !wiki.ValidFile(name) {
 			return "", fmt.Errorf("invalid generated filename")
 		}
 		names = append(names, name)
@@ -159,7 +156,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	}
 	for _, key := range keys {
 		name := strings.TrimPrefix(string(key), "projects/"+job.ProjectID+"/")
-		if (strings.HasPrefix(name, "wiki/") || strings.HasPrefix(name, "maps/")) && !strings.HasPrefix(name, "wiki/inbox/") && files[name] == "" {
+		if (strings.HasPrefix(name, "wiki/") || strings.HasPrefix(name, "maps/")) && files[name] == "" {
 			if _, ok := files[name]; !ok {
 				if err = s.Blobs.Delete(ctx, key); err != nil {
 					return "", err

@@ -313,3 +313,5 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	}
 	return nil
 }
+
+func (r *Runner) SupportsSourceCredentials() bool { return true }

@@ -24,6 +24,7 @@ const (
 )
 
 type AgentRun struct {
+	InboxIDs           []string       `json:"inbox_ids"`
 	Ref                runner.RunRef  `json:"ref"`
 	CostCents          *int64         `json:"cost_cents,omitempty"`
 	CleanupComplete    bool           `json:"cleanup_complete,omitempty"`

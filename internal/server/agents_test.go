@@ -51,13 +51,10 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		t.Fatal(c)
 	}
 	var job model.Job
-	if c := f.seedSource("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: "Project A evidence", SourceURL: testSourceURL("evidence.md", "Project A evidence")}}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: "Project A evidence", SourceURL: testSourceURL("evidence.md", "Project A evidence")}}, &job); c != 202 {
 		t.Fatal(c)
 	}
-	job = f.generate(a.ID, human, false)
-	if _, err := f.s.process(context.Background(), job); err != nil {
-		t.Fatal(err)
-	}
+	runGeneration(t, f, human, a.ID)
 	id, token := testAgent(t, f, human, a.ID, "read")
 	var projects []model.Project
 	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].ID != a.ID {
@@ -115,15 +112,26 @@ func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
 		}
 	}
 	var job model.Job
-	if c := f.seedSource("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "note.md", Content: "Authorized file", SourceURL: testSourceURL("note.md", "Authorized file")}}, &job); c != 202 || job.AgentID != id {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "note.md", Content: "Authorized file", SourceURL: testSourceURL("note.md", "Authorized file")}}, &job); c != 202 {
 		t.Fatal(c, job)
 	}
 	job = f.generate(p.ID, token, false)
 	if c := f.request("DELETE", "/api/projects/"+p.ID+"/agents/"+id, human, nil, nil); c != 200 {
 		t.Fatal(c)
 	}
-	if _, err := f.s.process(context.Background(), job); err == nil {
-		t.Fatal("revoked agent job published")
+	configureAutoRunner(t, f)
+	f.db.Update(func(st *model.State) error {
+		j := st.Jobs[job.ID]
+		j.Status = "running"
+		st.Jobs[j.ID] = j
+		job = j
+		return nil
+	})
+	if err := f.s.startAgentJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if j := storedJob(t, f, job.ID); j.Status != "failed" {
+		t.Fatal("revoked agent job published", j)
 	}
 	if c := f.request("GET", "/api/projects", token, nil, nil); c != 401 {
 		t.Fatal("revoked token accepted", c)

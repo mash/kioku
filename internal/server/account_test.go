@@ -134,7 +134,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 		return nil
 	})
 	var job model.Job
-	if c := f.seedSource("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "facts.md", Content: "Retained team evidence", SourceURL: testSourceURL("facts.md", "Retained team evidence")}}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "facts.md", Content: "Retained team evidence", SourceURL: testSourceURL("facts.md", "Retained team evidence")}}, &job); c != 202 {
 		t.Fatal(c)
 	}
 	if c := f.request("POST", "/api/projects/"+p.ID+"/owner", human, map[string]string{"target": target}, nil); c != 200 {
@@ -154,8 +154,8 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("GET", "/api/me", human, nil, nil); c != 401 {
 		t.Fatal("deleted account session active", c)
 	}
-	var sources []model.Source
-	if c := f.request("GET", "/api/projects/"+p.ID+"/sources", other, nil, &sources); c != 200 || len(sources) != 1 {
+	var sources []model.InboxItem
+	if c := f.request("GET", "/api/projects/"+p.ID+"/inbox", other, nil, &sources); c != 200 || len(sources) != 1 {
 		t.Fatal("team evidence lost", c, sources)
 	}
 	_ = f.db.View(func(st model.State) error {

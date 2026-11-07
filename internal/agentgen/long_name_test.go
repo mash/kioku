@@ -8,17 +8,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
 )
 
 func TestIncrementalAcceptsPublishedLongName(t *testing.T) {
 	pages := map[string]string{"wiki/index.md": "# Index", "wiki/" + strings.Repeat("a", 101) + ".md": "# Topic"}
-	if err := wiki.ValidatePages(pages, wiki.PageLimits{MaxPages: 300}); err != nil {
+	if err := wiki.ValidatePages(pages); err != nil {
 		t.Fatal(err)
 	}
 	var out, again bytes.Buffer
-	spec := InputSpec{Mode: model.ModeIncremental, Wiki: pages}
+	spec := InputSpec{Wiki: pages}
 	if err := BuildInput(spec, &out); err != nil {
 		t.Fatal(err)
 	}

@@ -3,10 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -66,6 +66,7 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 				if j.Status == "running" && sameManagedRun(j, job) {
 					revokeJobToken(st, j.ID)
 					j.Status, j.Error = "failed", "managed agents unavailable; job timed out"
+					releaseInbox(st, j)
 					j.Run.CostCents = nil
 					st.Jobs[j.ID] = j
 				}
@@ -162,15 +163,11 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 	if auth.Hash(string(body)) != job.Run.OutputHash {
 		return failJob("agent output hash mismatch")
 	}
-	pages, err := agentgen.ReadOutput(bytes.NewReader(body), agentgen.DefaultOutputLimits())
+	pages, err := agentgen.ReadAcceptedOutput(bytes.NewReader(body))
 	if err != nil {
 		return failJob("stored agent output is invalid")
 	}
-	inputs, err := s.managedInputs(ctx, job)
-	if err != nil {
-		return failJob(err.Error())
-	}
-	files, err := wiki.Assemble(inputs, pages)
+	files, err := wiki.Assemble(pages)
 	if err != nil {
 		return failJob(err.Error())
 	}
@@ -178,15 +175,13 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 	if err = s.DB.View(func(st model.State) error { project = st.Projects[job.ProjectID]; return nil }); err != nil {
 		return err
 	}
-	project.SourceVersion = job.Run.SourceVersion
-	project.NextIntakeSequence = job.Run.NextIntakeSequence
-	project.SourcesUpdatedAt = job.Run.SourcesUpdatedAt
-	sources := make([]model.Source, 0, len(inputs))
-	for _, in := range inputs {
-		sources = append(sources, in.Source)
-	}
-	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Sources: sources, Files: files, Fingerprint: agentFingerprint(inputs), Validate: func(st model.State) error { return validateGeneration(st, job, sources) }, Finish: func(st *model.State, now time.Time) error {
+	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Files: files, Validate: func(st model.State) error { return validateGeneration(st, job) }, Finish: func(st *model.State, now time.Time) error {
 		revokeJobToken(st, job.ID)
+		for _, id := range job.Run.InboxIDs {
+			if item, ok := st.Inbox[id]; ok && item.RunID == job.Run.Attempt.ID {
+				delete(st.Inbox, id)
+			}
+		}
 		j := st.Jobs[job.ID]
 		j.Run.CostCents = status.Cost
 		st.Jobs[j.ID] = j
@@ -195,21 +190,17 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 	if err != nil {
 		return failJob(err.Error())
 	}
+	request, _ := http.NewRequestWithContext(ctx, "POST", "/", nil)
+	unlock, gcErr := s.lockProject(ctx, job.ProjectID)
+	if gcErr == nil {
+		_, gcErr = s.gc(request, job.ProjectID)
+		unlock()
+	}
+	if gcErr != nil {
+		slog.Warn("inbox cleanup deferred", "job", job.ID, "error", gcErr)
+	}
 	return s.cleanupAgentJob(ctx, job, &status)
 }
-func agentFingerprint(inputs []wiki.Input) string {
-	type item struct{ ID, Hash string }
-	v := struct {
-		Version string
-		Sources []item
-	}{Version: "agent-v1"}
-	for _, in := range inputs {
-		v.Sources = append(v.Sources, item{in.Source.ID, in.Source.ContentHash})
-	}
-	b, _ := json.Marshal(v)
-	return auth.Hash(string(b))
-}
-
 func (s *Server) failAgentJobLocked(ctx context.Context, job model.Job, reason string, status *runner.Status) error {
 	return s.finishFailedAgentJobLocked(ctx, job, reason, status, false)
 }
@@ -239,6 +230,7 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job model.Job, 
 			waiting = true
 		} else {
 			j.Status, j.Error = "failed", reason
+			releaseInbox(st, j)
 			if j.Run != nil {
 				if j.Run.AbortReason != "" {
 					j.Error = j.Run.AbortReason

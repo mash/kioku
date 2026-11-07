@@ -16,12 +16,15 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
+	"github.com/mash/kioku/internal/managedagents"
+	"github.com/mash/kioku/internal/managedagents/fake"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
 type fixture struct {
+	auto         *fake.Server
 	runnerConfig runners.Config
 	t            *testing.T
 	s            *Server
@@ -57,6 +60,10 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	})}}
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
+	f := &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), db: db}
+	if startWorker {
+		configureAutoRunner(t, f)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	if startWorker {
@@ -72,7 +79,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 		ts.Close()
 		db.Close()
 	})
-	return &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), db: db}
+	return f
 }
 func (f *fixture) request(method, path, token string, in, out any) int {
 	f.t.Helper()
@@ -135,6 +142,13 @@ func (f *fixture) wait(pid, token, id string) model.Job {
 		if code := f.request("GET", "/api/projects/"+pid+"/jobs/"+id, token, nil, &j); code != 200 {
 			f.t.Fatalf("job status %d", code)
 		}
+		if f.auto != nil && j.Status == "running" && j.Run != nil && j.Run.Ref.ID != "" {
+			if j.Run.OutputHash == "" {
+				sendOutput(f.t, f, f.auto, j, "Generated")
+			}
+			f.auto.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+			f.s.ReconcileJob(context.Background(), j.ID, j.Run.Attempt.ID)
+		}
 		if j.Status == "failed" {
 			f.t.Fatal(j.Error)
 		}
@@ -187,11 +201,11 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 		t.Fatalf("member cannot invite: %d", code)
 	}
 	req := model.PutRequest{File: &model.FileInput{Name: "decisions.md", Content: "# Decision\nWe use Go and S3.", SourceURL: testSourceURL("decisions.md", "# Decision\nWe use Go and S3.")}}
-	if code := f.seedSource("POST", base+"/put", eve, req, nil); code != 404 {
+	if code := f.request("POST", base+"/put", eve, req, nil); code != 404 {
 		t.Fatalf("nonmember put: %d", code)
 	}
 	var job model.Job
-	if code := f.seedSource("POST", base+"/put", bob, req, &job); code != 202 {
+	if code := f.request("POST", base+"/put", bob, req, &job); code != 202 {
 		t.Fatal(code)
 	}
 	f.wait(p.ID, bob, f.generate(p.ID, bob, false).ID)
@@ -199,13 +213,13 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("GET", base+"/snapshot", alice, nil, &snap); code != 200 {
 		t.Fatal(code)
 	}
-	if !strings.Contains(snap.Files["wiki/source-"+job.SourceIDs[0]+".md"], "Go and S3") {
+	if !strings.Contains(snap.Files[sourcePage(job.ID)], "Go and S3") {
 		t.Fatal("source not in wiki")
 	}
 	if !strings.Contains(snap.Files["maps/graph.json"], "links-to") {
 		t.Fatal("map missing edges")
 	}
-	srcPath := base + "/sources/" + job.SourceIDs[0] + "/text"
+	srcPath := base + "/inbox"
 	if code := f.request("GET", srcPath, eve, nil, nil); code != 404 {
 		t.Fatalf("source isolation: %d", code)
 	}
@@ -227,12 +241,12 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 		t.Fatalf("owner removal: %d", code)
 	}
 	var second model.Job
-	if code := f.seedSource("POST", base+"/put", alice, req, &second); code != 202 {
+	if code := f.request("POST", base+"/put", alice, req, &second); code != 202 {
 		t.Fatal(code)
 	}
 	f.wait(p.ID, alice, f.generate(p.ID, alice, true).ID)
-	if second.SourceIDs[0] != job.SourceIDs[0] {
-		t.Fatal("duplicate source not deduplicated")
+	if second.ID == job.ID {
+		t.Fatal("put reused an inbox ID")
 	}
 	if code := f.request("GET", base+"/snapshot?revision="+snap.Revision, alice, nil, nil); code != 404 {
 		t.Fatal("old snapshots should not be retained", code)
@@ -254,7 +268,7 @@ func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			var j model.Job
-			code := f.seedSource("POST", base+"/put", token, model.PutRequest{File: &model.FileInput{Name: fmt.Sprintf("note-%d.md", i), Content: fmt.Sprintf("Unique note %d", i), SourceURL: testSourceURL(fmt.Sprintf("note-%d.md", i), fmt.Sprintf("Unique note %d", i))}}, &j)
+			code := f.request("POST", base+"/put", token, model.PutRequest{File: &model.FileInput{Name: fmt.Sprintf("note-%d.md", i), Content: fmt.Sprintf("Unique note %d", i), SourceURL: testSourceURL(fmt.Sprintf("note-%d.md", i), fmt.Sprintf("Unique note %d", i))}}, &j)
 			if code != 202 {
 				t.Errorf("put %d", code)
 			}
@@ -264,7 +278,9 @@ func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 	wg.Wait()
 	close(jobs)
 	for j := range jobs {
-		f.wait(p.ID, token, j.ID)
+		if j.ID == "" {
+			t.Fatal("missing inbox ID")
+		}
 	}
 	f.wait(p.ID, token, f.generate(p.ID, token, false).ID)
 	var snap model.Snapshot
@@ -328,4 +344,16 @@ func (f *fixture) setRunners() {
 			f.t.Error(err)
 		}
 	})
+}
+
+func configureAutoRunner(t *testing.T, f *fixture) {
+	t.Helper()
+	ma := fake.New()
+	t.Cleanup(ma.Close)
+	f.auto = ma
+	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: managedagents.New(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
+	f.setRunners()
+}
+func sourcePage(id string) string {
+	return "wiki/source-" + strings.ReplaceAll(strings.ToLower(id), "_", "-") + ".md"
 }

@@ -42,16 +42,16 @@ func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 }
 func runGeneration(t *testing.T, f *fixture, token, pid string) model.Job {
 	t.Helper()
-	var j model.Job
-	base := "/api/projects/" + pid
-	if c := f.request("POST", base+"/generate", token, nil, &j); c != 202 {
-		t.Fatal(c)
+	if f.auto == nil {
+		configureAutoRunner(t, f)
 	}
-	if _, err := f.s.process(context.Background(), j); err != nil {
-		t.Fatal(err)
+	j := startManaged(t, f, token, pid, false)
+	if j.Unchanged {
+		return j
 	}
-	f.request("GET", base+"/jobs/"+j.ID, token, nil, &j)
-	return j
+	sendOutput(t, f, f.auto, j, "Generated")
+	f.auto.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	return reconcileManaged(t, f, j)
 }
 
 func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
@@ -61,10 +61,10 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
 	base := "/api/projects/" + p.ID
-	first := putFile(t, f, token, p.ID, "first.md", "First source")
-	var inbox model.Snapshot
-	if c := f.request("GET", base+"/snapshot", token, nil, &inbox); c != 200 || !strings.Contains(inbox.Files["wiki/inbox.md"], "first.md") {
-		t.Fatal("put not visible before generation", c, inbox)
+	putFile(t, f, token, p.ID, "first.md", "First source")
+	var inbox []model.InboxItem
+	if c := f.request("GET", base+"/inbox", token, nil, &inbox); c != 200 || len(inbox) != 1 {
+		t.Fatal(c, inbox)
 	}
 	runGeneration(t, f, token, p.ID)
 	backup := filepath.Join(t.TempDir(), "backup")
@@ -73,14 +73,7 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	}
 	putFile(t, f, token, p.ID, "second.md", "Newer than SQLite backup")
 	runGeneration(t, f, token, p.ID)
-	journal, err := objects.List(context.Background(), "projects/"+p.ID+"/wiki/inbox/")
-	if err != nil || len(journal) != 2 {
-		t.Fatal("intake journal missing", journal, err)
-	}
-	originalEntry, err := objects.Get(context.Background(), journal[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	waiting := putFile(t, f, token, p.ID, "third.md", "Still waiting")
 	restored := objectFixture(t, backup, objects)
 	var snapshot model.Snapshot
 	if c := restored.request("GET", base+"/snapshot", token, nil, &snapshot); c != 200 {
@@ -94,11 +87,8 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 		t.Fatal("old SQLite backup rolled back wiki")
 	}
 	_ = restored.db.View(func(st model.State) error {
-		if len(st.Sources) != 2 || len(st.Revisions) != 1 || st.Projects[p.ID].SourceVersion != 2 || st.Projects[p.ID].ProcessedIntakeSequence != 2 {
-			t.Error("content/cursor did not survive config restore")
-		}
-		if st.Sources[first.SourceIDs[0]].Title != "first.md" {
-			t.Error("source metadata lost")
+		if len(st.Revisions) != 1 || len(st.Inbox) != 1 || st.Inbox[waiting.ID].Status != "fetched" {
+			t.Error("project content lost during restore", st.Inbox)
 		}
 		return nil
 	})
@@ -110,10 +100,6 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 		if strings.Contains(string(key), "/revisions/") {
 			t.Error("full wiki history retained", key)
 		}
-	}
-	after, _ := objects.Get(context.Background(), journal[0])
-	if string(after) != string(originalEntry) {
-		t.Error("generation rewrote append-only intake")
 	}
 	if _, err = os.Stat(filepath.Join(backup, "projects")); !os.IsNotExist(err) {
 		t.Fatal("content databases included in config backup")
@@ -137,15 +123,14 @@ func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
 	putFile(t, f, token, p.ID, "note.md", "Durable input")
-	var job model.Job
 	base := "/api/projects/" + p.ID
-	f.request("POST", base+"/generate", token, nil, &job)
-	if _, err := f.s.process(context.Background(), job); err == nil {
-		t.Fatal("failed upload reported success")
+	failed := runGeneration(t, f, token, p.ID)
+	if failed.Status != "failed" {
+		t.Fatal(failed)
 	}
 	_ = f.db.View(func(st model.State) error {
 		p := st.Projects[p.ID]
-		if !p.WikiIncomplete || p.WikiSourceVersion == p.SourceVersion {
+		if !p.WikiIncomplete || len(st.Inbox) != 1 {
 			t.Error("partial wiki marked complete", p)
 		}
 		return nil
@@ -161,7 +146,7 @@ func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
 	}
 	_ = f.db.View(func(st model.State) error {
 		p := st.Projects[p.ID]
-		if p.WikiIncomplete || p.WikiSourceVersion != p.SourceVersion || len(st.Revisions) != 1 {
+		if p.WikiIncomplete || len(st.Inbox) != 0 || len(st.Revisions) != 1 {
 			t.Error("retry did not complete current wiki", p)
 		}
 		return nil

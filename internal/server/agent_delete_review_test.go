@@ -9,7 +9,7 @@ import (
 
 func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
-	put := putFile(t, f, token, p.ID, "x.md", "evidence")
+	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 123)
 	_ = f.db.Update(func(st *model.State) error {
@@ -19,7 +19,7 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 		st.Jobs[x.ID] = x
 		return nil
 	})
-	path := "/api/projects/" + p.ID + "/sources/" + put.SourceIDs[0]
+	path := "/api/projects/" + p.ID
 	if c := f.request("DELETE", path, token, nil, nil); c != 503 {
 		t.Fatal(c)
 	}
@@ -28,7 +28,7 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if c := f.request("DELETE", path, token, nil, nil); c != 202 {
+	if c := f.request("DELETE", path, token, nil, nil); c != 200 {
 		t.Fatal(c)
 	}
 	if !ma.Session(j.Run.Ref.ID).Interrupted || !ma.Session(j.Run.Ref.ID).Archived {

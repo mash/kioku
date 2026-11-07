@@ -1,6 +1,8 @@
-Write only wiki/*.md, the complete set of agent-authored pages; omitted pages are deleted.
-Always include wiki/index.md.
-Do not write wiki/source-*.md or wiki/inbox*; Kioku owns those paths.
+Write only wiki/*.md, the complete set of pages; omitted pages are deleted.
+Always include wiki/index.md and wiki/log.md.
 File names use lowercase letters, digits and hyphens, with a .md suffix.
-Write at most 300 pages, at most 256 KiB per page, and at most 64 MiB for the whole wiki including the source pages Kioku adds.
-Kioku rewrites the trailing Source snapshots section.
+Every wiki/source-*.md has a nonempty source_url string in YAML frontmatter.
+There is at most one source page per exact source_url. Do not normalize URLs.
+Remove source pages only for removed inbox items. Preserve all other existing sources.
+Every fetched inbox item must have a matching source page in the output.
+Do not change inbox/. Kioku derives maps/ from your Markdown links.

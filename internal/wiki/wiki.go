@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/mash/kioku/internal/model"
 )
@@ -33,48 +32,18 @@ type Graph struct {
 
 var pagePath = regexp.MustCompile(`^wiki/[A-Za-z0-9][A-Za-z0-9_/-]*\.md$`)
 
-// MaxSnapshotBytes includes agent pages, source pages, provenance, and maps.
-const MaxSnapshotBytes = 64 << 20
-
 func ValidFile(p string) bool {
 	return p != "" && len(p) < 160 && path.Clean(p) == p && (pagePath.MatchString(p) || p == "maps/graph.json" || p == "maps/graph.mmd")
 }
 func title(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// Assemble adds service-owned evidence pages, provenance and link maps.
-func Assemble(inputs []Input, pages map[string]string) (map[string]string, error) {
+// Assemble preserves every runner page verbatim and derives link maps.
+func Assemble(pages map[string]string) (map[string]string, error) {
 	files := map[string]string{}
-	total := 0
-	add := func(name string, pieces ...string) error {
-		n := total - len(files[name])
-		for _, part := range pieces {
-			n += len(part)
-		}
-		if n > MaxSnapshotBytes {
-			return &SnapshotTooLargeError{Bytes: int64(n)}
-		}
-		files[name] = strings.Join(pieces, "")
-		total = n
-		return nil
-	}
-	var index strings.Builder
-	index.WriteString("# Project wiki\n\nGenerated from shared project sources.\n\n")
-	for _, in := range inputs {
-		file := "wiki/source-" + in.Source.ID + ".md"
-		if err := add(file, "# ", title(in.Source.Title), "\n\n", in.Text, "\n\n## Source\n\n", sourceLink(in.Source), "\n"); err != nil {
-			return nil, err
-		}
-		fmt.Fprintf(&index, "- [%s](source-%s.md)\n", title(in.Source.Title), in.Source.ID)
-	}
-	if err := add("wiki/index.md", index.String()); err != nil {
-		return nil, err
-	}
-	provenance := sources(inputs)
 	for name, body := range pages {
-		if err := add(name, StripSnapshots(body), "\n\n## Source snapshots\n\n", provenance); err != nil {
-			return nil, err
-		}
+		files[name] = body
 	}
+	add := func(name string, pieces ...string) error { files[name] = strings.Join(pieces, ""); return nil }
 	graph := Graph{Nodes: []Node{}, Edges: []Edge{}}
 	names := make([]string, 0, len(files))
 	for name := range files {
@@ -153,23 +122,4 @@ func pageTitle(body, fallback string) string {
 		}
 	}
 	return fallback
-}
-func sourceLink(s model.Source) string {
-	return fmt.Sprintf("- [%s](/api/projects/%s/sources/%s/text) — snapshot `%s`, contributor `%s`, %s", title(s.Title), s.ProjectID, s.ID, s.ContentHash, s.CreatedBy, s.Created.UTC().Format(time.RFC3339))
-}
-func sources(inputs []Input) string {
-	var b strings.Builder
-	for _, in := range inputs {
-		b.WriteString(sourceLink(in.Source))
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
-
-// StripSnapshots removes the service-owned trailing provenance section.
-func StripSnapshots(body string) string {
-	if i := strings.LastIndex(body, "\n\n## Source snapshots\n\n"); i >= 0 {
-		return body[:i]
-	}
-	return body
 }

@@ -63,35 +63,40 @@ func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) 
 	_, err = w.Write(b)
 	return err
 }
-func (s *Server) managedInputs(ctx context.Context, job model.Job) ([]wiki.Input, error) {
-	var sources []model.Source
-	if err := s.DB.View(func(st model.State) error {
-		if job.Run == nil {
-			return fail(409, "managed job missing")
+func (s *Server) outputContext(ctx context.Context, job model.Job) (map[string]string, []model.InboxItem, error) {
+	previous := map[string]string{}
+	var rev model.Revision
+	var items []model.InboxItem
+	err := s.DB.View(func(st model.State) error {
+		if err := validateGeneration(st, job); err != nil {
+			return err
 		}
-		for _, id := range job.Run.SourceIDs {
-			src, ok := st.Sources[id]
-			if !ok || src.ProjectID != job.ProjectID {
-				return fail(409, "generation inputs were removed")
+		rev = st.Revisions[st.Projects[job.ProjectID].Revision]
+		for _, id := range job.Run.InboxIDs {
+			item, ok := st.Inbox[id]
+			if !ok || item.RunID != job.Run.Attempt.ID {
+				return fail(409, "generation inbox missing")
 			}
-			sources = append(sources, src)
+			items = append(items, item)
 		}
 		return nil
-	}); err != nil {
-		return nil, err
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	inputs := make([]wiki.Input, 0, len(sources))
-	for _, src := range sources {
-		b, err := s.Blobs.Get(ctx, src.TextKey)
-		if err != nil {
-			return nil, err
+	for name, key := range rev.Files {
+		if agentgen.AgentPage(name) {
+			b, err := s.Blobs.Get(ctx, key)
+			if err != nil {
+				return nil, nil, err
+			}
+			previous[name] = string(b)
 		}
-		inputs = append(inputs, wiki.Input{Source: src, Text: string(b)})
 	}
-	return inputs, nil
+	return previous, items, nil
 }
-func outputTooLarge(w http.ResponseWriter, size, limit int64) {
-	jsonOut(w, 413, map[string]any{"error": "wiki too large", "bytes": size, "limit": limit})
+func (s *Server) outputLimits() agentgen.OutputLimits {
+	return agentgen.OutputLimits{MaxCompressed: 2 * s.Config.MaxWikiBytes, MaxUncompressed: 2 * s.Config.MaxWikiBytes}
 }
 func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string) error {
 	// Bound archive memory before reading either object bytes or request bodies.
@@ -110,13 +115,13 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	}); err != nil {
 		return err
 	}
-	lim := agentgen.DefaultOutputLimits()
+	lim := s.outputLimits()
 	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxCompressed)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			outputTooLarge(w, lim.MaxCompressed+1, lim.MaxCompressed)
+			jsonOut(w, 400, map[string]any{"error": "invalid output", "problems": []string{"compressed output exceeds twice max-wiki-bytes"}})
 			return nil
 		}
 		return fail(400, "could not read output")
@@ -124,7 +129,7 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	pages, err := agentgen.ReadOutput(bytes.NewReader(body), lim)
 	if err != nil {
 		if errors.Is(err, agentgen.ErrOutputTooLarge) {
-			outputTooLarge(w, lim.MaxUncompressed+1, lim.MaxUncompressed)
+			jsonOut(w, 400, map[string]any{"error": "invalid output", "problems": []string{"expanded output exceeds twice max-wiki-bytes"}})
 			return nil
 		}
 		var invalid *agentgen.OutputError
@@ -134,17 +139,13 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 		}
 		return err
 	}
-	inputs, err := s.managedInputs(r.Context(), job)
+	previous, items, err := s.outputContext(r.Context(), job)
 	if err != nil {
 		return err
 	}
-	if _, err = wiki.Assemble(inputs, pages); err != nil {
-		var tooLarge *wiki.SnapshotTooLargeError
-		if errors.As(err, &tooLarge) {
-			outputTooLarge(w, tooLarge.Bytes, 64<<20)
-			return nil
-		}
-		return err
+	if problems := wiki.ValidateSources(pages, previous, items); len(problems) > 0 {
+		jsonOut(w, 400, map[string]any{"error": "invalid output", "problems": problems})
+		return nil
 	}
 	// Serialize object writes against source/project deletion and cleanup.
 	unlock, err := s.lockProject(r.Context(), job.ProjectID)

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/wiki"
 )
 
 func createTestOrg(t *testing.T, f *fixture, token, slug string) string {
@@ -61,30 +60,17 @@ func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testi
 		t.Fatal(p.Namespace)
 	}
 }
-func TestAgentFingerprintIncludesSources(t *testing.T) {
-	inputs := []wiki.Input{{Source: model.Source{ID: "source", ContentHash: "hash"}}}
-	a := agentFingerprint(inputs)
-	inputs[0].Source.ID = "other"
-	b := agentFingerprint(inputs)
-	inputs[0].Source.ContentHash = "changed"
-	if a == b || b == agentFingerprint(inputs) {
-		t.Fatal("fingerprint missed sources or content")
-	}
-}
-func TestDeterministicFallbackPublishes(t *testing.T) {
+func TestMissingRunnerFailsGeneration(t *testing.T) {
 	f, token, p := orgProject(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")
-	var j model.Job
-	f.request("POST", "/api/projects/"+p.ID+"/generate", token, nil, &j)
-	if _, err := f.s.process(context.Background(), j); err != nil {
+	j := managedJob(t, f, token, p.ID, false)
+	if err := f.s.startAgentJob(t.Context(), j); err != nil {
 		t.Fatal(err)
 	}
-	_ = f.db.View(func(st model.State) error {
-		if st.Projects[p.ID].Revision == "" {
-			t.Error("fallback did not publish")
-		}
-		return nil
-	})
+	j = storedJob(t, f, j.ID)
+	if j.Status != "failed" || !strings.Contains(j.Error, "not configured") {
+		t.Fatal(j)
+	}
 }
 func TestManagedBudgetCapsTheSession(t *testing.T) {
 	f, token, p, ma := managedFixture(t)

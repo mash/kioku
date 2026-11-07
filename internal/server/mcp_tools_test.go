@@ -74,15 +74,8 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	content := "MixedCaseNeedle\n" + strings.Repeat("界", 12000) + "\n" + strings.Repeat("FloodNeedle\n", 55) + "ẞ" + strings.Repeat("x", 300) + "DeepNeedle" + "Ⱥ" + strings.Repeat("y", 300)
 	var put model.Job
 	base := "/api/projects/" + project.ID
-	if code := f.seedSource("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: content, SourceURL: testSourceURL("evidence.md", content)}}, &put); code != 202 {
+	if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: content, SourceURL: testSourceURL("evidence.md", content)}}, &put); code != 202 {
 		t.Fatal("put source", code)
-	}
-	if msg := connectorTool(t, f, access, "wiki_read", args, nil); msg != "wiki not generated yet; read wiki/inbox.md" {
-		t.Fatal("ungenerated project", msg)
-	}
-	var inbox connectorReadResult
-	if msg := connectorTool(t, f, access, "wiki_read", map[string]any{"project": project.Namespace, "path": "wiki/inbox.md"}, &inbox); msg != "" || !strings.Contains(inbox.Content, "evidence.md") {
-		t.Fatal("intake view", msg, inbox)
 	}
 	f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
 	var snapshot model.Snapshot
@@ -102,7 +95,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	if msg := connectorTool(t, f, access, "wiki_read", args, &index); msg != "" || index.Project != project.Namespace || index.Path != "wiki/index.md" || index.Content != snapshot.Files[index.Path] || index.FileBytes != len(index.Content) || index.Offset != 0 || index.NextOffset != nil {
 		t.Fatal("index read", msg, index)
 	}
-	name := "wiki/source-" + put.SourceIDs[0] + ".md"
+	name := sourcePage(put.ID)
 	args["path"] = name
 	var first, second connectorReadResult
 	if msg := connectorTool(t, f, access, "wiki_read", args, &first); msg != "" || first.NextOffset == nil || len(first.Content) > 32768 || !utf8.ValidString(first.Content) || first.Offset != 0 {
@@ -235,7 +228,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			human := f.login("owner@example.com")
 			project := securityProject(t, f, human)
 			base := "/api/projects/" + project.ID
-			if code := f.seedSource("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "initial.md", Content: "Initial evidence", SourceURL: testSourceURL("initial.md", "Initial evidence")}}, nil); code != 202 {
+			if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "initial.md", Content: "Initial evidence", SourceURL: testSourceURL("initial.md", "Initial evidence")}}, nil); code != 202 {
 				t.Fatal("initial put", code)
 			}
 			f.wait(project.ID, human, f.generate(project.ID, human, false).ID)

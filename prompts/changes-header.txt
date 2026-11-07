@@ -1,6 +1,0 @@
-# Changes since the last published wiki
-
-mode: %s
-published revision: %s
-
-## Added (%d)

@@ -322,44 +322,17 @@ func (s *Server) RunWorker(ctx context.Context) error {
 				break
 			}
 			jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			_, runnerErr := s.runners.New(job)
-			if !errors.Is(runnerErr, runner.ErrNotConfigured) {
-				err := s.startAgentJob(jobCtx, job)
-				cancel()
-				if ctx.Err() != nil {
-					return nil
-				}
-				if errors.Is(err, runner.ErrTemporary) {
-					slog.Warn("agent start awaits reconciliation", "job", job.ID, "error", err)
-				} else if err != nil {
-					return err
-				}
-				continue
-			}
-			rev, runErr := s.process(jobCtx, job)
+			err = s.startAgentJob(jobCtx, job)
 			cancel()
 			if ctx.Err() != nil {
 				return nil
-			} // running job will be recovered at next boot
-			err = s.DB.Update(func(st *model.State) error {
-				j, exists := st.Jobs[job.ID]
-				if !exists {
-					return nil
-				}
-				if runErr != nil {
-					j.Status = "failed"
-					j.Error = runErr.Error()
-				} else {
-					j.Status = "completed"
-					j.Error = ""
-					j.Revision = rev
-				}
-				st.Jobs[j.ID] = j
-				return nil
-			})
-			if err != nil {
+			}
+			if errors.Is(err, runner.ErrTemporary) {
+				slog.Warn("agent start awaits reconciliation", "job", job.ID)
+			} else if err != nil {
 				return err
 			}
+
 		}
 	}
 }
@@ -515,7 +488,7 @@ func (s *Server) process(ctx context.Context, job model.Job) (string, error) {
 	if err = s.DB.View(validate); err != nil {
 		return "", err
 	}
-	files, err := wiki.Assemble(inputs, nil)
+	files, err := wiki.Assemble(nil)
 	if err != nil {
 		return "", err
 	}

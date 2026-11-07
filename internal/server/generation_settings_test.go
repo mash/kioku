@@ -14,6 +14,7 @@ func TestServerGenerationBudget(t *testing.T) {
 	for _, budget := range []int64{0, 50, 100} {
 		t.Run(strconv.FormatInt(budget, 10), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
+			putFile(t, f, token, p.ID, "budget.md", "Evidence")
 			var j model.Job
 			if code := f.request("POST", "/api/projects/"+p.ID+"/generate", token, map[string]any{"full": true, "budget_cents": budget}, &j); code != 202 {
 				t.Fatal(code)

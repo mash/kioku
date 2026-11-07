@@ -24,7 +24,7 @@ func (b crashAfterInputWrite) Put(ctx context.Context, key blob.Key, body []byte
 }
 func TestManagedInputWriteCrashRetainsCleanupIdentity(t *testing.T) {
 	f, token, p, _ := managedFixture(t)
-	put := putFile(t, f, token, p.ID, "x.md", "must be erased")
+	putFile(t, f, token, p.ID, "x.md", "must be erased")
 	j := managedJob(t, f, token, p.ID, false)
 	objects := f.s.Blobs
 	f.s.Blobs = crashAfterInputWrite{objects}
@@ -38,7 +38,7 @@ func TestManagedInputWriteCrashRetainsCleanupIdentity(t *testing.T) {
 	}()
 	f.s.Blobs = objects
 	restartManagedFixture(t, f)
-	if code := f.request("DELETE", "/api/projects/"+p.ID+"/sources/"+put.SourceIDs[0], token, nil, nil); code != 503 {
+	if code := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); code != 503 {
 		t.Fatal(code)
 	}
 	_ = f.db.Update(func(st *model.State) error {
@@ -50,7 +50,7 @@ func TestManagedInputWriteCrashRetainsCleanupIdentity(t *testing.T) {
 	if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if code := f.request("DELETE", "/api/projects/"+p.ID+"/sources/"+put.SourceIDs[0], token, nil, nil); code != 202 {
+	if code := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); code != 200 {
 		t.Fatal(code)
 	}
 	keys, err := objects.List(context.Background(), agentJobPrefix(j))

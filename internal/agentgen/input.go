@@ -3,7 +3,6 @@ package agentgen
 import (
 	"archive/tar"
 	"compress/gzip"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
@@ -21,117 +22,45 @@ const MaxInputBytes int64 = 256 << 20
 
 var ErrInputTooLarge = errors.New("agent input exceeds 256 MiB")
 
-type SourceText struct {
-	Source model.Source
-	Text   string
-}
-type UpdatedSource struct{ Previous, Current model.Source }
-type Changes struct {
-	Added   []model.Source
-	Updated []UpdatedSource
-	Removed []model.Source
+type InboxText struct {
+	Item model.InboxItem
+	Text string
 }
 type InputSpec struct {
-	Mode                                                     model.GenerationMode
-	JobID, ProjectID, InputURL, OutputURL, PublishedRevision string
-	Sources, Previous                                        []SourceText
-	Changes                                                  Changes
-	Wiki                                                     map[string]string
+	JobID, ProjectID, InputURL, OutputURL string
+	Inbox                                 []InboxText
+	Wiki                                  map[string]string
+	FetchAllowed                          bool
 }
 
-func DiffChanges(published, active []model.Source) Changes {
-	c := Changes{}
-	oldIDs, newIDs := map[string]bool{}, map[string]bool{}
-	oldURLs, newURLs := map[string]model.Source{}, map[string]model.Source{}
-	for _, s := range published {
-		oldIDs[s.ID] = true
-		if s.URL != "" {
-			oldURLs[s.URL] = s
-		}
-	}
-	for _, s := range active {
-		newIDs[s.ID] = true
-		if s.URL != "" {
-			newURLs[s.URL] = s
-		}
-	}
-	for _, s := range active {
-		if oldIDs[s.ID] {
-			continue
-		}
-		if old, ok := oldURLs[s.URL]; ok {
-			c.Updated = append(c.Updated, UpdatedSource{old, s})
-		} else {
-			c.Added = append(c.Added, s)
-		}
-	}
-	for _, s := range published {
-		if newIDs[s.ID] {
-			continue
-		}
-		if _, ok := newURLs[s.URL]; !ok {
-			c.Removed = append(c.Removed, s)
-		}
-	}
-	sort.Slice(c.Added, func(i, j int) bool { return c.Added[i].ID < c.Added[j].ID })
-	sort.Slice(c.Updated, func(i, j int) bool { return c.Updated[i].Current.ID < c.Updated[j].Current.ID })
-	sort.Slice(c.Removed, func(i, j int) bool { return c.Removed[i].ID < c.Removed[j].ID })
-	return c
-}
+func AgentPage(name string) bool { return wiki.ValidFile(name) && strings.HasPrefix(name, "wiki/") }
 
-// AgentPage excludes files managed by the service, including the intake view.
-func AgentPage(name string) bool {
-	return wiki.ValidFile(name) && strings.HasPrefix(name, "wiki/") && !strings.HasPrefix(name, "wiki/source-") && !strings.HasPrefix(name, "wiki/inbox")
-}
-func StripSnapshots(body string) string { return wiki.StripSnapshots(body) }
+var inboxID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
-var sourceID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-
-func BuildInput(spec InputSpec, w io.Writer) error {
-	return buildInput(spec, w, MaxInputBytes)
-}
+func BuildInput(spec InputSpec, w io.Writer) error { return buildInput(spec, w, MaxInputBytes) }
 func buildInput(spec InputSpec, w io.Writer, limit int64) error {
-	if spec.Mode != model.ModeFull && spec.Mode != model.ModeIncremental {
-		return errors.New("invalid generation mode")
-	}
-	files := map[string]string{
-		"JOB.md":     fmt.Sprintf(prompts.Job, spec.Mode, spec.JobID, spec.ProjectID, spec.InputURL, spec.OutputURL, prompts.OutputRules),
-		"CHANGES.md": changesMarkdown(spec),
-	}
-	ordered := append([]SourceText(nil), spec.Sources...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Source.ID < ordered[j].Source.ID })
-	var index strings.Builder
-	tsv := csv.NewWriter(&index)
-	tsv.Comma = '\t'
-	_ = tsv.Write([]string{"id", "url", "title", "contributor", "created", "hash"})
-	for _, in := range ordered {
-		s := in.Source
-		if !sourceID.MatchString(s.ID) || len(s.ID) > 100 {
-			return errors.New("invalid source ID")
+	files := map[string]string{"JOB.md": fmt.Sprintf(prompts.Job, spec.JobID, spec.ProjectID, spec.InputURL, spec.OutputURL, spec.FetchAllowed, prompts.OutputRules)}
+	for _, in := range spec.Inbox {
+		if !inboxID.MatchString(in.Item.ID) {
+			return errors.New("invalid inbox ID")
 		}
-		name := "sources/" + s.ID + ".txt"
+		name := "inbox/" + in.Item.ID + ".md"
 		if _, exists := files[name]; exists {
-			return errors.New("duplicate source ID")
+			return errors.New("duplicate inbox ID")
 		}
-		files[name] = in.Text
-		_ = tsv.Write([]string{s.ID, s.URL, s.Title, s.CreatedBy, s.Created.UTC().Format(time.RFC3339), s.ContentHash})
-	}
-	tsv.Flush()
-	if err := tsv.Error(); err != nil {
-		return err
-	}
-	files["sources/index.tsv"] = index.String()
-	if spec.Mode == model.ModeIncremental {
-		for _, in := range spec.Previous {
-			if !sourceID.MatchString(in.Source.ID) || len(in.Source.ID) > 100 {
-				return errors.New("invalid previous source ID")
-			}
-			files["previous/"+in.Source.ID+".txt"] = in.Text
+		metadata, err := yaml.Marshal(struct {
+			SourceURL string `yaml:"source_url"`
+			Status    string `yaml:"status"`
+			Submitter string `yaml:"submitter"`
+		}{in.Item.SourceURL, in.Item.Status, in.Item.Submitter})
+		if err != nil {
+			return err
 		}
-		for name, body := range spec.Wiki {
-			if AgentPage(name) {
-				files[name] = StripSnapshots(body)
-			}
+		files[name] = "---\n" + string(metadata) + "---\n" + in.Text
+	}
+	for name, body := range spec.Wiki {
+		if AgentPage(name) {
+			files[name] = body
 		}
 	}
 	gz := gzip.NewWriter(w)
@@ -168,21 +97,4 @@ func (w *inputWriter) Write(p []byte) (int, error) {
 	n, e := w.w.Write(p)
 	w.remaining -= int64(n)
 	return n, e
-}
-
-func changesMarkdown(spec InputSpec) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, prompts.ChangesHeader, spec.Mode, spec.PublishedRevision, len(spec.Changes.Added))
-	for _, s := range spec.Changes.Added {
-		fmt.Fprintf(&b, prompts.ChangesSource, s.ID, s.URL, s.Title)
-	}
-	fmt.Fprintf(&b, prompts.ChangesUpdatedHeader, len(spec.Changes.Updated))
-	for _, s := range spec.Changes.Updated {
-		fmt.Fprintf(&b, prompts.ChangesUpdatedSource, s.Current.ID, s.Previous.ID, s.Current.URL, s.Previous.ID, s.Current.ID)
-	}
-	fmt.Fprintf(&b, prompts.ChangesRemovedHeader, len(spec.Changes.Removed))
-	for _, s := range spec.Changes.Removed {
-		fmt.Fprintf(&b, prompts.ChangesSource, s.ID, s.URL, s.Title)
-	}
-	return b.String()
 }

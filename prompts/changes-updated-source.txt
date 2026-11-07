@@ -1,2 +1,0 @@
-- %s (previous: %s) — %s
-  - compare: diff -u previous/%s.txt sources/%s.txt

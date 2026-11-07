@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 )
 
@@ -131,13 +130,14 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 }
 func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 	f, raw, job, _, _ := jobTokenFixture(t)
+	f.s.Config.MaxWikiBytes = 4096
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
 	for _, pages := range []map[string]string{{"wiki/index.md": "ok", "wiki/../../x.md": "bad"}, {"wiki/index.md": "ok", "wiki/source-x.md": "bad"}, {"wiki/a.md": "no index"}, {"wiki/index.md": string([]byte{0xff})}} {
 		if code, b := agentRequest(t, f, job, raw, "PUT", "output", outputArchive(t, pages)); code != 400 || !bytes.Contains(b, []byte(`"problems"`)) {
 			t.Fatal(code, string(b))
 		}
 	}
-	if code, b := agentRequest(t, f, job, raw, "PUT", "output", make([]byte, (16<<20)+1)); code != 413 {
+	if code, b := agentRequest(t, f, job, raw, "PUT", "output", make([]byte, 8193)); code != 400 {
 		t.Fatal(code, string(b))
 	}
 	keys, err := f.s.Blobs.List(context.Background(), agentJobPrefix(job))
@@ -151,27 +151,15 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 		return nil
 	})
 }
-func TestAgentOutputIncludesSourcePagesInSizeLimit(t *testing.T) {
+func TestAgentOutputExpandedSizeLimit(t *testing.T) {
 	f, raw, job, _, _ := jobTokenFixture(t)
+	f.s.Config.MaxWikiBytes = 4096
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
-	src := model.Source{ID: "large", ProjectID: job.ProjectID, TextKey: blob.Key("projects/" + job.ProjectID + "/sources/large/extracted.md")}
-	if err := f.s.Blobs.Put(context.Background(), src.TextKey, bytes.Repeat([]byte("x"), 64<<20)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.Update(func(st *model.State) error {
-		st.Sources[src.ID] = src
-		j := st.Jobs[job.ID]
-		j.Run.SourceIDs = []string{src.ID}
-		st.Jobs[j.ID] = j
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	code, b := agentRequest(t, f, job, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "# Index"}))
-	if code != 413 {
+	code, b := agentRequest(t, f, job, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": string(bytes.Repeat([]byte("x"), 8193))}))
+	if code != 400 || !bytes.Contains(b, []byte(`"problems"`)) {
 		t.Fatal(code, string(b))
 	}
-	keys, err := f.s.Blobs.List(context.Background(), agentJobPrefix(job))
+	keys, err := f.s.Blobs.List(t.Context(), agentJobPrefix(job))
 	if err != nil || len(keys) != 0 {
 		t.Fatal(keys, err)
 	}

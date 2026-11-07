@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/authtest"
 )
 
 type oauthTransport func(*http.Request) (*http.Response, error)
@@ -16,6 +17,7 @@ type oauthTransport func(*http.Request) (*http.Response, error)
 func (f oauthTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 	f := setup(t)
+	google := authtest.NewGoogle(t)
 	f.s.Config.Providers["google"] = auth.Provider{Name: "google", ClientID: "id", ClientSecret: "secret", RedirectURL: f.url + "/auth/google/callback"}
 	old := auth.Client
 	defer func() { auth.Client = old }()
@@ -31,14 +33,16 @@ func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 			if auth.Challenge(r.Form.Get("code_verifier")) != challenge {
 				t.Error("PKCE mismatch")
 			}
-			payload = map[string]any{"access_token": r.Form.Get("code"), "refresh_token": "refresh-secret", "expires_in": 3600}
+			payload = map[string]any{"access_token": r.Form.Get("code"), "refresh_token": "refresh-secret", "expires_in": 3600, "id_token": google.Token(t, r.Form.Get("code"), r.Form.Get("code_verifier"))}
+		case "www.googleapis.com":
+			payload = google.JWKS()
 		case "openidconnect.googleapis.com":
 			payload = map[string]any{"sub": strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), "name": "Same email", "email": providerEmail, "email_verified": true}
 		default:
 			t.Errorf("unexpected host %s", r.URL.Host)
 		}
 		b, _ := json.Marshal(payload)
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
 	})}
 	login := func(identity string) string {
 		t.Helper()

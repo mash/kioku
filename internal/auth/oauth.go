@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 type Provider struct {
@@ -25,27 +25,62 @@ type Identity struct{ ID, Name, Email string }
 
 var Client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
-func (p Provider) URL(state, verifier, purpose string) string {
-	q := url.Values{"client_id": {p.ClientID}, "redirect_uri": {p.RedirectURL}, "state": {state}, "response_type": {"code"}, "code_challenge": {Challenge(verifier)}, "code_challenge_method": {"S256"}}
-	base := "https://accounts.google.com/o/oauth2/v2/auth"
-	scope := "openid email profile"
-	if p.Name == "github" {
-		base = "https://github.com/login/oauth/authorize"
-		scope = "read:user user:email"
-		if purpose == "connect" {
-			scope += " repo"
-		}
-	} else if purpose == "connect" {
-		scope += " https://www.googleapis.com/auth/documents.readonly https://www.googleapis.com/auth/drive.readonly"
-		q.Set("access_type", "offline")
-		q.Set("prompt", "consent")
+// oauthContext preserves the provider timeout and redirect policy for token and
+// JWKS requests, including the injected transport used by tests.
+func (p Provider) oauthContext(ctx context.Context) context.Context {
+	client := p.Client
+	if client == nil {
+		client = Client
 	}
-	q.Set("scope", scope)
-	return base + "?" + q.Encode()
+	return context.WithValue(ctx, oauth2.HTTPClient, client)
 }
-func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, error) {
-	return p.token(ctx, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "code_verifier": {verifier}, "redirect_uri": {p.RedirectURL}})
+
+func (p Provider) config(purpose string) oauth2.Config {
+	endpoint, scopes := googleConfig(purpose)
+	if p.Name == "github" {
+		endpoint, scopes = githubConfig(purpose)
+	}
+
+	// Both providers accept credentials in the POST body; avoid auth-style probing.
+	endpoint.AuthStyle = oauth2.AuthStyleInParams
+	return oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: p.RedirectURL, Endpoint: endpoint, Scopes: scopes}
 }
+
+func (p Provider) URL(state, verifier, purpose string) string {
+	config := p.config(purpose)
+	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
+	if p.Name == "google" {
+		opts = append(opts, googleAuthOptions(verifier, purpose)...)
+	}
+	return config.AuthCodeURL(state, opts...)
+}
+
+func credential(token *oauth2.Token) Credential {
+	return Credential{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, ExpiresAt: token.Expiry}
+}
+
+// Exchange verifies the login identity before returning credentials to the caller.
+// ID tokens are transient and are never persisted in a session or connection.
+func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, Identity, error) {
+	ctx = p.oauthContext(ctx)
+	config := p.config("login")
+	token, err := config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
+	if err != nil {
+		return Credential{}, Identity{}, err
+	}
+	var identity Identity
+	if p.Name == "google" {
+		identity, err = p.googleLoginIdentity(ctx, token, verifier)
+	} else {
+		identity, err = p.githubIdentity(ctx, token.AccessToken)
+	}
+	if err != nil {
+		return Credential{}, Identity{}, err
+	}
+
+	return credential(token), identity, nil
+}
+
 func (p Provider) Refresh(ctx context.Context, c Credential) (Credential, error) {
 	if c.ExpiresAt.IsZero() || time.Until(c.ExpiresAt) > time.Minute {
 		return c, nil
@@ -53,87 +88,20 @@ func (p Provider) Refresh(ctx context.Context, c Credential) (Credential, error)
 	if c.RefreshToken == "" {
 		return c, errors.New("connection expired; reconnect the provider")
 	}
-	n, err := p.token(ctx, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.RefreshToken}})
-	if n.RefreshToken == "" {
-		n.RefreshToken = c.RefreshToken
-	}
-	return n, err
-}
-func (p Provider) token(ctx context.Context, q url.Values) (Credential, error) {
-	q.Set("client_id", p.ClientID)
-	q.Set("client_secret", p.ClientSecret)
-	u := "https://oauth2.googleapis.com/token"
-	if p.Name == "github" {
-		u = "https://github.com/login/oauth/access_token"
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", u, strings.NewReader(q.Encode()))
+	config := p.config("connect")
+	token := &oauth2.Token{AccessToken: c.AccessToken, RefreshToken: c.RefreshToken, Expiry: c.ExpiresAt}
+	source := oauth2.ReuseTokenSourceWithExpiry(token, config.TokenSource(p.oauthContext(ctx), token), time.Minute)
+	fresh, err := source.Token()
 	if err != nil {
 		return Credential{}, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	var r struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		Error        string `json:"error"`
-	}
-	if err = p.doJSON(req, &r); err != nil {
-		return Credential{}, err
-	}
-	if r.Error != "" || r.AccessToken == "" {
-		return Credential{}, errors.New("OAuth token exchange rejected")
-	}
-	c := Credential{AccessToken: r.AccessToken, RefreshToken: r.RefreshToken}
-	if r.ExpiresIn > 0 {
-		c.ExpiresAt = time.Now().Add(time.Duration(r.ExpiresIn) * time.Second)
-	}
-	return c, nil
+	return credential(fresh), nil
 }
 func (p Provider) Identity(ctx context.Context, token string) (Identity, error) {
 	if p.Name == "google" {
-		var r struct {
-			Sub      string `json:"sub"`
-			Name     string `json:"name"`
-			Email    string `json:"email"`
-			Verified bool   `json:"email_verified"`
-		}
-		if err := p.get(ctx, "https://openidconnect.googleapis.com/v1/userinfo", token, &r); err != nil {
-			return Identity{}, err
-		}
-		if r.Sub == "" || !r.Verified {
-			return Identity{}, errors.New("a verified Google email is required")
-		}
-		return Identity{r.Sub, r.Name, strings.ToLower(r.Email)}, nil
+		return p.googleIdentity(ctx, token)
 	}
-	var u struct {
-		ID    int64  `json:"id"`
-		Login string `json:"login"`
-		Name  string `json:"name"`
-	}
-	if err := p.get(ctx, "https://api.github.com/user", token, &u); err != nil {
-		return Identity{}, err
-	}
-	var emails []struct {
-		Email    string `json:"email"`
-		Primary  bool   `json:"primary"`
-		Verified bool   `json:"verified"`
-	}
-	if err := p.get(ctx, "https://api.github.com/user/emails", token, &emails); err != nil {
-		return Identity{}, err
-	}
-	if u.ID == 0 {
-		return Identity{}, errors.New("invalid GitHub user")
-	}
-	if u.Name == "" {
-		u.Name = u.Login
-	}
-	for _, e := range emails {
-		if e.Primary && e.Verified {
-			return Identity{fmt.Sprint(u.ID), u.Name, strings.ToLower(e.Email)}, nil
-		}
-	}
-	return Identity{}, errors.New("a verified primary GitHub email is required")
+	return p.githubIdentity(ctx, token)
 }
 func Get(ctx context.Context, u, token string, out any) error {
 	return (Provider{}).get(ctx, u, token, out)

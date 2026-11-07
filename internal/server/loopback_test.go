@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/authtest"
 	"github.com/mash/kioku/internal/model"
 )
 
 func setupLoopback(t *testing.T) *fixture {
 	t.Helper()
 	f := setupWithWorker(t, false)
+	google := authtest.NewGoogle(t)
 	f.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	f.s.Config.Providers["google"] = auth.Provider{Name: "google", ClientID: "id", ClientSecret: "secret", RedirectURL: f.url + "/auth/google/callback", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		var payload any
@@ -33,7 +35,9 @@ func setupLoopback(t *testing.T) *fixture {
 			if r.Form.Get("code") == "exchange-error" {
 				return nil, errors.New("exchange failed")
 			}
-			payload = map[string]any{"access_token": r.Form.Get("code"), "expires_in": 3600}
+			payload = map[string]any{"access_token": r.Form.Get("code"), "expires_in": 3600, "id_token": google.Token(t, r.Form.Get("code"), r.Form.Get("code_verifier"))}
+		case "www.googleapis.com":
+			payload = google.JWKS()
 		case "openidconnect.googleapis.com":
 			id := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if id == "identity-error" {
@@ -44,7 +48,7 @@ func setupLoopback(t *testing.T) *fixture {
 			return nil, fmt.Errorf("unexpected host %s", r.URL.Host)
 		}
 		b, _ := json.Marshal(payload)
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(b))}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(b))}, nil
 	})}}
 	return f
 }

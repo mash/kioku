@@ -224,19 +224,12 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		return s.loopbackFailure(w, r, pending.Device, "access_denied")
 	}
 	p := s.Config.Providers[pending.Provider]
-	credential, err := p.Exchange(r.Context(), r.URL.Query().Get("code"), pending.Verifier)
+	credential, identity, err := p.Exchange(r.Context(), r.URL.Query().Get("code"), pending.Verifier)
 	if err != nil {
 		if pending.Device != "" {
 			return s.loopbackFailure(w, r, pending.Device, "server_error")
 		}
 		return fail(502, "OAuth exchange failed; restart login")
-	}
-	identity, err := p.Identity(r.Context(), credential.AccessToken)
-	if err != nil {
-		if pending.Device != "" {
-			return s.loopbackFailure(w, r, pending.Device, "server_error")
-		}
-		return fail(502, "could not verify provider identity and primary email")
 	}
 	var uid, loopbackURL string
 	token := auth.Token()

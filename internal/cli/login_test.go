@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/authtest"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/server"
@@ -345,6 +346,7 @@ func (f *loginFixture) exchangeCount() int {
 // the resulting loopback Location. Account visibility mitigates this accepted
 // login-CSRF limitation; the exchange itself still succeeds.
 func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
+	google := authtest.NewGoogle(t)
 	dir := t.TempDir()
 	db, err := store.Open(dir)
 	if err != nil {
@@ -356,7 +358,7 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := auth.Provider{Name: "google", ClientID: "id", ClientSecret: "secret", Client: &http.Client{Transport: loginOAuthTransport(func(r *http.Request) (*http.Response, error) {
-		var payload map[string]any
+		var payload any
 		switch r.URL.Host {
 		case "oauth2.googleapis.com":
 			if err := r.ParseForm(); err != nil {
@@ -365,14 +367,16 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 			if r.Form.Get("code") != "attacker-authorization-code" {
 				t.Error("unexpected provider code")
 			}
-			payload = map[string]any{"access_token": "attacker-provider-token", "expires_in": 3600}
+			payload = map[string]any{"access_token": "attacker-provider-token", "expires_in": 3600, "id_token": google.Token(t, "attacker-id", r.Form.Get("code_verifier"))}
+		case "www.googleapis.com":
+			payload = google.JWKS()
 		case "openidconnect.googleapis.com":
 			payload = map[string]any{"sub": "attacker-id", "name": "Attacker <script>", "email": "attacker@example.com", "email_verified": true}
 		default:
 			return nil, fmt.Errorf("unexpected provider request: %s", r.URL.Host)
 		}
 		body, _ := json.Marshal(payload)
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
 	s := server.New(server.Config{Providers: map[string]auth.Provider{"google": provider}}, db, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
 	ts := httptest.NewServer(s.Handler())

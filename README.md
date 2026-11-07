@@ -60,7 +60,7 @@ You can run your own server, but self-hosting is not supported. There is no comp
 4. Put a TLS proxy in front of port 8080 for the origin in `KIOKU_BASE_URL`.
 5. Log in with `kioku --server <KIOKU_BASE_URL> login`.
 
-The server keeps its catalog in SQLite and needs one host with a persistent disk. Set `KIOKU_STORAGE=local` to store project data under `/data/objects`, or `KIOKU_STORAGE=s3` with the required `S3_*` settings to use S3. These backends are mutually exclusive; S3 does not use a local content cache. Wiki generation with Anthropic Managed Agents is optional. The sections below describe the settings, storage and backups in detail (in Japanese).
+The server keeps its catalog in SQLite and needs one host with a persistent disk. Storage defaults to local: project data is stored under `<KIOKU_DATA>/objects` (`./data/objects` without configuration). Set `KIOKU_STORAGE=s3` with the required `S3_*` settings to use S3. These backends are mutually exclusive; S3 does not use a local content cache. Wiki generation with Anthropic Managed Agents is optional. The sections below describe the settings, storage and backups in detail (in Japanese).
 
 ## License
 
@@ -273,7 +273,7 @@ export S3_ACCESS_KEY_ID=...
 export S3_SECRET_ACCESS_KEY=...
 ```
 
-`KIOKU_STORAGE=local|s3` または `kiokud --storage=local|s3` で保存先を選択します（指定必須、フラグ優先）。localではS3設定を拒否し、s3では資格情報の不足を拒否します。保存先障害時の自動切り替えはありません。既存環境も新しい設定名へ更新し、`KIOKU_STORAGE` を明示してください。S3互換サービスの違いは `S3_ENDPOINT`・`S3_REGION` などの設定値で指定します。設定変更はデータ移行を行わないため、既存データの切り替えには停止・データ移送・カタログの保存先情報の整合が必要です。旧 `cache/` は使用しません。
+`KIOKU_STORAGE=local|s3` または `kiokud --storage=local|s3` で保存先を選択します（未指定はlocal、フラグ優先）。保存ディレクトリも未指定なら `./data/objects/` を使います。localではS3設定を拒否し、s3では資格情報の不足を拒否します。保存先障害時の自動切り替えはありません。S3を使う場合は `KIOKU_STORAGE=s3` を明示してください。S3互換サービスの違いは `S3_ENDPOINT`・`S3_REGION` などの設定値で指定します。設定変更はデータ移行を行わないため、既存データの切り替えには停止・データ移送・カタログの保存先情報の整合が必要です。旧 `cache/` は使用しません。
 
 事前作成した非公開の `S3_BUCKET` に、`projects/<project-id>/` プレフィックスでデータを保存します。バケット名とルートはSQLiteに記録します。S3 の資格情報は対象バケットの Object Read & Write に限定できます。バケットの作成・削除はアプリでは行いません。
 

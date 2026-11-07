@@ -53,7 +53,7 @@ Source `updated_at` and project `sources_updated_at` advance only for material a
 
 ## Storage selection and recovery
 
-Select `KIOKU_STORAGE=local|s3` (or `--storage`, which takes precedence). Backend selection is required; S3 credentials with local selected are rejected. S3 requires all credentials and writes directly to remote storage without a local content cache or fallback. Existing S3 deployments must explicitly select s3. Changing this setting does not migrate existing objects or catalog bucket mappings. Old cache files are unused.
+Select `KIOKU_STORAGE=local|s3` (or `--storage`, which takes precedence). The default is local, storing objects in `<KIOKU_DATA>/objects` (`./data/objects` when the data directory is also unset). S3 credentials with local selected are rejected. S3 requires all credentials and writes directly to remote storage without a local content cache or fallback. Existing S3 deployments must explicitly select s3. Changing this setting does not migrate existing objects or catalog bucket mappings. Old cache files are unused.
 
 Queued/running jobs live in project storage. URL and deterministic generation jobs return to their queues at startup. URL jobs have a two-minute deadline and deterministic generation has a five-minute execution timeout. Managed generation has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts the session and immediately proceeds to another project; intake jobs use their separate workers.
 

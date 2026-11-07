@@ -32,7 +32,7 @@ func main() {
 }
 func run() error {
 	addr := flag.String("addr", env("KIOKU_ADDR", "127.0.0.1:8080"), "listen address")
-	storage := flag.String("storage", env("KIOKU_STORAGE", ""), "required object storage backend: local or s3")
+	storage := flag.String("storage", env("KIOKU_STORAGE", string(blob.BackendLocal)), "object storage backend: local or s3")
 	dir := flag.String("data", env("KIOKU_DATA", "./data"), "persistent metadata directory")
 	onlineBackup := flag.String("online-backup", "", "request an online configuration backup from the running server")
 	adminSocket := flag.String("admin-socket", "", "operator Unix socket (default DATA/admin.sock)")

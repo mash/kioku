@@ -32,6 +32,7 @@ put saves sources; --wait waits for intake only. Changed projects generate perio
 Use generate --wait to generate immediately and pull the completed wiki.
 All project members can read submitted sources and generated content.
 The cwd .kioku/config selects server and namespace; no parent directory search.
+For login, connect and agent login, non-default servers require --server or KIOKU_SERVER.
 Default server: https://kioku.magicians.ee
 wiki/, maps/ and inbox/ live in cwd; transfer metadata lives in .kioku/.
 Credentials are stored per server in ~/.config/kioku/auth.

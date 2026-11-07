@@ -101,6 +101,13 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if _, err := normalizeOrigin(a.Config.Server); err != nil {
 		return err
 	}
+	// Project configuration may come from an untrusted checkout. It cannot
+	// authorize sending login codes or establishing credentials on another server.
+	authenticating := commands[0] == "login" || commands[0] == "connect" ||
+		(len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login")
+	if authenticating && !a.ServerExplicit && a.Config.Server != defaultServer {
+		return fmt.Errorf("authentication server %q comes from .kioku/config; explicitly select a trusted server with --server or KIOKU_SERVER", a.Config.Server)
+	}
 	switch {
 	case commands[0] == "login", len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login":
 		// Login commands select no credential, so a damaged file cannot block them.

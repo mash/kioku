@@ -63,7 +63,7 @@ func TestUnavailableWebSourceRequiresFileInput(t *testing.T) {
 				return &http.Response{StatusCode: tc.status, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})}
 			_, err := f.Fetch(context.Background(), "https://example.com/artifact", "")
-			if err == nil || !strings.Contains(err.Error(), "kioku put <file>") {
+			if err == nil || !strings.Contains(err.Error(), "kioku put --source-url <original-URL> <file>") {
 				t.Fatalf("expected a file-put instruction, got %v", err)
 			}
 		})

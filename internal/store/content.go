@@ -206,10 +206,8 @@ func (s *Store) loadContent(pid string) error {
 		}
 	}
 	for _, src := range c.Sources {
-		for _, key := range []blob.Key{src.OriginalKey, src.TextKey} {
-			if key != "" && !strings.HasPrefix(string(key), "projects/"+pid+"/") {
-				return errors.New("cross-project source object reference")
-			}
+		if src.TextKey != "" && !strings.HasPrefix(string(src.TextKey), "projects/"+pid+"/") {
+			return errors.New("cross-project source object reference")
 		}
 	}
 	if c.Wiki != nil {

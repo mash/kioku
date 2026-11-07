@@ -51,7 +51,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		t.Fatal(c)
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: "Project A evidence"}}}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: "Project A evidence", SourceURL: testSourceURL("evidence.md", "Project A evidence")}}}, &job); c != 202 {
 		t.Fatal(c)
 	}
 	job = f.generate(a.ID, human, false)
@@ -115,7 +115,7 @@ func TestWriteAgentIsFileOnlyAndRevocationStopsQueuedWork(t *testing.T) {
 		}
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "note.md", Content: "Authorized file"}}}, &job); c != 202 || job.AgentID != id {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "note.md", Content: "Authorized file", SourceURL: testSourceURL("note.md", "Authorized file")}}}, &job); c != 202 || job.AgentID != id {
 		t.Fatal(c, job)
 	}
 	job = f.generate(p.ID, token, false)

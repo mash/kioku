@@ -74,7 +74,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	content := "MixedCaseNeedle\n" + strings.Repeat("界", 12000) + "\n" + strings.Repeat("FloodNeedle\n", 55) + "ẞ" + strings.Repeat("x", 300) + "DeepNeedle" + "Ⱥ" + strings.Repeat("y", 300)
 	var put model.Job
 	base := "/api/projects/" + project.ID
-	if code := f.request("POST", base+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: content}}}, &put); code != 202 {
+	if code := f.request("POST", base+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "evidence.md", Content: content, SourceURL: testSourceURL("evidence.md", content)}}}, &put); code != 202 {
 		t.Fatal("put source", code)
 	}
 	if msg := connectorTool(t, f, access, "wiki_read", args, nil); msg != "wiki not generated yet; read wiki/inbox.md" {
@@ -235,7 +235,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			human := f.login("owner@example.com")
 			project := securityProject(t, f, human)
 			base := "/api/projects/" + project.ID
-			if code := f.request("POST", base+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "initial.md", Content: "Initial evidence"}}}, nil); code != 202 {
+			if code := f.request("POST", base+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "initial.md", Content: "Initial evidence", SourceURL: testSourceURL("initial.md", "Initial evidence")}}}, nil); code != 202 {
 				t.Fatal("initial put", code)
 			}
 			f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
@@ -276,7 +276,8 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 				JobID     string   `json:"job_id"`
 				SourceIDs []string `json:"source_ids"`
 			}
-			args := map[string]any{"project": project.Namespace, "name": "record.md", "content": "A new shared record"}
+			content := "---\nsource_url: https://example.com/record\n---\nA new shared record"
+			args := map[string]any{"project": project.Namespace, "name": "record.md", "content": content}
 			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result.JobID == "" || len(result.SourceIDs) != 1 {
 				t.Fatal("source put", msg, result)
 			}
@@ -291,7 +292,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			found := false
 			for _, src := range sources {
 				if src.ID == result.SourceIDs[0] {
-					found = src.Title == "record.md" && src.ContentHash == auth.Hash("A new shared record") && src.CreatedBy == job.UserID
+					found = src.Title == "record.md" && src.ContentHash == auth.Hash(content) && src.URL == "https://example.com/record" && src.CreatedBy == job.UserID
 				}
 			}
 			if !found {
@@ -340,6 +341,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 	}{
 		{map[string]any{"project": project.Namespace, "name": "record.pdf", "content": "text"}, "record.pdf: unsupported file extension; use text, Markdown, HTML or code"},
 		{map[string]any{"project": project.Namespace, "name": "record.md"}, "unknown tool or invalid arguments"},
+		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "record.md: original source URL is required: use source_url frontmatter or --source-url"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": ""}, "record.md: source is empty"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "text", "url": "https://example.com"}, "unknown tool or invalid arguments"},
 	} {

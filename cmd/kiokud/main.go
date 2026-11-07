@@ -38,7 +38,7 @@ func run() error {
 	adminSocket := flag.String("admin-socket", "", "operator Unix socket (default DATA/admin.sock)")
 	backup := flag.String("backup", "", "write a configuration-only SQLite backup, then exit (offline operator command)")
 	maxSources := flag.Int("max-sources", 200, "maximum sources per project")
-	maxBytes := flag.Int64("max-source-bytes", 64<<20, "maximum original and extracted bytes per project")
+	maxBytes := flag.Int64("max-source-bytes", 64<<20, "maximum extracted text and source metadata bytes per project")
 	maxJobs := flag.Int("max-jobs", 20, "maximum queued/running generation jobs per project")
 	generateEvery := flag.Duration("generate-every", 24*time.Hour, "periodic generation interval for changed projects; 0 disables scheduling")
 	intakeWorkers := flag.Int("intake-workers", 4, "concurrent URL fetch workers")

@@ -66,10 +66,10 @@ Manage issued agent credentials with `kioku agent list` and `kioku agent revoke 
 
 | Credential | Allowed |
 | --- | --- |
-| Read | Its own identity metadata; only its selected project in project listings; that project's snapshots, source originals/extracted text, jobs, and technical usage; logout of itself |
+| Read | Its own identity metadata; only its selected project in project listings; that project's snapshots, source extracted text, jobs, and technical usage; logout of itself |
 | Write | Everything above, plus file puts, explicit generation and retrying jobs in the same project |
 
-Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes, issuing credentials, and Google/GitHub connections. Agents cannot put or refresh URLs: delegating a user's broad provider connection could expose unrelated documents or repositories. Supply authorized original contents as files instead.
+Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes, issuing credentials, and Google/GitHub connections. Agents cannot put or refresh URLs: delegating a user's broad provider connection could expose unrelated documents or repositories. Supply authorized extracted text as files instead, with the original source URL in `source_url` frontmatter or `--source-url`. This provenance URL is stored but is not fetched for file submissions.
 
 All existing source material in the selected project is readable, consistent with project membership. Writes may consume the organization's existing budget; an agent cannot increase that budget.
 

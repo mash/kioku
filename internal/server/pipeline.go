@@ -20,6 +20,9 @@ import (
 func (s *Server) storeSources(ctx context.Context, docs []source.Document, job model.Job) (model.Job, error) {
 	pid, uid := job.ProjectID, job.UserID
 	for _, doc := range docs {
+		if err := source.ValidateSourceURL(doc.URL); err != nil {
+			return job, fail(400, err.Error())
+		}
 		if len(doc.Title) > 1024 || len(doc.URL) > 4096 {
 			return job, fail(400, "source title or URL is too long")
 		}
@@ -82,13 +85,13 @@ func (s *Server) storeSources(ctx context.Context, docs []source.Document, job m
 			if id == "" {
 				id = auth.Token()[:20]
 				prefix := blob.Key("projects/" + pid + "/sources/" + id + "/")
-				src := model.Source{ID: id, ProjectID: pid, Title: doc.Title, URL: doc.URL, Kind: doc.Kind, Version: doc.Version, ContentHash: hash, OriginalKey: prefix + "original", TextKey: prefix + "extracted.txt", MediaType: doc.MediaType, Bytes: int64(len(doc.Original) + len(doc.Text) + len(doc.Title) + len(doc.URL)), StoredBytes: int64(len(doc.Original) + len(doc.Text)), CreatedBy: uid, Created: time.Now().UTC()}
+				src := model.Source{ID: id, ProjectID: pid, Title: doc.Title, URL: doc.URL, Kind: doc.Kind, Version: doc.Version, ContentHash: hash, TextKey: prefix + "extracted.md", MediaType: "text/markdown", Bytes: int64(len(doc.Text) + len(doc.Title) + len(doc.URL)), StoredBytes: int64(len(doc.Text)), CreatedBy: uid, Created: time.Now().UTC()}
 				upload.Sources = append(upload.Sources, src)
 				known[id] = src
 				documents[id] = doc
 			}
 			upload.Job.SourceIDs = append(upload.Job.SourceIDs, id)
-			if doc.URL != "" {
+			if doc.URL != "" && doc.Kind != "file" {
 				upload.Heads[doc.URL] = id
 			}
 		}
@@ -146,9 +149,6 @@ func (s *Server) storeSources(ctx context.Context, docs []source.Document, job m
 	}()
 	for _, src := range upload.Sources {
 		doc := documents[src.ID]
-		if err = s.Blobs.Put(ctx, src.OriginalKey, doc.Original); err != nil {
-			return job, err
-		}
 		if err = s.Blobs.Put(ctx, src.TextKey, []byte(doc.Text)); err != nil {
 			return job, err
 		}
@@ -174,7 +174,7 @@ func (s *Server) storeSources(ctx context.Context, docs []source.Document, job m
 		changed := false
 		for _, src := range upload.Sources {
 			src.UpdatedAt = now
-			if src.URL == "" {
+			if src.URL == "" || src.Kind == "file" {
 				changed = true
 			}
 			st.Sources[src.ID] = src
@@ -426,7 +426,7 @@ func (s *Server) process(ctx context.Context, job model.Job) (string, error) {
 	// latest version feeds the current wiki.
 	latest := map[string]string{}
 	for _, src := range all {
-		if src.URL != "" {
+		if src.URL != "" && src.Kind != "file" {
 			latest[src.URL] = src.ID
 		}
 	}
@@ -435,7 +435,7 @@ func (s *Server) process(ctx context.Context, job model.Job) (string, error) {
 	}
 	active := all[:0]
 	for _, src := range all {
-		if src.URL == "" || latest[src.URL] == src.ID {
+		if src.Kind == "file" || src.URL == "" || latest[src.URL] == src.ID {
 			active = append(active, src)
 		}
 	}
@@ -667,18 +667,11 @@ func (s *Server) sourceContent(w http.ResponseWriter, r *http.Request, uid strin
 	if err != nil {
 		return err
 	}
-	key := src.TextKey
-	switch r.PathValue("format") {
-	case "text":
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	case "original":
-		key = src.OriginalKey
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", `attachment; filename="source-original"`)
-	default:
+	if r.PathValue("format") != "text" {
 		return fail(404, "unknown source format")
 	}
-	b, err := s.Blobs.Get(r.Context(), key)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	b, err := s.Blobs.Get(r.Context(), src.TextKey)
 	if err != nil {
 		return err
 	}

@@ -114,11 +114,12 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			}, "required": []string{"project", "query"}, "additionalProperties": false},
 		}, map[string]any{
 			"name":        "source_put",
-			"description": "Save one UTF-8 text file (.md, .txt, .html, code; at most 4 MiB) as a new source in a Kioku project. The wiki includes the source after the next generation; this tool does not start one. Use it for records the user may share with the project team.",
+			"description": "Save extracted Markdown and its original source URL from one UTF-8 text file (.md, .txt, .html, code; at most 4 MiB) as a new source in a Kioku project. The wiki includes the source after the next generation; this tool does not start one. Use it for records the user may share with the project team.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
-				"project": map[string]any{"type": "string"},
-				"name":    map[string]any{"type": "string"},
-				"content": map[string]any{"type": "string"},
+				"project":    map[string]any{"type": "string"},
+				"name":       map[string]any{"type": "string"},
+				"content":    map[string]any{"type": "string"},
+				"source_url": map[string]any{"type": "string", "description": "Original source HTTPS URL. Required unless content has source_url YAML frontmatter."},
 			}, "required": []string{"project", "name", "content"}, "additionalProperties": false},
 		}}}
 	case "tools/call":

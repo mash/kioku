@@ -75,7 +75,7 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	} else {
 		docs := make([]source.Document, 0, len(req.Files))
 		for _, f := range req.Files {
-			doc, err := source.File(f.Name, f.Content)
+			doc, err := source.FileWithURL(f.Name, f.Content, f.SourceURL)
 			if err != nil {
 				return fail(400, fmt.Sprintf("%s: %v", f.Name, err))
 			}

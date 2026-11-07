@@ -106,10 +106,12 @@ API／HTTPで原資料を取得します。クラウドから本文を取得で�
 ./bin/kioku share invite bob@example.com
 ```
 
-表示されたプロジェクトディレクトリの `inbox/` にMarkdownなどを置きます。
+原資料の投入には2つの方法があります。Kioku が取得できる Google Docs や GitHub の資料はURLを渡します。非公開資料でも、利用者が接続を認可し、その資料を読む権限があれば取得できます。Artifact など Kioku が直接取得できない資料は、スキルを実行するエージェントが本文を抽出し、原本URLを YAML frontmatter に含む Markdown を渡します。具体例は[原資料](#原資料)を参照してください。
+
+例えば、GitHub にある Kioku の README を取り込み、Wiki を生成して開くには:
 
 ```bash
-./bin/kioku put --wait
+./bin/kioku put --wait https://github.com/mash/kioku/blob/main/README.md
 ./bin/kioku generate --wait
 ./bin/kioku status
 ./bin/kioku pull
@@ -119,8 +121,7 @@ API／HTTPで原資料を取得します。クラウドから本文を取得で�
 プロジェクトのメンバーは、投入された全原資料と生成Wikiを閲覧できます。投入時の追加フラグや個別の共有設定はありません。投入した内容は設定したLLM事業者にも送信されます。変更のないinboxファイルは再送しません。
 
 ```bash
-kioku put ./notes.md ./export/
-kioku put --wait ./notes.md   # Wait for source storage only
+kioku put --wait ./payment-api-design.md  # Artifactから抽出した設計書（下のfrontmatter例）
 kioku generate --wait         # Generate now and pull the wiki
 kioku job status <job-id>
 kioku job wait <job-id>
@@ -170,43 +171,62 @@ kioku connect github
 
 ## 原資料
 
+### 1. Kioku が取得できる資料はURLを渡す
+
+Google Docs の議事録や GitHub の設計書は、そのURLを投入します。公開・非公開ではなく、Kioku が本文を取得できるかで選びます。非公開資料には利用者の Google／GitHub 接続の認可と、その資料への閲覧権限が必要です。
+
 ```bash
-kioku put 'https://docs.google.com/document/d/ID/edit'
-kioku put 'https://github.com/owner/repo/blob/main/README.md'
-kioku put 'https://公開されたサイトのURL'
+# 接続を認可する（初回）
+kioku connect google
+kioku connect github
+
+# Google Docsの議事録（<document-id>を実際のIDに置き換える）
+kioku put --wait 'https://docs.google.com/document/d/<document-id>/edit'
+
+# GitHub上のKioku README
+kioku put --wait https://github.com/mash/kioku/blob/main/README.md
+```
+
+Kioku の取り込みワーカーが認可済みの接続で取得し、抽出テキストを保存します。`put --wait` は取り込みの完了まで待ち、Wiki生成は開始しません。定期生成を待つか、`kioku generate --wait` で直ちに生成できます。同じURLを再投入すると内容を再取得します。
+
+| 種類 | 抽出する内容 |
+| --- | --- |
+| Google Docs | 本文・表・タブのテキスト |
+| GitHub | ファイル、リポジトリURLのREADME、Issue／PRの説明と先頭100件までのIssueコメント |
+| その他のHTTPS URL | HTTPで取得できるHTML／テキスト |
+
+通常のHTTP取得は、認証済みブラウザのCookieを使用せず、JavaScriptも実行しません。GitHubのPR差分・インラインレビュー・リポジトリ全体の収集は対象外です。`/` を含むブランチ名はcommit SHAのファイルURLを使ってください。HTTP取得はDNS解決したIPに固定して接続し、プライベート／予約アドレス・任意ポートを拒否します。
+
+### 2. Kioku が取得できない資料は、エージェントが抽出して渡す
+
+例えば、Claude Artifact で作成した「決済APIの設計書」は、Kioku のワーカーから本文を取得できない場合があります。この場合は、スキルを実行するエージェントが利用者の許可されたコネクターや画面から本文を読み、`payment-api-design.md` に書いて投入します。
+
+原本URLは YAML frontmatter の `source_url` に一度だけ記録します。以下の `<Artifact画面からコピーしたURL>` は実際のHTTPS URLに置き換えます。
+
+```markdown
+---
+source_url: "<Artifact画面からコピーしたURL>"
+retrieved_at: "2026-11-07"
+---
+# 決済APIの設計書
+
+（Artifactから実際に抽出した本文）
+```
+
+```bash
+kioku put --wait ./payment-api-design.md
+kioku generate --wait
 kioku open
 ```
 
-原資料の閲覧・本文の確認・ダウンロードは、`kioku open` で開く認証済みWeb Wikiビューアーを使います。URLの内容を再取得する場合は、同じURLを `kioku put` でもう一度投入してください。
+ファイル投入では、Kioku は frontmatter のURLを取得しに行きません。渡された本文を保存し、URLを出典として保持します。本文を読めなかった場合は推測で補わず、未取得と報告します。URLがない場合も捏造せず、投入を保留します。本文中に重複した `Source:` 行を書く必要はありません。
 
-| 種類 | 取得するもの |
-| --- | --- |
-| ファイル | UTF-8のMarkdown、テキスト、HTML、JSON、Go/JS/TS等のコード、YAML、CSV、CSS |
-| Google Docs | 本文・表・タブのテキストと、取得時点のAPIレスポンス |
-| GitHub | ファイル、リポジトリURLのREADME、Issue／PRの説明と先頭100件までのIssueコメント |
-| 公開Claude Artifacts／Codex Sites等 | HTTPで取得できるHTML／テキスト。取得できない内容はMarkdown等に書いてファイル投入 |
+スキルの agent 認証では、利用者の Google／GitHub 接続を代理利用できないため、ファイル投入を使います。MCP の `source_put` でも、同じ frontmatter を含む Markdown を `content` に渡します。
 
-公開URL取得は認証済みブラウザのCookieを使用しません。ログイン必須ページはエクスポートファイルを投入してください。画面のボタンを操作してしか出ない内容・アプリ内部のコードやデータを完全に収集する機能ではありません。GitHubのPR差分・インラインレビュー・リポジトリ全体の自動収集も範囲外です。`/` を含むブランチ名はcommit SHAのファイルURLを使ってください。
-
-公開URL取得はHTTPSに限定し、DNS解決したIPに固定して接続します。プライベート／予約アドレス・任意ポートを拒否します。JavaScriptの実行やブラウザ自動操作は行いません。
-
-クラウドから本文を取得できない場合は、原資料の内容をファイルに書き、元URL・取得日を添えて投入します。本文を取得できていない状態で、内容を推測したりURLだけを原資料として扱ったりしません。
-
-```markdown
-# Artifactの内容
-
-Source: https://元資料のURL
-Retrieved: 2026-10-30
-
-（ユーザーが提供した原資料の本文）
-```
-
-```bash
-kioku put ./artifact-notes.md
-```
+複数の抽出ファイルは `inbox/` に置き、引数なしの `kioku put --wait` で変更分を投入できます。各ファイルに `source_url` が必要です。原資料の抽出テキストと出典リンクは `kioku open` の認証済みWebビューアーから参照できます。
 
 
-原資料は取得時点の版を保存します。同じURLを更新したときは最後に取得した内容をWiki生成に使用し、過去の原本は保存します。A → B → Aと戻った場合もAを現在の版とし、原本自体は重複保存しません。
+原本ファイルは保存せず、出典URLと取得時点の抽出テキストを `extracted.md` に保存します。URLを直接投入して更新したときは最後に取得した版をWiki生成に使用し、過去の抽出テキストも保持します。A → B → Aと戻った場合もAを現在の版とし、同一の内容は重複保存しません。新規資料は抽出テキストとタイトル・URLを容量に計上します。ファイル投入では同じ出典URLを参照する別々のメモも保持し、Wiki生成に使用します。
 
 ## Wikiとマップ
 
@@ -223,7 +243,7 @@ export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 
 kiokud は原資料・差分・既存 Wiki をジョブ専用の tar にまとめ、隔離されたエージェントが取得して生成物を返します。通常は増分生成です。`kioku generate --full --wait` は同じ原資料でも全体を作り直します。出力は完全なページ集合で、省略されたページは削除されます。原資料ページと出典一覧・リンクマップはサーバーが付けます。重要な判断は引用元の原資料を確認してください。
 
-生成物は `wiki/*.md`、`maps/graph.json`、`maps/graph.mmd`。Web画面でMarkdownとクリックできるSVGマップを表示し、ページを検索できます。原資料の抽出テキストと原本も、プロジェクト権限を確認して配信します。未信頼HTMLやJavaScriptを閲覧者のブラウザで実行しません。
+生成物は `wiki/*.md`、`maps/graph.json`、`maps/graph.mmd`。Web画面でMarkdownとクリックできるSVGマップを表示し、ページを検索できます。原資料の抽出テキストは、プロジェクト権限を確認して配信します。原本は出典URLから参照します。未信頼HTMLやJavaScriptを閲覧者のブラウザで実行しません。
 
 保存前に容量と待機ジョブ数を予約し、拒否された投入ではオブジェクトを書きません。途中失敗・中断した投入は永続的な予約として残し、削除が完了するまで容量に計上します。再起動後も回収を再試行します。`kioku usage` で予約容量も確認できます。
 
@@ -259,7 +279,7 @@ export S3_SECRET_ACCESS_KEY=...
 
 ```text
 <project-bucket>/projects/<project-id>/
-  sources/<source-id>/{original,extracted.txt}
+  sources/<source-id>/extracted.md
   wiki/index.md
   wiki/*.md
   wiki/inbox/<sequence>-<entry-id>.json  # putの追記専用ログ
@@ -295,7 +315,7 @@ kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
 kioku usage
 kioku audit                             # ownerのみ
 kioku maintenance             # owner: currentを含む20リビジョンを保持、GC
-kioku source remove --yes <source-id>   # owner: 原本と旧生成物を削除し再生成
+kioku source remove --yes <source-id>   # owner: 保存した資料と旧生成物を削除し再生成
 kioku delete --yes                      # owner: プロジェクトと専用バケットを削除
 kioku doctor                            # ストレージ往復とGoogle/GitHub接続確認
 kioku doctor --llm                      # Managed Agents の設定確認（API 呼出しなし）

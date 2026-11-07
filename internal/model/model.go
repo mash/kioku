@@ -157,7 +157,6 @@ type Source struct {
 	Kind        string    `json:"kind"`
 	Version     string    `json:"version"`
 	ContentHash string    `json:"content_hash"`
-	OriginalKey blob.Key  `json:"original_key"`
 	TextKey     blob.Key  `json:"text_key"`
 	MediaType   string    `json:"media_type"`
 	CreatedBy   string    `json:"created_by"`
@@ -244,8 +243,9 @@ func NewState() State {
 }
 
 type FileInput struct {
-	Name    string `json:"name"`
-	Content string `json:"content"`
+	SourceURL string `json:"source_url,omitempty"`
+	Name      string `json:"name"`
+	Content   string `json:"content"`
 }
 type PutRequest struct {
 	Files []FileInput `json:"files,omitempty"`

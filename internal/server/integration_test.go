@@ -178,7 +178,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("POST", base+"/invites", bob, map[string]string{}, nil); code != 403 {
 		t.Fatalf("member cannot invite: %d", code)
 	}
-	req := model.PutRequest{Files: []model.FileInput{{Name: "decisions.md", Content: "# Decision\nWe use Go and S3."}}}
+	req := model.PutRequest{Files: []model.FileInput{{Name: "decisions.md", Content: "# Decision\nWe use Go and S3.", SourceURL: testSourceURL("decisions.md", "# Decision\nWe use Go and S3.")}}}
 	if code := f.request("POST", base+"/put", eve, req, nil); code != 404 {
 		t.Fatalf("nonmember put: %d", code)
 	}
@@ -246,7 +246,7 @@ func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			var j model.Job
-			code := f.request("POST", base+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: fmt.Sprintf("note-%d.md", i), Content: fmt.Sprintf("Unique note %d", i)}}}, &j)
+			code := f.request("POST", base+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: fmt.Sprintf("note-%d.md", i), Content: fmt.Sprintf("Unique note %d", i), SourceURL: testSourceURL(fmt.Sprintf("note-%d.md", i), fmt.Sprintf("Unique note %d", i))}}}, &j)
 			if code != 202 {
 				t.Errorf("put %d", code)
 			}

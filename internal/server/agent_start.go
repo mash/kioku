@@ -56,7 +56,7 @@ func (s *Server) agentSnapshot(job model.Job) (generationSnapshot, error) {
 	})
 	latest := map[string]string{}
 	for _, src := range in.sources {
-		if src.URL != "" {
+		if src.URL != "" && src.Kind != "file" {
 			latest[src.URL] = src.ID
 		}
 	}
@@ -65,7 +65,7 @@ func (s *Server) agentSnapshot(job model.Job) (generationSnapshot, error) {
 	}
 	active := in.sources[:0]
 	for _, src := range in.sources {
-		if src.URL == "" || latest[src.URL] == src.ID {
+		if src.Kind == "file" || src.URL == "" || latest[src.URL] == src.ID {
 			active = append(active, src)
 		}
 	}

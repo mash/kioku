@@ -153,7 +153,7 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 func TestAgentOutputIncludesSourcePagesInSizeLimit(t *testing.T) {
 	f, raw, job, _, _ := generatorFixture(t)
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
-	src := model.Source{ID: "large", ProjectID: job.ProjectID, TextKey: blob.Key("projects/" + job.ProjectID + "/sources/large/extracted.txt")}
+	src := model.Source{ID: "large", ProjectID: job.ProjectID, TextKey: blob.Key("projects/" + job.ProjectID + "/sources/large/extracted.md")}
 	if err := f.s.Blobs.Put(context.Background(), src.TextKey, bytes.Repeat([]byte("x"), 64<<20)); err != nil {
 		t.Fatal(err)
 	}

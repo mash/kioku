@@ -19,7 +19,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Operations"}, &p)
 	base := "/api/projects/" + p.ID
 	var job model.Job
-	input := model.PutRequest{Files: []model.FileInput{{Name: "one.md", Content: "One source"}}}
+	input := model.PutRequest{Files: []model.FileInput{{Name: "one.md", Content: "One source", SourceURL: testSourceURL("one.md", "One source")}}}
 	if c := f.request("POST", base+"/put", token, input, &job); c != 202 {
 		t.Fatal(c)
 	}

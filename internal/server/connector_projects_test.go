@@ -227,7 +227,7 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 	shared := consentProject(t, f, owner, "shared")
 	joinConsentProject(t, f, shared.ID, owner, human)
 	deleting := consentProject(t, f, human, "deleting")
-	if status := f.request("POST", "/api/projects/"+shared.ID+"/put", owner, model.PutRequest{Files: []model.FileInput{{Name: "secret.md", Content: "ungranted text"}}}, nil); status != 202 {
+	if status := f.request("POST", "/api/projects/"+shared.ID+"/put", owner, model.PutRequest{Files: []model.FileInput{{Name: "secret.md", Content: "ungranted text", SourceURL: testSourceURL("secret.md", "ungranted text")}}}, nil); status != 202 {
 		t.Fatal("prepare ungranted source", status)
 	}
 	if err := f.db.Update(func(st *model.State) error {

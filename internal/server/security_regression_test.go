@@ -259,7 +259,7 @@ func TestRejectedUploadsWriteNoObjects(t *testing.T) {
 	p := securityProject(t, f, token)
 	f.s.Config.MaxBytes = 1
 	for i := 0; i < 3; i++ {
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "over-quota.md", Content: "Rejected"}}}, nil); c != 413 {
+		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "over-quota.md", Content: "Rejected", SourceURL: testSourceURL("over-quota.md", "Rejected")}}}, nil); c != 413 {
 			t.Fatal(c)
 		}
 	}
@@ -308,7 +308,7 @@ func TestFailedUploadsAreCleanedOrRemainReserved(t *testing.T) {
 			p := securityProject(t, f, token)
 			objects := &failingUploadStore{Store: f.s.Blobs, failDelete: outage}
 			f.s.Blobs = objects
-			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "source.md", Content: "Evidence"}}}, nil); c != 500 {
+			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: "source.md", Content: "Evidence", SourceURL: testSourceURL("source.md", "Evidence")}}}, nil); c != 500 {
 				t.Fatal(c)
 			}
 			var reserved int
@@ -377,7 +377,7 @@ func TestURLRefreshAtoBtoAUsesLatestObservationWithoutDuplicateObjects(t *testin
 		t.Fatal("duplicate content was uploaded again")
 	}
 	keys, err := f.s.Blobs.List(context.Background(), "projects/"+p.ID+"/sources/")
-	if err != nil || len(keys) != 4 {
+	if err != nil || len(keys) != 2 {
 		t.Fatal("duplicate object writes", keys, err)
 	}
 	_ = f.db.View(func(st model.State) error {
@@ -407,14 +407,14 @@ func TestInterruptedUploadRecoveryAndGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	src := model.Source{ID: "interrupted", ProjectID: p.ID, Bytes: 40, OriginalKey: blob.Key("projects/" + p.ID + "/sources/interrupted/original"), TextKey: blob.Key("projects/" + p.ID + "/sources/interrupted/text")}
+	src := model.Source{ID: "interrupted", ProjectID: p.ID, Bytes: 40, TextKey: blob.Key("projects/" + p.ID + "/sources/interrupted/text")}
 	if err = f.db.Update(func(st *model.State) error {
 		st.Uploads["interrupted"] = model.Upload{ID: "interrupted", ProjectID: p.ID, Sources: []model.Source{src}, Job: model.Job{ID: "j", ProjectID: p.ID}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.s.Blobs.Put(context.Background(), src.OriginalKey, []byte("partially uploaded")); err != nil {
+	if err = f.s.Blobs.Put(context.Background(), src.TextKey, []byte("partially uploaded")); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest("GET", "/", nil)
@@ -475,14 +475,14 @@ func TestWorkerRecoversUnfinishedUploadOnStartup(t *testing.T) {
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
-	src := model.Source{ID: "unfinished", ProjectID: p.ID, Bytes: 40, OriginalKey: blob.Key("projects/" + p.ID + "/sources/unfinished/original"), TextKey: blob.Key("projects/" + p.ID + "/sources/unfinished/text")}
+	src := model.Source{ID: "unfinished", ProjectID: p.ID, Bytes: 40, TextKey: blob.Key("projects/" + p.ID + "/sources/unfinished/text")}
 	if err := f.db.Update(func(st *model.State) error {
 		st.Uploads["unfinished"] = model.Upload{ID: "unfinished", ProjectID: p.ID, Sources: []model.Source{src}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.Blobs.Put(context.Background(), src.OriginalKey, []byte("partially uploaded")); err != nil {
+	if err := f.s.Blobs.Put(context.Background(), src.TextKey, []byte("partially uploaded")); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

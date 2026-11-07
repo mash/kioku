@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
 )
 
 func putFile(t *testing.T, f *fixture, token, pid, name, body string) model.Job {
 	t.Helper()
 	var j model.Job
-	if c := f.request("POST", "/api/projects/"+pid+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: name, Content: body}}}, &j); c != 202 {
+	if c := f.request("POST", "/api/projects/"+pid+"/put", token, model.PutRequest{Files: []model.FileInput{{Name: name, Content: body, SourceURL: testSourceURL(name, body)}}}, &j); c != 202 {
 		t.Fatal(c)
 	}
 	if j.Kind != "put" || j.Status != "completed" || j.Revision != "" {
@@ -373,4 +374,8 @@ func TestAgentPermissionsForPutAndGenerate(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+other.ID+"/generate", write, nil, nil); c != 404 {
 		t.Fatal("agent escaped project", c)
 	}
+}
+
+func testSourceURL(name, body string) string {
+	return "https://example.com/" + auth.Hash(name+"\x00"+body)
 }

@@ -217,14 +217,12 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	if err := s.DB.View(func(st model.State) error {
 		for _, src := range st.Sources {
 			if src.ProjectID == pid {
-				live[src.OriginalKey] = true
 				live[src.TextKey] = true
 			}
 		}
 		for _, u := range st.Uploads {
 			if u.ProjectID == pid {
 				for _, src := range u.Sources {
-					live[src.OriginalKey] = true
 					live[src.TextKey] = true
 				}
 			}

@@ -10,8 +10,7 @@ Each private project bucket is independently authoritative for content:
 
 ```text
 projects/<project-id>/
-  sources/<source-id>/original
-  sources/<source-id>/extracted.txt
+  sources/<source-id>/extracted.md
   wiki/index.md
   wiki/*.md
   wiki/inbox/<sequence>-<entry-id>.json
@@ -28,11 +27,11 @@ Updates confined to content do not write SQLite. Changes spanning configuration 
 
 ## Put and intake
 
-`kioku put [FILES...]` validates and durably stores sources without generating wiki. With no arguments it submits changed files from the local input inbox. `kioku put URL` records a durable URL job and returns before retrieval. Its worker uses the submitter's stored provider connection; delegated agents remain file-only. Source count, byte and queue limits still apply. A failed retrieval is visible on its job.
+`kioku put [FILES...]` validates and durably stores extracted Markdown and original source URLs without generating wiki. Original files are never stored. Files require an original HTTPS URL via `--source-url` (one explicit file), `source_url` YAML frontmatter, or the API file field `source_url`. With no arguments it submits changed files from the local input inbox. `kioku put URL` records a durable URL job and returns before retrieval. Its worker uses the submitter's stored provider connection; delegated agents remain file-only. Source count, byte and queue limits still apply. A failed retrieval is visible on its job.
 
-Successful submissions produce service-owned, append-only intake segments. Source references include contributor, timestamp, source metadata and original/text object keys. Submitted URL events precede retrieval; stored-source events describe actual material. Retries use stable event IDs, and existing entries cannot be modified. Generation cannot write the reserved intake paths.
+Successful submissions produce service-owned, append-only intake segments. Source references include contributor, timestamp, source URLs, metadata and extracted-text object keys. Submitted URL events precede retrieval; stored-source events describe actual material. Retries use stable event IDs, and existing entries cannot be modified. Generation cannot write the reserved intake paths.
 
-`kioku pull` exposes the recent journal as `wiki/inbox.md`, including before the first generation. This is a generated reading view of the latest 64 entries, not the canonical log. Full segments remain unchanged in project storage. Original bodies are available through each entry's authenticated source link. Deleted originals are not included in this view.
+`kioku pull` exposes the recent journal as `wiki/inbox.md`, including before the first generation. This is a generated reading view of the latest 64 entries, not the canonical log. Full segments remain unchanged in project storage. Extracted text is available through each entry's authenticated source link. Deleted sources are not included in this view.
 
 `put --wait` waits for intake only.
 

@@ -134,7 +134,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 		return nil
 	})
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "facts.md", Content: "Retained team evidence"}}}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{Files: []model.FileInput{{Name: "facts.md", Content: "Retained team evidence", SourceURL: testSourceURL("facts.md", "Retained team evidence")}}}, &job); c != 202 {
 		t.Fatal(c)
 	}
 	if c := f.request("POST", "/api/projects/"+p.ID+"/owner", human, map[string]string{"target": target}, nil); c != 200 {

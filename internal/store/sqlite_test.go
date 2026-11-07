@@ -256,7 +256,7 @@ func TestUploadReservationPersistsAcrossRestart(t *testing.T) {
 	}
 	if err = s.Update(func(st *model.State) error {
 		st.Projects["p"] = model.Project{ID: "p"}
-		st.Uploads["u"] = model.Upload{ID: "u", ProjectID: "p", Sources: []model.Source{{ID: "s", ProjectID: "p", Bytes: 123, OriginalKey: "projects/p/source/original", TextKey: "projects/p/source/text"}}, Job: model.Job{ID: "j", ProjectID: "p"}, Heads: map[string]string{"https://example.com": "s"}}
+		st.Uploads["u"] = model.Upload{ID: "u", ProjectID: "p", Sources: []model.Source{{ID: "s", ProjectID: "p", Bytes: 123, TextKey: "projects/p/source/text"}}, Job: model.Job{ID: "j", ProjectID: "p"}, Heads: map[string]string{"https://example.com": "s"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -134,11 +134,11 @@ func (f *Fetcher) Fetch(ctx context.Context, raw, token string) (Document, error
 	req.Header.Set("Accept", "text/html,text/plain,text/markdown")
 	resp, err := f.Public.Do(req)
 	if err != nil {
-		return Document{}, fmt.Errorf("source could not be fetched over HTTP; write the original contents and source URL to a Markdown/text file, then run kioku put <file>: %w", err)
+		return Document{}, fmt.Errorf("source could not be fetched over HTTP; write the original contents and source URL to a Markdown/text file, then run kioku put --source-url <original-URL> <file>: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Document{}, fmt.Errorf("source returned HTTP %d; write the original contents and source URL to a Markdown/text file, then run kioku put <file>", resp.StatusCode)
+		return Document{}, fmt.Errorf("source returned HTTP %d; write the original contents and source URL to a Markdown/text file, then run kioku put --source-url <original-URL> <file>", resp.StatusCode)
 	}
 	b, err := read(resp.Body)
 	if err != nil {
@@ -155,7 +155,7 @@ func (f *Fetcher) Fetch(ctx context.Context, raw, token string) (Document, error
 		return Document{}, errors.New("unsupported web content type; export as Markdown, text or HTML")
 	}
 	if strings.TrimSpace(d.Text) == "" {
-		return Document{}, errors.New("page has no readable text over HTTP; write the original contents and source URL to a Markdown/text file, then run kioku put <file>")
+		return Document{}, errors.New("page has no readable text over HTTP; write the original contents and source URL to a Markdown/text file, then run kioku put --source-url <original-URL> <file>")
 	}
 	d.URL = raw
 	d.Kind = "web"

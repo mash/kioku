@@ -109,14 +109,15 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 		return s.mcpWikiSearch(ctx, key, *args.Project, *args.Query)
 	case "source_put":
 		var args struct {
-			Project *string `json:"project"`
-			Name    *string `json:"name"`
-			Content *string `json:"content"`
+			Project   *string `json:"project"`
+			Name      *string `json:"name"`
+			Content   *string `json:"content"`
+			SourceURL string  `json:"source_url"`
 		}
 		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil || args.Name == nil || args.Content == nil {
 			return nil, invalid
 		}
-		return s.mcpSourcePut(ctx, key, *args.Project, *args.Name, *args.Content)
+		return s.mcpSourcePut(ctx, key, *args.Project, *args.Name, *args.Content, args.SourceURL)
 	default:
 		return nil, invalid
 	}
@@ -265,7 +266,7 @@ func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string
 	return map[string]any{"project": namespace, "query": query, "results": results, "truncated": truncated}, nil
 }
 
-func (s *Server) mcpSourcePut(ctx context.Context, key, namespace, name, content string) (any, error) {
+func (s *Server) mcpSourcePut(ctx context.Context, key, namespace, name, content, sourceURL string) (any, error) {
 	var project model.Project
 	var uid string
 	if err := s.DB.View(func(st model.State) error {
@@ -275,7 +276,7 @@ func (s *Server) mcpSourcePut(ctx context.Context, key, namespace, name, content
 	}); err != nil {
 		return nil, err
 	}
-	doc, err := source.File(name, content)
+	doc, err := source.FileWithURL(name, content, sourceURL)
 	if err != nil {
 		return nil, fail(400, fmt.Sprintf("%s: %v", name, err))
 	}

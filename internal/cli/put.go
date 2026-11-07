@@ -12,12 +12,14 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/source"
 	"github.com/mash/kioku/internal/store"
 )
 
 func (a *App) put(args []string) error {
 	f := flag.NewFlagSet("put", flag.ContinueOnError)
 	f.SetOutput(a.Err)
+	sourceURL := f.String("source-url", "", "original HTTPS URL for one explicit file; otherwise use source_url YAML frontmatter")
 	wait := f.Bool("wait", false, "wait for source intake to complete (does not generate or pull wiki)")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -46,6 +48,18 @@ func (a *App) put(args []string) error {
 	inputs := []model.FileInput{}
 	hashes := map[string]string{}
 	paths := f.Args()
+	if *sourceURL != "" {
+		if len(paths) != 1 || strings.HasPrefix(paths[0], "https://") {
+			return errors.New("--source-url requires one explicit file")
+		}
+		info, err := os.Lstat(paths[0])
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("--source-url requires one regular file")
+		}
+	}
 	if len(paths) == 1 && strings.HasPrefix(paths[0], "https://") {
 		var job model.Job
 		if _, err = a.request("POST", p+"/put", model.PutRequest{URL: paths[0]}, &job); err != nil {
@@ -107,7 +121,11 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return err
 			}
-			inputs = append(inputs, model.FileInput{Name: filepath.ToSlash(name), Content: string(b)})
+			doc, err := source.FileWithURL(name, string(b), *sourceURL)
+			if err != nil {
+				return fmt.Errorf("%s: %w", p, err)
+			}
+			inputs = append(inputs, model.FileInput{Name: filepath.ToSlash(name), Content: string(b), SourceURL: doc.URL})
 			hashes[abs] = h
 			if len(inputs) > 30 {
 				return errors.New("at most 30 files per put")

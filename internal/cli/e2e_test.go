@@ -92,7 +92,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := config
-	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("---\nsource_url: https://example.com/notes\n---\n# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
 		t.Fatal(err)
 	}
 	must("put", "--wait")

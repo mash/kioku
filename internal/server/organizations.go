@@ -213,6 +213,9 @@ func (s *Server) Prepare() error {
 			s.prepareErr = errors.New("runners are not configured")
 			return
 		}
+		if s.prepareErr = s.migrateGitHubSources(); s.prepareErr != nil {
+			return
+		}
 		if s.prepareErr = s.migrateOrganizations(); s.prepareErr != nil {
 			return
 		}

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 p=argparse.ArgumentParser()
-p.add_argument('--binary',required=True)
+p.add_argument('--binary', default=str(Path(__file__).resolve().parents[1] / 'bin' / 'kioku'))
 p.add_argument('--plugin',required=True)
 a=p.parse_args()
 env=dict(os.environ,KIOKU_TEST_BINARY=str(Path(a.binary).resolve()))

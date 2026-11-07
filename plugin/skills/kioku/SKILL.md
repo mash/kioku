@@ -83,5 +83,6 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 - local mode: `put` は inbox の ID と status を返し、取得・生成を待たない。Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。後者は生成完了後に pull する。`status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。取得失敗は Runner が `wiki/log.md` に書く。利用者が尋ねたときに読む。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。
 - local mode: 読み取り専用の認証では `put`、`delete`、`generate`、`job retry` を実行しない。即時更新の依頼も認証の権限を増やさない。
+- GitHub の取得失敗を直す依頼では [capture.md](references/capture.md#github-の取得失敗を解消する場合) に従い、owner が対象ディレクトリの接続先で App を接続し、元の URL を再投入する。member の接続で代用しない。remote MCP には App 管理を足さない。
 - 426 は CLI 更新が必要なエラー。別の認証や remote mode で回避せず、plugin／CLI の更新を案内する。
 - 自動投入と自動選択は外部送信・本番変更・承認待ちの解除を許可しない。上位の指示とユーザーの保存禁止を優先する。

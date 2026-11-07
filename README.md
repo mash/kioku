@@ -107,7 +107,7 @@ export GOOGLE_CLIENT_SECRET=...
 ./bin/kioku project share invite bob@example.com
 ```
 
-原資料の投入には2つの方法があります。Kioku が取得できる Google Docs や GitHub の資料はURLを渡します。非公開資料は、プロジェクトオーナーの接続と閲覧権限で取得します。GitHub App の接続機能は未実装のため、現在の GitHub URL 取得は公開資料だけを対象にします。Artifact など Kioku が直接取得できない資料は、スキルを実行するエージェントが本文を抽出し、原本URLを YAML frontmatter に含む Markdown を渡します。具体例は[原資料](#原資料)を参照してください。
+原資料の投入には2つの方法があります。Kioku が取得できる Google Docs や GitHub の資料はURLを渡します。非公開資料は、プロジェクトオーナーの接続と閲覧権限で取得します。GitHub は運用者が読み取り専用 App を設定し、owner が `kioku connect github` で選んだ installation と現在の閲覧範囲で取得します。App は既定で無効です。Artifact など Kioku が直接取得できない資料は、スキルを実行するエージェントが本文を抽出し、原本URLを YAML frontmatter に含む Markdown を渡します。具体例は[原資料](#原資料)を参照してください。
 
 例えば、GitHub にある Kioku の README を取り込み、Wiki を生成して開くには:
 
@@ -168,9 +168,11 @@ kioku connect github
 
 `login`・`connect`・`agent login` では、標準サーバー（`https://kioku.magicians.ee`）以外への初回認証時に接続先を表示し、信頼するか確認します。承認はユーザーの `~/.config/kioku/auth/` に接続先ごとに保存し、次回から確認を省略します。別の接続先には改めて承認が必要です。未承認の接続先は、`--server ORIGIN` や `KIOKU_SERVER` で指定した場合も端末での承認が必要です。非対話実行で未承認の接続先を選ぶと、通信前に終了します。明示した接続先と `.kioku/config` が異なる場合は拒否します。通常の `pull` などは引き続き `.kioku/config` の接続先を使用します。
 
-ログインと原資料への認可は別です。Google の接続は Docs／Drive の読み取りスコープを使います。既存の GitHub OAuth App 接続は `read:user user:email repo` を要求しますが、生成 Runner にはこの OAuth トークンを渡しません。GitHub App の接続・インストール機能は未実装です。`connect github` だけでは、生成時に非公開リポジトリを取得できません。
+ログインと原資料への認可は別です。Google の接続は Docs／Drive の読み取りスコープを使います。GitHub の OAuth App はログイン専用で `read:user user:email` だけを要求します。`connect github` は別の GitHub App を認可し、owner が複数の installation を選択できます。GitHub App の Contents・Metadata・Issues は Read-only、Pull requests は No access です。登録画面の正確な設定値、秘密鍵配置、旧 `repo` grant の取消と移行は [GitHub App 運用手順](docs/GITHUB_APP.md) を参照してください。
 
 `connect` は原資料の取得権限だけを接続します。ログイン方法の追加、プロフィールの変更、ブラウザへのKiokuログインは行いません。既存のログイン用の紐付けは維持します。既存アカウントでCLIにログインしてから実行してください。login／connect は同じ端末のブラウザとloopback、state、PKCEを使用します。connect はOAuthの承認後も、認証済みCLIが単回・短命のコードを交換するまで接続を確定しません。旧CLIのチケット方式は受け付けないため、サーバー更新時にはCLIも更新してください。
+
+`kioku account status` の `github_app` で configured / enabled、GitHub login、installation ごとの状態と確認時刻を確認できます。保存済み状態の表示であり、GitHub への照合は接続時と発行前に行います。Google でログインしている人も GitHub App を接続できます。App 設定・鍵・user/refresh token は kiokud だけが保持し、Runner へは短命の installation token を vault 経由で渡します。
 
 ## 原資料
 
@@ -203,7 +205,7 @@ Runner への取得規則は次のとおりです。実際の取得結果は `wi
 | GitHub | 指定ファイル、リポジトリの README、Issue／PR の説明と先頭100件までのコメント |
 | 公開 Web | 指定 URL の本文 |
 
-GitHub の PR 差分・リポジトリ全体の収集は対象外です。git リポジトリ内の文書には、そのファイルを指す URL を使います。ブランチの指定が曖昧な場合は commit SHA のファイル URL を使います。GitHub App 未設定時は資格情報を渡さず、公開リポジトリを認証なしで取得します。既存の GitHub OAuth 接続には切り替えません。
+GitHub の PR 差分・リポジトリ全体の収集は対象外です。git リポジトリ内の文書には、そのファイルを指す URL を使います。ブランチの指定が曖昧な場合は commit SHA のファイル URL を使います。認可済み repo は公開・非公開とも最初から認証して取得します。未接続・installation 外は未認証で取得しますが、既存接続の無効化・認可障害・発行失敗ではその repo を取得せず失敗として記録します。旧 OAuth トークンや別メンバーの資格情報には切り替えません。失敗解消後は owner が対象ディレクトリの接続先で再接続し、元の URL を再投入します。
 
 Runner は取得本文を UTF-8 境界で1 MiBまでに切り詰め、切り詰めたことをログに書きます。取得先のネットワーク制限は運用者が設定します。[運用設定](docs/WORKERS.md#source-credentials-and-network-policy)を参照してください。
 

@@ -92,8 +92,10 @@ func (a *App) loopback(provider string, connect bool) error {
 		}
 		switch {
 		case q.Has("error"):
-			if q.Get("error") == "access_denied" {
+			if q.Get("error") == "access_denied" || q.Get("error") == "canceled" || q.Get("error") == "denied" {
 				err = fmt.Errorf("%s was cancelled in the browser", action)
+			} else if q.Get("error") == "restart_required" {
+				err = errors.New("旧GitHub OAuth資料接続は廃止されました。kioku connect github を最初から実行し、GitHub App の installation を選択してください")
 			} else {
 				err = fmt.Errorf("%s failed on the server; run kioku %s again", action, action)
 			}
@@ -121,6 +123,9 @@ func (a *App) loopback(provider string, connect bool) error {
 			accountMessage = fmt.Sprintf("ログインしました: %s (%s)", response.Email, response.Provider)
 			if connect {
 				accountMessage = fmt.Sprintf("接続しました: %s", response.Provider)
+				if provider == "github" {
+					accountMessage += "\nkioku account status で接続を確認し、取得に失敗した URL を kioku put URL で再投入してください。"
+				}
 			}
 			loginPage(w, http.StatusOK, accountMessage, response.Name+"\nこのタブを閉じて CLI に戻ってください。")
 		}
@@ -137,6 +142,9 @@ func (a *App) loopback(provider string, connect bool) error {
 			_ = server.Close()
 		}
 	}()
+	if connect && provider == "github" {
+		fmt.Fprintln(a.Out, "プロジェクトの owner として GitHub App を認可し、読み取る installation を選択してください。接続はこの CLI の完了時に確定します。")
+	}
 	fmt.Fprintf(a.Out, "%s先: %s\n同じ端末のブラウザで認証してください:\n%s\n中断は Ctrl-C\n", label, origin, device.URL)
 	if err := openBrowser(a.Config.Server, device.URL); err != nil {
 		fmt.Fprintf(a.Err, "ブラウザを開けませんでした。表示された URL を同じ端末のブラウザに貼り付けてください: %v\n", err)

@@ -46,10 +46,14 @@ func newLoginFixture(t *testing.T) *loginFixture {
 }
 
 func newAuthFixture(t *testing.T, connect bool) *loginFixture {
+	return newAuthProviderFixture(t, connect, "google")
+}
+
+func newAuthProviderFixture(t *testing.T, connect bool, provider string) *loginFixture {
 	t.Helper()
 	startPath, finishPath, header := "/api/auth/loopback", "/api/auth/loopback/token", ""
 	if connect {
-		startPath, finishPath, header = "/api/connect/google", "/api/connect/google/complete", "Bearer existing-human-token"
+		startPath, finishPath, header = "/api/connect/"+provider, "/api/connect/"+provider+"/complete", "Bearer existing-human-token"
 	}
 	f := &loginFixture{started: make(chan map[string]string, 1)}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +68,7 @@ func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 		}
 		switch r.URL.Path {
 		case startPath:
-			if req["provider"] != "google" || req["code_challenge_method"] != "S256" || len(req["code_challenge"]) != 43 || len(req["state"]) != 43 {
+			if req["provider"] != provider || req["code_challenge_method"] != "S256" || len(req["code_challenge"]) != 43 || len(req["state"]) != 43 {
 				t.Error("invalid login start", req)
 			}
 			u, err := url.Parse(req["redirect_uri"])
@@ -76,7 +80,7 @@ func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 			f.mu.Unlock()
 			f.started <- req
 			w.WriteHeader(201)
-			json.NewEncoder(w).Encode(map[string]string{"device": "test-device", "url": f.server.URL + "/auth/google/start?device=test-device"})
+			json.NewEncoder(w).Encode(map[string]string{"device": "test-device", "url": f.server.URL + "/auth/" + provider + "/start?device=test-device"})
 		case finishPath:
 			f.mu.Lock()
 			f.exchanges++
@@ -90,10 +94,10 @@ func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 				return
 			}
 			if connect {
-				json.NewEncoder(w).Encode(map[string]any{"connected": true, "provider": "google"})
+				json.NewEncoder(w).Encode(map[string]any{"connected": true, "provider": provider})
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]string{"token": loopbackTestToken, "provider": "google", "name": "Test User", "email": "user@example.com"})
+			json.NewEncoder(w).Encode(map[string]string{"token": loopbackTestToken, "provider": provider, "name": "Test User", "email": "user@example.com"})
 		default:
 			t.Error("unexpected request", r.URL.Path)
 			w.WriteHeader(404)

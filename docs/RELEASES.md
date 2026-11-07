@@ -50,3 +50,20 @@ may still name the previous release while working on the next one. Use
 ## Inbox release transition
 
 The inbox release uses version 0.1.0 as the minimum CLI version. PR-1 adds the version header and the `project` command group; PR-2 through PR-6 must ship together after the operator has stopped the server and manually deleted old project content. The version bump is included with PR-6 for this coordinated change. Do not deploy a partial series. No release or remote change is performed by the six local implementation commits.
+
+## GitHub App source-access transition
+
+Ship the four GitHub App commits together (client/persistence, connect/status,
+runner integration, CLI/plugin/migration/docs). Keep `KIOKU_GITHUB_APP_ENABLED=false`
+until the server, CLI/plugin and both deployed runner prompts agree. Follow the
+[exact App registration and migration runbook](GITHUB_APP.md). The rollout must
+include the one-time removal of old OAuth source ciphertext, user revocation of
+the old GitHub OAuth `repo` grant, and new narrow-scope login sessions. Account
+sessions are preserved during migration but their old GitHub identity proof is
+cleared. Test catalog backup/restore with the database encryption key. Never open
+a catalog with the new record kinds using the old binary.
+
+Local implementation and fake tests do not register an App, publish a release,
+update a deployed Anthropic agent or run a real sandbox smoke test. Those remain
+operator release gates. Bump the shared plugin/CLI/server version through the
+normal release workflow when distribution is authorized.

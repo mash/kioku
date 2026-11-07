@@ -244,6 +244,9 @@ func TestGitHubAppBrowserForgeryAndSetup(t *testing.T) {
 }
 func TestGitHubLegacyConnectNeverRequestsRepo(t *testing.T) {
 	f, token := appFixture(t)
+	if err := f.s.Prepare(); err != nil {
+		t.Fatal(err)
+	}
 	_ = f.db.Update(func(st *model.State) error {
 		st.Devices["legacy"] = model.Device{Purpose: "connect", IdentityProvider: "github", UserID: st.Sessions[auth.Hash(token)].UserID, LoopbackRedirectURI: "http://127.0.0.1:1234/callback", LoopbackState: "bound", Expires: time.Now().Add(time.Minute)}
 		return nil

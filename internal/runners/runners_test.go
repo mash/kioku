@@ -26,7 +26,7 @@ func TestBYOKResolvesCredentialsOnEveryOperation(t *testing.T) {
 	ma := fake.New()
 	defer ma.Close()
 	c := Config{MABaseURL: ma.URL(), AnthropicAPIKey: "operator", MAAgentID: "operator-agent", MAEnvironmentID: "operator-env", BaseURL: "https://kioku.test"}
-	g, err := Load(c, db, cipher)
+	g, err := Load(c, db, cipher, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestNewWithoutOperatorConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	s, err := Load(Config{}, db, nil)
+	s, err := Load(Config{}, db, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

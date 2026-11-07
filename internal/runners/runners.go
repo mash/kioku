@@ -4,7 +4,10 @@ package runners
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
+
+	execrunner "github.com/mash/kioku/internal/runner/exec"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/managedagents"
@@ -16,6 +19,8 @@ import (
 
 type Config struct {
 	Type                 string
+	Command              []string
+	DataDir              string
 	AnthropicAPIKey      string
 	MAAgentID            string
 	MAAgentVersion       int64
@@ -29,12 +34,13 @@ type Config struct {
 }
 
 type Set struct {
-	config Config
-	db     *store.Store
-	cipher *auth.Cipher
+	config     Config
+	execRunner *execrunner.Runner
+	db         *store.Store
+	cipher     *auth.Cipher
 }
 
-func Load(c Config, db *store.Store, cipher *auth.Cipher) (*Set, error) {
+func Load(c Config, db *store.Store, cipher *auth.Cipher, onExit func(string, string)) (*Set, error) {
 	if c.AgentMaxSessions == 0 {
 		c.AgentMaxSessions = 4
 	}
@@ -44,14 +50,15 @@ func Load(c Config, db *store.Store, cipher *auth.Cipher) (*Set, error) {
 	if c.AgentMaxSessionCents == 0 {
 		c.AgentMaxSessionCents = 1000
 	}
+	c.Command = slices.Clone(c.Command)
 	s := &Set{config: c, db: db, cipher: cipher}
-	if err := s.prepareRunner(); err != nil {
+	if err := s.prepareRunner(onExit); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Set) Close(context.Context) error { return nil }
+func (s *Set) Close(ctx context.Context) error { return s.execRunner.Close(ctx) }
 
 func (s *Set) jobConnection(job model.Job) (model.AnthropicConnection, error) {
 	var out model.AnthropicConnection
@@ -77,6 +84,9 @@ func (s *Set) connectionClient(uid string, c model.AnthropicConnection) (*manage
 // fall back to the operator's key.
 func (s *Set) New(job model.Job) (runner.Runner, error) {
 	if job.AnthropicConnectionID == "" {
+		if s.config.Type == "exec" {
+			return s.execRunner, nil
+		}
 		if s.config.ManagedAgents == nil {
 			return nil, runner.ErrNotConfigured
 		}

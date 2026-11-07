@@ -126,24 +126,31 @@ func run() error {
 	if len(providers) == 0 {
 		return errors.New("configure at least one Google or GitHub OAuth provider")
 	}
-	runnersSet, err := runners.Load(runners.Config{Type: os.Getenv("KIOKU_RUNNER"), AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, db, cipher)
+	selection := os.Getenv("KIOKU_RUNNER")
+	command, err := runners.ParseCommand(selection, os.Getenv("KIOKU_RUNNER_COMMAND"))
 	if err != nil {
-		return err
-	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := runnersSet.Close(ctx); err != nil {
-			slog.Error("runner shutdown incomplete", "error", err)
-		}
-	}()
-	app := server.New(server.Config{TrustedProxy: trustedNetwork, MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, IntakeWorkers: *intakeWorkers, MaxIntakeJobs: *intakeJobs, BaseURL: base, Providers: providers, MaxSources: *maxSources, MaxBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
-	app.SetRunners(runnersSet)
-	if err = app.Prepare(); err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	app := server.New(server.Config{TrustedProxy: trustedNetwork, MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, IntakeWorkers: *intakeWorkers, MaxIntakeJobs: *intakeJobs, BaseURL: base, Providers: providers, MaxSources: *maxSources, MaxBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
+	set, err := runners.Load(runners.Config{Type: selection, Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, db, cipher, func(jobID, attemptID string) { app.ReconcileJob(ctx, jobID, attemptID) })
+	if err != nil {
+		return err
+	}
+	defer func() {
+		stop()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := set.Close(ctx); err != nil {
+			slog.Error("runner shutdown incomplete", "error", err)
+		}
+	}()
+
+	app.SetRunners(set)
+	if err = app.Prepare(); err != nil {
+		return err
+	}
 	stopAdmin, err := serveAdmin(ctx, *adminSocket, db)
 	if err != nil {
 		return err

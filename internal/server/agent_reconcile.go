@@ -324,7 +324,8 @@ func (s *Server) abortProjectAgentJobs(ctx context.Context, pid string) error {
 }
 
 func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *runner.Status) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	cleanupParent := ctx
+	cleanupCtx, cancel := context.WithTimeout(cleanupParent, 30*time.Second)
 	defer cancel()
 	var current model.Job
 	if err := s.DB.View(func(st model.State) error { current = st.Jobs[job.ID]; return nil }); err != nil {

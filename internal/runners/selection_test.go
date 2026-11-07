@@ -22,7 +22,7 @@ func TestRunnerStartupSelection(t *testing.T) {
 				if mask&4 != 0 {
 					c.MAEnvironmentID = "environment"
 				}
-				s, err := Load(c, nil, nil)
+				s, err := Load(c, nil, nil, nil)
 				wantOK := mask == 7 || runner == "" && mask == 0
 				if (err == nil) != wantOK {
 					t.Fatal(err)
@@ -34,14 +34,14 @@ func TestRunnerStartupSelection(t *testing.T) {
 		}
 	}
 	for _, runner := range []string{"exec", "invalid"} {
-		if _, err := Load(Config{Type: runner}, nil, nil); err == nil {
+		if _, err := Load(Config{Type: runner}, nil, nil, nil); err == nil {
 			t.Fatal(err)
 		}
 	}
 	for _, change := range []func(*Config){func(c *Config) { c.MAAgentVersion = -1 }, func(c *Config) { c.BaseURL = "https://kioku.test/path" }, func(c *Config) { c.AgentMaxSessionCents = 49 }} {
 		c := Config{Type: "managed", AnthropicAPIKey: "key", MAAgentID: "agent", MAEnvironmentID: "environment", BaseURL: "https://kioku.test"}
 		change(&c)
-		if _, err := Load(c, nil, nil); err == nil {
+		if _, err := Load(c, nil, nil, nil); err == nil {
 			t.Fatal("invalid managed settings accepted")
 		}
 	}
@@ -59,7 +59,7 @@ func TestBYOKIgnoresRunnerSelection(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	g, err := Load(Config{}, db, nil)
+	g, err := Load(Config{}, db, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

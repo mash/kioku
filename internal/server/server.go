@@ -26,7 +26,7 @@ import (
 
 type Config struct {
 	TrustedProxy               *net.IPNet
-	MABaseURL                  string
+	MABaseURL                  string // Used only by BYOK connection setup handlers.
 	AnthropicWebhookSigningKey string
 	AgentMaxSessions           int
 	AgentJobTimeout            time.Duration

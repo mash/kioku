@@ -32,7 +32,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := server.New(server.Config{BaseURL: "http://127.0.0.1"}, db, local.Store{Dir: filepath.Join(data, "objects")}, key)
-	g, err := runners.Load(runners.Config{}, db, key)
+	g, err := runners.Load(runners.Config{}, db, key, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

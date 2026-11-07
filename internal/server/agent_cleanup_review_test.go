@@ -47,7 +47,7 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 	}
 	t.Cleanup(func() { db.Close() })
 	restored := New(old.Config, db, old.Blobs, old.Cipher)
-	g, err := runners.Load(f.runnerConfig, db, old.Cipher)
+	g, err := runners.Load(f.runnerConfig, db, old.Cipher, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

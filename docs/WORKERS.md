@@ -51,17 +51,94 @@ The current file descriptor and the API's legacy `revision` field are synchroniz
 
 Source `updated_at` and project `sources_updated_at` advance only for material active-source changes. Identical puts/refreshes do not advance them. An older URL fetch cannot replace a newer successful observation or dirty the active sources. `wiki_updated_at` describes generated page updates, and `processed_intake_sequence` records the journal position captured by the last successful/no-op generation. Version numbers track coverage rather than wall-clock comparisons. Status exposes these timestamps, cursors and the incomplete flag.
 
+## Generation runner type
+
+`KIOKU_RUNNER` selects the operator's LLM generation runner type. Leave it unset to keep the existing behavior: `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` together enable Managed Agents; with none configured, generation produces a deterministic source wiki. Partial Managed Agents settings fail startup. An explicit `KIOKU_RUNNER=managed` requires all three settings. Set `KIOKU_RUNNER=exec` for a trusted external command as described below. Unknown runner names fail startup. Changing `KIOKU_RUNNER` while operator-key jobs run makes those jobs fail; wait until running jobs finish before switching. BYOK jobs are not affected.
+
+BYOK jobs always use the owner's Managed Agents connection, regardless of the operator's runner type selection. Production uses only BYOK keys for LLM generation and leaves `ANTHROPIC_API_KEY` empty.
+
+Each attempt persists `Job.Run` (JSON `run`) with attempt ID, phase, budget, deadline and job token identity before creating external resources. `Start` returns the runner-neutral `ref`, which is saved after creation. Runner selection uses the job’s BYOK connection and current configuration; the runner type is not persisted. Fingerprints include source IDs and hashes.
+
 ## Storage selection and recovery
 
 Select `KIOKU_STORAGE=local|s3` (or `--storage`, which takes precedence). The default is local, storing objects in `<KIOKU_DATA>/objects` (`./data/objects` when the data directory is also unset). S3 credentials with local selected are rejected. S3 requires all credentials and writes directly to remote storage without a local content cache or fallback. Existing S3 deployments must explicitly select s3. Changing this setting does not migrate existing objects or catalog bucket mappings. Old cache files are unused.
 
-Queued/running jobs live in project storage. URL and deterministic generation jobs return to their queues at startup. URL jobs have a two-minute deadline and deterministic generation has a five-minute execution timeout. Managed generation has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts the session and immediately proceeds to another project; intake jobs use their separate workers.
+Queued/running jobs live in project storage. URL and deterministic generation jobs return to their queues at startup. URL jobs have a two-minute deadline and deterministic generation has a five-minute execution timeout. LLM generation uses a Runner for its runner type lifecycle and has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts the run and immediately proceeds to another project; intake jobs use their separate workers.
 
-Managed phases are `preparing`, `agent_running`, `output_received`, and `finalizing`. The validated complete output is pinned by hash when finalization begins. A 30-second reconciler, also run at worker startup, and optional signed webhooks inspect session state and finalize or fail idempotently. Startup preserves every managed phase and its attempt ID. A preparing run with no saved session ID is searched by job metadata after five minutes, interrupted if found, and failed. A lost session-create response follows this same recovery. Finalizing resumes publication after restart. A persisted stop reason keeps the run open while a session is still observed running after interruption; its credential is revoked. Completed/failed jobs retain a cleanup marker and remain in the hot index until archive and tar removal finish, including across restart. Retry waits for this cleanup, then starts a new attempt. Session recovery also matches the attempt ID in metadata, so the cost of an older attempt never reaches the new one.
+Generation phases are `preparing`, `agent_running`, `output_received`, and `finalizing`. The server validates output at upload and stores its hash; finalization pins that output against replacement. Only the reconciler calls `Runner.Inspect`, once per job per pass, and passes its `Status` to finalization, failure handling and cleanup. Passes run every 30 seconds, at worker startup, and on signed MA webhooks or exec exit callbacks. The four states are None, Running, Stopped and Unknown; the zero value is Unknown.
 
-Source/project deletion takes the generation lock before the project lock, interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. If stopping or cleanup remains incomplete, deletion returns 503 and preserves the source/project so it can be retried. New puts remain independent of a running agent; only the captured source versions are marked processed by its publication. Queue caps are separate: `--max-intake-jobs 200`, `--intake-workers 4`, `--max-jobs 20`. The default project source limit remains 200 snapshots/64 MiB. These bounds are capacity limits, not a sustained-throughput promise independent of quotas or upstream latency.
+For a missing run handle, `Inspect` searches by job and attempt metadata and saves any recovered handle before continuing. A None result waits until five minutes after preparation, then fails with `session creation did not finish`. A recovered running run continues normally. A Stopped run with accepted output is published regardless of its stop reason, unless an `AbortReason` already exists. Without output it fails. Unknown or Running waits until the deadline, then failure handling revokes the token, records `AbortReason` and requests `Stop`. A later pass confirms the stop and records the final cost; unknown cost is omitted (`cost_cents` is absent), not recorded as zero. Persistent inspection or stop failures keep the job running until its token deadline (job deadline plus ten minutes), after which it fails with unknown cost. Unavailable runner type configuration fails a running job at its job deadline and defers cleanup until configuration is restored.
+
+Completed/failed jobs retain a cleanup marker and remain in the hot index until resource cleanup and tar removal finish. A late-discovered running run is stopped before cleanup. Retry waits for cleanup and creates a new attempt; discovery matches that attempt ID, so previous attempts cannot supply its run or cost. Stop confirmation and publication can take until the next pass (up to 30 seconds).
+
+Source/project deletion takes the generation lock before the project lock, interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. Deleting a source, project or Anthropic connection with a running generation first returns 503 while the reconciler confirms the stop. Retry the deletion after a pass. Pending cleanup or unavailable runner type configuration also returns 503 and preserves the data needed to retry. New puts remain independent of a running agent; only the captured source versions are marked processed by its publication. Queue caps are separate: `--max-intake-jobs 200`, `--intake-workers 4`, `--max-jobs 20`. The default project source limit remains 200 snapshots/64 MiB. These bounds are capacity limits, not a sustained-throughput promise independent of quotas or upstream latency.
 
 Finishing a generation and recording its provider cost use the control/content redo protocol; page writes may already be visible before completion. Abandoned-upload recovery runs independently of generation. Managed Agents execute in a provider container whose outbound network is restricted to kiokud. The server validates returned archives and never executes their contents.
+
+## External runner (self-host and development)
+
+The exec runner type starts one trusted command for each generation attempt. Production does not use it. The command runs as the kiokud OS user and can read that user's files and process environment, including server credentials. The command must provide its own sandbox and credential isolation; a separate process is not a sandbox. This repository does not include a runner command.
+
+Set both variables and keep the command's executable path absolute:
+
+```sh
+KIOKU_RUNNER=exec
+KIOKU_RUNNER_COMMAND='["/usr/local/bin/kioku-gen", "--config", "/etc/kioku-gen.json"]'
+```
+
+`KIOKU_RUNNER_COMMAND` is a JSON array of strings passed directly as argv, without a shell. Put the command's provider credentials and settings in a file referenced by an absolute argv path, or in its wrapper script. Do not put credentials in argv. kiokud passes only `PATH` from its own environment, `HOME` set to the attempt's working directory, and `TMPDIR` set to that directory's `tmp` subdirectory. It does not pass LLM keys, `DOCKER_HOST`, or the job token as environment variables.
+
+Startup validates the command array and that argv[0] is executable, the `KIOKU_BASE_URL` origin, and the embedded prompt's model, then creates `<DATA>/exec-runs` with mode 0700. Each attempt uses `<job-id>-<attempt-id>` and its `tmp` subdirectory, also mode 0700. `DATA` is the `--data` directory (default `./data`). A missing or non-executable command prevents kiokud from starting. BYOK selects managed regardless of these operator settings.
+
+### JSON contract v1
+
+The command receives one JSON object on stdin, followed by EOF:
+
+```json
+{
+  "version": 1,
+  "job_id": "j_01",
+  "attempt_id": "a1b2c3",
+  "project_id": "p_01",
+  "mode": "incremental",
+  "input_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/input",
+  "output_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/output",
+  "job_token": "<secret>",
+  "model": "claude-opus-5-5",
+  "first_message": "Job j_01 for project p_01. ...",
+  "prompt": "You maintain a team wiki ...",
+  "budget_cents": 1000,
+  "deadline": "2026-11-07T12:00:00Z"
+}
+```
+
+`mode` is `incremental` or `full`. `prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` describes the captured generation input. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` for both. The server validates the output and never executes its contents.
+
+The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
+
+The command enforces `budget_cents` (USD cents) and `deadline`. The common server limits still apply: a minimum budget of 50 cents, `--agent-max-session-usd`, `--agent-max-sessions`, and `--agent-job-timeout`. The worker's five-minute startup context does not govern the child's lifetime; the reconciler stops it after the persisted deadline.
+
+Write a result object as stdout's last nonempty line:
+
+```json
+{"version":1,"reason":"","cost_cents":137}
+```
+
+`cost_cents` is a self-reported integer from 0 through 1,000,000 inclusive. Missing, null, out-of-range or non-integer cost, invalid JSON, or a version other than 1 makes the result invalid. Unknown cost is represented by an absent `cost_cents` in `Job.Run`. `invalid result line` is logged at warning level for exit code 0, and debug otherwise. The run handle contains only the attempt ID, with no host paths.
+
+Exit code 0 with a valid result means a normal stop. A nonzero exit or invalid result means a stopped run with the result's reason, or `agent failed` when no reason was supplied. A signal following `Stop` means `terminated`. Exit zero only when generation is finished. The reconciler publishes already accepted output from any stopped run regardless of its reason; an existing abort reason takes precedence over output.
+
+`reason` must contain no secrets. kiokud keeps at most 512 bytes in `Status.Reason`, which can become `Job.Error` and is visible in the job API. It retains the last nonempty stdout line, up to 1 MiB; an oversized line is invalid. For stderr it keeps only a byte count, logged at debug level. Stderr contents are never retained, logged or copied into the job error.
+
+### Stop, shutdown and restart
+
+Stopping sends SIGTERM to the process group and returns immediately. After ten seconds, a still-running child receives SIGKILL. On SIGTERM the command must remove any external resources it created, such as remote sandboxes or containers, within that grace period. Cleanup kills and waits for the child, then kills the group again even after a successful exit to remove remaining descendants. It removes the attempt's working directory only within the configured exec root. A cleanup timeout remains pending for the next reconciliation.
+
+On normal shutdown, kiokud cancels exit-triggered reconciliation, stops its children, and waits up to fifteen seconds before closing the store. On Linux, the direct child also receives SIGKILL if its creating OS thread dies; this does not cover descendants. A crash may leave descendants, and on other operating systems direct children, running. External resources can survive SIGKILL or a crash. Only one kiokud may own a deployment; fence the old instance before starting another against the same project storage.
+
+Before dequeuing new jobs after restart, the worker runs reconciliation once. The exec runner reports lost attempts as stopped with `exec run lost on restart`; jobs without output fail and lose their job tokens. `output_received` and `finalizing` resume publication from accepted output, with unknown cost omitted. Existing abort reasons always take precedence. Retry waits for cleanup and starts a new attempt.
+
+An exec run cannot be rediscovered after restart. Keep the same runner configuration to reconcile it and remove its leftover working directory under the same data directory.
 
 ## Configuration-only online backup
 

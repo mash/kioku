@@ -327,41 +327,9 @@ func TestLoopbackAndConnectSeparation(t *testing.T) {
 		t.Fatal(status)
 	}
 	token := f.login("owner@example.com")
-	var connection map[string]string
-	if status := f.request("POST", "/api/connect/google", token, nil, &connection); status != 201 {
+	connection := newConnectAttempt(t, f, token)
+	if status := f.request("GET", "/auth/google/start?device="+connection.device, "", nil, nil); status != 410 {
 		t.Fatal(status)
-	}
-	u, err := url.Parse(connection["url"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status := f.request("GET", "/auth/google/start?device="+u.Query().Get("connect"), "", nil, nil); status != 410 {
-		t.Fatal(status)
-	}
-	resp, err := f.client.Get(connection["url"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 302 {
-		t.Fatal("connect broken", resp.StatusCode)
-	}
-	providerURL, err := resp.Location()
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := loopbackSnapshot(t, f)
-	uid := st.Sessions[auth.Hash(token)].UserID
-	callback, err := http.NewRequest("GET", f.url+"/auth/google/callback?"+url.Values{"state": {providerURL.Query().Get("state")}, "code": {uid}}.Encode(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, cookie := range resp.Cookies() {
-		callback.AddCookie(cookie)
-	}
-	connected := finishLoopbackOAuth(t, f, callback)
-	if connected.StatusCode != 303 || connected.Header.Get("Location") != "/" || loopbackSnapshot(t, f).Users[uid].Connections["google"] == "" {
-		t.Fatal("connect callback broken", connected.StatusCode)
 	}
 	if err := f.db.Update(func(st *model.State) error {
 		d := st.Devices[a.device]

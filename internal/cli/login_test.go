@@ -42,10 +42,18 @@ type loginFixture struct {
 }
 
 func newLoginFixture(t *testing.T) *loginFixture {
+	return newAuthFixture(t, false)
+}
+
+func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 	t.Helper()
+	startPath, finishPath, header := "/api/auth/loopback", "/api/auth/loopback/token", ""
+	if connect {
+		startPath, finishPath, header = "/api/connect/google", "/api/connect/google/complete", "Bearer existing-human-token"
+	}
 	f := &loginFixture{started: make(chan map[string]string, 1)}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.Header.Get("Authorization") != "" {
+		if r.Method != "POST" || r.Header.Get("Authorization") != header {
 			t.Error("login sent a credential or wrong method", r.Method)
 		}
 		var req map[string]string
@@ -55,7 +63,7 @@ func newLoginFixture(t *testing.T) *loginFixture {
 			return
 		}
 		switch r.URL.Path {
-		case "/api/auth/loopback":
+		case startPath:
 			if req["provider"] != "google" || req["code_challenge_method"] != "S256" || len(req["code_challenge"]) != 43 || len(req["state"]) != 43 {
 				t.Error("invalid login start", req)
 			}
@@ -69,7 +77,7 @@ func newLoginFixture(t *testing.T) *loginFixture {
 			f.started <- req
 			w.WriteHeader(201)
 			json.NewEncoder(w).Encode(map[string]string{"device": "test-device", "url": f.server.URL + "/auth/google/start?device=test-device"})
-		case "/api/auth/loopback/token":
+		case finishPath:
 			f.mu.Lock()
 			f.exchanges++
 			challenge := f.start["code_challenge"]
@@ -79,6 +87,10 @@ func newLoginFixture(t *testing.T) *loginFixture {
 			}
 			if f.token != nil {
 				f.token(w)
+				return
+			}
+			if connect {
+				json.NewEncoder(w).Encode(map[string]any{"connected": true, "provider": "google"})
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]string{"token": loopbackTestToken, "provider": "google", "name": "Test User", "email": "user@example.com"})
@@ -91,6 +103,13 @@ func newLoginFixture(t *testing.T) *loginFixture {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	f.app = &App{AuthDir: t.TempDir(), Config: Config{Server: f.server.URL}, Client: f.server.Client(), Out: &f.out, Err: &f.errOut, ctx: ctx}
+	if connect {
+		f.app.kind = credentialHuman
+		f.app.Config.Token = "existing-human-token"
+		if err := f.app.saveCredentials(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	f.app.Client.Timeout = 3 * time.Second
 	return f
 }

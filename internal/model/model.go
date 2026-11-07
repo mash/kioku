@@ -125,6 +125,7 @@ type OAuthState struct {
 	Expires    time.Time `json:"expires"`
 }
 type Device struct {
+	Purpose             string    `json:"purpose,omitempty"`
 	LoopbackChallenge   string    `json:"loopback_challenge,omitempty"`
 	LoopbackRedirectURI string    `json:"loopback_redirect_uri,omitempty"`
 	LoopbackState       string    `json:"loopback_state,omitempty"`

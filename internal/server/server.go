@@ -206,6 +206,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/logout", s.wrap(s.logout, true))
 	s.mux.HandleFunc("GET /api/me", s.wrap(s.me, true))
 	s.mux.HandleFunc("POST /api/connect/{provider}", s.wrap(s.connect, true))
+	s.mux.HandleFunc("POST /api/connect/{provider}/complete", s.wrap(s.completeConnect, true))
 	s.mux.HandleFunc("GET /api/projects", s.wrap(s.projects, true))
 	s.mux.HandleFunc("POST /api/projects", s.wrap(s.createProject, true))
 	s.mux.HandleFunc("POST /api/join", s.wrap(s.join, true))

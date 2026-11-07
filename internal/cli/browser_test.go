@@ -130,32 +130,20 @@ func TestLoginStartFailureClosesListener(t *testing.T) {
 	}
 }
 
-func TestConnectAndOpenUseValidatedBrowserURL(t *testing.T) {
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/connect/google" {
-			t.Error("unexpected path", r.URL.Path)
-		}
-		w.WriteHeader(201)
-		json.NewEncoder(w).Encode(map[string]string{"url": server.URL + "/auth/google/start?connect=one&ticket=two"})
-	}))
-	defer server.Close()
+func TestOpenUsesValidatedBrowserURL(t *testing.T) {
 	var targets []string
 	stubBrowser(t, func(origin, target string) error {
-		if origin != server.URL {
+		if origin != "https://kioku.test" {
 			t.Error(origin)
 		}
 		targets = append(targets, target)
 		return nil
 	})
-	a := &App{Config: Config{Server: server.URL, Namespace: "org/project", Project: "project-id"}, Client: server.Client(), Out: io.Discard, Err: io.Discard, ctx: context.Background()}
-	if err := a.connect([]string{"google"}); err != nil {
-		t.Fatal(err)
-	}
+	a := &App{Config: Config{Server: "https://kioku.test", Namespace: "org/project", Project: "project-id"}, Out: io.Discard, Err: io.Discard}
 	if err := a.open(); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(targets, []string{server.URL + "/auth/google/start?connect=one&ticket=two", server.URL + "/org/project"}) {
+	if !reflect.DeepEqual(targets, []string{"https://kioku.test/org/project"}) {
 		t.Fatal(targets)
 	}
 }

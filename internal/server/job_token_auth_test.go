@@ -105,6 +105,12 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 func TestJobTokenRouteAudit(t *testing.T) {
 	f, raw, job, _, _ := jobTokenFixture(t)
 	routes := []string{
+		"GET /auth/github-app/start",
+		"GET /auth/github-app/callback",
+		"GET /auth/github-app/setup",
+		"GET /auth/github-app/installations",
+		"POST /auth/github-app/installations",
+		"POST /api/connect/github/complete",
 		"POST /api/agent/login",
 		"GET /.well-known/oauth-protected-resource",
 		"GET /.well-known/oauth-protected-resource/mcp",

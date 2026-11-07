@@ -13,9 +13,6 @@ import (
 
 func (Connector) OAuth(purpose, verifier string) connector.OAuth {
 	scopes := []string{"read:user", "user:email"}
-	if purpose == "connect" {
-		scopes = append(scopes, "repo")
-	}
 	endpoint := oauthprovider.Endpoint
 	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return connector.OAuth{Endpoint: endpoint, Scopes: scopes}

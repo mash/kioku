@@ -113,7 +113,7 @@ func TestProviderAuthorizationOptions(t *testing.T) {
 				if purpose == "connect" && (q.Get("access_type") != "offline" || q.Get("prompt") != "consent" || !strings.Contains(q.Get("scope"), "drive.readonly")) {
 					t.Fatal("lost Google connection options")
 				}
-			} else if q.Get("nonce") != "" || strings.Contains(q.Get("scope"), "repo") != (purpose == "connect") {
+			} else if q.Get("nonce") != "" || strings.Contains(q.Get("scope"), "repo") || q.Get("scope") != "read:user user:email" {
 				t.Fatal("incorrect GitHub options")
 			}
 		}

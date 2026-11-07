@@ -147,6 +147,12 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /auth/github-app/start", s.wrap(s.githubStart, false))
+	s.mux.HandleFunc("GET /auth/github-app/callback", s.wrap(s.githubCallback, false))
+	s.mux.HandleFunc("GET /auth/github-app/setup", s.wrap(s.githubSetup, false))
+	s.mux.HandleFunc("GET /auth/github-app/installations", s.wrap(s.githubInstallations, false))
+	s.mux.HandleFunc("POST /auth/github-app/installations", s.wrap(s.githubInstallations, false))
+	s.mux.HandleFunc("POST /api/connect/github/complete", s.wrap(s.completeGitHub, false))
 	s.mux.HandleFunc("POST /mcp", s.mcp)
 	s.mux.HandleFunc("GET /mcp", s.mcp)
 	s.mux.HandleFunc("POST /api/agent/login", s.wrap(s.agentLogin, false))
@@ -342,11 +348,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
 	}
 	return s.DB.View(func(st model.State) error {
 		u := st.Users[uid]
-		providers := []string{}
-		for p := range u.Connections {
-			providers = append(providers, p)
-		}
-		sort.Strings(providers)
+		providers := connections(st, uid)
 		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "connections": providers})
 		return nil
 	})

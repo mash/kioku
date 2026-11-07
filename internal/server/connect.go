@@ -14,6 +14,9 @@ import (
 // only staged; it cannot change the account until that CLI redeems the code.
 func (s *Server) connect(w http.ResponseWriter, r *http.Request, uid string) error {
 	provider := r.PathValue("provider")
+	if provider == "github" {
+		return s.connectGitHub(w, r, uid)
+	}
 	p, ok := s.Config.Providers[provider]
 	if !ok || p.ClientID == "" {
 		return fail(400, "provider is not configured")

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/githubapp"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 )
@@ -135,6 +136,9 @@ func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, rea
 }
 
 func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) error {
+	if r.PathValue("provider") == "github" && r.URL.Query().Get("connect") != "" {
+		return s.legacyGitHubConnect(w, r)
+	}
 	provider := r.PathValue("provider")
 	p, ok := s.Config.Providers[provider]
 	if !ok || p.ClientID == "" {
@@ -197,6 +201,9 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	}
 	if pending.Device != "" && r.URL.Query().Has("error") {
 		return s.loopbackFailure(w, r, pending.Device, "access_denied")
+	}
+	if pending.Provider == "github" && pending.Purpose == "connect" {
+		return s.githubFailure(w, r, pending.Device, "restart_required")
 	}
 	p := s.Config.Providers[pending.Provider]
 	credential, identity, err := p.Exchange(r.Context(), r.URL.Query().Get("code"), pending.Verifier)
@@ -307,6 +314,10 @@ func prune(st *model.State) {
 	}
 	for k, v := range st.Devices {
 		if v.Used || !v.Expires.After(now) {
+			if _, ok := st.GitHubAppConnectAttempts[k]; ok {
+				githubapp.Count(st, `kioku_github_connect_total{result="expired"}`, 1)
+				delete(st.GitHubAppConnectAttempts, k)
+			}
 			delete(st.Devices, k)
 		}
 	}

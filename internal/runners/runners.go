@@ -15,6 +15,7 @@ import (
 )
 
 type Config struct {
+	Type                 string
 	AnthropicAPIKey      string
 	MAAgentID            string
 	MAAgentVersion       int64
@@ -44,7 +45,7 @@ func Load(c Config, db *store.Store, cipher *auth.Cipher) (*Set, error) {
 		c.AgentMaxSessionCents = 1000
 	}
 	s := &Set{config: c, db: db, cipher: cipher}
-	if err := s.prepareManaged(); err != nil {
+	if err := s.prepareRunner(); err != nil {
 		return nil, err
 	}
 	return s, nil

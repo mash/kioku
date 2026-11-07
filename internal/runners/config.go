@@ -32,3 +32,22 @@ func (s *Set) prepareManaged() error {
 	}
 	return nil
 }
+
+func (s *Set) prepareRunner() error {
+	if err := s.prepareManaged(); err != nil {
+		return err
+	}
+	switch s.config.Type {
+	case "":
+		return nil
+	case "managed":
+		if !(s.config.ManagedAgents != nil) {
+			return errors.New("KIOKU_RUNNER=managed requires Managed Agents configuration")
+		}
+		return nil
+	case "exec":
+		return errors.New("exec runner is not available")
+	default:
+		return errors.New("unknown KIOKU_RUNNER")
+	}
+}

@@ -14,7 +14,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	urls := []string{"https://example.com/a", "https://example.com/b"}
 	putText := func(url, body string) {
 		t.Helper()
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: body, SourceURL: url}}, nil); c != 202 {
+		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent(url, body)}}, nil); c != 202 {
 			t.Fatal(c)
 		}
 	}
@@ -46,6 +46,20 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 		t.Fatal(c, string(b))
 	}
 	input := readInput(t, b)
+	inboxCount := 0
+	for name, body := range input {
+		if !strings.HasPrefix(name, "inbox/") {
+			continue
+		}
+		inboxCount++
+		outer, _, ok := strings.Cut(strings.TrimPrefix(body, "---\n"), "---\n")
+		if !ok || !strings.Contains(outer, "updated_at: "+testUpdatedAt+"\n") {
+			t.Fatalf("source time missing from server-owned metadata: %s", body)
+		}
+	}
+	if inboxCount != 1 {
+		t.Fatalf("got %d inbox items, want 1", inboxCount)
+	}
 	for name, body := range pages {
 		if input[name] != body {
 			t.Fatalf("previous page changed: %s", name)

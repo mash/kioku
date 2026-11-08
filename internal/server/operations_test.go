@@ -19,7 +19,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Operations"}, &p)
 	base := "/api/projects/" + p.ID
 	var job model.Job
-	input := model.PutRequest{File: &model.FileInput{Name: "one.md", Content: "One source", SourceURL: testSourceURL("one.md", "One source")}}
+	input := model.PutRequest{File: &model.FileInput{Name: "one.md", Content: testSourceContent(testSourceURL("one.md", "One source"), "One source")}}
 	if c := f.request("POST", base+"/put", token, input, &job); c != 202 {
 		t.Fatal(c)
 	}
@@ -64,7 +64,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 		t.Fatal(c)
 	}
 	var deletion model.Job
-	if c := f.request("POST", base+"/put", token, model.PutRequest{Remove: true, SourceURL: input.File.SourceURL}, &deletion); c != 202 {
+	if c := f.request("POST", base+"/put", token, model.PutRequest{Remove: true, SourceURL: testSourceURL("one.md", "One source")}, &deletion); c != 202 {
 		t.Fatal(c)
 	}
 	f.s.Config.MaxWikiBytes = 64 << 20

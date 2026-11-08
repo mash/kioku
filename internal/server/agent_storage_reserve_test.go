@@ -10,7 +10,7 @@ import (
 func TestManagedAcceptedLargeOutputCanPublish(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.MaxWikiBytes = 1 << 20
-	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: "https://example.com/missing"}}, nil)
+	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/missing", "Source body")}}, nil)
 	j := startManaged(t, f, token, p.ID, false)
 	pages := map[string]string{"wiki/index.md": "# Large wiki", "wiki/source-original.md": "---\nsource_url: https://example.com/missing\n---\nSource body"}
 	pages["wiki/large.md"] = strings.Repeat("a", (1<<20)+100)
@@ -23,7 +23,7 @@ func TestManagedAcceptedLargeOutputCanPublish(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatalf("accepted output could not publish: %s: %s", j.Status, j.Error)
 	}
-	if code := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: "https://example.com/new"}}, nil); code != 413 {
+	if code := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/new", "Source body")}}, nil); code != 413 {
 		t.Fatal("quota", code)
 	}
 	if code := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/missing"}, nil); code != 202 {

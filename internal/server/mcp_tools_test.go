@@ -74,7 +74,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	content := "MixedCaseNeedle\n" + strings.Repeat("界", 12000) + "\n" + strings.Repeat("FloodNeedle\n", 55) + "ẞ" + strings.Repeat("x", 300) + "DeepNeedle" + "Ⱥ" + strings.Repeat("y", 300)
 	var put model.Job
 	base := "/api/projects/" + project.ID
-	if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: content, SourceURL: testSourceURL("evidence.md", content)}}, &put); code != 202 {
+	if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: testSourceContent(testSourceURL("evidence.md", content), content)}}, &put); code != 202 {
 		t.Fatal("put source", code)
 	}
 	f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
@@ -228,7 +228,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			human := f.login("owner@example.com")
 			project := securityProject(t, f, human)
 			base := "/api/projects/" + project.ID
-			if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "initial.md", Content: "Initial evidence", SourceURL: testSourceURL("initial.md", "Initial evidence")}}, nil); code != 202 {
+			if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "initial.md", Content: testSourceContent(testSourceURL("initial.md", "Initial evidence"), "Initial evidence")}}, nil); code != 202 {
 				t.Fatal("initial put", code)
 			}
 			f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
@@ -266,7 +266,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 				t.Fatal(err)
 			}
 			var result model.InboxItem
-			content := "---\nsource_url: https://example.com/record\n---\nA new shared record"
+			content := testSourceContent("https://example.com/record", "A new shared record")
 			args := map[string]any{"project": project.Namespace, "name": "record.md", "content": content}
 			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result.ID == "" || result.Status != "fetched" {
 				t.Fatal(msg, result)
@@ -313,7 +313,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		{map[string]any{"project": project.Namespace, "url": "https://example.com"}, "unknown tool or invalid arguments"},
 		{map[string]any{"project": project.Namespace, "name": "record.pdf", "content": "text"}, "unsupported file extension; use text, Markdown, HTML or code"},
 		{map[string]any{"project": project.Namespace, "name": "record.md"}, "unknown tool or invalid arguments"},
-		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "original source URL is required: use source_url frontmatter or --source-url"},
+		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "source_url and updated_at are required in YAML frontmatter at the top of the content"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": ""}, "source is empty"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "text", "url": "https://example.com"}, "unknown tool or invalid arguments"},
 	} {

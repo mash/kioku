@@ -20,21 +20,34 @@ projects/<project-id>/
   .kioku/audit/<event-id>.json
 ```
 
-Content schema 2 stores inbox metadata, job state, scheduling deadlines and current wiki metadata. Each inbox item has an ID, source_url, status, submitter and optional run ID. Removed items have no body. Fetched bodies are written before the inbox state commits; a crash in between leaves an unreferenced object for GC. The state contains no provider tokens. Recent job/audit indexes are bounded to 256 entries; unfinished jobs and pending cleanup remain indexed. Archived generation jobs remain queryable/retryable through the authorized API.
+Content schema 2 stores inbox metadata, job state, scheduling deadlines and current wiki metadata. Each inbox item has an ID, source_url, status, submitter and optional run ID. New fetched items also have updated_at. The server can read old stored items without updated_at. Removed items have no body or updated_at. Fetched bodies are written before the inbox state commits; a crash in between leaves an unreferenced object for GC. The state contains no provider tokens. Recent job/audit indexes are bounded to 256 entries; unfinished jobs and pending cleanup remain indexed. Archived generation jobs remain queryable/retryable through the authorized API.
 
 Updates confined to content do not write SQLite. Changes spanning configuration and content use a configuration-only SQLite redo intent referring to external content transaction objects. Recovery completes that intent before serving. A failed/ambiguous storage commit fails closed until restart; missing or corrupt project state is never replaced by an empty wiki.
 
 ## Put and inbox
 
-POST `/api/projects/{id}/put` accepts either `{"file":{"name":"doc.md","content":"…","source_url":"https://…"}}` or `{"remove":true,"source_url":"https://…"}`. These create fetched and removed items respectively. It returns 202 with `id` and `status`, not a job. File frontmatter may supply source_url; the caller's body is retained verbatim and cannot override the server-owned status. Source URLs must be HTTPS and cannot name private address literals. The client asserts source_url as provenance. The server does not retrieve the URL or verify that the submitted text came from the URL.
+POST `/api/projects/{id}/put` accepts one file or one removal:
 
-`kioku put [FILES...]` sends one request per file and saves each successful receipt immediately. With no arguments it sends changed files in local inbox/. `kioku delete URL` saves removed. Human, write-agent and MCP callers submit source text with a source_url. Neither operation starts a runner. `GET /api/projects` includes inbox_count and an inbox list (source_url and status only) in each project entry, including pinned items; empty inboxes return 0 and []. `kioku status` prints those fields from the same response; pull and MCP read only the published wiki/maps.
+```json
+{"file":{"name":"doc.md","content":"---\nsource_url: https://example.com/doc\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nDocument text"}}
+{"remove":true,"source_url":"https://example.com/doc"}
+```
+
+A file creates a fetched item. A removal creates a removed item. The server returns 202 with `id` and `status`. It does not create a job.
+
+Every file must start with YAML frontmatter. It must contain `source_url` and `updated_at`. The URL must use public HTTPS and pass `ValidateSourceURL`. Write `updated_at` as an RFC 3339 timestamp with an explicit offset, such as `+09:00` or `Z`. Use the original document's last-updated time. If the original has no update metadata, use the fetch time. Missing, empty or invalid values cause a 400 response that names the key.
+
+The server reads provenance only from the file. It rejects `file.source_url` and a top-level `source_url` with a file. The top-level `source_url` is for removals only. The server keeps the submitted body unchanged. The body cannot override the server-owned status. The sender asserts provenance. The server does not retrieve the URL or verify the source of the text.
+
+`kioku put [FILES...]` sends one request per file. It saves each successful receipt immediately. With no arguments, it sends changed files in local inbox/. Each file needs the same frontmatter. There is no `--source-url` flag. `kioku delete URL` submits a removal. MCP `source_put` takes `name` and `content` for a file. It takes `remove: true` and `source_url` for a removal. Do not send the `source_url` argument with `content`. These operations do not start a runner.
+
+`GET /api/projects` includes inbox_count and an inbox list (source_url and status only) in each project entry. The list includes pinned items. Empty inboxes return 0 and []. `kioku status` prints these fields. Pull and MCP read only the published wiki/maps.
 
 Each put request is at most 1 MiB including JSON overhead (413 on excess). Each project has at most 200 inbox items, including pinned items (429 on excess). A new put replaces waiting items with the same exact source_url, including a removal canceling fetched. Pinned items stay in their current run; new submissions wait for a later run. Replaced/consumed bodies are unreferenced and GC may delete them. No source history or intake journal is retained outside the published wiki.
 
 ## One current wiki
 
-Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md is identical to the first message: four lines containing the job ID, project ID, input URL and output URL. Instructions and output rules are in the system prompt. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
+Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md is identical to the first message: four lines containing the job ID, project ID, input URL and output URL. Instructions and output rules are in the system prompt. The outer YAML includes updated_at for fetched items that have it. It omits updated_at for removals and old items without it. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
 
 The runner processes fetched and removed items, edits source and concept/entity/analysis/overview pages, and returns the complete wiki/*.md set. Existing sources are identified by exact frontmatter source_url and keep their filenames. New slug collisions use -2, -3, etc. The index omits source pages; log.md records changes, newest first, up to 100 entries. The prompt requires these content rules and forbids tokens and signed URL secrets in log.md.
 

@@ -29,8 +29,10 @@ Workflow:
    Keep its filename. For a new source choose source-<slug>.md from the title
    using ASCII lowercase letters, digits and hyphens. If occupied by another
    URL, use -2, then -3 etc. Copy the exact source_url into YAML frontmatter.
+   Copy the item's updated_at into the source page's YAML frontmatter when present.
 3. Rewrite related concept, entity, analysis and overview pages. Cite the
    source page beside factual claims. Keep contradictions and open questions.
+   Use source times (updated_at and times listed in the body) to date facts and write status.
    Make wiki/index.md a catalog grouped by page kind; omit source pages there.
 4. Prepend this run's entry to wiki/log.md and retain the newest 100 entries.
    Describe changes and truncations with source URL and submitter. Never write

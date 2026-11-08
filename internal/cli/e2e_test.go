@@ -101,15 +101,42 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := config
-	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("---\nsource_url: https://example.com/notes\n---\n# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("---\nsource_url: https://example.com/notes\nupdated_at: 2026-11-07T18:00:00+09:00\n---\n# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := run("put", "--source-url", "https://example.com/override", filepath.Join(project, "inbox", "notes.md")); err == nil {
+		t.Fatal("accepted removed source-url flag")
+	}
 	must("put")
+	if err := db.View(func(st model.State) error {
+		for _, item := range st.Inbox {
+			if item.ProjectID == cfg.Project && (item.SourceURL != "https://example.com/notes" || item.UpdatedAt == nil || item.UpdatedAt.Format(time.RFC3339) != "2026-11-07T18:00:00+09:00") {
+				t.Fatalf("stored provenance: %+v", item)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if out := must("status"); !strings.Contains(out, `"inbox_count": 1`) {
 		t.Fatal(out)
 	}
 	if out := must("put"); !strings.Contains(out, "新しい投入ファイルはありません") {
 		t.Fatal(out)
+	}
+	must("delete", "https://example.com/notes")
+	if err := db.View(func(st model.State) error {
+		if len(st.Inbox) != 1 {
+			t.Fatalf("expected one removal, got %d inbox items", len(st.Inbox))
+		}
+		for _, item := range st.Inbox {
+			if item.ProjectID == cfg.Project && (item.Status != "removed" || item.UpdatedAt != nil) {
+				t.Fatalf("removed provenance: %+v", item)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	must("logout")
 	if _, err = run("whoami"); err == nil {

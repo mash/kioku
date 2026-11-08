@@ -14,7 +14,7 @@ import (
 func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	first := putFile(t, f, token, p.ID, "a.md", "First body")
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: "https://example.com/private"}}, nil); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/private", "Source body")}}, nil); c != 202 {
 		t.Fatal(c)
 	}
 	j := startManaged(t, f, token, p.ID, false)
@@ -104,7 +104,7 @@ func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
 	if !j.Unchanged || j.Status != "completed" || len(ma.Requests()) != before {
 		t.Fatal(j)
 	}
-	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: "https://example.com/waiting"}}, nil)
+	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/waiting", "Source body")}}, nil)
 	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/removed"}, nil)
 	f.db.Update(func(st *model.State) error {
 		q := st.Projects[p.ID]
@@ -391,7 +391,7 @@ func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
 	f.s.Config.MaxWikiBytes = 1 << 20
 	j := startManaged(t, f, token, p.ID, true)
 	// This item arrives after pinning and stays waiting after the oversized publish.
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: "https://example.com/waiting"}}, nil); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/waiting", "Source body")}}, nil); c != 202 {
 		t.Fatal(c)
 	}
 	pages := map[string]string{"wiki/index.md": "# Index", "wiki/large.md": strings.Repeat("a", (1<<20)+100)}

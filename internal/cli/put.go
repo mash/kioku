@@ -18,7 +18,6 @@ import (
 func (a *App) put(args []string) error {
 	f := flag.NewFlagSet("put", flag.ContinueOnError)
 	f.SetOutput(a.Err)
-	sourceURL := f.String("source-url", "", "original HTTPS URL for one explicit file; otherwise use source_url YAML frontmatter")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -44,18 +43,6 @@ func (a *App) put(args []string) error {
 	}
 	inputs := []filePut{}
 	paths := f.Args()
-	if *sourceURL != "" {
-		if len(paths) != 1 {
-			return errors.New("--source-url requires one explicit file")
-		}
-		info, err := os.Lstat(paths[0])
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return errors.New("--source-url requires one regular file")
-		}
-	}
 	inbox := len(paths) == 0
 	if inbox {
 		paths = []string{filepath.Join(a.localDir(), "inbox")}
@@ -105,11 +92,11 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return err
 			}
-			doc, err := source.FileWithURL(name, string(b), *sourceURL)
+			_, err = source.FileWithProvenance(name, string(b))
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
 			}
-			inputs = append(inputs, filePut{model.FileInput{Name: filepath.ToSlash(name), Content: string(b), SourceURL: doc.URL}, abs, h})
+			inputs = append(inputs, filePut{model.FileInput{Name: filepath.ToSlash(name), Content: string(b)}, abs, h})
 			return nil
 		})
 		if err != nil {

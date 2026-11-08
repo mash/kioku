@@ -51,7 +51,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		t.Fatal(c)
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: "Project A evidence", SourceURL: testSourceURL("evidence.md", "Project A evidence")}}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+a.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: testSourceContent(testSourceURL("evidence.md", "Project A evidence"), "Project A evidence")}}, &job); c != 202 {
 		t.Fatal(c)
 	}
 	runGeneration(t, f, human, a.ID)
@@ -107,12 +107,12 @@ func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
 	p := securityProject(t, f, human)
 	id, token := testAgent(t, f, human, p.ID, "write")
 	for _, u := range []string{"https://docs.google.com/document/d/private/edit", "https://github.com/example/private/blob/main/secret.md", "https://example.com"} {
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: u}}, nil); c != 202 {
+		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent(u, "Source body")}}, nil); c != 202 {
 			t.Fatal("provider/URL delegation", c)
 		}
 	}
 	var job model.Job
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "note.md", Content: "Authorized file", SourceURL: testSourceURL("note.md", "Authorized file")}}, &job); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "note.md", Content: testSourceContent(testSourceURL("note.md", "Authorized file"), "Authorized file")}}, &job); c != 202 {
 		t.Fatal(c, job)
 	}
 	job = f.generate(p.ID, token, false)

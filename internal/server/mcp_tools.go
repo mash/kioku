@@ -108,19 +108,24 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 			Project   *string `json:"project"`
 			Name      *string `json:"name"`
 			Content   *string `json:"content"`
-			SourceURL string  `json:"source_url"`
+			SourceURL *string `json:"source_url"`
 			Remove    bool    `json:"remove"`
 		}
 		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil {
 			return nil, invalid
 		}
-		req := model.PutRequest{Remove: args.Remove, SourceURL: args.SourceURL}
+		req := model.PutRequest{Remove: args.Remove}
+		if args.SourceURL != nil {
+			if !args.Remove || args.Name != nil || args.Content != nil {
+				return nil, fail(400, "source_url argument is only allowed with remove: true; put source_url and updated_at in content YAML frontmatter")
+			}
+			req.SourceURL = *args.SourceURL
+		}
 		if args.Name != nil || args.Content != nil {
 			if args.Name == nil || args.Content == nil || args.Remove {
 				return nil, invalid
 			}
-			req.File = &model.FileInput{Name: *args.Name, Content: *args.Content, SourceURL: args.SourceURL}
-			req.SourceURL = ""
+			req.File = &model.FileInput{Name: *args.Name, Content: *args.Content}
 		}
 		return s.mcpSourcePut(ctx, key, *args.Project, req)
 	default:

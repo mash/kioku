@@ -38,7 +38,7 @@ func TestPutCheckpointsEachAcceptedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"a.md", "b.md"} {
-		if err := os.WriteFile(filepath.Join(a.Dir, "inbox", name), []byte("---\nsource_url: https://example.com/"+name+"\n---\nBody"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(a.Dir, "inbox", name), []byte("---\nsource_url: https://example.com/"+name+"\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nBody"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}

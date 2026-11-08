@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 type entry struct {
@@ -197,5 +198,44 @@ func TestBuildInputDeterministicInbox(t *testing.T) {
 	spec.Inbox[0].Item.ID = "../escape"
 	if err := BuildInput(spec, io.Discard); err == nil {
 		t.Fatal("path traversal")
+	}
+}
+
+func TestBuildInputProvenance(t *testing.T) {
+	updatedAt, err := time.Parse(time.RFC3339, "2026-11-07T18:00:00.123+09:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nsource_url: https://example.com/nested\nupdated_at: 2000-01-01T00:00:00Z\nstatus: removed\n---\nEvidence"
+	var output bytes.Buffer
+	spec := InputSpec{Inbox: []InboxText{
+		{Item: model.InboxItem{ID: "new", SourceURL: "https://example.com/a", Status: "fetched", UpdatedAt: &updatedAt}, Text: body},
+		{Item: model.InboxItem{ID: "old", SourceURL: "https://example.com/old", Status: "fetched"}, Text: "Legacy evidence"},
+		{Item: model.InboxItem{ID: "removed", SourceURL: "https://example.com/removed", Status: "removed", UpdatedAt: &updatedAt}},
+	}}
+	if err := BuildInput(spec, &output); err != nil {
+		t.Fatal(err)
+	}
+	files := unpack(t, output.Bytes())
+	for _, id := range []string{"new", "old", "removed"} {
+		outer, inner, ok := strings.Cut(strings.TrimPrefix(files["inbox/"+id+".md"], "---\n"), "---\n")
+		if !ok {
+			t.Fatal("missing outer frontmatter", files)
+		}
+		var metadata struct {
+			SourceURL string     `yaml:"source_url"`
+			Status    string     `yaml:"status"`
+			UpdatedAt *time.Time `yaml:"updated_at"`
+		}
+		if err := yaml.Unmarshal([]byte(outer), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		if id == "new" {
+			if metadata.SourceURL != "https://example.com/a" || metadata.Status != "fetched" || metadata.UpdatedAt == nil || metadata.UpdatedAt.Format(time.RFC3339Nano) != updatedAt.Format(time.RFC3339Nano) || inner != body {
+				t.Fatalf("metadata: %+v; body: %q", metadata, inner)
+			}
+		} else if strings.Contains(outer, "updated_at") {
+			t.Fatalf("unexpected updated_at for %s: %s", id, outer)
+		}
 	}
 }

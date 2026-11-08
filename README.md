@@ -1,6 +1,6 @@
 # Kioku
 
-Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends its text with a source_url. The server stores the text as a fetched inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
+Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source. It sends Markdown with source_url and updated_at in YAML frontmatter. It uses the original last-updated time, or the fetch time if the source has no update metadata. The server stores the text as a fetched inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
 
 The repository has three parts:
 
@@ -96,7 +96,7 @@ export GOOGLE_CLIENT_SECRET=...
 
 `KIOKU_ENCRYPTION_KEY` を指定した場合は、その値を優先しファイルには書き出しません。未指定なら保存済みの鍵を読み、初回だけ暗号学的乱数で32バイトの鍵を生成します。保存済みの鍵が壊れている場合は再生成せず起動エラーにします。
 
-生成 Runner が API／HTTP で原資料を取得します。クラウドから本文を取得できない場合は、その内容をMarkdownなどのファイルに書いて投入します。ローカルでもGoogle／GitHub認証を使い、認証を省略する起動モードはありません。
+ユーザーの Claude が API／HTTP で原資料を取得し、必須の frontmatter を付けた Markdown ファイルを投入します。ローカルでもGoogle／GitHub認証を使い、認証を省略する起動モードはありません。
 
 別のターミナルで:
 
@@ -112,9 +112,13 @@ export GOOGLE_CLIENT_SECRET=...
 例えば、GitHub にある Kioku の README を取り込み、Wiki を生成して開くには:
 
 ```bash
-source_commit=$(gh api repos/mash/kioku/commits/main --jq .sha)
-gh api "repos/mash/kioku/contents/README.md?ref=$source_commit" -H "Accept: application/vnd.github.raw+json" > /tmp/kioku-readme.md
-./bin/kioku put --source-url "https://github.com/mash/kioku/blob/$source_commit/README.md" /tmp/kioku-readme.md
+source_commit=$(gh api 'repos/mash/kioku/commits?path=README.md&per_page=1' --jq '.[0].sha')
+source_updated_at=$(gh api "repos/mash/kioku/commits/$source_commit" --jq '.commit.committer.date')
+{
+  printf '%s\n' '---' "source_url: https://github.com/mash/kioku/blob/$source_commit/README.md" "updated_at: $source_updated_at" '---'
+  gh api "repos/mash/kioku/contents/README.md?ref=$source_commit" -H "Accept: application/vnd.github.raw+json"
+} > /tmp/kioku-readme.md
+./bin/kioku put /tmp/kioku-readme.md
 ./bin/kioku generate --wait
 ./bin/kioku status
 ./bin/kioku pull
@@ -176,13 +180,16 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 
 ユーザーの Claude が自身のコネクターや CLI で資料を取得し、本文を送ります。Kioku は受け取った本文をプロジェクトのメンバーへ共有します。`source_url` はクライアントが申告する原本 URL です。サーバーは本文がその URL から来たことや、投稿者の原本への閲覧権限を検証しません。[資料アクセス方針](docs/ACCOUNT_ADMIN.md#project-source-authorization-policy)を参照してください。
 
-### 1. 本文と原本 URL を渡す
+### 1. 本文と原本 URL・最終更新日時を渡す
 
-どの資料も、ユーザーの Claude が本文を読み、UTF-8 のテキストファイルとして投入します。CLI 単体で使う場合も、利用者が本文をファイルに保存して送ります。別の要約や操作記録は投入しません。
+どの資料も、ユーザーの Claude が本文を読み、UTF-8 の Markdown ファイルとして投入します。CLI 単体で使う場合も、利用者が本文をファイルに保存して送ります。別の要約や操作記録は投入しません。
+
+ファイル先頭の YAML frontmatter に `source_url` と `updated_at` が必須です。`source_url` は公開 HTTPS の原本 URL、`updated_at` はオフセット付きの RFC 3339 形式（`+09:00` や `Z`）で書きます。原本の最終更新日時を使い、更新時刻のメタデータがなければ取得日時を使います。CLI・HTTP・MCP は同じ検証を行い、欠落・空値・不正な値を拒否します。HTTP は400とキー名を含むエラーを返します。
 
 ```markdown
 ---
 source_url: "https://example.com/the-original-document"
+updated_at: "2026-11-07T18:00:00+09:00"
 ---
 # 決済APIの設計書
 
@@ -191,9 +198,9 @@ source_url: "https://example.com/the-original-document"
 
 ```bash
 kioku put ./payment-api-design.md
-# 1ファイルなら URL を引数で指定してもよい
-kioku put --source-url https://example.com/the-original-document ./payment-api-design.md
 ```
+
+ファイル投入の出典は frontmatter だけから読みます。`put --source-url`、HTTP の `file.source_url`、本文と併用する MCP の `source_url` 引数は使えません。トップレベルの `source_url` は削除専用です。
 
 ファイルの put は `fetched` の項目を作り、ID と status を返します。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 

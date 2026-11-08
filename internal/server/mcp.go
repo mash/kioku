@@ -114,14 +114,19 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			}, "required": []string{"project", "query"}, "additionalProperties": false},
 		}, map[string]any{
 			"name":        "source_put",
-			"description": "Submit one text body with source_url, or remove=true with source_url to the project inbox. The request is limited to 1 MiB. Generation processes the inbox later.",
+			"description": "Submit one Markdown body with source_url and updated_at in YAML frontmatter at the top. Use the original last-updated time, or the fetch time if none is available. To remove a source, send remove=true and source_url without content or name. The request is limited to 1 MiB. Generation processes the inbox later.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 				"remove":     map[string]any{"type": "boolean"},
 				"project":    map[string]any{"type": "string"},
 				"name":       map[string]any{"type": "string"},
-				"content":    map[string]any{"type": "string"},
-				"source_url": map[string]any{"type": "string", "description": "Client-asserted source HTTPS URL; the server does not verify provenance. Required unless content has source_url YAML frontmatter."},
-			}, "required": []string{"project"}, "additionalProperties": false},
+				"content":    map[string]any{"type": "string", "description": "Markdown with required source_url (public HTTPS URL) and updated_at (RFC 3339 with an explicit offset) in its first YAML frontmatter block. The server does not verify provenance."},
+				"source_url": map[string]any{"type": "string", "description": "Public HTTPS URL to remove. Use this argument only with remove=true. For content, put source_url in YAML frontmatter."},
+			}, "required": []string{"project"}, "additionalProperties": false,
+				"oneOf": []any{
+					map[string]any{"required": []string{"name", "content"}, "properties": map[string]any{"remove": map[string]any{"const": false}}, "not": map[string]any{"required": []string{"source_url"}}},
+					map[string]any{"required": []string{"remove", "source_url"}, "properties": map[string]any{"remove": map[string]any{"const": true}}, "not": map[string]any{"anyOf": []any{map[string]any{"required": []string{"name"}}, map[string]any{"required": []string{"content"}}}}},
+				},
+			},
 		}}}
 	case "tools/call":
 		value, err := s.mcpCall(r.Context(), key, req.Params)

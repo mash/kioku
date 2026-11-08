@@ -44,7 +44,7 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	var out, stderr bytes.Buffer
 	a := &App{Dir: t.TempDir(), Config: Config{Server: server.URL, Project: "project", Namespace: "acme/platform"}, Client: server.Client(), Out: &out, Err: &stderr, ctx: context.Background()}
 	file := filepath.Join(t.TempDir(), "note.md")
-	if err := os.WriteFile(file, []byte("---\nsource_url: https://example.com/notes\n---\nEvidence"), 0600); err != nil {
+	if err := os.WriteFile(file, []byte("---\nsource_url: https://example.com/notes\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nEvidence"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	operations := []func() error{

@@ -7,10 +7,14 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
-type Document struct{ URL string }
+type Document struct {
+	URL       string
+	UpdatedAt time.Time
+}
 
 func File(name, content string) (Document, error) {
 	if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {

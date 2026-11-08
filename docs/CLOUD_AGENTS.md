@@ -25,11 +25,11 @@ The MCP endpoint exposes five tools:
 `source_put` accepts exactly one of these shapes (with the selected `project`):
 
 ```json
-{"project":"acme/docs","name":"design.md","content":"Original text","source_url":"https://example.com/design"}
+{"project":"acme/docs","name":"design.md","content":"---\nsource_url: https://example.com/design\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nOriginal text"}
 {"project":"acme/docs","remove":true,"source_url":"https://example.com/design"}
 ```
 
-The statuses are `fetched` and `removed`. The normalized put request is limited to 1 MiB including JSON overhead. A file can instead carry `source_url` in YAML frontmatter. The client fetches the source and sends its text. source_url is client-asserted provenance; the server does not verify that the text came from that URL. The tool saves an inbox item without starting generation. The scheduler includes it in a later run. Waiting items with the same exact URL are replaced, while items pinned to an active run remain unchanged.
+The statuses are `fetched` and `removed`. The normalized put request is limited to 1 MiB including JSON overhead. Every file must start with YAML frontmatter that contains `source_url` and `updated_at`. Use the original last-updated time, or the fetch time if the source has no update metadata. Write the time in RFC 3339 format with an explicit offset. Use the `source_url` argument only for removals. The client fetches the source and sends its text. source_url is client-asserted provenance; the server does not verify that the text came from that URL. The tool saves an inbox item without starting generation. The scheduler includes it in a later run. Waiting items with the same exact URL are replaced, while items pinned to an active run remain unchanged.
 
 ```text
 user ──> claude.ai chat ──(skill kioku loads from the plugin)
@@ -76,7 +76,7 @@ Manage issued agent credentials with `kioku agent list` and `kioku agent revoke 
 | Read | Its own identity metadata; only its selected project in project listings; that project's published wiki/maps, inbox metadata, jobs, and technical usage; logout of itself |
 | Write | Everything above, plus file/removal puts, explicit generation and retrying jobs in the same project |
 
-Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes and issuing credentials. Write agents submit source text with source_url. The user's Claude retrieves GitHub, Google Docs, public Web and other sources before submission. Kioku holds no source-access credentials. See the sharing policy in [account administration](ACCOUNT_ADMIN.md#project-source-authorization-policy).
+Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes and issuing credentials. Write agents submit source text with source_url and updated_at in YAML frontmatter. The user's Claude retrieves GitHub, Google Docs, public Web and other sources before submission. Kioku holds no source-access credentials. See the sharing policy in [account administration](ACCOUNT_ADMIN.md#project-source-authorization-policy).
 
 Published source pages are readable by project members. Writes may consume the organization's existing budget; an agent cannot increase that budget.
 

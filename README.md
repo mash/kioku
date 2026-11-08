@@ -1,6 +1,6 @@
 # Kioku
 
-Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source. It sends Markdown with source_url and updated_at in YAML frontmatter. It uses the original last-updated time, or the fetch time if the source has no update metadata. The server stores the text as a fetched inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
+Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as a fetched inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
 
 The repository has three parts:
 
@@ -128,7 +128,7 @@ source_updated_at=$(gh api "repos/mash/kioku/commits/$source_commit" --jq '.comm
 プロジェクトのメンバーは、公開した source ページと Wiki を閲覧できます。投入時の追加フラグや個別の共有設定はありません。投入した内容は設定したLLM事業者にも送信されます。変更のないinboxファイルは再送しません。
 
 ```bash
-kioku put ./payment-api-design.md  # Artifactから抽出した設計書（下のfrontmatter例）
+kioku put ./payment-api-design.md  # Artifactから抽出し、capture.md の規則で準備した設計書
 kioku generate --wait         # Generate now and pull the wiki
 kioku job status <job-id>
 kioku job wait <job-id>
@@ -184,23 +184,11 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 
 どの資料も、ユーザーの Claude が本文を読み、UTF-8 の Markdown ファイルとして投入します。CLI 単体で使う場合も、利用者が本文をファイルに保存して送ります。別の要約や操作記録は投入しません。
 
-ファイル先頭の YAML frontmatter に `source_url` と `updated_at` が必須です。`source_url` は公開 HTTPS の原本 URL、`updated_at` はオフセット付きの RFC 3339 形式（`+09:00` や `Z`）で書きます。原本の最終更新日時を使い、更新時刻のメタデータがなければ取得日時を使います。CLI・HTTP・MCP は同じ検証を行い、欠落・空値・不正な値を拒否します。HTTP は400とキー名を含むエラーを返します。
-
-```markdown
----
-source_url: "https://example.com/the-original-document"
-updated_at: "2026-11-07T18:00:00+09:00"
----
-# 決済APIの設計書
-
-（原本から実際に取得した本文）
-```
+ファイル先頭の YAML frontmatter に `source_url` と `updated_at` を付け、[原資料の取得・検証規則](plugin/skills/kioku/references/capture.md)に従って投入します。
 
 ```bash
 kioku put ./payment-api-design.md
 ```
-
-ファイル投入の出典は frontmatter だけから読みます。`put --source-url`、HTTP の `file.source_url`、本文と併用する MCP の `source_url` 引数は使えません。トップレベルの `source_url` は削除専用です。
 
 ファイルの put は `fetched` の項目を作り、ID と status を返します。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 

@@ -16,19 +16,18 @@ import (
 )
 
 func TestPutProvenance(t *testing.T) {
+	valid := SourceContentForTest("https://example.com/evidence", "Evidence")
 	for _, tc := range []struct {
 		name, body string
-		flags      []string
 		valid      bool
 	}{
-		{"removed flag", "Evidence", []string{"--source-url", "https://example.com/evidence"}, false},
-		{"frontmatter", "---\nsource_url: https://example.com/evidence\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nEvidence", nil, true},
-		{"missing", "Evidence", nil, false},
-		{"missing source_url", "---\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nEvidence", nil, false},
-		{"missing updated_at", "---\nsource_url: https://example.com/evidence\n---\nEvidence", nil, false},
-		{"empty updated_at", "---\nsource_url: https://example.com/evidence\nupdated_at: \"\"\n---\nEvidence", nil, false},
-		{"invalid updated_at", "---\nsource_url: https://example.com/evidence\nupdated_at: yesterday\n---\nEvidence", nil, false},
-		{"offset required", "---\nsource_url: https://example.com/evidence\nupdated_at: 2026-11-07T18:00:00\n---\nEvidence", nil, false},
+		{"frontmatter", valid, true},
+		{"missing", "Evidence", false},
+		{"missing source_url", strings.ReplaceAll(valid, "source_url: https://example.com/evidence\n", ""), false},
+		{"missing updated_at", strings.ReplaceAll(valid, "updated_at: "+testUpdatedAt+"\n", ""), false},
+		{"empty updated_at", strings.ReplaceAll(valid, testUpdatedAt, `""`), false},
+		{"invalid updated_at", strings.ReplaceAll(valid, testUpdatedAt, "yesterday"), false},
+		{"offset required", strings.ReplaceAll(valid, testUpdatedAt, "2026-11-07T18:00:00"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			writes := 0
@@ -53,16 +52,14 @@ func TestPutProvenance(t *testing.T) {
 			if err := os.WriteFile(file, []byte(tc.body), 0600); err != nil {
 				t.Fatal(err)
 			}
-			err := a.put(append(tc.flags, file))
-			if !tc.valid && len(tc.flags) == 0 {
+			err := a.put([]string{file})
+			if !tc.valid {
 				_, want := source.FileWithProvenance("notes.md", tc.body)
 				if err == nil || want == nil || !strings.HasSuffix(err.Error(), want.Error()) {
 					t.Fatalf("CLI error: %v; want %v", err, want)
 				}
 			}
-			if tc.name == "removed flag" && (err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -source-url")) {
-				t.Fatalf("removed flag error: %v", err)
-			}
+
 			if (err == nil) != tc.valid || (!tc.valid && writes != 0) || (tc.valid && writes != 1) {
 				t.Fatal("result", err, "writes", writes)
 			}

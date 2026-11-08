@@ -46,10 +46,7 @@ CLI はユーザー共通領域で接続先別に認証を管理する。スキ�
 local mode は `.md` ファイルを CLI の `kioku put FILE` で送信する。
 remote mode は MCP（Model Context Protocol）の `source_put` で本文を送信する。
 remote mode の接続先は `https://kioku.magicians.ee` に限る。
-共通の取得規則、frontmatter、送信前の確認は [capture.md](skills/kioku/references/capture.md) に従う。
-送信する Markdown の先頭に YAML frontmatter を置き、`source_url` と `updated_at` を必ず書く。
-`updated_at` は原本の最終更新日時とし、メタデータがなければ取得日時を使う。
-オフセット付きの RFC 3339 形式で書く。本文を送る時は `source_url` 引数を使わない。
+`source_url`・`updated_at` を含む frontmatter と送信前の確認は [capture.md](skills/kioku/references/capture.md) に従う。
 原本の HTTPS URL がない資料は送信せず、未保存と伝える。
 `source_url` は送信者の申告であり、サーバーは本文と原本の一致を検証しない。
 

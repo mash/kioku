@@ -33,36 +33,30 @@ func FileWithProvenance(name, content string) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	normalized := strings.ReplaceAll(content, "\r\n", "\n")
-	if !strings.HasPrefix(normalized, "---\n") {
-		return Document{}, errors.New("source_url and updated_at are required in YAML frontmatter at the top of the content")
+	metadata, err := Frontmatter(content)
+	if err != nil {
+		return Document{}, err
 	}
-	// Retain the opening newline so an immediately closing delimiter ends an
-	// empty block instead of letting YAML consume metadata from the body.
-	rest := normalized[3:]
-	end := strings.Index(rest+"\n", "\n---\n")
-	if end < 0 {
-		return Document{}, errors.New("source_url and updated_at require a closed YAML frontmatter block")
+	sourceURL, err := FrontmatterSourceURL(metadata)
+	if err != nil {
+		return Document{}, err
 	}
-	var metadata struct {
-		SourceURL yaml.Node `yaml:"source_url"`
-		UpdatedAt yaml.Node `yaml:"updated_at"`
-	}
-	if err := yaml.Unmarshal([]byte(rest[:end]), &metadata); err != nil {
-		return Document{}, fmt.Errorf("invalid source frontmatter (source_url and updated_at): %w", err)
-	}
-	if metadata.SourceURL.Kind != yaml.ScalarNode || metadata.SourceURL.Tag != "!!str" || metadata.SourceURL.Value == "" {
-		return Document{}, errors.New("source_url must be a nonempty string in YAML frontmatter")
-	}
-	if err := ValidateSourceURL(metadata.SourceURL.Value); err != nil {
+	if err := ValidateSourceURL(sourceURL); err != nil {
 		return Document{}, fmt.Errorf("source_url: %w", err)
 	}
-	if metadata.UpdatedAt.Kind != yaml.ScalarNode || (metadata.UpdatedAt.Tag != "!!str" && metadata.UpdatedAt.Tag != "!!timestamp") || !provenanceTimestamp.MatchString(metadata.UpdatedAt.Value) {
-		return Document{}, errors.New("updated_at must be a nonempty RFC 3339 timestamp with an explicit offset in YAML frontmatter")
+	var updatedAt yaml.Node
+	for i := 0; i < len(metadata.Content); i += 2 {
+		if metadata.Content[i].Value == "updated_at" {
+			updatedAt = *metadata.Content[i+1]
+		}
 	}
-	if _, err := time.Parse(time.RFC3339, strings.ToUpper(metadata.UpdatedAt.Value)); err != nil {
-		return Document{}, fmt.Errorf("updated_at must be an RFC 3339 timestamp with an explicit offset: %w", err)
+	const invalidUpdatedAt = "updated_at must be an RFC 3339 timestamp with an explicit offset in YAML frontmatter"
+	if updatedAt.Kind != yaml.ScalarNode || !provenanceTimestamp.MatchString(updatedAt.Value) {
+		return Document{}, errors.New(invalidUpdatedAt)
 	}
-	doc.URL = metadata.SourceURL.Value
+	if _, err := time.Parse(time.RFC3339, strings.ToUpper(updatedAt.Value)); err != nil {
+		return Document{}, errors.New(invalidUpdatedAt)
+	}
+	doc.URL = sourceURL
 	return doc, nil
 }

@@ -100,9 +100,7 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが選択を会話内で保持し、カタログだけを管理する。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
   source ページの `source_url` から原本を確認する。
-- 原資料の先頭の YAML frontmatter に `source_url` と `updated_at` を必ず書く。
-  `updated_at` は原本の最終更新日時、メタデータがなければ取得日時とし、オフセット付き RFC 3339 形式で書く。
-  URL を投入引数で渡さず、[capture.md](references/capture.md) の取得・検証規則に従う。
+- 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。
 - local mode: `put` は受付結果として inbox の ID（識別子）と status を返す。Wiki の生成を待たない。
   Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。`generate --wait` は生成完了後に pull する。
   `status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。

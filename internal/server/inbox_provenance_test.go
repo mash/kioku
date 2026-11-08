@@ -15,8 +15,8 @@ func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
 	access := connectorAccessToken(t, f, human, p.ID)
 	valid := testSourceContent("https://example.com/a", "Evidence")
 	for _, tc := range []struct{ name, body, key string }{
-		{"missing frontmatter", "Evidence", "source_url"},
-		{"empty frontmatter before provenance", "---\n" + valid, "source_url"},
+		{"missing frontmatter", "Evidence", "frontmatter"},
+		{"empty frontmatter before provenance", "---\n" + valid, "frontmatter"},
 		{"missing source_url", strings.ReplaceAll(valid, "source_url: https://example.com/a\n", ""), "source_url"},
 		{"missing updated_at", strings.ReplaceAll(valid, "updated_at: "+testUpdatedAt+"\n", ""), "updated_at"},
 		{"empty updated_at", strings.ReplaceAll(valid, testUpdatedAt, `""`), "updated_at"},
@@ -61,17 +61,21 @@ func TestInboxRejectsExternalFileProvenance(t *testing.T) {
 	p := securityProject(t, f, human)
 	access := connectorAccessToken(t, f, human, p.ID)
 	content := testSourceContent("https://example.com/original", "Evidence")
-	for _, url := range []string{"https://example.com/original", "https://example.com/override", ""} {
+	for _, tc := range []struct{ url, errorKey string }{
+		{"https://example.com/original", "source_url argument is only for remove"},
+		{"https://example.com/override", "source_url argument is only for remove"},
+		{"", "invalid arguments"},
+	} {
 		for _, req := range []any{
-			map[string]any{"file": map[string]any{"name": "a.md", "content": content, "source_url": url}},
-			map[string]any{"file": map[string]any{"name": "a.md", "content": content}, "source_url": url},
+			map[string]any{"file": map[string]any{"name": "a.md", "content": content, "source_url": tc.url}},
+			map[string]any{"file": map[string]any{"name": "a.md", "content": content}, "source_url": tc.url},
 		} {
 			if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, req, nil); c != 400 {
 				t.Fatalf("accepted external provenance: %d, %+v", c, req)
 			}
 		}
-		args := map[string]any{"project": p.Namespace, "name": "a.md", "content": content, "source_url": url}
-		if msg := connectorTool(t, f, access, "source_put", args, nil); !strings.Contains(msg, "source_url argument is only allowed with remove: true") {
+		args := map[string]any{"project": p.Namespace, "name": "a.md", "content": content, "source_url": tc.url}
+		if msg := connectorTool(t, f, access, "source_put", args, nil); !strings.Contains(msg, tc.errorKey) {
 			t.Fatal("MCP accepted external provenance:", msg)
 		}
 	}

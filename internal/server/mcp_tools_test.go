@@ -313,7 +313,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		{map[string]any{"project": project.Namespace, "url": "https://example.com"}, "unknown tool or invalid arguments"},
 		{map[string]any{"project": project.Namespace, "name": "record.pdf", "content": "text"}, "unsupported file extension; use text, Markdown, HTML or code"},
 		{map[string]any{"project": project.Namespace, "name": "record.md"}, "unknown tool or invalid arguments"},
-		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "source_url and updated_at are required in YAML frontmatter at the top of the content"},
+		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "frontmatter missing or invalid: require a top YAML mapping with unique keys"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": ""}, "source is empty"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "text", "url": "https://example.com"}, "unknown tool or invalid arguments"},
 	} {

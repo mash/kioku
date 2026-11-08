@@ -101,7 +101,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := config
-	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte("---\nsource_url: https://example.com/notes\nupdated_at: 2026-11-07T18:00:00+09:00\n---\n# Architecture\nAll application code is Go. Objects live in S3."), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte(cli.SourceContentForTest("https://example.com/notes", "# Architecture\nAll application code is Go. Objects live in S3.")), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := run("put", "--source-url", "https://example.com/override", filepath.Join(project, "inbox", "notes.md")); err == nil {

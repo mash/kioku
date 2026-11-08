@@ -92,11 +92,13 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return err
 			}
-			_, err = source.FileWithProvenance(name, string(b))
+			content := string(b)
+			// This is a pre-flight check; the server is authoritative.
+			_, err = source.FileWithProvenance(name, content)
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
 			}
-			inputs = append(inputs, filePut{model.FileInput{Name: filepath.ToSlash(name), Content: string(b)}, abs, h})
+			inputs = append(inputs, filePut{model.FileInput{Name: filepath.ToSlash(name), Content: content}, abs, h})
 			return nil
 		})
 		if err != nil {

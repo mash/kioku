@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/mash/kioku/internal/model"
-	"gopkg.in/yaml.v3"
+	"github.com/mash/kioku/internal/source"
 )
 
 var outputPath = regexp.MustCompile(`^wiki/[a-z0-9][a-z0-9-]*\.md$`)
@@ -25,39 +25,11 @@ func ValidatePages(pages map[string]string) error {
 }
 
 func SourceURL(body string) (string, error) {
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	if !strings.HasPrefix(body, "---\n") {
-		return "", fmt.Errorf("source_url frontmatter required")
+	metadata, err := source.Frontmatter(body)
+	if err != nil {
+		return "", err
 	}
-	rest := body[4:]
-	end := strings.Index(rest, "\n---\n")
-	if end < 0 && strings.HasSuffix(rest, "\n---") {
-		end = len(rest) - 4
-	}
-	if end < 0 {
-		return "", fmt.Errorf("unterminated frontmatter")
-	}
-	var root yaml.Node
-	if err := yaml.Unmarshal([]byte(rest[:end]), &root); err != nil {
-		return "", fmt.Errorf("invalid frontmatter")
-	}
-	if len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
-		return "", fmt.Errorf("source_url frontmatter required")
-	}
-	var value string
-	for i := 0; i < len(root.Content[0].Content); i += 2 {
-		key, v := root.Content[0].Content[i], root.Content[0].Content[i+1]
-		if key.Value == "source_url" {
-			if value != "" || v.Kind != yaml.ScalarNode || v.Tag != "!!str" || v.Value == "" {
-				return "", fmt.Errorf("source_url must be one nonempty string")
-			}
-			value = v.Value
-		}
-	}
-	if value == "" {
-		return "", fmt.Errorf("source_url frontmatter required")
-	}
-	return value, nil
+	return source.FrontmatterSourceURL(metadata)
 }
 
 // ValidateSources implements (a)-(e); source bodies and log entries are not checked.

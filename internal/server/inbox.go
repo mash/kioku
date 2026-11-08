@@ -60,12 +60,12 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		}
 		item.SourceURL, item.Status, body = doc.URL, "fetched", req.File.Content
 	case req.File == nil && req.Remove && req.SourceURL != "":
+		if err := source.ValidateSourceURL(req.SourceURL); err != nil {
+			return item, fail(400, err.Error())
+		}
 		item.SourceURL, item.Status = req.SourceURL, "removed"
 	default:
-		return item, fail(400, "provide one file with source_url and updated_at frontmatter, or remove: true with source_url")
-	}
-	if err := source.ValidateSourceURL(item.SourceURL); err != nil {
-		return item, fail(400, err.Error())
+		return item, fail(400, "provide one file, or remove: true with source_url; put source_url and updated_at in the file frontmatter; the source_url argument is only for remove")
 	}
 	unlock, err := s.lockProject(ctx, pid)
 	if err != nil {

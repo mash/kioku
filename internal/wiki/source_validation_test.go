@@ -41,3 +41,23 @@ func TestSourceValidationRules(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceURLFrontmatterBoundaries(t *testing.T) {
+	const metadata = "source_url: https://example.com/a\n"
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"closing at eof", "---\n" + metadata + "---", true},
+		{"crlf", strings.ReplaceAll("---\n"+metadata+"---\nBody", "\n", "\r\n"), true},
+		{"empty block before metadata", "---\n---\n" + metadata + "---\nBody", false},
+		{"duplicate other key", "---\n" + metadata + "title: first\ntitle: second\n---\nBody", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url, err := SourceURL(tc.body)
+			if (err == nil) != tc.valid || (tc.valid && url != "https://example.com/a") {
+				t.Fatalf("SourceURL = %q, %v; valid = %v", url, err, tc.valid)
+			}
+		})
+	}
+}

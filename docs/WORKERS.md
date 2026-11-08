@@ -35,7 +35,7 @@ POST `/api/projects/{id}/put` accepts one file or one removal:
 
 A file creates a fetched item. A removal creates a removed item. The server returns 202 with `id` and `status`. It does not create a job.
 
-Every file must start with YAML frontmatter. It must contain `source_url` and `updated_at`. The URL must use public HTTPS and pass `ValidateSourceURL`. Write `updated_at` as an RFC 3339 timestamp with an explicit offset, such as `+09:00` or `Z`. Use the original document's last-updated time. If the original has no update metadata, use the fetch time. Missing, empty or invalid values cause a 400 response that names the key.
+Every file must start with a YAML mapping delimited by complete `---` lines (LF or CRLF; the closing line may end at EOF). Empty blocks and duplicate keys are rejected. It must contain `source_url` and `updated_at`. The URL must use public HTTPS and pass `ValidateSourceURL`. Write `updated_at` as an RFC 3339 timestamp with an explicit offset, such as `+09:00` or `Z`. Use the original document's last-updated time. If the original has no update metadata, use the fetch time. Invalid or missing frontmatter causes a 400 response naming frontmatter; missing, empty or invalid provenance values cause a 400 response naming `source_url` or `updated_at`.
 
 The server reads provenance only from the file. It rejects `file.source_url` and a top-level `source_url` with a file. The top-level `source_url` is for removals only. The server validates updated_at but keeps it only in the unchanged submitted body, not in inbox metadata. The body cannot override the server-owned status. The sender asserts provenance. The server does not retrieve the URL or verify the source of the text.
 

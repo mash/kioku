@@ -45,15 +45,16 @@ func buildInput(spec InputSpec, w io.Writer, limit int64) error {
 		if _, exists := files[name]; exists {
 			return errors.New("duplicate inbox ID")
 		}
-		var updatedAt *time.Time
-		if in.Item.Status == "fetched" {
-			updatedAt = in.Item.UpdatedAt
+		var updatedAt string
+		if in.Item.Status == "fetched" && in.Item.UpdatedAt != nil {
+			// yaml omitempty treats *time.Time pointing to zero as absent.
+			updatedAt = in.Item.UpdatedAt.Format(time.RFC3339Nano)
 		}
 		metadata, err := yaml.Marshal(struct {
-			SourceURL string     `yaml:"source_url"`
-			UpdatedAt *time.Time `yaml:"updated_at,omitempty"`
-			Status    string     `yaml:"status"`
-			Submitter string     `yaml:"submitter"`
+			SourceURL string `yaml:"source_url"`
+			UpdatedAt string `yaml:"updated_at,omitempty"`
+			Status    string `yaml:"status"`
+			Submitter string `yaml:"submitter"`
 		}{in.Item.SourceURL, updatedAt, in.Item.Status, in.Item.Submitter})
 		if err != nil {
 			return err

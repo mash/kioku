@@ -17,11 +17,16 @@ func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
 	valid := testSourceContent("https://example.com/a", "Evidence")
 	for _, tc := range []struct{ name, body, key string }{
 		{"missing frontmatter", "Evidence", "source_url"},
+		{"empty frontmatter before provenance", "---\n" + valid, "source_url"},
 		{"missing source_url", strings.ReplaceAll(valid, "source_url: https://example.com/a\n", ""), "source_url"},
 		{"missing updated_at", strings.ReplaceAll(valid, "updated_at: "+testUpdatedAt+"\n", ""), "updated_at"},
 		{"empty updated_at", strings.ReplaceAll(valid, testUpdatedAt, `""`), "updated_at"},
 		{"invalid updated_at", strings.ReplaceAll(valid, testUpdatedAt, "yesterday"), "updated_at"},
 		{"offset required", strings.ReplaceAll(valid, testUpdatedAt, "2026-11-07T18:00:00"), "updated_at"},
+		{"offset hour overflow", strings.ReplaceAll(valid, testUpdatedAt, "2026-11-07T18:00:00+24:00"), "updated_at"},
+		{"offset minute overflow", strings.ReplaceAll(valid, testUpdatedAt, "2026-11-07T18:00:00+09:60"), "updated_at"},
+		{"single digit hour", strings.ReplaceAll(valid, testUpdatedAt, "2026-11-07T8:00:00+09:00"), "updated_at"},
+		{"comma fraction", strings.ReplaceAll(valid, testUpdatedAt, "2026-11-07T18:00:00,123+09:00"), "updated_at"},
 		{"invalid url", strings.ReplaceAll(valid, "https://", "http://"), "source_url"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -239,3 +239,24 @@ func TestBuildInputProvenance(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildInputPreservesZeroUpdatedAt(t *testing.T) {
+	updatedAt := time.Time{}
+	var output bytes.Buffer
+	spec := InputSpec{Inbox: []InboxText{{Item: model.InboxItem{
+		ID: "zero", SourceURL: "https://example.com/zero", Status: "fetched", UpdatedAt: &updatedAt,
+	}}}}
+	if err := BuildInput(spec, &output); err != nil {
+		t.Fatal(err)
+	}
+	outer, _, _ := strings.Cut(strings.TrimPrefix(unpack(t, output.Bytes())["inbox/zero.md"], "---\n"), "---\n")
+	var metadata struct {
+		UpdatedAt *time.Time `yaml:"updated_at"`
+	}
+	if err := yaml.Unmarshal([]byte(outer), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.UpdatedAt == nil || !metadata.UpdatedAt.IsZero() {
+		t.Fatalf("explicit zero timestamp lost: %s", outer)
+	}
+}

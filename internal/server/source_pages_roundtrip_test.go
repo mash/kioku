@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 // The fake supplies model output. This verifies the archive/publication contract,
@@ -53,7 +54,10 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 		}
 		inboxCount++
 		outer, _, ok := strings.Cut(strings.TrimPrefix(body, "---\n"), "---\n")
-		if !ok || !strings.Contains(outer, "updated_at: "+testUpdatedAt+"\n") {
+		var metadata struct {
+			UpdatedAt string `yaml:"updated_at"`
+		}
+		if err := yaml.Unmarshal([]byte(outer), &metadata); err != nil || !ok || metadata.UpdatedAt != testUpdatedAt {
 			t.Fatalf("source time missing from server-owned metadata: %s", body)
 		}
 	}

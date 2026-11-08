@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ func ValidateSourceURL(raw string) error {
 	return ValidateURL(u)
 }
 
+// time.Parse accepts some non-RFC 3339 forms, including single-digit hours,
+// comma fractions and out-of-range offsets. Check the syntax before parsing.
+var provenanceTimestamp = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
+
 // FileWithProvenance reads provenance only from the submitted frontmatter.
 func FileWithProvenance(name, content string) (Document, error) {
 	doc, err := File(name, content)
@@ -32,7 +37,9 @@ func FileWithProvenance(name, content string) (Document, error) {
 	if !strings.HasPrefix(normalized, "---\n") {
 		return Document{}, errors.New("source_url and updated_at are required in YAML frontmatter at the top of the content")
 	}
-	rest := normalized[4:]
+	// Retain the opening newline so an immediately closing delimiter ends an
+	// empty block instead of letting YAML consume metadata from the body.
+	rest := normalized[3:]
 	end := strings.Index(rest+"\n", "\n---\n")
 	if end < 0 {
 		return Document{}, errors.New("source_url and updated_at require a closed YAML frontmatter block")
@@ -50,10 +57,10 @@ func FileWithProvenance(name, content string) (Document, error) {
 	if err := ValidateSourceURL(metadata.SourceURL.Value); err != nil {
 		return Document{}, fmt.Errorf("source_url: %w", err)
 	}
-	if metadata.UpdatedAt.Kind != yaml.ScalarNode || (metadata.UpdatedAt.Tag != "!!str" && metadata.UpdatedAt.Tag != "!!timestamp") || metadata.UpdatedAt.Value == "" {
+	if metadata.UpdatedAt.Kind != yaml.ScalarNode || (metadata.UpdatedAt.Tag != "!!str" && metadata.UpdatedAt.Tag != "!!timestamp") || !provenanceTimestamp.MatchString(metadata.UpdatedAt.Value) {
 		return Document{}, errors.New("updated_at must be a nonempty RFC 3339 timestamp with an explicit offset in YAML frontmatter")
 	}
-	doc.UpdatedAt, err = time.Parse(time.RFC3339, metadata.UpdatedAt.Value)
+	doc.UpdatedAt, err = time.Parse(time.RFC3339, strings.ToUpper(metadata.UpdatedAt.Value))
 	if err != nil {
 		return Document{}, fmt.Errorf("updated_at must be an RFC 3339 timestamp with an explicit offset: %w", err)
 	}

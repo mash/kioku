@@ -72,11 +72,11 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 		t.Fatal("empty search", msg, search)
 	}
 	content := "MixedCaseNeedle\n" + strings.Repeat("界", 12000) + "\n" + strings.Repeat("FloodNeedle\n", 55) + "ẞ" + strings.Repeat("x", 300) + "DeepNeedle" + "Ⱥ" + strings.Repeat("y", 300)
-	var put model.Job
 	base := "/api/projects/" + project.ID
-	if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: testSourceContent(testSourceURL("evidence.md", content), content)}}, &put); code != 202 {
+	if code := f.request("POST", base+"/put", human, model.PutRequest{File: &model.FileInput{Name: "evidence.md", Content: testSourceContent(testSourceURL("evidence.md", content), content)}}, nil); code != 202 {
 		t.Fatal("put source", code)
 	}
+	put := waitingInboxItem(t, f, project.ID, testSourceURL("evidence.md", content))
 	f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
 	var snapshot model.Snapshot
 	if code := f.request("GET", base+"/snapshot", human, nil, &snapshot); code != 200 {
@@ -265,15 +265,19 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			var result model.InboxItem
+			var result map[string]any
 			content := testSourceContent("https://example.com/record", "A new shared record")
 			args := map[string]any{"project": project.Namespace, "name": "record.md", "content": content}
-			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result.ID == "" || result.Status != "fetched" {
+			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
 				t.Fatal(msg, result)
+			}
+			item := waitingInboxItem(t, f, project.ID, "https://example.com/record")
+			if item.Status != "fetched" {
+				t.Fatal("stored status", item)
 			}
 			var submitter string
 			if err := f.db.View(func(st model.State) error {
-				submitter = st.Inbox[result.ID].Submitter
+				submitter = st.Inbox[item.ID].Submitter
 				if st.Projects[project.ID].Revision != before.Revision || len(st.Jobs) != jobsBefore || submitter != st.Sessions[auth.Hash(caller)].UserID {
 					t.Error("inbox acceptance changed generation or submitter")
 				}

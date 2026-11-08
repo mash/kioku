@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -30,10 +31,11 @@ func TestPutCheckpointsEachAcceptedFile(t *testing.T) {
 			return
 		}
 		w.WriteHeader(202)
-		w.Write([]byte(`{"id":"accepted","status":"fetched"}`))
+		w.Write([]byte(`{}`))
 	}))
 	defer ts.Close()
-	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/p"}, Client: ts.Client(), Out: io.Discard, Err: io.Discard, ctx: context.Background()}
+	var out bytes.Buffer
+	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/p"}, Client: ts.Client(), Out: &out, Err: io.Discard, ctx: context.Background()}
 	if err := a.ensureProject(); err != nil {
 		t.Fatal(err)
 	}
@@ -45,12 +47,19 @@ func TestPutCheckpointsEachAcceptedFile(t *testing.T) {
 	if err := a.put(nil); err == nil {
 		t.Fatal("second failure hidden")
 	}
+	if got := out.String(); got != "accepted a.md\n" {
+		t.Fatal("failed file reported as accepted", got)
+	}
+	out.Reset()
 	r, err := a.readReceipts()
 	if err != nil || len(r.Hashes) != 1 {
 		t.Fatal(r, err)
 	}
 	if err := a.put(nil); err != nil {
 		t.Fatal(err)
+	}
+	if got := out.String(); got != "accepted b.md\n" {
+		t.Fatal("retry output", got)
 	}
 	if writes != 3 {
 		t.Fatal("accepted file resubmitted", writes)

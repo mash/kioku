@@ -43,7 +43,7 @@ func TestPutProvenance(t *testing.T) {
 					t.Errorf("input: %+v", req)
 				}
 				w.WriteHeader(202)
-				json.NewEncoder(w).Encode(model.Job{ID: "job", Status: "completed"})
+				json.NewEncoder(w).Encode(struct{}{})
 			}))
 			defer server.Close()
 			var out bytes.Buffer
@@ -53,6 +53,9 @@ func TestPutProvenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := a.put([]string{file})
+			if tc.valid && out.String() != "accepted notes.md\n" {
+				t.Fatal("acceptance output", out.String())
+			}
 			if !tc.valid {
 				_, want := source.FileWithProvenance("notes.md", tc.body)
 				if err == nil || want == nil || !strings.HasSuffix(err.Error(), want.Error()) {

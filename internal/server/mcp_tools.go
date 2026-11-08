@@ -272,10 +272,9 @@ func (s *Server) mcpSourcePut(ctx context.Context, key, namespace string, req mo
 	}); err != nil {
 		return nil, err
 	}
-	item, err := s.acceptInbox(ctx, project.ID, uid, req)
-	if err != nil {
+	if err := s.acceptInbox(ctx, project.ID, uid, req); err != nil {
 		return nil, err
 	}
 	s.recordAudit(project.ID, uid, "POST", "mcp source_put")
-	return map[string]string{"id": item.ID, "status": item.Status}, nil
+	return struct{}{}, nil
 }

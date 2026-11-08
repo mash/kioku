@@ -33,8 +33,10 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 		default:
 			writes++
 			jobKind = "generate"
-			if strings.HasSuffix(r.URL.Path, "/put") || r.Method == "DELETE" {
-				jobKind = "put"
+			if strings.HasSuffix(r.URL.Path, "/put") {
+				w.WriteHeader(202)
+				json.NewEncoder(w).Encode(struct{}{})
+				return
 			}
 			w.WriteHeader(202)
 			json.NewEncoder(w).Encode(model.Job{ID: "job", Kind: jobKind, Status: "queued"})
@@ -49,21 +51,30 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	}
 	operations := []func() error{
 		func() error { return a.put([]string{file}) },
-		func() error { return a.deleteSources([]string{"https://example.com/source"}) },
+		func() error {
+			return a.deleteSources([]string{"https://example.com/source", "https://example.com/another"})
+		},
 		func() error { return a.job([]string{"retry", "job"}) },
 		func() error { return a.generate(nil) },
 	}
-	for _, operation := range operations {
+	for i, operation := range operations {
 		out.Reset()
 		if err := operation(); err != nil {
 			t.Fatal(err)
+		}
+		if i < 2 {
+			want := []string{"accepted note.md\n", "removed https://example.com/source\nremoved https://example.com/another\n"}[i]
+			if out.String() != want {
+				t.Fatal("acceptance output", out.String())
+			}
+			continue
 		}
 		var job model.Job
 		if err := json.Unmarshal(out.Bytes(), &job); err != nil || job.ID != "job" || job.Status != "queued" {
 			t.Fatal("write did not return accepted job JSON", out.String(), err)
 		}
 	}
-	if polls != 0 || snapshots != 0 || writes != len(operations) {
+	if polls != 0 || snapshots != 0 || writes != len(operations)+1 {
 		t.Fatal("default writes polled or pulled", polls, snapshots, writes)
 	}
 	if err := a.put([]string{"--wait", file}); err == nil {

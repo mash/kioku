@@ -34,42 +34,41 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	if !decodeMCPArguments(body, &req) {
 		return fail(400, "invalid put request")
 	}
-	item, err := s.acceptInbox(r.Context(), pid, uid, req)
-	if err != nil {
+	if err := s.acceptInbox(r.Context(), pid, uid, req); err != nil {
 		return err
 	}
-	jsonOut(w, http.StatusAccepted, map[string]string{"id": item.ID, "status": item.Status})
+	jsonOut(w, http.StatusAccepted, struct{}{})
 	return nil
 }
 
-func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest) (model.InboxItem, error) {
+func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest) error {
 	item := model.InboxItem{ID: auth.Token()[:20], ProjectID: pid, Submitter: uid, Created: time.Now().UTC()}
 	encoded, err := json.Marshal(req)
 	if err != nil {
-		return item, err
+		return err
 	}
 	if len(encoded) > maxPutBytes {
-		return item, fail(413, "put exceeds 1 MiB")
+		return fail(413, "put exceeds 1 MiB")
 	}
 	var body string
 	switch {
 	case req.File != nil && !req.Remove && req.SourceURL == "":
 		doc, err := source.FileWithProvenance(req.File.Name, req.File.Content)
 		if err != nil {
-			return item, fail(400, err.Error())
+			return fail(400, err.Error())
 		}
 		item.SourceURL, item.Status, body = doc.URL, "fetched", req.File.Content
 	case req.File == nil && req.Remove && req.SourceURL != "":
 		if err := source.ValidateSourceURL(req.SourceURL); err != nil {
-			return item, fail(400, err.Error())
+			return fail(400, err.Error())
 		}
 		item.SourceURL, item.Status = req.SourceURL, "removed"
 	default:
-		return item, fail(400, "provide one file, or remove: true with source_url; put source_url and updated_at in the file frontmatter; the source_url argument is only for remove")
+		return fail(400, "provide one file, or remove: true with source_url; put source_url and updated_at in the file frontmatter; the source_url argument is only for remove")
 	}
 	unlock, err := s.lockProject(ctx, pid)
 	if err != nil {
-		return item, err
+		return err
 	}
 	defer unlock()
 	check := func(st model.State) error {
@@ -92,14 +91,14 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		return nil
 	}
 	if err = s.DB.View(check); err != nil {
-		return item, err
+		return err
 	}
 	if item.Status == "fetched" {
 		if err = s.Blobs.Put(ctx, item.BodyKey(), []byte(body)); err != nil {
-			return item, err
+			return err
 		}
 	}
-	err = s.DB.Update(func(st *model.State) error {
+	return s.DB.Update(func(st *model.State) error {
 		if err := check(*st); err != nil {
 			return err
 		}
@@ -111,5 +110,4 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		st.Inbox[item.ID] = item
 		return nil
 	})
-	return item, err
 }

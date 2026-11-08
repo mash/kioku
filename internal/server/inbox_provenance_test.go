@@ -88,7 +88,7 @@ func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 	access := connectorAccessToken(t, f, human, p.ID)
 	content := strings.Replace(testSourceContent("https://example.com/a", "Evidence"), "---\nEvidence", "status: removed\nsubmitter: forged\n---\nEvidence", 1)
 	for _, mcp := range []bool{false, true} {
-		var result model.InboxItem
+		var result map[string]any
 		if mcp {
 			args := map[string]any{"project": p.Namespace, "name": "a.md", "content": content}
 			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" {
@@ -97,18 +97,16 @@ func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 		} else if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "a.md", Content: content}}, &result); c != 202 {
 			t.Fatal(c)
 		}
-		if err := f.db.View(func(st model.State) error {
-			item := st.Inbox[result.ID]
-			if item.SourceURL != "https://example.com/a" || item.Status != "fetched" || item.Submitter == "forged" {
-				t.Fatalf("stored item: %+v", item)
-			}
-			body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
-			if err != nil || string(body) != content {
-				t.Fatalf("body: %q, %v", body, err)
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
+		if result == nil || len(result) != 0 {
+			t.Fatal("non-empty put response", result)
+		}
+		item := waitingInboxItem(t, f, p.ID, "https://example.com/a")
+		if item.SourceURL != "https://example.com/a" || item.Status != "fetched" || item.Submitter == "forged" {
+			t.Fatalf("stored item: %+v", item)
+		}
+		body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
+		if err != nil || string(body) != content {
+			t.Fatalf("body: %q, %v", body, err)
 		}
 	}
 }

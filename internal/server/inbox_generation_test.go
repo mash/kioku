@@ -56,10 +56,10 @@ func TestInboxFailureReleasesAndRetryUsesCurrentWaitingItems(t *testing.T) {
 	first := putFile(t, f, token, p.ID, "a.md", "First body")
 	j := startManaged(t, f, token, p.ID, false)
 	url := testSourceURL("a.md", "First body")
-	var replacement model.InboxItem
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: url}, &replacement); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: url}, nil); c != 202 {
 		t.Fatal(c)
 	}
+	replacement := waitingInboxItem(t, f, p.ID, url)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
 	j = reconcileManaged(t, f, j)
 	if j.Status != "failed" {
@@ -193,10 +193,10 @@ func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
 			first := putFile(t, f, token, p.ID, "a.md", "Body")
 			j := startManaged(t, f, token, p.ID, false)
-			var replacement model.InboxItem
-			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: testSourceURL("a.md", "Body")}, &replacement); c != 202 {
+			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: testSourceURL("a.md", "Body")}, nil); c != 202 {
 				t.Fatal(c)
 			}
+			replacement := waitingInboxItem(t, f, p.ID, testSourceURL("a.md", "Body"))
 			if err := f.db.Update(func(st *model.State) error {
 				item := st.Inbox[replacement.ID]
 				item.Created = st.Inbox[first.ID].Created.Add(offset)

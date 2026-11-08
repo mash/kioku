@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
@@ -21,11 +22,10 @@ func (a *App) deleteSources(args []string) error {
 		return err
 	}
 	for _, url := range args {
-		var item model.InboxItem
-		if _, err := a.request("POST", p+"/put", model.PutRequest{Remove: true, SourceURL: url}, &item); err != nil {
+		if _, err := a.request("POST", p+"/put", model.PutRequest{Remove: true, SourceURL: url}, nil); err != nil {
 			return err
 		}
-		if err := a.print(item); err != nil {
+		if _, err := fmt.Fprintf(a.Out, "removed %s\n", url); err != nil {
 			return err
 		}
 	}

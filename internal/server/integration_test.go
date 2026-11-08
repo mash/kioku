@@ -224,16 +224,16 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("POST", base+"/put", eve, req, nil); code != 404 {
 		t.Fatalf("nonmember put: %d", code)
 	}
-	var job model.Job
-	if code := f.request("POST", base+"/put", bob, req, &job); code != 202 {
+	if code := f.request("POST", base+"/put", bob, req, nil); code != 202 {
 		t.Fatal(code)
 	}
+	first := waitingInboxItem(t, f, p.ID, testSourceURL("decisions.md", "# Decision\nWe use Go and S3."))
 	f.wait(p.ID, bob, f.generate(p.ID, bob, false).ID)
 	var snap model.Snapshot
 	if code := f.request("GET", base+"/snapshot", alice, nil, &snap); code != 200 {
 		t.Fatal(code)
 	}
-	if !strings.Contains(snap.Files[sourcePage(job.ID)], "Go and S3") {
+	if !strings.Contains(snap.Files[sourcePage(first.ID)], "Go and S3") {
 		t.Fatal("source not in wiki")
 	}
 	if !strings.Contains(snap.Files["maps/graph.json"], "links-to") {
@@ -260,12 +260,12 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("DELETE", base+"/members/alice@example.com", alice, nil, nil); code != 400 {
 		t.Fatalf("owner removal: %d", code)
 	}
-	var second model.Job
-	if code := f.request("POST", base+"/put", alice, req, &second); code != 202 {
+	if code := f.request("POST", base+"/put", alice, req, nil); code != 202 {
 		t.Fatal(code)
 	}
+	second := waitingInboxItem(t, f, p.ID, first.SourceURL)
 	f.wait(p.ID, alice, f.generate(p.ID, alice, true).ID)
-	if second.ID == job.ID {
+	if second.ID == first.ID {
 		t.Fatal("put reused an inbox ID")
 	}
 	if code := f.request("GET", base+"/snapshot?revision="+snap.Revision, alice, nil, nil); code != 404 {
@@ -281,23 +281,18 @@ func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 	var p model.Project
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Concurrent"}, &p)
 	base := "/api/projects/" + p.ID
-	jobs := make(chan model.Job, 8)
+	items := make(chan model.InboxItem, 8)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			var j model.Job
-			code := f.request("POST", base+"/put", token, model.PutRequest{File: &model.FileInput{Name: fmt.Sprintf("note-%d.md", i), Content: testSourceContent(testSourceURL(fmt.Sprintf("note-%d.md", i), fmt.Sprintf("Unique note %d", i)), fmt.Sprintf("Unique note %d", i))}}, &j)
-			if code != 202 {
-				t.Errorf("put %d", code)
-			}
-			jobs <- j
+			items <- putFile(t, f, token, p.ID, fmt.Sprintf("note-%d.md", i), fmt.Sprintf("Unique note %d", i))
 		}(i)
 	}
 	wg.Wait()
-	close(jobs)
-	for j := range jobs {
+	close(items)
+	for j := range items {
 		if j.ID == "" {
 			t.Fatal("missing inbox ID")
 		}

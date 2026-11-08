@@ -110,8 +110,7 @@ func (a *App) put(args []string) error {
 		return nil
 	}
 	for _, input := range inputs {
-		var item model.InboxItem
-		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input.file}, &item); err != nil {
+		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input.file}, nil); err != nil {
 			return err
 		}
 		r.Hashes[input.path] = input.hash
@@ -119,7 +118,7 @@ func (a *App) put(args []string) error {
 		if err = store.AtomicWrite(filepath.Join(a.metadataDir(), "receipts.json"), b, 0600); err != nil {
 			return err
 		}
-		if err = a.print(item); err != nil {
+		if _, err = fmt.Fprintf(a.Out, "accepted %s\n", input.file.Name); err != nil {
 			return err
 		}
 	}

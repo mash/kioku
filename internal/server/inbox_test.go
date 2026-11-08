@@ -25,9 +25,12 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		{model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", "---\nstatus: removed\n---\nBody")}}, "fetched"},
 		{model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, "removed"},
 	} {
-		var item model.InboxItem
-		if code := f.request("POST", base+"/put", token, tc.req, &item); code != 202 || item.ID == "" || item.Status != tc.status {
-			t.Fatal(code, item)
+		var result map[string]any
+		if code := f.request("POST", base+"/put", token, tc.req, &result); code != 202 || result == nil || len(result) != 0 {
+			t.Fatal(code, result)
+		}
+		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Status != tc.status {
+			t.Fatal("stored status", item)
 		}
 		f.db.View(func(st model.State) error {
 			if len(st.Inbox) != 1 || len(st.Jobs) != 0 {
@@ -155,9 +158,9 @@ func TestConnectorAndAgentInboxPuts(t *testing.T) {
 		{"project": p.Namespace, "name": "source.md", "content": testSourceContent("https://example.com/mcp", "MCP source body")},
 		{"project": p.Namespace, "remove": true, "source_url": "https://example.com/mcp"},
 	} {
-		var item model.InboxItem
-		if msg := connectorTool(t, f, access, "source_put", args, &item); msg != "" || item.ID == "" {
-			t.Fatal(msg, item)
+		var result map[string]any
+		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
+			t.Fatal(msg, result)
 		}
 	}
 	// No version header must be rejected by the real HTTP middleware.

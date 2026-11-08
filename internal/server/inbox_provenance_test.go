@@ -3,7 +3,6 @@ package server
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
@@ -78,7 +77,7 @@ func TestInboxRejectsExternalFileProvenance(t *testing.T) {
 	}
 }
 
-func TestInboxStoresProvenanceAndVerbatimBody(t *testing.T) {
+func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -96,7 +95,7 @@ func TestInboxStoresProvenanceAndVerbatimBody(t *testing.T) {
 		}
 		if err := f.db.View(func(st model.State) error {
 			item := st.Inbox[result.ID]
-			if item.SourceURL != "https://example.com/a" || item.Status != "fetched" || item.Submitter == "forged" || item.UpdatedAt == nil || item.UpdatedAt.Format(time.RFC3339) != testUpdatedAt {
+			if item.SourceURL != "https://example.com/a" || item.Status != "fetched" || item.Submitter == "forged" {
 				t.Fatalf("stored item: %+v", item)
 			}
 			body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
@@ -107,18 +106,5 @@ func TestInboxStoresProvenanceAndVerbatimBody(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-	}
-	var removed model.InboxItem
-	if msg := connectorTool(t, f, access, "source_put", map[string]any{"project": p.Namespace, "remove": true, "source_url": "https://example.com/a"}, &removed); msg != "" {
-		t.Fatal(msg)
-	}
-	if err := f.db.View(func(st model.State) error {
-		item := st.Inbox[removed.ID]
-		if item.Status != "removed" || item.UpdatedAt != nil {
-			t.Fatalf("removal: %+v", item)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 }

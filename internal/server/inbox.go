@@ -59,7 +59,6 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 			return item, fail(400, err.Error())
 		}
 		item.SourceURL, item.Status, body = doc.URL, "fetched", req.File.Content
-		item.UpdatedAt = &doc.UpdatedAt
 	case req.File == nil && req.Remove && req.SourceURL != "":
 		item.SourceURL, item.Status = req.SourceURL, "removed"
 	default:

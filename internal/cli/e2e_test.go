@@ -108,35 +108,11 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal("accepted removed source-url flag")
 	}
 	must("put")
-	if err := db.View(func(st model.State) error {
-		for _, item := range st.Inbox {
-			if item.ProjectID == cfg.Project && (item.SourceURL != "https://example.com/notes" || item.UpdatedAt == nil || item.UpdatedAt.Format(time.RFC3339) != "2026-11-07T18:00:00+09:00") {
-				t.Fatalf("stored provenance: %+v", item)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if out := must("status"); !strings.Contains(out, `"inbox_count": 1`) {
 		t.Fatal(out)
 	}
 	if out := must("put"); !strings.Contains(out, "新しい投入ファイルはありません") {
 		t.Fatal(out)
-	}
-	must("delete", "https://example.com/notes")
-	if err := db.View(func(st model.State) error {
-		if len(st.Inbox) != 1 {
-			t.Fatalf("expected one removal, got %d inbox items", len(st.Inbox))
-		}
-		for _, item := range st.Inbox {
-			if item.ProjectID == cfg.Project && (item.Status != "removed" || item.UpdatedAt != nil) {
-				t.Fatalf("removed provenance: %+v", item)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 	must("logout")
 	if _, err = run("whoami"); err == nil {

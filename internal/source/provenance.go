@@ -60,8 +60,7 @@ func FileWithProvenance(name, content string) (Document, error) {
 	if metadata.UpdatedAt.Kind != yaml.ScalarNode || (metadata.UpdatedAt.Tag != "!!str" && metadata.UpdatedAt.Tag != "!!timestamp") || !provenanceTimestamp.MatchString(metadata.UpdatedAt.Value) {
 		return Document{}, errors.New("updated_at must be a nonempty RFC 3339 timestamp with an explicit offset in YAML frontmatter")
 	}
-	doc.UpdatedAt, err = time.Parse(time.RFC3339, strings.ToUpper(metadata.UpdatedAt.Value))
-	if err != nil {
+	if _, err := time.Parse(time.RFC3339, strings.ToUpper(metadata.UpdatedAt.Value)); err != nil {
 		return Document{}, fmt.Errorf("updated_at must be an RFC 3339 timestamp with an explicit offset: %w", err)
 	}
 	doc.URL = metadata.SourceURL.Value

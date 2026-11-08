@@ -210,14 +210,13 @@ type PutRequest struct {
 }
 
 type InboxItem struct {
-	ID        string     `json:"id"`
-	ProjectID string     `json:"project_id"`
-	SourceURL string     `json:"source_url"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
-	Status    string     `json:"status"`
-	Submitter string     `json:"submitter"`
-	Created   time.Time  `json:"created"`
-	RunID     string     `json:"run_id,omitempty"`
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id"`
+	SourceURL string    `json:"source_url"`
+	Status    string    `json:"status"`
+	Submitter string    `json:"submitter"`
+	Created   time.Time `json:"created"`
+	RunID     string    `json:"run_id,omitempty"`
 }
 
 func (i InboxItem) BodyKey() blob.Key {

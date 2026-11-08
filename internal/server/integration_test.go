@@ -45,7 +45,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, local.Store{Dir: dir + "/objects"}, key)
+	s := New(Config{Prompts: defaultPrompts(t), BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, local.Store{Dir: dir + "/objects"}, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -333,6 +333,7 @@ func TestNoUnauthenticatedEmailLogin(t *testing.T) {
 func (f *fixture) setRunners() {
 	f.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
+	f.runnerConfig.Prompts = f.s.Config.Prompts
 	g, err := runners.Load(f.runnerConfig, func(jobID, attemptID string) { f.s.ReconcileJob(ctx, jobID, attemptID) })
 	if err != nil {
 		f.t.Fatal(err)
@@ -351,7 +352,7 @@ func configureAutoRunner(t *testing.T, f *fixture) {
 	ma := fake.New()
 	t.Cleanup(ma.Close)
 	f.auto = ma
-	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: managedagents.New(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
+	f.runnerConfig = runners.Config{Prompts: f.s.Config.Prompts, AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: managedagents.New(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 }
 func sourcePage(id string) string {

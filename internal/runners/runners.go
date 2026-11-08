@@ -7,6 +7,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/mash/kioku/prompts"
+
 	execrunner "github.com/mash/kioku/internal/runner/exec"
 
 	"github.com/mash/kioku/internal/managedagents"
@@ -17,6 +19,7 @@ import (
 )
 
 type Config struct {
+	Prompts              *prompts.Rendered
 	Type                 string
 	OpenAIAPIKey         string
 	OpenAIModel          string
@@ -83,5 +86,5 @@ func (s *Set) New(job model.Job) (runner.Runner, error) {
 	if s.config.ManagedAgents == nil {
 		return nil, runner.ErrNotConfigured
 	}
-	return claudemanaged.New(func() (managedagents.Client, error) { return s.config.ManagedAgents, nil }, s.config.MAAgentID, s.config.MAAgentVersion, s.config.MAEnvironmentID), nil
+	return claudemanaged.New(func() (managedagents.Client, error) { return s.config.ManagedAgents, nil }, s.config.MAAgentID, s.config.MAAgentVersion, s.config.MAEnvironmentID, s.config.Prompts.System(), s.config.Prompts.Model()), nil
 }

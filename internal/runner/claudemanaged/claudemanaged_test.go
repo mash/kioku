@@ -17,8 +17,9 @@ func fixture(t *testing.T) (*Runner, *fake.Server, runner.RunSpec) {
 	t.Helper()
 	f := fake.New()
 	t.Cleanup(f.Close)
-	r := New(func() (managedagents.Client, error) { return managedagents.New(f.URL(), "key", nil), nil }, "agent", 3, "environment")
-	return r, f, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Token: runner.Secret("secret"), OutputURL: "https://kioku.test:8443/output", BudgetCents: 50, FirstMessage: "message"}
+	rendered := defaultPrompts(t)
+	r := New(func() (managedagents.Client, error) { return managedagents.New(f.URL(), "key", nil), nil }, "agent", 3, "environment", rendered.System(), rendered.Model())
+	return r, f, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Token: runner.Secret("test-job-token"), OutputURL: "https://kioku.test:8443/output", BudgetCents: 50, FirstMessage: "message"}
 }
 func start(t *testing.T, r *Runner, spec runner.RunSpec) runner.RunRef {
 	t.Helper()
@@ -31,7 +32,7 @@ func start(t *testing.T, r *Runner, spec runner.RunSpec) runner.RunRef {
 func TestLifecycle(t *testing.T) {
 	r, f, spec := fixture(t)
 	ref := start(t, r, spec)
-	if f.Credential(ref.Resources["vault_id"]) != "secret" {
+	if f.Credential(ref.Resources["vault_id"]) != "test-job-token" {
 		t.Fatal("credential lost")
 	}
 	metadata := map[string]any{"kioku_project_id": "project", "kioku_job_id": "job", "kioku_attempt_id": "attempt"}

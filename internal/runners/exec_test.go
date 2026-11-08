@@ -8,12 +8,11 @@ import (
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
-	"github.com/mash/kioku/prompts"
 )
 
 func execConfig(t *testing.T) Config {
 	t.Helper()
-	return Config{Type: "exec", Command: []string{os.Args[0]}, BaseURL: "http://127.0.0.1", DataDir: t.TempDir()}
+	return Config{Prompts: defaultPrompts(t), Type: "exec", Command: []string{os.Args[0]}, BaseURL: "http://127.0.0.1", DataDir: t.TempDir()}
 }
 func TestExecStartupValidation(t *testing.T) {
 	for _, command := range [][]string{nil, {}, {""}, {"relative-command"}} {
@@ -43,14 +42,6 @@ func TestExecStartupValidation(t *testing.T) {
 	}
 	if _, err := Load(c, nil); err == nil {
 		t.Fatal("invalid root accepted")
-	}
-	original := prompts.WikiDefinition
-	defer func() { prompts.WikiDefinition = original }()
-	for _, definition := range []string{"invalid", "---\nmodel: [unterminated\n---\nprompt", "---\nname: no-model\n---\nprompt", "---\nmodel: ''\n---\nprompt"} {
-		prompts.WikiDefinition = definition
-		if _, err := Load(execConfig(t), nil); err == nil {
-			t.Fatal("invalid definition accepted")
-		}
 	}
 }
 func TestExecStartupRootAndReconcileOnly(t *testing.T) {

@@ -71,11 +71,21 @@ Generation uses the operator's runner configuration. Personal generation keys re
 
 Each attempt persists Job.Run with attempt ID, pinned inbox IDs, phase, budget, deadline and job token identity before external resources are created. Start returns a runner-neutral ref. Recovery uses the same configured runner and attempt metadata; the runner type is not persisted.
 
+## Prompt configuration
+
+`KIOKU_PROMPTS_DIR` optionally replaces `wiki-agent.system.md`, `wiki-agent.user.md`, and the description fields in `mcp-server.yaml`. The server reads and validates these once before constructing runners or accepting HTTP requests. Missing files use embedded defaults; unknown visible filenames, invalid templates/YAML, and unknown keys stop startup. See [the configuration reference](../README.md#生成プロンプトと-mcp-の説明の差し替え) for variables, model handling, and examples.
+
+Startup logs record `source=default|override` and `sha256` for each file without exposing content. The system prompt uses deployment variables only; per-job variables are confined to the user template. `JOB.md` is not customizable. MCP descriptions and optional `instructions` are served to clients, not to the generation agent; no `listChanged` notification is sent.
+
+MA sessions always receive `agent_with_overrides`: rendered system, model when present, the fixed Go tool list, and empty non-nil `mcp_servers` and `skills`. `KIOKU_MA_AGENT_VERSION` still pins the referenced agent version. The MA system limit is 100,000 Unicode runes, checked at startup, including when MA is selected implicitly. Agent resources carry the placeholder documented in README; environment resources must be separate for each deployment. OpenAI uses the rendered system with `KIOKU_OPENAI_MODEL`. Exec receives the rendered system and user message on stdin.
+
+Existing MA/OpenAI sessions retain their original prompts across restart. Discovery of an uncertain start resumes that session without creating another one; retry starts a new attempt with current prompts. Exec stops on restart. MA session-create 4xx errors log `session create rejected status=... type=...`; 429 remains temporary, while other 4xx fail the attempt. Error conversion retains only the HTTP status and SDK error type, never the provider message or request.
+
 ## Job credential and network policy
 
 Managed runners create one vault per attempt. The vault contains only KIOKU_JOB_TOKEN as a runner.Secret. The vault injects the token into request headers for the Kioku host. The input tar, JOB.md, first message, logs and API responses contain no token values. Kioku holds no GitHub or Google credentials for source access. The client retrieves every source before submission.
 
-**The operator must configure runner networking outside Kioku.** The checked-in environments/kioku-wiki.yaml allows only kioku.magicians.ee and disables package-manager networking and MCP servers. The agent definition disables web_fetch and web_search. Kioku does not apply the environment file at startup. Update the deployed environment and read back allowed_hosts through the provider API. Vault host restrictions limit secret injection; the environment policy limits network egress. The OpenAI runner uses the operator's environment policy without a networking override.
+**The operator must configure runner networking outside Kioku.** The checked-in environments/kioku-wiki.yaml allows only kioku.magicians.ee and disables package-manager networking and MCP servers. The fixed toolset in `internal/managedagents` disables web_fetch and web_search on every MA session. The session also clears inherited MCP servers and skills. Kioku does not apply the environment file at startup. Update the deployed environment and read back allowed_hosts through the provider API. Vault host restrictions limit secret injection; the environment policy limits network egress. The OpenAI runner uses the operator's environment policy without a networking override.
 
 Exec processes fetched and removed items using the submitted text. The trusted command must enforce its own network sandbox.
 
@@ -133,7 +143,7 @@ The command receives one JSON object on stdin, followed by EOF:
 }
 ```
 
-`prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` contains job metadata only; `prompt` supplies instructions. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
+`prompt` is the rendered body of `prompts/wiki-agent.system.md` (or its `KIOKU_PROMPTS_DIR` override); `model` is its required frontmatter model ID as a hint. A model map uses only `id`; `effort`, `speed`, and `inference_geo` are ignored with one startup warning. `first_message` is `wiki-agent.user.md` rendered for this attempt and can include operator instructions as well as metadata. The input archive's `JOB.md` always contains the fixed four metadata lines. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 

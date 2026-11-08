@@ -2,7 +2,7 @@ package agentgen
 
 import "testing"
 
-func TestFirstMessageContainsOnlyJobMetadata(t *testing.T) {
+func TestJobMetadataContainsOnlyJobMetadata(t *testing.T) {
 	spec := InputSpec{
 		JobID:     "job-123",
 		ProjectID: "project-456",
@@ -15,7 +15,7 @@ func TestFirstMessageContainsOnlyJobMetadata(t *testing.T) {
 		"project: project-456\n" +
 		"input: https://kioku.test/jobs/job-123/input\n" +
 		"output: https://kioku.test/jobs/job-123/output\n"
-	if got := FirstMessage(spec); got != want {
-		t.Fatalf("FirstMessage() = %q, want %q", got, want)
+	if got := JobMetadata(spec); got != want {
+		t.Fatalf("JobMetadata() = %q, want %q", got, want)
 	}
 }

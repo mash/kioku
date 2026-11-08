@@ -21,9 +21,11 @@ import (
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/prompts"
 )
 
 type Config struct {
+	Prompts                    *prompts.Rendered
 	TrustedProxy               *net.IPNet
 	AnthropicWebhookSigningKey string
 	AgentMaxSessions           int
@@ -47,6 +49,7 @@ type Runners interface {
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
+	mcpTools     map[string]any
 	runners      Runners
 	Config       Config
 	DB           *store.Store
@@ -89,6 +92,9 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 		c.RatePerMinute = 600
 	}
 	s := &Server{Config: c, DB: db, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
+	if c.Prompts != nil {
+		s.mcpTools = mcpTools(c.Prompts)
+	}
 	s.routes()
 	return s
 }

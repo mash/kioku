@@ -13,6 +13,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
+	"github.com/mash/kioku/prompts"
 )
 
 type Client interface {
@@ -30,6 +31,8 @@ type VaultInput struct {
 	Credentials                 []runner.Credential
 }
 type SessionInput struct {
+	System                 string
+	Model                  prompts.Model
 	MAAgentID              string
 	MAAgentVersion         int64
 	EnvironmentID, VaultID string
@@ -64,6 +67,18 @@ func New(baseURL, apiKey string, client *http.Client) *API {
 	sdk := anthropic.NewBetaService(opts...)
 	return &API{sdk: sdk}
 }
+
+// APIError retains only HTTP status and error.type, never a provider body or request.
+type APIError struct {
+	Status int
+	Type   string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("managed agents: HTTP %d", e.Status) }
+func (e *APIError) Is(target error) bool {
+	return target == ErrTemporary && (e.Status == 429 || e.Status >= 500)
+}
+
 func apiError(err error) error {
 	if err == nil {
 		return nil
@@ -73,15 +88,13 @@ func apiError(err error) error {
 	}
 	var e *anthropic.Error
 	if errors.As(err, &e) {
-		if e.StatusCode == 429 || e.StatusCode >= 500 {
-			return fmt.Errorf("%w: HTTP %d", ErrTemporary, e.StatusCode)
-		}
-		return fmt.Errorf("managed agents: HTTP %d", e.StatusCode)
+		return &APIError{Status: e.StatusCode, Type: string(e.Type())}
 	}
 	// SDK errors can contain provider response bodies or credential-bearing
 	// request dumps. Never propagate those into logs or persisted job errors.
 	return fmt.Errorf("%w: request failed", ErrTemporary)
 }
+
 func (a *API) CreateJobVault(ctx context.Context, in VaultInput) (string, error) {
 	v, err := a.sdk.Vaults.New(ctx, anthropic.BetaVaultNewParams{DisplayName: "kioku-job-" + in.JobID, Metadata: map[string]string{"kioku_job_id": in.JobID, "kioku_attempt_id": in.AttemptID, "kioku_project_id": in.ProjectID}})
 	if err != nil {
@@ -140,10 +153,29 @@ func (a *API) CreateSession(ctx context.Context, in SessionInput) (string, error
 	if in.BudgetCents < 50 {
 		return "", errors.New("managed agents: budget must be at least 50 cents")
 	}
-	agent := anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(in.MAAgentID)}
-	if in.MAAgentVersion > 0 {
-		agent = anthropic.BetaSessionNewParamsAgentUnion{OfBetaManagedAgentsAgents: &anthropic.BetaManagedAgentsAgentParams{ID: in.MAAgentID, Version: anthropic.Int(in.MAAgentVersion)}}
+	overrides := anthropic.BetaManagedAgentsAgentWithOverridesParams{
+		ID: in.MAAgentID, System: anthropic.String(in.System),
+		MCPServers: []anthropic.BetaManagedAgentsURLMCPServerParams{},
+		Skills:     []anthropic.BetaManagedAgentsSkillParamsUnion{},
+		Tools:      wikiTools,
 	}
+	if in.MAAgentVersion > 0 {
+		overrides.Version = anthropic.Int(in.MAAgentVersion)
+	}
+	if in.Model.ID != "" {
+		overrides.Model = anthropic.BetaManagedAgentsModelConfigParams{
+			ID:    anthropic.BetaManagedAgentsModel(in.Model.ID),
+			Speed: anthropic.BetaManagedAgentsModelConfigParamsSpeed(in.Model.Speed),
+		}
+		if in.Model.Effort != "" {
+			overrides.Model.Effort.OfBetaManagedAgentsModelConfigsEffortBetaManagedAgentsEffortLevel = anthropic.String(in.Model.Effort)
+		}
+		if in.Model.InferenceGeo != "" {
+			overrides.Model.InferenceGeo = anthropic.String(in.Model.InferenceGeo)
+		}
+	}
+	agent := anthropic.BetaSessionNewParamsAgentUnion{OfBetaManagedAgentsAgentWithOverridess: &overrides}
+
 	v, err := a.sdk.Sessions.New(ctx, anthropic.BetaSessionNewParams{Agent: agent, EnvironmentID: in.EnvironmentID, VaultIDs: []string{in.VaultID}, Metadata: in.Metadata, Title: anthropic.String(in.Title), Budget: anthropic.BetaManagedAgentsBudgetLimitParam{MaxListCost: anthropic.BetaMonetaryAmountParam{Amount: strconv.FormatInt(in.BudgetCents, 10), Currency: "USD"}}, InitialEvents: []anthropic.BetaSessionNewParamsInitialEventUnion{{OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{OfText: &anthropic.BetaManagedAgentsTextBlockParam{Text: in.FirstMessage}}}}}}})
 	if err != nil {
 		return "", apiError(err)

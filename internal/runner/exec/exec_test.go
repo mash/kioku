@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/prompts"
 )
 
 func TestExecHelper(t *testing.T) {
@@ -121,7 +122,7 @@ func TestExecHelper(t *testing.T) {
 func newRunner(t *testing.T, role string, onExit func(string, string)) (*Runner, runner.RunSpec) {
 	t.Helper()
 	root := t.TempDir()
-	r := New(Config{Root: root, Command: []string{os.Args[0], "-test.run=^TestExecHelper$", "--", role}, Model: "model", Prompt: "system"}, onExit)
+	r := New(Config{Root: root, Command: []string{os.Args[0], "-test.run=^TestExecHelper$", "--", role}, Model: prompts.Model{ID: "model"}, Prompt: "system"}, onExit)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()

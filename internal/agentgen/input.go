@@ -36,7 +36,7 @@ var inboxID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 func BuildInput(spec InputSpec, w io.Writer) error { return buildInput(spec, w, MaxInputBytes) }
 func buildInput(spec InputSpec, w io.Writer, limit int64) error {
-	files := map[string]string{"JOB.md": FirstMessage(spec)}
+	files := map[string]string{"JOB.md": JobMetadata(spec)}
 	for _, in := range spec.Inbox {
 		if !inboxID.MatchString(in.Item.ID) {
 			return errors.New("invalid inbox ID")

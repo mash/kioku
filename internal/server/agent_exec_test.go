@@ -28,17 +28,25 @@ func TestExecRunnerHelper(t *testing.T) {
 	}
 	role := os.Args[i+1]
 	var in struct {
-		InputURL  string `json:"input_url"`
-		OutputURL string `json:"output_url"`
-		Token     string `json:"job_token"`
-		Prompt    string `json:"prompt"`
+		InputURL     string `json:"input_url"`
+		OutputURL    string `json:"output_url"`
+		Token        string `json:"job_token"`
+		Prompt       string `json:"prompt"`
+		Model        string `json:"model"`
+		FirstMessage string `json:"first_message"`
 	}
 	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
 		os.Exit(90)
 	}
-	_, prompt, err := prompts.SplitWikiDefinition()
-	if err != nil || in.Prompt != strings.TrimSpace(prompt) {
-		os.Exit(96)
+	if role == "custom" {
+		if in.Prompt != "Custom system" || in.Model != "custom-model" || in.FirstMessage != "Fetch "+in.InputURL+" then upload "+in.OutputURL {
+			os.Exit(97)
+		}
+	} else {
+		rendered, err := prompts.Load("", prompts.Variables{ClientVersion: MinimumClientVersion, MaxOutputBytes: 128 << 20}, MCPToolNames())
+		if err != nil || in.Prompt != rendered.System() {
+			os.Exit(96)
+		}
 	}
 	if role == "wait" {
 		for {
@@ -60,7 +68,7 @@ func TestExecRunnerHelper(t *testing.T) {
 	if len(readInput(t, data)) == 0 {
 		os.Exit(93)
 	}
-	if role == "success" || role == "upload-failure" {
+	if role == "success" || role == "upload-failure" || role == "custom" {
 		output := outputArchive(t, map[string]string{"wiki/index.md": "# Exec wiki\n"})
 		req, _ = http.NewRequest("PUT", in.OutputURL, bytes.NewReader(output))
 		req.Header.Set("Authorization", "Bearer "+in.Token)
@@ -296,3 +304,13 @@ type observingRunners struct {
 }
 
 func (r observingRunners) New(job model.Job) (runner.Runner, error) { return r.newRun(job) }
+
+func TestExecPromptOverridesOnWire(t *testing.T) {
+	f, token, p := execFixture(t, "custom")
+	overridePrompts(t, f, "---\nmodel: {id: custom-model, effort: high}\n---\nCustom system", "Fetch {{.InputURL}} then upload {{.OutputURL}}", "")
+	j := startManaged(t, f, token, p.ID, true)
+	j = waitExecJob(t, f, j)
+	if j.Status != "completed" {
+		t.Fatal(j)
+	}
+}

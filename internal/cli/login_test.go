@@ -25,6 +25,7 @@ import (
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/prompts"
 )
 
 const loopbackTestCode = "kioku_loopback.test-code"
@@ -380,7 +381,11 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 		body, _ := json.Marshal(payload)
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
-	s := server.New(server.Config{Providers: map[string]auth.Provider{"google": provider}}, db, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
+	rendered, err := prompts.Load("", prompts.Variables{ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 128 << 20}, server.MCPToolNames())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.New(server.Config{Prompts: rendered, Providers: map[string]auth.Provider{"google": provider}}, db, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
 	set, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)

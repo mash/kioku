@@ -29,7 +29,7 @@ func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{}, db, objects, key)
+	s := New(Config{Prompts: defaultPrompts(t)}, db, objects, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)

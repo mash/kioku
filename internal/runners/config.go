@@ -3,17 +3,19 @@ package runners
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/managedagents"
 	execrunner "github.com/mash/kioku/internal/runner/exec"
 	openairunner "github.com/mash/kioku/internal/runner/openai"
 	"github.com/mash/kioku/prompts"
-	"gopkg.in/yaml.v3"
 )
 
 func (s *Set) prepareManaged() error {
@@ -45,6 +47,18 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 	if err := s.prepareManaged(); err != nil {
 		return err
 	}
+	kind := s.config.Type
+	if kind == "" && s.config.ManagedAgents != nil {
+		kind = "claudemanaged"
+	}
+	if kind != "" {
+		if s.config.Prompts == nil {
+			return errors.New("prompts are not configured")
+		}
+		if kind == "claudemanaged" && utf8.RuneCountInString(s.config.Prompts.System()) > 100000 {
+			return fmt.Errorf("prompts: %s: too long (line 1)", prompts.SystemFile)
+		}
+	}
 	data := s.config.DataDir
 	if data == "" {
 		data = "./data"
@@ -70,12 +84,15 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 		if err != nil || !validBaseOrigin(s.config.BaseURL) || u.Scheme != "https" || (u.Port() != "" && u.Port() != "443" && u.Port() != "8443") {
 			return errors.New("OpenAI generation requires an HTTPS KIOKU_BASE_URL on port 443 or 8443")
 		}
-		_, prompt, err := prompts.SplitWikiDefinition()
-		if err != nil {
-			return err
-		}
-		s.openaiRunner = openairunner.New(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: strings.TrimSpace(prompt)})
+		s.openaiRunner = openairunner.New(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: s.config.Prompts.System()})
 	case "exec":
+		model := s.config.Prompts.Model()
+		if model.ID == "" {
+			return fmt.Errorf("prompts: %s: missing model (line 1)", prompts.SystemFile)
+		}
+		if model.Effort != "" || model.Speed != "" || model.InferenceGeo != "" {
+			slog.Warn("exec runner ignores model effort, speed and inference_geo", "file", prompts.SystemFile)
+		}
 		command := s.config.Command
 		if len(command) == 0 || !filepath.IsAbs(command[0]) {
 			return errors.New("KIOKU_RUNNER_COMMAND must be a nonempty JSON argv array with an absolute executable path")
@@ -86,20 +103,10 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 		if !validBaseOrigin(s.config.BaseURL) {
 			return errors.New("exec generation requires a valid KIOKU_BASE_URL origin")
 		}
-		frontmatter, prompt, err := prompts.SplitWikiDefinition()
-		if err != nil {
-			return err
-		}
-		var definition struct {
-			Model string `yaml:"model"`
-		}
-		if err := yaml.Unmarshal([]byte(frontmatter), &definition); err != nil || strings.TrimSpace(definition.Model) == "" {
-			return errors.New("invalid runner model")
-		}
 		if err := os.MkdirAll(root, 0700); err != nil {
 			return err
 		}
-		config = execrunner.Config{Root: root, Command: command, Model: definition.Model, Prompt: strings.TrimSpace(prompt)}
+		config = execrunner.Config{Root: root, Command: command, Model: model, Prompt: s.config.Prompts.System()}
 	default:
 		return errors.New("unknown KIOKU_RUNNER")
 	}

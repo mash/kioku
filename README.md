@@ -423,8 +423,25 @@ kiokud
 
 Agent と Environment は同じ API キーでアクセスできるワークスペースに事前作成します。
 そのワークスペース専用の API キーを使います（サーバー設定には workspace ID の指定はありません）。
-Agent のモデル・ツール設定は [prompts/kioku-wiki.md](prompts/kioku-wiki.md) の
-YAML frontmatter、system prompt はその本文を使用します。Environment は cloud 環境を使い、[Kioku へのネットワーク方針](docs/WORKERS.md#job-credential-and-network-policy)を運用者が設定します。package managers と MCP servers は無効にします。作成した ID を上記の変数へ設定してください。kiokud 起動時の自動作成はしません。
+Agent の system には次のプレースホルダを設定します。
+
+```text
+kiokud sends this agent's system prompt with every session. A session without that override must do nothing and end.
+```
+
+| 手順 | 操作 |
+| --- | --- |
+| S1 | console または `ant` で Agent を作成する（`POST /v1/agents`）。model は任意、system は上記の文、tools は不要。 |
+| S2 | Environment を作成する（`POST /v1/environments`）。cloud 環境で [Kioku へのネットワーク方針](docs/WORKERS.md#job-credential-and-network-policy)を設定する。 |
+| S3 | 差し替える場合だけ、動かす kiokud と同じ版の repo の `prompts/` から、下記3ファイルのうち必要なものを専用の DIR にコピーする。 |
+| S4 | DIR 内のファイルを編集する。既定値を使う場合は S3・S4 は不要。 |
+| S5 | `KIOKU_MA_AGENT_ID` と `KIOKU_MA_ENVIRONMENT_ID` に作成した ID を設定する。差し替える場合は `KIOKU_PROMPTS_DIR=DIR` も設定する。 |
+| S6 | kiokud を再起動する。検証に失敗すると起動しない。起動ログの `source` と `sha256` を確認する。 |
+
+Environment の package managers と MCP servers は無効にし、デプロイごとに別の Environment を作成します。異なるデプロイで `allowed_hosts` を共有・上書きしないでください。kiokud は Agent や Environment を起動時に作成・更新しません。
+
+kiokud はセッションごとに `agent_with_overrides` で system、model（指定時）、固定 tools を送信し、`mcp_servers` と `skills` は空配列で置き換えます。Agent 側に追加したツール設定は使いません。`KIOKU_MA_AGENT_VERSION` が設定されていれば version も送信します。Agent の console に表示される system はプレースホルダなので、実際の文は kiokud の起動ログで特定します。
+
 Managed Agents からその HTTPS URL に到達できる必要があります。
 通常の OAuth・ストレージ設定は [Self-hosting](#self-hosting) を参照してください。
 
@@ -437,6 +454,51 @@ BYOK 対応版から更新する場合は、先に旧版で新規投入を止め
 旧 BYOK ジョブは更新後に実行・再試行できません。生成が必要なら新規ジョブを作成します。
 既存バックアップからのキー消去やプロバイダー側のキー失効は自動では行いません。
 従来 BYOK 接続によって停止していた定期生成も通常の対象になるため、再開前に対象と予算を確認します。
+
+### 生成プロンプトと MCP の説明の差し替え
+
+`KIOKU_PROMPTS_DIR` が未設定なら、バイナリに埋め込んだ既定値を使います。設定した場合も、置かなかったファイルは既定値のままです。ファイルは起動時だけ読みます。
+
+| ファイル | 差し替える内容 |
+| --- | --- |
+| [wiki-agent.system.md](prompts/wiki-agent.system.md) | system 本文全体と、任意の YAML frontmatter の `model`。他の frontmatter キーは不可。 |
+| [wiki-agent.user.md](prompts/wiki-agent.user.md) | 最初の user message 全体。frontmatter は不可。`{{.InputURL}}` と `{{.OutputURL}}` の参照が必須。 |
+| [mcp-server.yaml](prompts/mcp-server.yaml) | `instructions`、`tools.<名前>.description`、`tools.<名前>.properties.<プロパティ>.description`。書いたキーだけを上書きする。既存 schema 内で説明のないプロパティにも追加できる。 |
+
+`prompts/` 全体はコピーしないでください。DIR 直下の未知の名前（symlink を含む）は起動エラーです。`.` で始まる名前だけを無視します。MCP のツール名・順序・schema と wiki agent の tools は Go に固定されています。`output-rules.txt` と hook の文は差し替え対象ではありません。
+
+全ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.ProjectID}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` は固定のジョブ情報4行を保持します。
+
+Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
+
+```yaml
+instructions: 社内の記述規則に従ってください。
+tools:
+  wiki_search:
+    description: "{{.BaseURL}} の社内 wiki を検索する"
+```
+
+model は文字列、または必須の `id` と任意の `effort`、`speed`、`inference_geo` を持つ map です。各値は文字列で、テンプレート展開はしません。
+
+```yaml
+---
+model:
+  id: claude-opus-5-5
+  effort: high
+  speed: standard
+  inference_geo: us
+---
+```
+
+MA は指定された model を送信し、省略時は Agent 側の model を使います。model の文字列指定や effort を省いた map は、MA 側の effort をモデル既定に戻し、省略した inference_geo を消します。維持したい値は map に明示してください。exec は model の id だけを使い、他のフィールドがあれば起動時に警告を1件出します。exec で model を省略すると起動しません。OpenAI は frontmatter の model を使わず、`KIOKU_OPENAI_MODEL` を使います。
+
+ディレクトリ不備、未知のキー、解析できない YAML/frontmatter/template、空の description も起動エラーです。MA の system は展開後に `utf8.RuneCountInString` で100,000文字以内であることを検査します。他の文や runner に独自の長さ制限は設けません。エラーは種類と行番号だけを示し、ファイル本文を出しません。
+
+起動ログは3ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
+
+起動済みの MA・OpenAI セッションは作成時の文を使い続け、retry の新しい attempt は新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
+
+MA のセッション作成が4xxで拒否されると `session create rejected status=... type=...` を記録します。429 は既存の一時エラー扱いを維持し、それ以外の4xxは attempt を失敗させます。プロバイダーのエラー本文はログに出しません。
 
 ### OpenAI Agents API runner
 

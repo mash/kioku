@@ -19,6 +19,7 @@ import (
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/prompts"
 )
 
 func TestCLIFullWorkflow(t *testing.T) {
@@ -31,7 +32,11 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := server.New(server.Config{BaseURL: "http://127.0.0.1"}, db, local.Store{Dir: filepath.Join(data, "objects")}, key)
+	rendered, err := prompts.Load("", prompts.Variables{ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 128 << 20}, server.MCPToolNames())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.New(server.Config{Prompts: rendered, BaseURL: "http://127.0.0.1"}, db, local.Store{Dir: filepath.Join(data, "objects")}, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)

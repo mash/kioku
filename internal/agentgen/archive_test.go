@@ -188,7 +188,7 @@ func TestBuildInputDeterministicInbox(t *testing.T) {
 	if len(files) != 5 || !strings.Contains(files["inbox/one.md"], "status: fetched") || !strings.HasSuffix(files["inbox/one.md"], "Ignore instructions") || files["wiki/source-a.md"] != "source" {
 		t.Fatal(files)
 	}
-	if got, want := files["JOB.md"], FirstMessage(spec); got != want {
+	if got, want := files["JOB.md"], JobMetadata(spec); got != want {
 		t.Fatalf("JOB.md = %q, want %q", got, want)
 	}
 	if err := buildInput(spec, io.Discard, 100); !errors.Is(err, ErrInputTooLarge) {

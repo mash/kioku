@@ -11,46 +11,20 @@ import (
 )
 
 func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
-	frontmatter, system, err := prompts.SplitWikiDefinition()
+	rendered, err := prompts.Load("", prompts.Variables{ClientVersion: "test-version", MaxOutputBytes: 128 << 20}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var agent struct {
-		Name, Model string
-		Tools       []struct {
-			Type    string
-			Default struct {
-				Permission struct{ Type string } `yaml:"permission_policy"`
-			} `yaml:"default_config"`
-			Configs []struct {
-				Name    string
-				Enabled bool
-			}
-		}
-	}
-	if err := yaml.Unmarshal([]byte(frontmatter), &agent); err != nil {
-		t.Fatal(err)
-	}
-	if agent.Name != "kioku-wiki" || agent.Model != "claude-opus-5-5" || len(agent.Tools) != 1 {
-		t.Fatal(agent)
-	}
-	tool := agent.Tools[0]
-	if tool.Type != "agent_toolset_20260401" || tool.Default.Permission.Type != "always_allow" {
-		t.Fatal(tool)
-	}
-	disabled := map[string]bool{}
-	for _, c := range tool.Configs {
-		disabled[c.Name] = !c.Enabled
-	}
-	if !disabled["web_fetch"] || !disabled["web_search"] {
-		t.Fatal(disabled)
+	system := rendered.System()
+	if rendered.Model().ID != "claude-opus-5-5" {
+		t.Fatal(rendered.Model())
 	}
 	for _, rule := range strings.Split(prompts.OutputRules, "\n") {
 		if !strings.Contains(system, rule) {
 			t.Errorf("prompt lacks %q", rule)
 		}
 	}
-	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_JOB_TOKEN", "inbox/", "source_url", "100 entries", "Kioku-Client-Version"} {
+	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_JOB_TOKEN", "inbox/", "source_url", "100 entries", "Kioku-Client-Version: test-version", "134217728 bytes", "JOB.md holds the job metadata"} {
 		if !strings.Contains(system, text) {
 			t.Error("prompt missing", text)
 		}

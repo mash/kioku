@@ -58,14 +58,14 @@ func ValidateSources(pages, previous map[string]string, items []model.InboxItem)
 	}
 	removed := map[string]bool{}
 	for _, item := range items {
-		if item.Status == "removed" {
+		if item.Remove {
 			removed[item.SourceURL] = true
 			if urls[item.SourceURL] != "" {
 				problems = append(problems, "(c) removed source remains: "+item.SourceURL)
 			}
 		}
-		if item.Status == "fetched" && urls[item.SourceURL] == "" {
-			problems = append(problems, "(e) fetched source missing: "+item.SourceURL)
+		if !item.Remove && urls[item.SourceURL] == "" {
+			problems = append(problems, "(e) submitted source missing: "+item.SourceURL)
 		}
 	}
 	for name, body := range previous {

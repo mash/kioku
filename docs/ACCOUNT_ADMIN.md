@@ -25,8 +25,8 @@ There is no unauthenticated recovery endpoint or account-merge shortcut. If all 
 
 ## Project source authorization policy
 
-The user's Claude fetches each source with the user's own connectors or CLI. The client sends the text and a source_url to Kioku. Human sessions, write agents and MCP clients can submit text. Kioku stores the text as a fetched inbox item and shares the published source pages with project members.
+The user's Claude fetches each source with the user's own connectors or CLI. The client sends the text and a source_url to Kioku. Human sessions, write agents and MCP clients can submit text. Kioku stores the text as an inbox item and shares the published source pages with project members.
 
 source_url is client-asserted provenance. The server validates the URL format but does not verify that the text came from that URL or that the submitter can read the original. A member can submit different text under an existing source_url. A later submission replaces an earlier waiting item with the same exact URL, even if the later text is older.
 
-Kioku holds no source-access credentials and never retrieves source text. GitHub and Google OAuth authorize login only. Login credentials remain available for identity verification during account administration. Runners receive the submitted text and process fetched and removed items. Managed attempts exchange input and output files through provider APIs.
+Kioku holds no source-access credentials and never retrieves source text. GitHub and Google OAuth authorize login only. Login credentials remain available for identity verification during account administration. Runners receive the submitted text and use the remove flag to process submitted bodies and removal requests. Managed attempts exchange input and output files through provider APIs.

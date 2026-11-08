@@ -17,9 +17,9 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 	other := f.login("other@example.com")
 	private := securityProject(t, f, other)
 	if err := f.db.Update(func(st *model.State) error {
-		st.Inbox["one"] = model.InboxItem{ID: "one", ProjectID: p.ID, SourceURL: "https://example.com/a", Status: "fetched", RunID: "pinned", Submitter: "owner"}
-		st.Inbox["two"] = model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Status: "fetched"}
-		st.Inbox["private"] = model.InboxItem{ID: "private", ProjectID: private.ID, SourceURL: "https://example.com/private", Status: "removed"}
+		st.Inbox["one"] = model.InboxItem{ID: "one", ProjectID: p.ID, SourceURL: "https://example.com/a", RunID: "pinned", Submitter: "owner"}
+		st.Inbox["two"] = model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Remove: true}
+		st.Inbox["private"] = model.InboxItem{ID: "private", ProjectID: private.ID, SourceURL: "https://example.com/private", Remove: true}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -31,9 +31,9 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 	}{{"owner", owner, 2}, {"agent", agent, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var entries []struct {
-				Namespace  string              `json:"namespace"`
-				InboxCount int                 `json:"inbox_count"`
-				Inbox      []map[string]string `json:"inbox"`
+				Namespace  string           `json:"namespace"`
+				InboxCount int              `json:"inbox_count"`
+				Inbox      []map[string]any `json:"inbox"`
 			}
 			if c := f.request("GET", "/api/projects", tc.token, nil, &entries); c != 200 || len(entries) != tc.count {
 				t.Fatal(c, entries)
@@ -45,11 +45,14 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 						t.Fatal(entry)
 					}
 					for i, item := range entry.Inbox {
-						wantURL, wantStatus := "https://example.com/a", "fetched"
+						wantURL, wantFields := "https://example.com/a", 1
 						if i == 1 {
-							wantURL, wantStatus = "https://example.com/b", "fetched"
+							wantURL, wantFields = "https://example.com/b", 2
+							if item["remove"] != true {
+								t.Fatal(item)
+							}
 						}
-						if len(item) != 2 || item["source_url"] != wantURL || item["status"] != wantStatus {
+						if len(item) != wantFields || item["source_url"] != wantURL || item["status"] != nil {
 							t.Fatal(item)
 						}
 					}

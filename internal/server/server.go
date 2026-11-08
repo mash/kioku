@@ -380,12 +380,12 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) er
 				entry := model.ProjectEntry{Project: p, Inbox: []model.InboxEntry{}}
 				for _, item := range st.Inbox {
 					if item.ProjectID == p.ID {
-						entry.Inbox = append(entry.Inbox, model.InboxEntry{SourceURL: item.SourceURL, Status: item.Status})
+						entry.Inbox = append(entry.Inbox, model.InboxEntry{SourceURL: item.SourceURL, Remove: item.Remove})
 					}
 				}
 				sort.Slice(entry.Inbox, func(i, j int) bool {
 					if entry.Inbox[i].SourceURL == entry.Inbox[j].SourceURL {
-						return entry.Inbox[i].Status < entry.Inbox[j].Status
+						return !entry.Inbox[i].Remove && entry.Inbox[j].Remove
 					}
 					return entry.Inbox[i].SourceURL < entry.Inbox[j].SourceURL
 				})

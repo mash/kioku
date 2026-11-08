@@ -22,7 +22,7 @@ func TestRedoJournalRecoversControlAndExternalContent(t *testing.T) {
 	}
 	st := model.NewState()
 	st.Projects["p"] = model.Project{ID: "p", Name: "Committed intent"}
-	st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p", Status: "fetched"}
+	st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p", Remove: true}
 	control, _ := controlJSON(st)
 	in := controlIntent{Control: control, Transaction: "transaction", Projects: []string{"p"}}
 	content, _ := json.Marshal(contentFor(st, "p"))
@@ -43,7 +43,7 @@ func TestRedoJournalRecoversControlAndExternalContent(t *testing.T) {
 	}
 	defer s.Close()
 	_ = s.View(func(st model.State) error {
-		if st.Inbox["s"].Status != "fetched" || st.Projects["p"].Name != "Committed intent" {
+		if !st.Inbox["s"].Remove || st.Projects["p"].Name != "Committed intent" {
 			t.Fatal("incomplete recovery")
 		}
 		return nil

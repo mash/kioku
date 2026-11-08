@@ -30,11 +30,7 @@ func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
 					job.Run.Attempt.ID = "attempt"
 					job.Run.InboxIDs = []string{"item"}
 					st.Jobs[j.ID] = job
-					status := "removed"
-					if rule == "e" {
-						status = "fetched"
-					}
-					st.Inbox["item"] = model.InboxItem{ID: "item", ProjectID: j.ProjectID, RunID: "attempt", Status: status, SourceURL: "https://example.com/a"}
+					st.Inbox["item"] = model.InboxItem{ID: "item", ProjectID: j.ProjectID, RunID: "attempt", Remove: rule == "c", SourceURL: "https://example.com/a"}
 					return nil
 				})
 			}

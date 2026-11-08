@@ -272,7 +272,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 				t.Fatal(msg, result)
 			}
 			item := waitingInboxItem(t, f, project.ID, "https://example.com/record")
-			if item.Status != "fetched" {
+			if item.Remove {
 				t.Fatal("stored status", item)
 			}
 			var submitter string

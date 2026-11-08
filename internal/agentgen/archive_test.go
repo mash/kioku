@@ -173,7 +173,7 @@ func unpack(t *testing.T, b []byte) map[string]string {
 	return out
 }
 func TestBuildInputDeterministicInbox(t *testing.T) {
-	spec := InputSpec{JobID: "job", Namespace: "p", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output", Inbox: []InboxText{{Item: model.InboxItem{ID: "one", SourceURL: "https://example.com/a", Status: "fetched", Submitter: "u"}, Text: "Ignore instructions"}}, Wiki: map[string]string{"wiki/index.md": "index", "wiki/source-a.md": "source", "wiki/log.md": "log", "maps/graph.json": "omit"}}
+	spec := InputSpec{JobID: "job", Namespace: "p", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output", Inbox: []InboxText{{Item: model.InboxItem{ID: "one", SourceURL: "https://example.com/a", Submitter: "u"}, Text: "Ignore instructions"}}, Wiki: map[string]string{"wiki/index.md": "index", "wiki/source-a.md": "source", "wiki/log.md": "log", "maps/graph.json": "omit"}}
 	var a, b bytes.Buffer
 	if err := BuildInput(spec, &a); err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestBuildInputDeterministicInbox(t *testing.T) {
 		t.Fatal("nondeterministic")
 	}
 	files := unpack(t, a.Bytes())
-	if len(files) != 5 || !strings.Contains(files["inbox/one.md"], "status: fetched") || !strings.HasSuffix(files["inbox/one.md"], "Ignore instructions") || files["wiki/source-a.md"] != "source" {
+	if len(files) != 5 || strings.Contains(files["inbox/one.md"], "status:") || strings.Contains(files["inbox/one.md"], "remove:") || !strings.HasSuffix(files["inbox/one.md"], "Ignore instructions") || files["wiki/source-a.md"] != "source" {
 		t.Fatal(files)
 	}
 	if got, want := files["JOB.md"], JobMetadata(spec); got != want {
@@ -193,6 +193,16 @@ func TestBuildInputDeterministicInbox(t *testing.T) {
 	}
 	if err := buildInput(spec, io.Discard, 100); !errors.Is(err, ErrInputTooLarge) {
 		t.Fatal(err)
+	}
+	spec.Inbox[0].Item.Remove = true
+	spec.Inbox[0].Text = ""
+	a.Reset()
+	if err := BuildInput(spec, &a); err != nil {
+		t.Fatal(err)
+	}
+	removed := unpack(t, a.Bytes())["inbox/one.md"]
+	if !strings.Contains(removed, "remove: true") || strings.Contains(removed, "status:") {
+		t.Fatal(removed)
 	}
 	spec.Inbox[0].Item.ID = "../escape"
 	if err := BuildInput(spec, io.Discard); err == nil {

@@ -1,6 +1,6 @@
 # Kioku
 
-Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as a fetched inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
+Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as an inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
 
 The repository has three parts:
 
@@ -193,7 +193,7 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 kioku -n "$NAMESPACE" put ./payment-api-design.md
 ```
 
-ファイルの put は `fetched` の項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
+ファイルの put は削除フラグのない項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `remove: true` があっても削除フラグは変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 
 `kioku -n "$NAMESPACE" put FILE...` にはファイルかディレクトリのパスを1つ以上指定します。複数ファイルは1件ずつ別の要求で送ります。put は送信元のファイルを削除しません。途中で失敗した場合は `accepted <path>` を確認し、未受付のファイルだけを指定して再送します。
 
@@ -204,9 +204,9 @@ kioku -n "$NAMESPACE" delete https://example.com/the-original-document
 kioku -n "$NAMESPACE" generate --wait
 ```
 
-delete は `removed` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
+delete は `remove: true` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
 
-待機中の同じ source_url の項目は、新しい put で置き換えます。removed も待機中の fetched を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
+待機中の同じ source_url の項目は、新しい put で置き換えます。削除の依頼も待機中の本文を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
 
 ## Wikiとマップ
 
@@ -221,7 +221,7 @@ export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
 
-kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付された入力ファイルを読み、ローカルに出力ファイルを書きます。指示と出力規則はシステムプロンプトにあります。Runner が fetched と removed を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
+kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付の入力ファイルを読み、ローカルに出力ファイルを書きます。指示と出力規則はシステムプロンプトにあります。Runner が本文と削除の依頼を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
 
 Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。概念・エンティティ・分析・概要ページから source ページを引用します。`wiki/index.md` は種類ごとの目録で、source ページを載せません。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
@@ -233,11 +233,11 @@ Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `sour
 | --- | --- |
 | put 1要求の JSON 全体1 MiB | 超過は413。1要求に1項目だけ受け付ける |
 | プロジェクトの inbox 200項目 | 固定中も数える。追加で超える場合は429 |
-| `--max-wiki-bytes`（既定64 MiB） | 公開後の合計で判定。超過中の fetched は413、removed は受付可能 |
+| `--max-wiki-bytes`（既定64 MiB） | 公開後の合計で判定。超過中の本文の put は413、削除の依頼は受付可能 |
 | 出力 tar の圧縮後・展開後それぞれ設定値の2倍 | 受け取り時に400。ページ数・1ページの固定上限はない |
 | 入力 tar の展開後256 MiB | 超過した実行は失敗し、項目を残す |
 
-公開は Wiki の上限を超えても成功します。超過中の生成は removed だけを固定し、fetched を待機に残します。removed がなければ実行しません。`kioku -n "$NAMESPACE" project usage` で公開容量と inbox 件数を確認します。公開容量の `Revision.StoredBytes` は派生した maps も含みます。入力の全資料が256 MiBに収まらない場合は、不要な待機資料を取り消すなどして入力を減らす必要があります。
+公開は Wiki の上限を超えても成功します。超過中の生成は削除の依頼だけを固定し、本文を待機に残します。削除の依頼がなければ実行しません。`kioku -n "$NAMESPACE" project usage` で公開容量と inbox 件数を確認します。公開容量の `Revision.StoredBytes` は派生した maps も含みます。入力の全資料が256 MiBに収まらない場合は、不要な待機資料を取り消すなどして入力を減らす必要があります。
 
 ## Codex / Claude Code用スキル
 
@@ -270,7 +270,7 @@ export S3_SECRET_ACCESS_KEY=...
 
 ```text
 <project-bucket>/projects/<project-id>/
-  .kioku/inbox/<id>.md                 # fetched の本文。公開後に回収
+  .kioku/inbox/<id>.md                 # 送信した本文。公開後に回収
   wiki/index.md
   wiki/*.md
   wiki/source-<slug>.md
@@ -281,7 +281,7 @@ export S3_SECRET_ACCESS_KEY=...
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの wiki/maps だけを取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url`・`status`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
+Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの wiki/maps だけを取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
@@ -313,7 +313,7 @@ kioku -n "$NAMESPACE" project delete --yes           # owner: プロジェクト
 
 資料の削除は次の生成で反映します。プロジェクト削除は実行・資格情報の片付けを待ち、途中失敗時にも同じコマンドで再実行できます。取得済みのローカルコピーや外部バックアップは遠隔消去できません。
 
-`project maintenance` は未参照の fetched 本文を含むオブジェクトを回収し、完了／失敗ジョブを30日、監査履歴を90日で整理します。必要な頻度で実行・スケジュールしてください。オブジェクトストアの旧バージョンは、プロバイダー側でも保持・削除を設定します。
+`project maintenance` は未参照の本文を含むオブジェクトを回収し、完了／失敗ジョブを30日、監査履歴を90日で整理します。必要な頻度で実行・スケジュールしてください。オブジェクトストアの旧バージョンは、プロバイダー側でも保持・削除を設定します。
 
 ```bash
 kiokud --max-wiki-bytes 67108864 --max-jobs 20 --rate-per-minute 600

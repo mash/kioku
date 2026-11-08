@@ -17,7 +17,7 @@ import (
 )
 
 func TestStatusReadsInboxFromProjectListing(t *testing.T) {
-	for _, items := range [][]model.InboxEntry{{}, {{SourceURL: "https://example.com/a", Status: "fetched"}, {SourceURL: "https://example.com/b", Status: "removed"}}} {
+	for _, items := range [][]model.InboxEntry{{}, {{SourceURL: "https://example.com/a"}, {SourceURL: "https://example.com/b", Remove: true}}} {
 		t.Run(fmt.Sprint(len(items)), func(t *testing.T) {
 			requests := 0
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +28,7 @@ func TestStatusReadsInboxFromProjectListing(t *testing.T) {
 					return
 				}
 				json.NewEncoder(w).Encode([]model.ProjectEntry{
-					{Project: model.Project{ID: "other"}, InboxCount: 1, Inbox: []model.InboxEntry{{SourceURL: "https://example.com/other", Status: "fetched"}}},
+					{Project: model.Project{ID: "other"}, InboxCount: 1, Inbox: []model.InboxEntry{{SourceURL: "https://example.com/other"}}},
 					{Project: model.Project{Namespace: "org/selected", Revision: "current"}, InboxCount: len(items), Inbox: items},
 				})
 			}))

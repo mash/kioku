@@ -147,8 +147,21 @@ func (s *Store) loadContent(pid string) error {
 		return err
 	}
 	var c projectContent
-	if err = json.Unmarshal(b, &c); err != nil {
+	// Only persisted inbox items accept the old status field. New writes use Remove.
+	stored := struct {
+		*projectContent
+		Inbox map[string]struct {
+			model.InboxItem
+			Status string `json:"status"`
+		} `json:"inbox"`
+	}{projectContent: &c}
+	if err = json.Unmarshal(b, &stored); err != nil {
 		return err
+	}
+	c.Inbox = make(map[string]model.InboxItem, len(stored.Inbox))
+	for id, item := range stored.Inbox {
+		item.Remove = item.Remove || item.Status == "removed"
+		c.Inbox[id] = item.InboxItem
 	}
 	if c.ProjectID != pid {
 		return errors.New("project content identity mismatch")

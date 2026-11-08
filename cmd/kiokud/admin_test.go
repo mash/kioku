@@ -25,7 +25,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	if err = db.Update(func(st *model.State) error {
 		st.Users["u"] = model.User{ID: "u"}
 		st.Projects["p"] = model.Project{ID: "p"}
-		st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p", Status: "pending"}
+		st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

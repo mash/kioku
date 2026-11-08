@@ -87,7 +87,7 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 		t.Fatal("old SQLite backup rolled back wiki")
 	}
 	_ = restored.db.View(func(st model.State) error {
-		if len(st.Revisions) != 1 || len(st.Inbox) != 1 || st.Inbox[waiting.ID].Status != "fetched" {
+		if len(st.Revisions) != 1 || len(st.Inbox) != 1 || st.Inbox[waiting.ID].Remove {
 			t.Error("project content lost during restore", st.Inbox)
 		}
 		return nil

@@ -116,7 +116,7 @@ func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
 	j = startManaged(t, f, token, p.ID, false)
 	f.db.View(func(st model.State) error {
 		for _, id := range j.Run.InboxIDs {
-			if st.Inbox[id].Status != "removed" {
+			if !st.Inbox[id].Remove {
 				t.Fatal(st.Inbox[id])
 			}
 		}
@@ -210,7 +210,7 @@ func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
 				t.Fatal(got)
 			}
 			if err := f.db.View(func(st model.State) error {
-				if len(st.Inbox) != 1 || st.Inbox[replacement.ID].Status != "removed" {
+				if len(st.Inbox) != 1 || !st.Inbox[replacement.ID].Remove {
 					t.Fatalf("failed item conflicts with accepted replacement: %+v", st.Inbox)
 				}
 				return nil
@@ -421,7 +421,7 @@ func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
 	restartManagedFixture(t, f)
 	j = startManaged(t, f, token, p.ID, false)
 	if err := f.db.View(func(st model.State) error {
-		if len(j.Run.InboxIDs) != 1 || st.Inbox[j.Run.InboxIDs[0]].Status != "removed" {
+		if len(j.Run.InboxIDs) != 1 || !st.Inbox[j.Run.InboxIDs[0]].Remove {
 			t.Fatal("partial removal bypassed the published quota", j.Run.InboxIDs)
 		}
 		return nil

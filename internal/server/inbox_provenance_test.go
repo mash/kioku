@@ -86,7 +86,7 @@ func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
 	access := connectorAccessToken(t, f, human, p.ID)
-	content := strings.Replace(testSourceContent("https://example.com/a", "Evidence"), "---\nEvidence", "status: removed\nsubmitter: forged\n---\nEvidence", 1)
+	content := strings.Replace(testSourceContent("https://example.com/a", "Evidence"), "---\nEvidence", "remove: true\nsubmitter: forged\n---\nEvidence", 1)
 	for _, mcp := range []bool{false, true} {
 		var result map[string]any
 		if mcp {
@@ -101,7 +101,7 @@ func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 			t.Fatal("non-empty put response", result)
 		}
 		item := waitingInboxItem(t, f, p.ID, "https://example.com/a")
-		if item.SourceURL != "https://example.com/a" || item.Status != "fetched" || item.Submitter == "forged" {
+		if item.SourceURL != "https://example.com/a" || item.Remove || item.Submitter == "forged" {
 			t.Fatalf("stored item: %+v", item)
 		}
 		body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())

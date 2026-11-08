@@ -91,7 +91,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		incomplete = p.WikiIncomplete
 		over := completedWikiBytes(published) > s.Config.MaxWikiBytes
 		for _, item := range st.Inbox {
-			if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Status == "removed") {
+			if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Remove) {
 				items = append(items, item)
 			}
 		}
@@ -146,7 +146,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	}
 	for _, item := range items {
 		in := agentgen.InboxText{Item: item}
-		if item.Status == "fetched" {
+		if !item.Remove {
 			b, err := s.Blobs.Get(ctx, item.BodyKey())
 			if err != nil {
 				return err

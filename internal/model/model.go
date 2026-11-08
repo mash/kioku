@@ -95,7 +95,7 @@ type ProjectEntry struct {
 
 type InboxEntry struct {
 	SourceURL string `json:"source_url"`
-	Status    string `json:"status"`
+	Remove    bool   `json:"remove,omitempty"`
 }
 
 type Invite struct {
@@ -213,7 +213,7 @@ type InboxItem struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
 	SourceURL string    `json:"source_url"`
-	Status    string    `json:"status"`
+	Remove    bool      `json:"remove,omitempty"`
 	Submitter string    `json:"submitter"`
 	Created   time.Time `json:"created"`
 	RunID     string    `json:"run_id,omitempty"`

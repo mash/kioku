@@ -57,12 +57,12 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		if err != nil {
 			return fail(400, err.Error())
 		}
-		item.SourceURL, item.Status, body = doc.URL, "fetched", req.File.Content
+		item.SourceURL, body = doc.URL, req.File.Content
 	case req.File == nil && req.Remove && req.SourceURL != "":
 		if err := source.ValidateSourceURL(req.SourceURL); err != nil {
 			return fail(400, err.Error())
 		}
-		item.SourceURL, item.Status = req.SourceURL, "removed"
+		item.SourceURL, item.Remove = req.SourceURL, true
 	default:
 		return fail(400, "provide one file, or remove: true with source_url; put source_url and updated_at in the file frontmatter; the source_url argument is only for remove")
 	}
@@ -76,7 +76,7 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		if err != nil {
 			return err
 		}
-		if item.Status != "removed" && st.Revisions[p.Revision].StoredBytes > s.Config.MaxWikiBytes {
+		if !item.Remove && st.Revisions[p.Revision].StoredBytes > s.Config.MaxWikiBytes {
 			return fail(413, "published wiki exceeds max-wiki-bytes; remove sources first")
 		}
 		count := 0
@@ -93,7 +93,7 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 	if err = s.DB.View(check); err != nil {
 		return err
 	}
-	if item.Status == "fetched" {
+	if !item.Remove {
 		if err = s.Blobs.Put(ctx, item.BodyKey(), []byte(body)); err != nil {
 			return err
 		}

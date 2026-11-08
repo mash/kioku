@@ -119,7 +119,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			dirty := false
 			over := completedWikiBytes(st.Revisions[p.Revision]) > s.Config.MaxWikiBytes
 			for _, item := range st.Inbox {
-				if item.ProjectID == id && item.RunID == "" && (!over || item.Status == "removed") {
+				if item.ProjectID == id && item.RunID == "" && (!over || item.Remove) {
 					dirty = true
 				}
 			}

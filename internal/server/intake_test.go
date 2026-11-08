@@ -14,7 +14,7 @@ func putFile(t *testing.T, f *fixture, token, pid, name, body string) model.Inbo
 		t.Fatal(c, result)
 	}
 	j := waitingInboxItem(t, f, pid, url)
-	if j.Status != "fetched" {
+	if j.Remove {
 		t.Fatal("unexpected source receipt", j)
 	}
 	return j

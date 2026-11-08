@@ -20,7 +20,7 @@ The MCP endpoint exposes five tools:
 - `projects_list`: list the projects that you chose at consent and where you are still a member.
 - `wiki_read`: read a current wiki or map file; follow `next_offset` to read long files.
 - `wiki_search`: find a case-insensitive substring in the current wiki and maps.
-- `source_put`: accept one UTF-8 text file or one removal and return its inbox `id` and `status`.
+- `source_put`: accept one UTF-8 text file or one removal and return `{}` after acceptance.
 
 `source_put` accepts exactly one of these shapes (with the selected `project`):
 
@@ -29,7 +29,7 @@ The MCP endpoint exposes five tools:
 {"project":"acme/docs","remove":true,"source_url":"https://example.com/design"}
 ```
 
-The statuses are `fetched` and `removed`. The normalized put request is limited to 1 MiB including JSON overhead. File frontmatter and removal arguments follow the [put contract](WORKERS.md#put-and-inbox). The client fetches the source and sends its text. source_url is client-asserted provenance; the server does not verify that the text came from that URL. The tool saves an inbox item without starting generation. The scheduler includes it in a later run. Waiting items with the same exact URL are replaced, while items pinned to an active run remain unchanged.
+Inbox items use `remove: true` for removals and omit the flag for submitted bodies. The normalized put request is limited to 1 MiB including JSON overhead. File frontmatter and removal arguments follow the [put contract](WORKERS.md#put-and-inbox). The client fetches the source and sends its text. source_url is client-asserted provenance; the server does not verify that the text came from that URL. The tool saves an inbox item without starting generation. The scheduler includes it in a later run. Waiting items with the same exact URL are replaced, while items pinned to an active run remain unchanged.
 
 ```text
 user ──> claude.ai chat ──(skill kioku loads from the plugin)
@@ -39,7 +39,7 @@ user ──> claude.ai chat ──(skill kioku loads from the plugin)
          kiokud POST /mcp
               ├─ projects_list            → granted projects where the user is a member
               ├─ wiki_read / wiki_search  → current wiki/ and maps/ files (read-only)
-              ├─ source_put               → stores one fetched/removed inbox item
+              ├─ source_put               → stores one inbox item (remove true for removals)
               └─ cli_login_code           → one-time code for kioku agent login
 ```
 
@@ -84,7 +84,7 @@ Expiry, revocation, issuer removal from the project, account deletion and accoun
 
 Request authentication retains the original restricted principal for the entire request. A concurrent revocation never turns an agent request into the issuer's unrestricted account identity.
 
-The server has one mutable wiki/maps tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. Pull and MCP expose only published wiki/maps. Before generation, inbox metadata is available through the CLI status or each entry of GET /api/projects (inbox_count and inbox, containing only source_url and status). Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
+The server has one mutable wiki/maps tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. Pull and MCP expose only published wiki/maps. Before generation, inbox metadata is available through the CLI status or each entry of GET /api/projects (inbox_count and inbox, containing source_url and remove true only for removals). Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
 
 ## Internal runner credential
 

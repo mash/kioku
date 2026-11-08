@@ -19,18 +19,18 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	base := "/api/projects/" + p.Namespace
 	for _, tc := range []struct {
 		req    model.PutRequest
-		status string
+		remove bool
 	}{
-		{model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/a", "Source body")}}, "fetched"},
-		{model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", "---\nstatus: removed\n---\nBody")}}, "fetched"},
-		{model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, "removed"},
+		{model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/a", "Source body")}}, false},
+		{model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", "---\nremove: true\n---\nBody")}}, false},
+		{model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, true},
 	} {
 		var result map[string]any
 		if code := f.request("POST", base+"/put", token, tc.req, &result); code != 202 || result == nil || len(result) != 0 {
 			t.Fatal(code, result)
 		}
-		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Status != tc.status {
-			t.Fatal("stored status", item)
+		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Remove != tc.remove {
+			t.Fatal("stored remove flag", item)
 		}
 		f.db.View(func(st model.State) error {
 			if len(st.Inbox) != 1 || len(st.Jobs) != 0 {
@@ -56,7 +56,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	f.db.Update(func(st *model.State) error {
 		for i := len(st.Inbox); i < 200; i++ {
 			id := fmt.Sprint(i)
-			st.Inbox[id] = model.InboxItem{ID: id, ProjectID: p.ID, SourceURL: "https://example.com/" + id, Status: "fetched"}
+			st.Inbox[id] = model.InboxItem{ID: id, ProjectID: p.ID, SourceURL: "https://example.com/" + id}
 		}
 		return nil
 	})

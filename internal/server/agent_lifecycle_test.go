@@ -130,11 +130,11 @@ func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j model.Job, title st
 				name = old
 			}
 		}
-		if item.Status == "removed" {
+		if item.Remove {
 			delete(pages, name)
 			continue
 		}
-		if item.Status == "fetched" {
+		if !item.Remove {
 			body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
 			if err != nil {
 				t.Fatal(err)

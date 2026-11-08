@@ -47,9 +47,9 @@ func buildInput(spec InputSpec, w io.Writer, limit int64) error {
 		}
 		metadata, err := yaml.Marshal(struct {
 			SourceURL string `yaml:"source_url"`
-			Status    string `yaml:"status"`
+			Remove    bool   `yaml:"remove,omitempty"`
 			Submitter string `yaml:"submitter"`
-		}{in.Item.SourceURL, in.Item.Status, in.Item.Submitter})
+		}{in.Item.SourceURL, in.Item.Remove, in.Item.Submitter})
 		if err != nil {
 			return err
 		}

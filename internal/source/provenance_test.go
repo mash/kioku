@@ -54,7 +54,7 @@ func TestFileProvenance(t *testing.T) {
 		{"offset minute overflow", strings.ReplaceAll(valid, updated, "2026-11-07T18:00:00+09:60"), "updated_at"},
 		{"boolean updated_at", strings.ReplaceAll(valid, updated, "true"), "updated_at"},
 		{"mapping updated_at", strings.ReplaceAll(valid, updated, "{value: now}"), "updated_at"},
-		{"injected updated_at", strings.ReplaceAll(valid, updated, `"2026-11-07T18:00:00+09:00\nstatus: removed"`), "updated_at"},
+		{"injected updated_at", strings.ReplaceAll(valid, updated, `"2026-11-07T18:00:00+09:00\nremove: true"`), "updated_at"},
 		{"numeric updated_at", strings.ReplaceAll(valid, updated, "123"), "updated_at"},
 		{"list updated_at", strings.ReplaceAll(valid, updated, "["+updated+"]"), "updated_at"},
 		{"duplicate updated_at", strings.ReplaceAll(valid, "updated_at: ", "updated_at: "+updated+"\nupdated_at: "), "frontmatter"},

@@ -198,7 +198,7 @@ func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	live := map[blob.Key]bool{}
 	if err := s.DB.View(func(st model.State) error {
 		for _, item := range st.Inbox {
-			if item.ProjectID == pid && item.Status == "fetched" {
+			if item.ProjectID == pid && !item.Remove {
 				live[item.BodyKey()] = true
 			}
 		}

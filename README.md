@@ -223,7 +223,7 @@ export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
 
-kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。Runner が fetched と removed を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
+kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` は最初のメッセージと同一で、job ID・project ID・入力 URL・出力 URL の4行だけを含みます。指示と出力規則はシステムプロンプトにあります。Runner が fetched と removed を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
 
 Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。概念・エンティティ・分析・概要ページから source ページを引用します。`wiki/index.md` は種類ごとの目録で、source ページを載せません。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 

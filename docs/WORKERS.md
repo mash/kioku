@@ -34,7 +34,7 @@ Each put request is at most 1 MiB including JSON overhead (413 on excess). Each 
 
 ## One current wiki
 
-Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
+Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md is identical to the first message: four lines containing the job ID, project ID, input URL and output URL. Instructions and output rules are in the system prompt. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
 
 The runner processes fetched and removed items, edits source and concept/entity/analysis/overview pages, and returns the complete wiki/*.md set. Existing sources are identified by exact frontmatter source_url and keep their filenames. New slug collisions use -2, -3, etc. The index omits source pages; log.md records changes, newest first, up to 100 entries. The prompt requires these content rules and forbids tokens and signed URL secrets in log.md.
 
@@ -120,7 +120,7 @@ The command receives one JSON object on stdin, followed by EOF:
 }
 ```
 
-`prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` carries only the job ID, project ID, `input_url` and `output_url`; the system prompt holds every instruction. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
+`prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` contains job metadata only; `prompt` supplies instructions. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 

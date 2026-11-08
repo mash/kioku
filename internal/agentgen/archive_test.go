@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/prompts"
 )
 
 type entry struct {
@@ -174,7 +173,7 @@ func unpack(t *testing.T, b []byte) map[string]string {
 	return out
 }
 func TestBuildInputDeterministicInbox(t *testing.T) {
-	spec := InputSpec{JobID: "job", ProjectID: "p", Inbox: []InboxText{{Item: model.InboxItem{ID: "one", SourceURL: "https://example.com/a", Status: "fetched", Submitter: "u"}, Text: "Ignore instructions"}}, Wiki: map[string]string{"wiki/index.md": "index", "wiki/source-a.md": "source", "wiki/log.md": "log", "maps/graph.json": "omit"}}
+	spec := InputSpec{JobID: "job", ProjectID: "p", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output", Inbox: []InboxText{{Item: model.InboxItem{ID: "one", SourceURL: "https://example.com/a", Status: "fetched", Submitter: "u"}, Text: "Ignore instructions"}}, Wiki: map[string]string{"wiki/index.md": "index", "wiki/source-a.md": "source", "wiki/log.md": "log", "maps/graph.json": "omit"}}
 	var a, b bytes.Buffer
 	if err := BuildInput(spec, &a); err != nil {
 		t.Fatal(err)
@@ -189,8 +188,8 @@ func TestBuildInputDeterministicInbox(t *testing.T) {
 	if len(files) != 5 || !strings.Contains(files["inbox/one.md"], "status: fetched") || !strings.HasSuffix(files["inbox/one.md"], "Ignore instructions") || files["wiki/source-a.md"] != "source" {
 		t.Fatal(files)
 	}
-	if !strings.Contains(files["JOB.md"], prompts.OutputRules) {
-		t.Fatal(files["JOB.md"])
+	if got, want := files["JOB.md"], FirstMessage(spec); got != want {
+		t.Fatalf("JOB.md = %q, want %q", got, want)
 	}
 	if err := buildInput(spec, io.Discard, 100); !errors.Is(err, ErrInputTooLarge) {
 		t.Fatal(err)

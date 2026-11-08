@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"errors"
-	"fmt"
 	"io"
 	"regexp"
 	"sort"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/wiki"
-	"github.com/mash/kioku/prompts"
 )
 
 const MaxInputBytes int64 = 256 << 20
@@ -38,7 +36,7 @@ var inboxID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 func BuildInput(spec InputSpec, w io.Writer) error { return buildInput(spec, w, MaxInputBytes) }
 func buildInput(spec InputSpec, w io.Writer, limit int64) error {
-	files := map[string]string{"JOB.md": fmt.Sprintf(prompts.Job, spec.JobID, spec.ProjectID, spec.InputURL, spec.OutputURL, prompts.OutputRules)}
+	files := map[string]string{"JOB.md": FirstMessage(spec)}
 	for _, in := range spec.Inbox {
 		if !inboxID.MatchString(in.Item.ID) {
 			return errors.New("invalid inbox ID")

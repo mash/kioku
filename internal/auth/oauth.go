@@ -107,9 +107,6 @@ func (p Provider) Identity(ctx context.Context, token string) (connector.Identit
 	}
 	return implementation.Identity(ctx, p.get, token)
 }
-func Get(ctx context.Context, u, token string, out any) error {
-	return (Provider{}).get(ctx, u, token, out)
-}
 func (p Provider) get(ctx context.Context, u, token string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {

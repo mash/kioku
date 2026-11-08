@@ -389,6 +389,26 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 	if session.UserID != uid || session.IdentityCredential == "" || session.IdentityProvider == "" || session.IdentityID == "" {
 		return "", fail(401, "sign in again to verify your email before accepting this invitation")
 	}
+	// CLI and browser sessions from one login share a single-use refresh token.
+	// Reload after taking the lock: request middleware may hold an older proof.
+	unlock, err := s.lockProject(r.Context(), identityContext(uid, session.IdentityProvider, session.IdentityID))
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if err = s.DB.View(func(st model.State) error {
+		current, ok := st.Sessions[key]
+		if !ok || current.UserID != uid || !current.Expires.After(time.Now()) || current.IdentityProvider != session.IdentityProvider || current.IdentityID != session.IdentityID || current.IdentityCredential == "" {
+			return fail(401, "session changed; sign in again")
+		}
+		if st.Users[uid].Identities[current.IdentityProvider] != current.IdentityID {
+			return fail(401, "identity no longer linked to this account")
+		}
+		session = current
+		return nil
+	}); err != nil {
+		return "", err
+	}
 	provider, ok := s.Config.Providers[session.IdentityProvider]
 	if !ok {
 		return "", fail(401, "sign in again with an available identity provider")
@@ -405,6 +425,44 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 	if err != nil {
 		return "", fail(401, "sign in again to verify your current email")
 	}
+	if fresh != credential {
+		// Commit rotation before optional identity lookups. A transient API failure
+		// must not discard the only usable refresh token. Update all copies of this
+		// proof, including a CLI exchange pending completion, but never source access.
+		data, _ := json.Marshal(fresh)
+		sealed := s.Cipher.Seal(string(data), identityContext(uid, session.IdentityProvider, session.IdentityID))
+		sameProof := func(value string) bool {
+			if value == session.IdentityCredential {
+				return true
+			}
+			// Older servers re-sealed unchanged credentials after identity checks.
+			// Different ciphertext can therefore still share one refresh token.
+			raw, err := s.Cipher.Open(value, identityContext(uid, session.IdentityProvider, session.IdentityID))
+			var other auth.Credential
+			return err == nil && json.Unmarshal([]byte(raw), &other) == nil && other.AccessToken == credential.AccessToken && other.RefreshToken == credential.RefreshToken
+		}
+		if err = s.DB.Update(func(st *model.State) error {
+			if st.Users[uid].Identities[session.IdentityProvider] != session.IdentityID {
+				return fail(401, "identity no longer linked to this account")
+			}
+			for id, current := range st.Sessions {
+				if current.UserID == uid && current.IdentityProvider == session.IdentityProvider && current.IdentityID == session.IdentityID && current.Expires.After(time.Now()) && sameProof(current.IdentityCredential) {
+					current.IdentityCredential = sealed
+					st.Sessions[id] = current
+				}
+			}
+			for id, d := range st.Devices {
+				if d.Purpose == "" && !d.Used && d.UserID == uid && d.IdentityProvider == session.IdentityProvider && d.IdentityID == session.IdentityID && d.Expires.After(time.Now()) && sameProof(d.IdentityCredential) {
+					d.IdentityCredential = sealed
+					st.Devices[id] = d
+				}
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+		session.IdentityCredential = sealed
+	}
 	identity, err := provider.Identity(r.Context(), fresh.AccessToken)
 	if err != nil {
 		return "", fail(502, "could not verify your current email with the identity provider")
@@ -412,7 +470,6 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 	if identity.ID != session.IdentityID || identity.Email == "" {
 		return "", fail(401, "identity no longer matches this session; sign in again")
 	}
-	data, _ := json.Marshal(fresh)
 	err = s.DB.Update(func(st *model.State) error {
 		current, ok := st.Sessions[key]
 		if !ok || current.UserID != uid || current.Expires.Before(time.Now()) || current.IdentityCredential != session.IdentityCredential {
@@ -422,8 +479,6 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 		if user.Identities[session.IdentityProvider] != identity.ID {
 			return fail(401, "identity no longer linked to this account")
 		}
-		current.IdentityCredential = s.Cipher.Seal(string(data), identityContext(uid, session.IdentityProvider, session.IdentityID))
-		st.Sessions[key] = current
 		user.Email = identity.Email
 		user.Name = identity.Name
 		st.Users[uid] = user

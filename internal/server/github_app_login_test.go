@@ -1,11 +1,17 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
@@ -159,5 +165,126 @@ func TestGitHubLoginUnavailableWithoutConfiguration(t *testing.T) {
 	resp := finishLoopbackOAuth(t, f, startLoopbackOAuth(t, f, a))
 	if resp.StatusCode != 302 {
 		t.Fatal("Google login without the App failed", resp.StatusCode)
+	}
+}
+
+func TestGitHubLoginRefreshSharedProof(t *testing.T) {
+	for _, mode := range []string{"shared sessions", "resealed shared proof", "identity lookup failure", "concurrent requests", "revoked during refresh"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setupWithWorker(t, false)
+			token := f.login("old@example.com")
+			sibling := auth.Token()
+			var uid, original, unrelated string
+			if err := f.db.Update(func(st *model.State) error {
+				s := st.Sessions[auth.Hash(token)]
+				uid = s.UserID
+				u := st.Users[uid]
+				u.Identities["github"] = "42"
+				st.Users[uid] = u
+				data, _ := json.Marshal(auth.Credential{AccessToken: "ghu_old", RefreshToken: "ghr_old", ExpiresAt: time.Now().Add(-time.Minute)})
+				original = f.s.Cipher.Seal(string(data), identityContext(uid, "github", "42"))
+				s.IdentityProvider, s.IdentityID, s.IdentityCredential = "github", "42", original
+				st.Sessions[auth.Hash(token)] = s
+				if mode == "resealed shared proof" {
+					// Older servers re-encrypted a proof after each identity lookup,
+					// even when the access and refresh tokens had not changed.
+					s.IdentityCredential = f.s.Cipher.Seal(string(data), identityContext(uid, "github", "42"))
+				}
+				st.Sessions[auth.Hash(sibling)] = s
+				st.Devices["pending-cli"] = model.Device{UserID: uid, IdentityProvider: "github", IdentityID: "42", IdentityCredential: original, Expires: time.Now().Add(time.Minute)}
+				unrelated = f.s.Cipher.Seal(`{"access_token":"another-login"}`, identityContext(uid, "github", "42"))
+				s.IdentityCredential = unrelated
+				st.Sessions["unrelated-login"] = s
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			refreshes, lookups := 0, 0
+			f.s.Config.Providers["github"] = auth.Provider{Name: "github", ClientID: "Iv.fixture", ClientSecret: "secret", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				status, body := 200, ""
+				switch r.URL.Host + r.URL.Path {
+				case "github.com/login/oauth/access_token":
+					if err := r.ParseForm(); err != nil {
+						return nil, err
+					}
+					if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "ghr_old" || r.Form.Get("client_id") != "Iv.fixture" || r.Form.Get("client_secret") != "secret" {
+						return nil, fmt.Errorf("incorrect refresh request")
+					}
+					refreshes++
+					if refreshes > 1 {
+						body = `{"error":"bad_refresh_token"}`
+					} else {
+						body = `{"access_token":"ghu_fresh","refresh_token":"ghr_fresh","expires_in":28800}`
+					}
+					if mode == "revoked during refresh" {
+						if err := f.db.Update(func(st *model.State) error { delete(st.Sessions, auth.Hash(token)); return nil }); err != nil {
+							return nil, err
+						}
+					}
+				case "api.github.com/user":
+					if r.Header.Get("Authorization") != "Bearer ghu_fresh" {
+						return nil, fmt.Errorf("used stale login access token")
+					}
+					body = `{"id":42,"login":"fixture-user"}`
+					lookups++
+					if lookups == 1 && mode == "identity lookup failure" {
+						status = 503
+					}
+				case "api.github.com/user/emails":
+					body = `[{"email":"current@example.com","primary":true,"verified":true}]`
+				default:
+					return nil, fmt.Errorf("unexpected identity request: %s", r.URL)
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}}
+			verify := func(token string) error {
+				r := httptest.NewRequest("POST", "/api/account/sessions/revoke-all", nil)
+				r.Header.Set("Authorization", "Bearer "+token)
+				// Middleware captures the session before waiting for the refresh lock.
+				key, principal := f.s.session(r)
+				r = r.WithContext(context.WithValue(r.Context(), authContextKey{}, requestIdentity{key: key, principal: principal}))
+				email, err := f.s.currentEmail(r, uid)
+				if err == nil && email != "current@example.com" {
+					return fmt.Errorf("wrong verified email: %q", email)
+				}
+				return err
+			}
+			if mode == "concurrent requests" {
+				results := make(chan error, 8)
+				for i := 0; i < cap(results); i++ {
+					go func() { results <- verify(token) }()
+				}
+				for i := 0; i < cap(results); i++ {
+					if err := <-results; err != nil {
+						t.Errorf("concurrent verification failed: %v", err)
+					}
+				}
+			} else {
+				err := verify(token)
+				wantError := mode == "identity lookup failure" || mode == "revoked during refresh"
+				if (err != nil) != wantError {
+					t.Fatalf("first verification: %v", err)
+				}
+			}
+			if err := verify(sibling); err != nil {
+				t.Errorf("sibling lost the rotated token: %v", err)
+			}
+			if refreshes != 1 {
+				t.Errorf("reused a single-use refresh token: %d calls", refreshes)
+			}
+			st := loopbackSnapshot(t, f)
+			if st.Sessions[auth.Hash(sibling)].IdentityCredential == original || st.Devices["pending-cli"].IdentityCredential != st.Sessions[auth.Hash(sibling)].IdentityCredential {
+				t.Error("shared login proof was not updated together")
+			}
+			if mode == "revoked during refresh" && st.Sessions[auth.Hash(token)].UserID != "" {
+				t.Error("refresh restored a revoked session")
+			}
+			if st.Sessions["unrelated-login"].IdentityCredential != unrelated || len(st.Users[uid].Connections) != 0 || len(st.GitHubAppConnections) != 0 {
+				t.Error("refresh changed unrelated login or source credentials")
+			}
+		})
 	}
 }

@@ -221,3 +221,37 @@ func TestUnknownProviderDoesNotUseAnotherProvider(t *testing.T) {
 		t.Fatal("unknown provider refreshed a token")
 	}
 }
+
+func TestGitHubIdentityFindsPrimaryEmailOnLaterPage(t *testing.T) {
+	pages := []string{}
+	p := Provider{Name: "github", Client: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "api.github.com" || r.Header.Get("Authorization") != "Bearer login" {
+			t.Fatalf("unexpected identity request: %s", r.URL)
+		}
+		switch r.URL.Path {
+		case "/user":
+			return jsonResponse(t, map[string]any{"id": 42, "login": "user"}), nil
+		case "/user/emails":
+			page := r.URL.Query().Get("page")
+			pages = append(pages, page)
+			if page == "2" {
+				return jsonResponse(t, []map[string]any{{"email": "PRIMARY@example.com", "primary": true, "verified": true}}), nil
+			}
+			if len(pages) > 2 {
+				t.Fatal("repeated email page")
+			}
+			emails := make([]map[string]any, 100)
+			for i := range emails {
+				emails[i] = map[string]any{"email": "secondary@example.com", "primary": false, "verified": true}
+			}
+			return jsonResponse(t, emails), nil
+		default:
+			t.Fatalf("unexpected identity request: %s", r.URL)
+			return nil, nil
+		}
+	})}}
+	i, err := p.Identity(context.Background(), "login")
+	if err != nil || i.ID != "42" || i.Email != "primary@example.com" || strings.Join(pages, ",") != "1,2" {
+		t.Fatalf("paginated primary email: %+v, pages=%v, error=%v", i, pages, err)
+	}
+}

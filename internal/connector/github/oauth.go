@@ -27,23 +27,29 @@ func (p Connector) Identity(ctx context.Context, get connector.Get, token string
 	if err := get(ctx, "https://api.github.com/user", token, &u); err != nil {
 		return connector.Identity{}, err
 	}
-	var emails []struct {
-		Email    string `json:"email"`
-		Primary  bool   `json:"primary"`
-		Verified bool   `json:"verified"`
-	}
-	if err := get(ctx, "https://api.github.com/user/emails", token, &emails); err != nil {
-		return connector.Identity{}, err
-	}
 	if u.ID == 0 {
 		return connector.Identity{}, errors.New("invalid GitHub user")
 	}
 	if u.Name == "" {
 		u.Name = u.Login
 	}
-	for _, e := range emails {
-		if e.Primary && e.Verified {
-			return connector.Identity{ID: fmt.Sprint(u.ID), Name: u.Name, Email: strings.ToLower(e.Email)}, nil
+	// The primary address is not guaranteed to appear on the first page.
+	for page := 1; ; page++ {
+		var emails []struct {
+			Email    string `json:"email"`
+			Primary  bool   `json:"primary"`
+			Verified bool   `json:"verified"`
+		}
+		if err := get(ctx, fmt.Sprintf("https://api.github.com/user/emails?per_page=100&page=%d", page), token, &emails); err != nil {
+			return connector.Identity{}, err
+		}
+		for _, e := range emails {
+			if e.Primary && e.Verified {
+				return connector.Identity{ID: fmt.Sprint(u.ID), Name: u.Name, Email: strings.ToLower(e.Email)}, nil
+			}
+		}
+		if len(emails) < 100 {
+			break
 		}
 	}
 	return connector.Identity{}, errors.New("a verified primary GitHub email is required")

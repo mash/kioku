@@ -18,6 +18,14 @@ uses the existing state, PKCE and CSRF checks without OAuth scopes. App registra
 permissions control access; [Email addresses: read](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#user-permissions-for-email-addresses)
 permits `GET /user/emails` (documentation checked 2026-11-08).
 
+Login identity proofs retain the access-token expiry and refresh token. Before
+rechecking email for invitations or account administration, Kioku refreshes an
+expiring token and saves the rotated credentials for every session from that
+login before fetching identity data. Concurrent checks share that refresh;
+separate logins and source connections retain their own credentials. A failed
+refresh requires signing in again. See GitHub's
+[refresh-token lifecycle](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens).
+
 ## Create the App (operator)
 
 In github.com, open **Settings → Developer settings → GitHub Apps → New GitHub

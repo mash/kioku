@@ -2,7 +2,7 @@
 
 remote mode では [remote.md](remote.md) の読み書き手順を使う。
 本文の `kioku` は [SKILL.md](../SKILL.md) で定義した CLI（コマンドラインの操作ツール）のパスを指す。
-CLI の呼び出しは `kioku -C "$P"` で始める。
+CLI の呼び出しは `kioku -n "$NAMESPACE"` で始める。
 
 ## 作業中の参照と送信
 
@@ -18,7 +18,7 @@ CLI の呼び出しは `kioku -C "$P"` で始める。
    URL を捏造せず、URL を得るためだけに文書を公開しない。
    利用者の目標や他のメンバーの状況を、この会話だけの観測で上書きしない。
 4. ユーザーが即時生成を依頼し、local mode の書き込み権限があれば生成する。
-   `kioku -C "$P" generate --wait` の後に status と取得した Wiki を確認する。
+   `kioku -n "$NAMESPACE" generate --wait` の後に status と取得した Wiki を確認する。
    実際に生成した内容だけを報告する。remote mode は定期生成を待つ。
 
 「今どこ？」には、保存済みの文書と原本を根拠に答える。

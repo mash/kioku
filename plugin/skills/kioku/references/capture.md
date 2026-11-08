@@ -136,13 +136,13 @@ updated_at: "2026-11-07T18:00:00+09:00"
 字句修正、日常のコマンド出力、生成 Wiki の再読は送信の対象にしない。
 
 remote mode は、本文を準備してから [remote.md](remote.md) の MCP（Model Context Protocol）で送信する。
-local mode は、本文をファイルに書き、`kioku -C "$P" put "$FILE"` で送信する。
+local mode は、本文をファイルに書き、`kioku -n "$NAMESPACE" put "$FILE"` で送信する。
 `kioku` は [SKILL.md](../SKILL.md) の CLI のパス、`FILE` は `.md` ファイルの絶対パスを指す。
 引数なしの put で無関係な inbox を送信しない。一時ファイルを永続ローカル台帳にしない。
 応答の inbox ID と `status: fetched` を確認し、受付結果を伝える。
 複数ファイルは CLI が1件ずつ送信する。途中で失敗した場合は、受付済みと未保存を分ける。
 
-資料を取り除く依頼には `kioku -C "$P" delete URL` を使う。
+資料を取り除く依頼には `kioku -n "$NAMESPACE" delete URL` を使う。
 サーバーは `removed` の項目を受け付け、次の生成で source ページと参照を除く。
 
 ## 失敗と鮮度
@@ -150,7 +150,7 @@ local mode は、本文をファイルに書き、`kioku -C "$P" put "$FILE"` �
 読み取り専用なら put／delete を実行しない。
 原文を読めない場合は、原本の HTTPS URL と全文をファイルなどで渡すようユーザーに頼む。
 権限不足・オフラインでは未保存と伝え、別アカウントや別プロジェクトに切り替えない。
-受付成否が不明なら再送せず、local mode では `kioku -C "$P" status` の inbox を確認する。
+受付成否が不明なら再送せず、local mode では `kioku -n "$NAMESPACE" status` の inbox を確認する。
 項目がないだけでは、未受付と生成済みを区別できない。判別できなければ受付不明と伝える。
 
 サーバーは原本の変更を取り直さない。更新時は Claude が全文を読み直して送信する。
@@ -159,5 +159,5 @@ local mode は、本文をファイルに書き、`kioku -C "$P" put "$FILE"` �
 サーバーは版を比較せず、後から受け付けた本文を使う。古い版でも新しい版を上書きする。
 
 put は受付結果を返し、Wiki の生成を待たない。
-Wiki は定期生成か、即時生成の依頼時の `kioku -C "$P" generate --wait` で更新する。
+Wiki は定期生成か、即時生成の依頼時の `kioku -n "$NAMESPACE" generate --wait` で更新する。
 `generate --wait` は生成完了後に pull する。受付だけで Wiki を生成したとは伝えない。

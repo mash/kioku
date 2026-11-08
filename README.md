@@ -7,7 +7,7 @@ The repository has three parts:
 | Part | Path | Role |
 | --- | --- | --- |
 | Server `kiokud` | `cmd/kiokud`, `internal/` | Stores inbox items, runs wiki generation, serves the web viewer, the API and the MCP connector |
-| CLI `kioku` | `cmd/kioku`, `internal/cli` | Logs in, puts sources, pulls the wiki of one project into the current directory |
+| CLI `kioku` | `cmd/kioku`, `internal/cli` | Logs in, puts sources, selects a project directory and pulls its wiki |
 | Claude plugin | [`plugin/`](plugin/README.md) | Skill and hooks for Claude Code, Claude Desktop, Cowork and claude.ai chat |
 
 Prompts are kept in [`prompts/`](prompts/): the wiki agent definition, generation
@@ -90,7 +90,7 @@ go build -o bin/kiokud ./cmd/kiokud
 # GoogleまたはGitHubのOAuthアプリを登録して設定（callback URLは下記参照）
 export GOOGLE_CLIENT_ID=...
 export GOOGLE_CLIENT_SECRET=...
-# 暗号鍵は未設定なら ./data/encryption.key に自動生成・保存される
+# サーバーは暗号鍵が未設定なら ./data/encryption.key に生成・保存する
 ./bin/kiokud
 ```
 
@@ -101,10 +101,13 @@ export GOOGLE_CLIENT_SECRET=...
 別のターミナルで:
 
 ```bash
+NAMESPACE=acme/my-project
+export KIOKU_SERVER=http://127.0.0.1:8080
 ./bin/kioku --server http://127.0.0.1:8080 login --provider google
-./bin/kioku --server http://127.0.0.1:8080 project create my-project
-./bin/kioku project share list
-./bin/kioku project share invite bob@example.com
+./bin/kioku org create acme
+./bin/kioku -n "$NAMESPACE" --server http://127.0.0.1:8080 project create
+./bin/kioku -n "$NAMESPACE" project share list
+./bin/kioku -n "$NAMESPACE" project share invite bob@example.com
 ```
 
 原資料は、ユーザーの Claude が本文を取得して投入します。GitHub、Google Docs、公開 Web など、どの資料も本文と原本 URL を渡します。Kioku は資料取得用の資格情報を保持しません。具体例は[原資料](#原資料)を参照してください。
@@ -118,25 +121,25 @@ source_updated_at=$(gh api "repos/mash/kioku/commits/$source_commit" --jq '.comm
   printf '%s\n' '---' "source_url: https://github.com/mash/kioku/blob/$source_commit/README.md" "updated_at: $source_updated_at" '---'
   gh api "repos/mash/kioku/contents/README.md?ref=$source_commit" -H "Accept: application/vnd.github.raw+json"
 } > /tmp/kioku-readme.md
-./bin/kioku put /tmp/kioku-readme.md
-./bin/kioku generate --wait
-./bin/kioku status
-./bin/kioku pull
-./bin/kioku open
+./bin/kioku -n "$NAMESPACE" put /tmp/kioku-readme.md
+./bin/kioku -n "$NAMESPACE" generate --wait
+./bin/kioku -n "$NAMESPACE" status
+./bin/kioku -n "$NAMESPACE" pull
+./bin/kioku -n "$NAMESPACE" open
 ```
 
 プロジェクトのメンバーは、公開した source ページと Wiki を閲覧できます。投入時の追加フラグや個別の共有設定はありません。投入した内容は設定したLLM事業者にも送信されます。変更のないinboxファイルは再送しません。
 
 ```bash
-kioku put ./payment-api-design.md  # Artifactから抽出し、capture.md の規則で準備した設計書
-kioku generate --wait         # Generate now and pull the wiki
-kioku job status <job-id>
-kioku job wait <job-id>
-kioku job retry <job-id>
+kioku -n "$NAMESPACE" put ./payment-api-design.md  # Artifactから抽出し、capture.md の規則で準備した設計書
+kioku -n "$NAMESPACE" generate --wait         # Generate now and pull the wiki
+kioku -n "$NAMESPACE" job status <job-id>
+kioku -n "$NAMESPACE" job wait <job-id>
+kioku -n "$NAMESPACE" job retry <job-id>
 kioku project join <invite-url>
 kioku project list
-kioku pull <organization/project>
-kioku project share remove bob@example.com
+kioku -n "$NAMESPACE" pull
+kioku -n "$NAMESPACE" project share remove bob@example.com
 ```
 
 フラグは位置引数の前、グローバルフラグはコマンドの前に指定します。招待は7日間有効・一度限りです。メール指定の招待を受ける際は、そのログインセッションのGoogle／GitHubに現在の確認済みメールを問い合わせて照合します。古いセッションに本人確認情報がない場合や認可が期限切れの場合は、再ログインが必要です。メール送信はせず、招待URLを出力します。
@@ -163,7 +166,7 @@ OAuthアプリのcallback URL:
 開発時は `http://127.0.0.1:8080/auth/<provider>/callback` を登録します。Google の OAuth アプリをテストする場合はテストユーザーを登録してください。ログインには Docs／Drive API は不要です。
 
 ```bash
-kioku --server https://kioku.magicians.ee login --provider google
+kioku login --provider google
 kioku login --provider github
 kioku whoami
 ```
@@ -187,18 +190,18 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 ファイル先頭の YAML frontmatter に `source_url` と `updated_at` を付け、[原資料の取得・検証規則](plugin/skills/kioku/references/capture.md)に従って投入します。
 
 ```bash
-kioku put ./payment-api-design.md
+kioku -n "$NAMESPACE" put ./payment-api-design.md
 ```
 
 ファイルの put は `fetched` の項目を作り、ID と status を返します。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 
-複数ファイルは1件ずつ別の要求で送ります。引数なしの `kioku put` はローカルの `inbox/` の変更分を送ります。成功したファイルごとに receipt を保存するため、途中で失敗しても成功分は再送しません。
+複数ファイルは1件ずつ別の要求で送ります。引数なしの `kioku -n "$NAMESPACE" put` はローカルの `inbox/` の変更分を送ります。成功したファイルごとに receipt を保存するため、途中で失敗しても成功分は再送しません。
 
 ### 2. 原資料を取り除く
 
 ```bash
-kioku delete https://example.com/the-original-document
-kioku generate --wait
+kioku -n "$NAMESPACE" delete https://example.com/the-original-document
+kioku -n "$NAMESPACE" generate --wait
 ```
 
 delete は `removed` の項目を保存します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
@@ -234,7 +237,7 @@ Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `sour
 | 出力 tar の圧縮後・展開後それぞれ設定値の2倍 | 受け取り時に400。ページ数・1ページの固定上限はない |
 | 入力 tar の展開後256 MiB | 超過した実行は失敗し、項目を残す |
 
-公開は Wiki の上限を超えても成功します。超過中の生成は removed だけを固定し、fetched を待機に残します。removed がなければ実行しません。`kioku project usage` で公開容量と inbox 件数を確認します。公開容量の `Revision.StoredBytes` は派生した maps も含みます。入力の全資料が256 MiBに収まらない場合は、不要な待機資料を取り消すなどして入力を減らす必要があります。
+公開は Wiki の上限を超えても成功します。超過中の生成は removed だけを固定し、fetched を待機に残します。removed がなければ実行しません。`kioku -n "$NAMESPACE" project usage` で公開容量と inbox 件数を確認します。公開容量の `Revision.StoredBytes` は派生した maps も含みます。入力の全資料が256 MiBに収まらない場合は、不要な待機資料を取り消すなどして入力を減らす必要があります。
 
 ## Codex / Claude Code用スキル
 
@@ -278,7 +281,7 @@ export S3_SECRET_ACCESS_KEY=...
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの wiki/maps だけを取得します。生成前の受付状態は `kioku status` の `inbox_count` と `inbox`（`source_url`・`status`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
+Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの wiki/maps だけを取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url`・`status`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
@@ -301,11 +304,11 @@ kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
 ## 運用・削除・接続確認
 
 ```bash
-kioku project usage
-kioku project audit                  # owner のみ
-kioku project maintenance            # owner: 未参照オブジェクトを回収
-kioku delete https://example.com/doc  # 資料の削除を inbox に投入
-kioku project delete --yes           # owner: プロジェクトを削除
+kioku -n "$NAMESPACE" project usage
+kioku -n "$NAMESPACE" project audit                  # owner のみ
+kioku -n "$NAMESPACE" project maintenance            # owner: 未参照オブジェクトを回収
+kioku -n "$NAMESPACE" delete https://example.com/doc  # 資料の削除を inbox に投入
+kioku -n "$NAMESPACE" project delete --yes           # owner: プロジェクトを削除
 ```
 
 資料の削除は次の生成で反映します。プロジェクト削除は実行・資格情報の片付けを待ち、途中失敗時にも同じコマンドで再実行できます。取得済みのローカルコピーや外部バックアップは遠隔消去できません。
@@ -348,52 +351,57 @@ Google／GitHub のログインと Managed Agents はモック、S3 は TLS テ�
 Named projects use `organization/project`:
 
 ```bash
+NAMESPACE=acme/platform
 kioku org create acme
-kioku project create acme/platform
-kioku pull acme/platform
+kioku -n "$NAMESPACE" project create --description "Platform development"
+kioku -n "$NAMESPACE" pull
 ```
 
-The web path is `/acme/platform`. The caller chooses a working directory; `.kioku/config` in that directory stores the server and namespace. Server-side project IDs and bucket mappings remain internal. Public project API paths use `/api/projects/<organization>/<project>`, and responses identify projects by `namespace`.
+The web path is `/acme/platform`. `-n ORG/PROJECT` selects the projects.json path for the same server and namespace, or `~/.local/share/kioku/projects/ORG/PROJECT`, and creates it with mode 0700 if needed. The CLI records it in `~/.config/kioku/projects.json`; `.kioku/config` in that directory stores the server and namespace. Combine `-C DIR` with `-n ORG/PROJECT` to use an existing directory. Create requires `-n`. Join uses cwd or `-C DIR` and rejects `-n`. Command flags must precede positional arguments. Server-side project IDs and bucket mappings remain internal. Public project API paths use `/api/projects/<organization>/<project>`, and responses identify projects by `namespace`.
 
 ## Cloud operations and releases
 
 - [Releases](docs/RELEASES.md): one version for the server, the CLI and the plugin; a version bump in `plugin.json` makes the release; macOS/Linux amd64/arm64 archives and checksums.
 - [Project-scoped cloud agents](docs/CLOUD_AGENTS.md): expiring read/write credentials, origin pinning, revocation, and the separate VM/container sandbox boundary.
-- [Claude connector](docs/CLOUD_AGENTS.md#claude-connector): select the Kioku projects to share at consent, then read and search their wikis and save sources through MCP tools in claude.ai chat. For CLI access, exchange a one-time login code, then run `kioku pull`.
+- [Claude connector](docs/CLOUD_AGENTS.md#claude-connector): select the Kioku projects to share at consent, then read and search their wikis and save sources through MCP tools in claude.ai chat. For CLI access, exchange a one-time login code, then run `kioku -n "$NAMESPACE" pull`.
 - [Account administration](docs/ACCOUNT_ADMIN.md): session revocation, provider management, safe ownership handoff and account deletion.
 - [Generation worker architecture](docs/WORKERS.md): durable queue, one generation worker, and independent cleanup maintenance.
 
 
-`kioku put [FILES...]` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku generate --wait` waits for publication and pulls the wiki. Inspect `kioku status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
+`kioku -n "$NAMESPACE" put [FILES...]` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
 
 CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together. Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 
 ## CLI と skills の責務
 
-CLI は cwd の `.kioku/config`（JSON）を読み、1プロジェクトを操作します。親ディレクトリは探索しません。既定の接続先は `https://kioku.magicians.ee`。別接続先は `--server URL`、別の作業ディレクトリは `-C PATH` をコマンドの前に指定します。既存設定と異なる接続先・namespace は拒否します。
+CLI（コマンドラインの操作ツール）は `-n ORG/PROJECT` で保存先を選び、1プロジェクトを操作します。接続先は `--server URL`、`KIOKU_SERVER`、既定の `https://kioku.magicians.ee` の順で決めます。CLI は `~/.config/kioku/projects.json` の同じ server・namespace（organization/project 形式のプロジェクト名）の path を使い、項目がなければ `~/.local/share/kioku/projects/<organization>/<project>` を使います。保存先がなければ CLI が0700で作ります。
 
 ```sh
-mkdir -p /path/to/project
-cd /path/to/project
-kioku pull org/project       # 参加確認後に .kioku/config を作成して取得
-kioku pull                   # cwd の設定から同じプロジェクトを取得
+kioku -n "$NAMESPACE" pull        # CLI が保存先を作り、参加確認後に紐づけて取得
+kioku -n "$NAMESPACE" status   # どの作業ディレクトリからでも同じ対象を参照
 ```
 
-`project create NAME` はクラウドにプロジェクトを作成し、`project join INVITE_URL` は招待に参加します。どちらも成功時に cwd の設定を保存します。既に設定がある cwd では、クラウド操作を始める前にエラーにします。参加済みのプロジェクトには `pull org/project` を使います。設定作成・取得をまとめる別コマンドはありません。
+紐づけとは、CLI が保存先の `.kioku/config` に接続先と namespace を書き、そのディレクトリを1プロジェクトに結ぶことを指します。親ディレクトリは探索しません。既存の紐づけが接続先や namespace と異なる場合、CLI は設定を書き換えずに止まります。未紐づけでは pull、認証用コマンド、project create を使えます。それ以外では CLI が先に `kioku -n "$NAMESPACE" pull` を実行するよう案内します。
 
-認証は CLI が `~/.config/kioku/auth/<server-hash>.json` に接続先別で保存します。プロジェクト設定には認証情報を保存しません。`login` は認証だけを行います。会話の選択状態・保存先の一覧・取得タイミング・複数プロジェクトの巡回・フック重複の抑止・文脈と通知はプラグイン（[plugin/](plugin/README.md)）が担当します。
+`kioku -n "$NAMESPACE" project create --description "プロジェクトの説明"` はクラウドにプロジェクトを作り、保存先へ紐づけます。create は `-n` を必須とし、pull と create は namespace の位置引数を受け付けません。`-n` を省略すると、CLI は cwd（作業ディレクトリ）か `-C DIR` の `.kioku/config` を使います。`project join INVITE_URL` は cwd か `-C DIR` へ紐づけ、`-n` を受け付けません。create と join は既存設定があればクラウド操作の前に止まります。参加済みのプロジェクトには pull を使います。
+
+ユーザーが保存先を明示した場合、スキルは `kioku -C DIR -n "$NAMESPACE" pull` を使います。DIR は既存ディレクトリを指定し、未紐づけか同じ接続先・namespace への紐づけを必要とします。以後も全プロジェクト操作で `-n "$NAMESPACE"` を使い、明示した保存先を使う操作では `-C DIR` を併用します。
+
+CLI は create・join・pull・agent login の紐づけ成功時と、毎回の pull で projects.json に項目を足します。project delete の成功時は項目を消します。同じ server・namespace の既存 path は変えず、別の場所へ紐づけた場合は既存 path を stderr（標準エラー出力）に示します。create・join・pull は `--description TEXT` で説明を保存します。join ではフラグを招待 URL の前に置きます。ファイルを0600、作成する設定ディレクトリを0700にします。JSON をデコードできない、path が絶対パスでない場合は、ファイル名を示して止まります。projects.json の書き込みだけに失敗した場合は終了コード0で警告します。登録失敗には次の pull、削除失敗にはファイルの修復と該当項目の削除を案内します。
+
+CLI が認証を `~/.config/kioku/auth/<server-hash>.json` に接続先別で保存します。プロジェクト設定に認証情報は保存しません。login は認証だけを行います。プラグイン（[plugin/](plugin/README.md)）は会話内の対象選択、取得タイミング、複数プロジェクトの巡回、結果の説明を担当します。スキルは projects.json を読むだけにします。新規作成時や description がない時は、スキルがプロジェクト名・会話・Wiki から説明案を作り、ユーザーの確認か修正を受けて `--description` で渡します。
 
 ### ローカル配置と取得
 
-- `wiki/` と `maps/`: cwd 直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
-- `inbox/`: cwd 直下の原資料投入領域。pull による上書き・削除の対象外です。
+- `wiki/` と `maps/`: 保存先直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
+- `inbox/`: 保存先直下の原資料投入領域。pull による上書き・削除の対象外です。
 - `.kioku/`: config、receipts.json、ファイル更新ロック。config は server と namespace のみを保存し、Git で共有できます。
 
 設定の初回作成では、既存の非空 wiki/maps があれば紐付けを拒否します。config がある場合、wiki/maps は管理対象のミラーとして扱うため、独自資料は置かないでください。管理対象の symlink も拒否します。公開・取得ともページ単位の順次反映なので、新旧混在を許容します。部分失敗でも成功したページは残ります。復旧後の pull は実ファイルとサーバーの一覧を比較して再同期します。前回の取得 revision や同期未完了状態はローカルに保存せず、status にも表示しません。
 
 ### 取得結果
 
-`kioku pull [org/project]` は通常の結果を stdout に出力します。変更がなければ「最新です」と表示します。失敗は stderr と非ゼロ終了で報告し、部分成功したファイルは残ります。
+`kioku -n "$NAMESPACE" pull` は通常の結果を stdout に出力します。変更がなければ「最新です」と表示します。失敗は stderr と非ゼロ終了で報告し、部分成功したファイルは残ります。
 
 ### プラグインの運用
 
@@ -440,12 +448,12 @@ kiokud sends this agent's system prompt with every session. A session without th
 
 Environment の package managers と MCP servers は無効にし、デプロイごとに別の Environment を作成します。kiokud は各実行前に設定をAPIから読み戻し、外向き通信を許可する環境では生成を開始しません。旧版から切り替える前に稼働中のジョブと後片付けを完了させ、新しい環境のIDを設定してください。
 
-kiokud はセッションごとに `agent_with_overrides` で system、model（指定時）、固定 tools を送信し、`mcp_servers` と `skills` は空配列で置き換えます。Agent 側に追加したツール設定は使いません。`KIOKU_MA_AGENT_VERSION` が設定されていれば version も送信します。Agent の console に表示される system はプレースホルダなので、実際の文は kiokud の起動ログで特定します。
+kiokud はセッションごとに `agent_with_overrides` で system、model（指定時）、固定 tools を送信し、`mcp_servers` と `skills` は空配列で置き換えます。Agent 側に追加したツール設定は使いません。`KIOKU_MA_AGENT_VERSION` に値があれば version も送信します。Agent の console は system のプレースホルダを表示するので、実際の文は kiokud の起動ログで特定します。
 
 通常の OAuth・ストレージ設定は [Self-hosting](#self-hosting) を参照してください。
 
 CLI は `kioku --server https://kioku.example.com login` で接続し、
-`kioku --server https://kioku.example.com pull org/project` で作業先を設定します。
+`kioku -n "$NAMESPACE" --server https://kioku.example.com pull` で作業先を設定します。
 生成予算はサーバーのセッション上限以内で指定できます。指定しない場合はサーバー上限を使います。
 
 BYOK 対応版から更新する場合は、先に旧版で新規投入を止め、接続解除で既存ジョブの
@@ -497,7 +505,7 @@ MA は指定された model を送信し、省略時は Agent 側の model を�
 
 起動済みの MA・OpenAI セッションは作成時の文を使い続け、retry の新しい attempt は新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
 
-MA のセッション作成が4xxで拒否されると `session create rejected status=... type=...` を記録します。429 は既存の一時エラー扱いを維持し、それ以外の4xxは attempt を失敗させます。プロバイダーのエラー本文はログに出しません。
+MA がセッション作成を4xxで拒否すると `session create rejected status=... type=...` を記録します。429 は既存の一時エラー扱いを維持し、それ以外の4xxは attempt を失敗させます。プロバイダーのエラー本文はログに出しません。
 
 ### OpenAI Agents API runner
 

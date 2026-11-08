@@ -1,9 +1,10 @@
 # Connector から CLI を認証して取得する
 
-local mode では、確定した `SERVER`・`NAMESPACE`・絶対パス `P` を使う。
+local mode では、確定した `SERVER`（接続先）・`NAMESPACE`（organization/project 形式のプロジェクト名）を使う。
+CLI が保存先を選ぶ。ユーザーが保存先を明示した場合だけ [selection.md](selection.md) の `-C` の手順に従う。
 Kioku の `cli_login_code` を使えるか確認する。
 local mode では `projects_list` を使わない。
-namespace はユーザー、repository、カタログから決める。
+namespace はユーザー、作業ディレクトリの `.kioku/config`、projects.json の description（プロジェクトの説明）から決める。
 本文の `kioku` は [SKILL.md](../SKILL.md) で定義した CLI のパスを指す。
 コマンドは CLI のパスで始め、変数の代入を前に付けない。
 
@@ -12,8 +13,8 @@ namespace はユーザー、repository、カタログから決める。
 通信・DNS エラーは [selection.md](selection.md) の「取得に失敗した場合」に従う。
 参加権限エラーも同じ失敗規則に従い、対象やアカウントを変えない。
 
-1. `mkdir -p "$P"` を実行する。既存の `P/.kioku/config` は SERVER・NAMESPACE と一致する必要がある。不一致なら止め、設定の上書きや別アカウントへの切り替えで回避しない。ツールの接続先も同じ SERVER と確認する。
-2. `kioku -C "$P" --server "$SERVER" whoami` を実行する。直前に同じコマンドを実行した場合は、直前の結果を使う（logout の後は実行し直す）。終了コードだけでなく JSON の **`agent_id`** を確認する。人の identity なら既存認証を使う。コード交換をせず、手順5へ進む。人が connector login を頼んだ場合は、[selection.md](selection.md) の規則で logout の同意を得てから、この手順をやり直す。設定があり、有効な agent identity を確認できれば既存認証を使う。
+1. ツールの接続先が SERVER と一致するか確認する。CLI が紐づけの不一致を返した場合は止め、設定の上書きや別アカウントへの切り替えで回避しない。
+2. `kioku -n "$NAMESPACE" whoami` を実行する。直前に同じコマンドを実行した場合は、直前の結果を使う（logout の後は実行し直す）。終了コードだけでなく JSON の **`agent_id`** を確認する。人の identity なら既存認証を使う。コード交換をせず、手順5へ進む。人が connector login を頼んだ場合は、[selection.md](selection.md) の規則で logout の同意を得てから、この手順をやり直す。設定があり、有効な agent identity を確認できれば既存認証を使う。
 3. `whoami` が認証エラーで失敗する場合は、コードを取得する。
    `cli_login_code` に `project: NAMESPACE` を渡す。role は既定の `read`。
    依頼が本文の送信・資料の削除・生成を含む場合だけ `write` を指定する。
@@ -21,19 +22,21 @@ namespace はユーザー、repository、カタログから決める。
 4. ツールが返したコードを**直ちに**次の CLI コマンドの `CODE` に渡す。60秒・一度限りなので、他の調査を間に挟まない。
 
    ```sh
-   kioku -C "$P" --server "$SERVER" agent login CODE
-   kioku -C "$P" --server "$SERVER" whoami
+   kioku -n "$NAMESPACE" agent login CODE
+   kioku -n "$NAMESPACE" whoami
    ```
 
    `agent login` が `a human login exists` のエラーで失敗した場合は、[selection.md](selection.md) の規則に従う。
-   ログイン成功時の namespace と `.kioku/config` が期待する対象と一致するか確認する。
+   CLI は NAMESPACE を送って交換し、サーバーが別の namespace を返したら止まる。
+   ログイン結果の namespace が期待する対象と一致するか確認する。
    再確認した `whoami` に `agent_id` があることも確認する。
    CLI が設定と24時間の agent 認証を保存する。
    コードを echo・ファイル保存・報告へ転記せず、認証ファイルを読まない。
    CLI が agent トークンを管理する。
-5. 認証を確認できたら、[selection.md](selection.md) の「取得」に従って pull する。設定があれば `kioku -C "$P" pull` を使う。設定がなければ `kioku -C "$P" --server "$SERVER" pull "$NAMESPACE"` を使う。Bash ツールの timeout は `600000` ms にし、完了を待つ。
+5. 認証を確認できたら、[selection.md](selection.md) の「取得」に従って pull する。`kioku -n "$NAMESPACE" pull` を使う。Bash ツールの timeout は `600000` ms にし、完了を待つ。
 
-   成功後に selection.md の「カタログ」を更新する。
+   CLI が projects.json に項目を足す。スキルはその `path` を保存先の絶対パス P として読む。
+   description がなければ selection.md の「説明の確認と新規作成」に従う。
    `P/wiki/index.md`、関連ページ、`P/maps/` を grep とファイルツールで読む。
    この pull は会話の初回取得を兼ねる。対象選択の手順に戻って重ねて pull しない。
 

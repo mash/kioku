@@ -3,11 +3,7 @@
     {
       "server": "https://kioku.example.com",
       "namespace": "acme/platform",
-      "description": "Platform project",
-      "triggers": [
-        "acme-platform",
-        "PlatformGateway"
-      ],
+      "description": "Platform project: acme-platform and PlatformGateway",
       "path": "/Users/you/.local/share/kioku/projects/acme/platform"
     }
   ]

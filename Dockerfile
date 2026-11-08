@@ -23,7 +23,8 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 RUN LDFLAGS="-X github.com/mash/kioku/internal/buildinfo.Version=$VERSION -X github.com/mash/kioku/internal/buildinfo.Commit=$COMMIT" && \
     GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=$BUILD_MEMORY_LIMIT GOGC=$BUILD_GOGC go build -p $BUILD_PARALLELISM -trimpath -ldflags "$LDFLAGS" -o /out/kiokud ./cmd/kiokud && \
-    GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=$BUILD_MEMORY_LIMIT GOGC=$BUILD_GOGC go build -p $BUILD_PARALLELISM -trimpath -ldflags "$LDFLAGS" -o /out/kioku ./cmd/kioku
+    GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 GOMEMLIMIT=$BUILD_MEMORY_LIMIT GOGC=$BUILD_GOGC go build -p $BUILD_PARALLELISM -trimpath -ldflags "$LDFLAGS" -o /out/kioku ./cmd/kioku && \
+    rm -rf /root/.cache/go-build
 
 # The prebuilt target packages binaries cross-compiled elsewhere, so the host does not build Go.
 FROM runtime AS prebuilt

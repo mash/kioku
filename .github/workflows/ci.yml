@@ -28,6 +28,9 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.value }}
             COMMIT=${{ github.sha }}
+            BUILD_PARALLELISM=4
+            BUILD_MEMORY_LIMIT=5GiB
+            BUILD_GOGC=100
           cache-from: type=gha,scope=ci-image
           cache-to: type=gha,mode=max,scope=ci-image
       - name: Check the image CLI and server

@@ -107,17 +107,23 @@ func (a *App) saveProjectConfig() error {
 	if current.Server != "" && (current.Server != a.Config.Server || current.Namespace != a.Config.Namespace) {
 		return errors.New("working directory is already bound to a different project")
 	}
-	if current.Server != "" {
-		return nil
+	if current.Server == "" {
+		if err := a.checkUnboundMirror(); err != nil {
+			return err
+		}
+		b, err := json.MarshalIndent(a.Config, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := store.AtomicWrite(filepath.Join(a.metadataDir(), "config"), b, 0600); err != nil {
+			return err
+		}
 	}
-	if err := a.checkUnboundMirror(); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(a.Config, "", "  ")
-	if err != nil {
-		return err
-	}
-	return store.AtomicWrite(filepath.Join(a.metadataDir(), "config"), b, 0600)
+	return a.projectEntryResult(a.addProjectEntry(nil), "the next pull will add the project entry")
+}
+
+func (a *App) removeProjectEntry() error {
+	return a.projectEntryResult(a.deleteProjectEntry(), "remove the deleted project entry from projects.json after fixing the file")
 }
 
 type credentials struct {

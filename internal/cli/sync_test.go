@@ -52,7 +52,7 @@ func syncFixture(t *testing.T) (*App, *map[string]string, *map[string]int, *int)
 		json.NewEncoder(w).Encode(manifest)
 	}))
 	t.Cleanup(ts.Close)
-	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/project"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
+	a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"), Config: Config{Server: ts.URL, Namespace: "org/project"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
 	return a, &files, &hits, &status
 }
 

@@ -13,20 +13,32 @@ func (a *App) localLock() (func(), error) {
 	if err := ensureDirectory(a.metadataDir()); err != nil {
 		return nil, err
 	}
-	if info, err := os.Lstat(filepath.Join(a.metadataDir(), "lock")); err == nil && !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("invalid project lock file")
-	} else if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	f, err := os.OpenFile(filepath.Join(a.metadataDir(), "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := lockRegularFile(filepath.Join(a.metadataDir(), "lock"), os.O_CREATE)
 	if err != nil {
 		return nil, err
 	}
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	return func() { _ = f.Close() }, nil
+}
+
+func lockRegularFile(path string, flags int) (*os.File, error) {
+	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("expected a regular file: %s", path)
+	} else if err != nil && !(os.IsNotExist(err) && flags&os.O_CREATE != 0) {
+		return nil, err
+	}
+	return openLockedFile(path, flags|os.O_RDWR|syscall.O_NOFOLLOW)
+}
+
+func openLockedFile(path string, flags int) (*os.File, error) {
+	f, err := os.OpenFile(path, flags, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		f.Close()
 		return nil, err
 	}
-	return func() { _ = f.Close() }, nil
+	return f, nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {

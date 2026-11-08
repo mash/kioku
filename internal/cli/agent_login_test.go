@@ -94,6 +94,10 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 	if err != nil || json.Unmarshal(config, &binding) != nil || len(binding) != 2 || binding["server"] != server.URL || binding["namespace"] != "acme/platform" || bytes.Contains(config, []byte(token)) {
 		t.Fatal("project binding contains wrong fields", err)
 	}
+	projects, err := readProjects(filepath.Join(home, ".config", "kioku", "projects.json"))
+	if err != nil || projects.find(server.URL, "acme/platform") < 0 {
+		t.Fatal("agent login did not register project", projects, err)
+	}
 	out.Reset()
 	if err := run("agent", "login", code); err != nil || stderr.Len() != 0 {
 		t.Fatal("bound cwd login", err, stderr.String())

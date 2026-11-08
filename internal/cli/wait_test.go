@@ -42,7 +42,7 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	}))
 	defer server.Close()
 	var out, stderr bytes.Buffer
-	a := &App{Dir: t.TempDir(), Config: Config{Server: server.URL, Namespace: "acme/platform"}, Client: server.Client(), Out: &out, Err: &stderr, ctx: context.Background()}
+	a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"), Config: Config{Server: server.URL, Namespace: "acme/platform"}, Client: server.Client(), Out: &out, Err: &stderr, ctx: context.Background()}
 	file := filepath.Join(t.TempDir(), "note.md")
 	if err := os.WriteFile(file, []byte(SourceContentForTest("https://example.com/notes", "Evidence")), 0600); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 
 func TestWaitingForUnchangedEmptyProjectDoesNotPull(t *testing.T) {
 	var out bytes.Buffer
-	a := &App{Dir: t.TempDir(), Config: Config{Namespace: "acme/platform"}, Out: &out, ctx: context.Background()}
+	a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"), Config: Config{Namespace: "acme/platform"}, Out: &out, ctx: context.Background()}
 	if err := a.wait(model.Job{ID: "job", Kind: "generate", Status: "completed", Unchanged: true}); err != nil {
 		t.Fatal(err)
 	}

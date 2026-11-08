@@ -141,7 +141,7 @@ func TestBindingCommandsRejectExistingConfigBeforeRemoteMutation(t *testing.T) {
 	calls := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(500) }))
 	defer ts.Close()
-	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/p"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
+	a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"), Config: Config{Server: ts.URL, Namespace: "org/p"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
 	unlock, err := a.localLock()
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +169,7 @@ func TestCreateAndJoinPreflightBeforePOST(t *testing.T) {
 	}))
 	defer ts.Close()
 	for _, command := range []string{"create", "join"} {
-		a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
+		a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"), Config: Config{Server: ts.URL}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
 		if err := os.WriteFile(filepath.Join(a.Dir, "wiki"), []byte("private"), 0600); err != nil {
 			t.Fatal(err)
 		}

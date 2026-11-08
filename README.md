@@ -193,7 +193,7 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 kioku -n "$NAMESPACE" put ./payment-api-design.md
 ```
 
-ファイルの put は `fetched` の項目を作り、ID と status を返します。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
+ファイルの put は `fetched` の項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 
 複数ファイルは1件ずつ別の要求で送ります。引数なしの `kioku -n "$NAMESPACE" put` はローカルの `inbox/` の変更分を送ります。成功したファイルごとに receipt を保存するため、途中で失敗しても成功分は再送しません。
 
@@ -204,7 +204,7 @@ kioku -n "$NAMESPACE" delete https://example.com/the-original-document
 kioku -n "$NAMESPACE" generate --wait
 ```
 
-delete は `removed` の項目を保存します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
+delete は `removed` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
 
 待機中の同じ source_url の項目は、新しい put で置き換えます。removed も待機中の fetched を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
 

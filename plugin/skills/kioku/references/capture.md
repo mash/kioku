@@ -139,11 +139,12 @@ remote mode は、本文を準備してから [remote.md](remote.md) の MCP（M
 local mode は、本文をファイルに書き、`kioku -n "$NAMESPACE" put "$FILE"` で送信する。
 `kioku` は [SKILL.md](../SKILL.md) の CLI のパス、`FILE` は `.md` ファイルの絶対パスを指す。
 引数なしの put で無関係な inbox を送信しない。一時ファイルを永続ローカル台帳にしない。
-応答の inbox ID と `status: fetched` を確認し、受付結果を伝える。
+コマンドの成功を確認し、Kioku がファイルを受け付けたとユーザーに伝える。
 複数ファイルは CLI が1件ずつ送信する。途中で失敗した場合は、受付済みと未保存を分ける。
 
 資料を取り除く依頼には `kioku -n "$NAMESPACE" delete URL` を使う。
-サーバーは `removed` の項目を受け付け、次の生成で source ページと参照を除く。
+コマンドの成功を確認し、Kioku が削除の依頼を受け付けたとユーザーに伝える。
+サーバーは次の生成で source ページと参照を除く。
 
 ## 失敗と鮮度
 
@@ -158,6 +159,6 @@ local mode は、本文をファイルに書き、`kioku -n "$NAMESPACE" put "$F
 生成中の項目は残し、新しい項目を次の生成に使う。
 サーバーは版を比較せず、後から受け付けた本文を使う。古い版でも新しい版を上書きする。
 
-put は受付結果を返し、Wiki の生成を待たない。
+put はファイルを受け付け、Wiki の生成を待たない。
 Wiki は定期生成か、即時生成の依頼時の `kioku -n "$NAMESPACE" generate --wait` で更新する。
 `generate --wait` は生成完了後に pull する。受付だけで Wiki を生成したとは伝えない。

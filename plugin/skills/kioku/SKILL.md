@@ -102,7 +102,7 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
   source ページの `source_url` から原本を確認する。
 - 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。
-- local mode: `put` は受付結果として inbox の ID（識別子）と status を返す。Wiki の生成を待たない。
+- local mode: `put` の成功は Kioku がファイルを受け付けたことを示す。ユーザーに受付を伝える。Wiki の生成を待たない。
   Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。`generate --wait` は生成完了後に pull する。
   `status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。

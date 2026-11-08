@@ -491,3 +491,84 @@ func TestProjectSelectionUsageErrors(t *testing.T) {
 		t.Fatal("invalid arguments reached server", calls)
 	}
 }
+
+func TestProjectFlagPullBindsOnlyAfterManifest(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		listed     bool
+		status     int
+		body, want string
+		bound      bool
+	}{
+		{name: "not listed", want: "project org/p not found, or you are not a member"},
+		{name: "forbidden", listed: true, status: 403, want: "project access lost"},
+		{name: "not found", listed: true, status: 404, want: "project org/p not found, or you are not a member"},
+		{name: "unauthorized", listed: true, status: 401, body: `{"error":"login required"}`, want: "login required"},
+		{name: "upgrade required", listed: true, status: 426, body: `{"error":"upgrade kioku to 0.1.5 or later"}`, want: "upgrade kioku to 0.1.5 or later"},
+		{name: "invalid manifest", listed: true, status: 200, body: `{}`, want: "invalid sync manifest"},
+		{name: "success", listed: true, status: 200, body: `{"revision":"empty","files":{}}`, bound: true},
+		{name: "file failure", listed: true, status: 200, body: `{"revision":"r","files":{"wiki/index.md":{"bytes":1,"hash":"` + strings.Repeat("0", 64) + `"}}}`, want: "wiki/index.md: file unavailable", bound: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := projectRunHome(t)
+			project := filepath.Join(home, ".local", "share", "kioku", "projects", "org", "p")
+			configPath := filepath.Join(project, ".kioku", "config")
+			projectsPath := (&App{AuthDir: filepath.Join(home, ".config", "kioku", "auth")}).projectsPath()
+			assertBound := func(want bool) {
+				t.Helper()
+				for _, path := range []string{configPath, projectsPath} {
+					_, err := os.Stat(path)
+					if want && err != nil || !want && !os.IsNotExist(err) {
+						t.Errorf("binding %s: err=%v, want bound=%v", path, err, want)
+					}
+				}
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/projects" {
+					assertBound(false)
+					if test.listed {
+						fmt.Fprint(w, `[{"namespace":"org/p"}]`)
+					} else {
+						fmt.Fprint(w, `[]`)
+					}
+					return
+				}
+				if !test.listed || r.URL.Path != "/api/projects/org/p/snapshot" {
+					t.Errorf("unexpected request: %s", r.URL)
+					w.WriteHeader(400)
+					return
+				}
+				if r.URL.Query().Get("file") != "" {
+					assertBound(true)
+					w.WriteHeader(400)
+					fmt.Fprint(w, `{"error":"file unavailable"}`)
+					return
+				}
+				assertBound(false)
+				w.WriteHeader(test.status)
+				fmt.Fprint(w, test.body)
+			}))
+			defer server.Close()
+			_, _, err := runProjectCLI("--server", server.URL, "-n", "org/p", "pull")
+			if test.want == "" && err != nil || test.want != "" && (err == nil || err.Error() != test.want) {
+				t.Errorf("pull error: %v, want %q", err, test.want)
+			}
+			assertBound(test.bound)
+		})
+	}
+}
+
+func TestSubcommandHelpSucceeds(t *testing.T) {
+	projectRunHome(t)
+	t.Chdir(t.TempDir())
+	for _, command := range [][]string{{"project", "create"}, {"project", "join"}, {"pull"}, {"put"}, {"generate"}} {
+		for _, flag := range []string{"-h", "--help"} {
+			t.Run(strings.Join(command, " ")+"/"+flag, func(t *testing.T) {
+				_, stderr, err := runProjectCLI(append(append([]string{}, command...), flag)...)
+				if err != nil || !strings.Contains(stderr, "Usage of ") || strings.Contains(stderr, "flag: help requested") {
+					t.Fatalf("help: err=%v, stderr=%q", err, stderr)
+				}
+			})
+		}
+	}
+}

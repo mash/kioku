@@ -103,13 +103,13 @@ func (a *App) syncWiki() (syncResult, error) {
 		return result, err
 	}
 	defer unlock()
-	if err := a.saveProjectConfig(); err != nil {
-		return result, err
-	}
 	var remote model.SyncManifest
 	if status, e := a.syncRequest(endpoint+"/snapshot?manifest=1", &remote); e != nil {
-		if status == 403 || status == 404 {
+		if status == 403 {
 			return result, errSyncForbidden
+		}
+		if status == 404 {
+			return result, fmt.Errorf("project %s not found, or you are not a member", a.Config.Namespace)
 		}
 		return result, e
 	}
@@ -125,6 +125,9 @@ func (a *App) syncWiki() (syncResult, error) {
 		if total > 64<<20 {
 			return result, errors.New("snapshot exceeds 64 MiB")
 		}
+	}
+	if err := a.saveProjectConfig(); err != nil {
+		return result, err
 	}
 	root, err := a.mirrorRoot()
 	if err != nil {

@@ -65,5 +65,5 @@ func (a *App) bindPullProject(namespace string) error {
 			return nil
 		}
 	}
-	return errSyncForbidden
+	return fmt.Errorf("project %s not found, or you are not a member", namespace)
 }

@@ -155,7 +155,11 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			return err
 		}
 	}
-	return a.dispatch(global.Args())
+	err = a.dispatch(global.Args())
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return err
 }
 
 // The flag value includes KIOKU_SERVER's default from global flag parsing.

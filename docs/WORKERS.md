@@ -113,14 +113,14 @@ The command receives one JSON object on stdin, followed by EOF:
   "output_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/output",
   "job_token": "<secret>",
   "model": "claude-opus-5-5",
-  "first_message": "Job j_01 for project p_01. ...",
+  "first_message": "job: j_01\nproject: p_01\ninput: https://...\noutput: https://...\n",
   "prompt": "You maintain a team wiki ...",
   "budget_cents": 1000,
   "deadline": "2026-11-07T12:00:00Z"
 }
 ```
 
-`prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` describes the pinned inbox and current wiki input. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
+`prompt` is the system prompt from `prompts/kioku-wiki.md`; `model` is its frontmatter model as a hint. `first_message` carries only the job ID, project ID, `input_url` and `output_url`; the system prompt holds every instruction. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 

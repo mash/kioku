@@ -1,16 +1,11 @@
 package agentgen
 
 import (
-	"strings"
-	"text/template"
-
-	"github.com/mash/kioku/prompts"
+	"fmt"
 )
 
-var firstMessage = template.Must(template.New("first-message").Parse(prompts.FirstMessage))
-
+// FirstMessage gives the agent the job's identifiers and URLs. The system
+// prompt holds every instruction, so this message carries data only.
 func FirstMessage(spec InputSpec) string {
-	var b strings.Builder
-	_ = firstMessage.Execute(&b, spec)
-	return b.String()
+	return fmt.Sprintf("job: %s\nproject: %s\ninput: %s\noutput: %s\n", spec.JobID, spec.ProjectID, spec.InputURL, spec.OutputURL)
 }

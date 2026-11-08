@@ -1,5 +1,0 @@
-Job {{.JobID}} for project {{.ProjectID}}.
-Input:  {{.InputURL}}
-Output: {{.OutputURL}}
-Process all {{len .Inbox}} inbox items and preserve the existing wiki.
-Use Kioku-Client-Version: 0.1.0 on Kioku requests. Do not fetch sources; use only the inbox bodies.

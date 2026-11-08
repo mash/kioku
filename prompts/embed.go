@@ -29,8 +29,5 @@ func SplitWikiDefinition() (frontmatter, system string, err error) {
 //go:embed output-rules.txt
 var OutputRules string
 
-//go:embed first-message.txt
-var FirstMessage string
-
 //go:embed job.txt
 var Job string

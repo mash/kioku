@@ -14,7 +14,10 @@ namespace はユーザー、repository、カタログから決める。
 
 1. `mkdir -p "$P"` を実行する。既存の `P/.kioku/config` は SERVER・NAMESPACE と一致する必要がある。不一致なら止め、設定の上書きや別アカウントへの切り替えで回避しない。ツールの接続先も同じ SERVER と確認する。
 2. `kioku -C "$P" --server "$SERVER" whoami` を実行する。直前に同じコマンドを実行した場合は、直前の結果を使う（logout の後は実行し直す）。終了コードだけでなく JSON の **`agent_id`** を確認する。人の identity なら既存認証を使う。コード交換をせず、手順5へ進む。人が connector login を頼んだ場合は、[selection.md](selection.md) の規則で logout の同意を得てから、この手順をやり直す。設定があり、有効な agent identity を確認できれば既存認証を使う。
-3. `whoami` が認証エラーで失敗する場合は、コードを取得する。`cli_login_code` に `project: NAMESPACE` を渡す。role は既定の `read`。依頼が URL／本文／削除の投入や生成を含む場合だけ `write` を指定する。自動記録のために read 認証を昇格しない。
+3. `whoami` が認証エラーで失敗する場合は、コードを取得する。
+   `cli_login_code` に `project: NAMESPACE` を渡す。role は既定の `read`。
+   依頼が本文の送信・資料の削除・生成を含む場合だけ `write` を指定する。
+   自動記録のために read 認証を昇格しない。
 4. ツールが返したコードを**直ちに**次の CLI コマンドの `CODE` に渡す。60秒・一度限りなので、他の調査を間に挟まない。
 
    ```sh

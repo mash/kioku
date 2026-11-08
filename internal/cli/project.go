@@ -51,7 +51,7 @@ func (a *App) ensureProject() error {
 	if !validNamespace(a.Config.Namespace) {
 		return errors.New("no project configured; run kioku -n organization/project pull")
 	}
-	for _, dir := range []string{a.metadataDir(), filepath.Join(a.Dir, "inbox"), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps")} {
+	for _, dir := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps")} {
 		if err := ensureDirectory(dir); err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func (a *App) preflightProjectStorage() error {
 	if err := a.checkUnboundMirror(); err != nil {
 		return err
 	}
-	for _, path := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps"), filepath.Join(a.Dir, "inbox")} {
+	for _, path := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps")} {
 		if err := ensureDirectory(path); err != nil {
 			return err
 		}

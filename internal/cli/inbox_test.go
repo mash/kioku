@@ -14,7 +14,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func TestPutCheckpointsEachAcceptedFile(t *testing.T) {
+func TestPutReportsEachAcceptedFile(t *testing.T) {
 	writes := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req model.PutRequest
@@ -39,33 +39,39 @@ func TestPutCheckpointsEachAcceptedFile(t *testing.T) {
 	if err := a.ensureProject(); err != nil {
 		t.Fatal(err)
 	}
+	sources := t.TempDir()
 	for _, name := range []string{"a.md", "b.md"} {
-		if err := os.WriteFile(filepath.Join(a.Dir, "inbox", name), []byte(SourceContentForTest("https://example.com/"+name, "Body")), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(sources, name), []byte(SourceContentForTest("https://example.com/"+name, "Body")), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := a.put(nil); err == nil {
+	if err := a.put([]string{sources}); err == nil {
 		t.Fatal("second failure hidden")
 	}
 	if got := out.String(); got != "accepted a.md\n" {
 		t.Fatal("failed file reported as accepted", got)
 	}
 	out.Reset()
-	r, err := a.readReceipts()
-	if err != nil || len(r.Hashes) != 1 {
-		t.Fatal(r, err)
-	}
-	if err := a.put(nil); err != nil {
+	if err := a.put([]string{sources}); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "accepted b.md\n" {
+	if got := out.String(); got != "accepted a.md\naccepted b.md\n" {
 		t.Fatal("retry output", got)
 	}
-	if writes != 3 {
-		t.Fatal("accepted file resubmitted", writes)
+	if writes != 4 {
+		t.Fatal("explicit retry did not submit all files", writes)
 	}
-	r, err = a.readReceipts()
-	if err != nil || len(r.Hashes) != 2 {
-		t.Fatal(r, err)
+	for _, name := range []string{"a.md", "b.md"} {
+		body, err := os.ReadFile(filepath.Join(sources, name))
+		if err != nil || string(body) != SourceContentForTest("https://example.com/"+name, "Body") {
+			t.Fatal("source changed", name, err)
+		}
+	}
+}
+
+func TestPutRequiresPath(t *testing.T) {
+	a := &App{Err: io.Discard}
+	if err := a.put(nil); err == nil || err.Error() != "usage: kioku put FILE..." {
+		t.Fatal(err)
 	}
 }

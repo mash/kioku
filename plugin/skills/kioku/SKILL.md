@@ -97,7 +97,8 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
   connector 認証では `kioku -n "$NAMESPACE" agent login CODE` が設定を作る。
 - local mode: `P` は CLI が選んだプロジェクトの保存先の絶対パス。CLI が projects.json の `path` に記録する。
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
-  maps は `P/maps/`、送信する資料は `P/inbox/` に置く。親ディレクトリの設定は探索しない。
+  maps は `P/maps/` に置く。親ディレクトリの設定は探索しない。
+  送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが選択を会話内で保持する。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
   source ページの `source_url` から原本を確認する。

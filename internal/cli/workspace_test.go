@@ -57,7 +57,7 @@ func TestPullBindsCWDWithoutLeakingCredentialsOrSession(t *testing.T) {
 	if len(saved) != 2 || saved["namespace"] != "org/p" || saved["server"] != ts.URL || bytes.Contains(b, []byte("secret")) {
 		t.Fatal(string(b))
 	}
-	for _, name := range []string{"wiki", "maps", "inbox", ".kioku"} {
+	for _, name := range []string{"wiki", "maps", ".kioku"} {
 		info, err := os.Lstat(filepath.Join(root, name))
 		if err != nil || !info.IsDir() {
 			t.Fatal(name, err)

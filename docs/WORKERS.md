@@ -39,7 +39,7 @@ Every file must start with a YAML mapping delimited by complete `---` lines (LF 
 
 The server reads provenance only from the file. It rejects `file.source_url` and a top-level `source_url` with a file. The top-level `source_url` is for removals only. The server validates updated_at but keeps it only in the unchanged submitted body, not in inbox metadata. The body cannot override the server-owned status. The sender asserts provenance. The server does not retrieve the URL or verify the source of the text.
 
-`kioku put [FILES...]` sends one request per file. It saves each successful receipt immediately. With no arguments, it sends changed files in local inbox/. Each file needs the same frontmatter. There is no `--source-url` flag. `kioku delete URL` submits a removal. MCP `source_put` takes `name` and `content` for a file. It takes `remove: true` and `source_url` for a removal. Do not send the `source_url` argument with `content`. These operations do not start a runner.
+`kioku put FILE...` requires at least one file or directory path and sends one request per file. It prints `accepted <path>` for each successful request and never deletes source files. Each file needs the same frontmatter. There is no `--source-url` flag. `kioku delete URL` submits a removal. MCP `source_put` takes `name` and `content` for a file. It takes `remove: true` and `source_url` for a removal. Do not send the `source_url` argument with `content`. These operations do not start a runner.
 
 `GET /api/projects` includes inbox_count and an inbox list (source_url and status only) in each project entry. The list includes pinned items. Empty inboxes return 0 and []. `kioku status` prints these fields. Pull and MCP read only the published wiki/maps.
 

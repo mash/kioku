@@ -37,10 +37,12 @@ create は `-n` を必須とし、pull と create は namespace の位置引数�
 `project join INVITE_URL` は cwd または `-C DIR` へ紐づけ、`-n` を受け付けない。
 CLI は親ディレクトリを探索しない。
 
-`wiki/`・`maps/`・`inbox/` は保存先の直下、CLI のメタデータは `.kioku/` 内に置く。
+`wiki/`・`maps/` は保存先の直下、CLI のメタデータは `.kioku/` 内に置く。
 CLI はユーザー共通領域で接続先別に認証を管理する。スキルは認証情報を読まない。
 
 ## 原資料の送信
+
+送信する原資料は `mktemp -d` で作った一時ディレクトリに Markdown として書き、`kioku -n "$NAMESPACE" put FILE` で送信する。`mktemp -d` は単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使う。シェル変数や `$(...)` は使わない。
 
 ユーザー自身の Claude が、コネクター、CLI、手元のファイル、ユーザーが貼った本文から原文を読む。
 資料の種類を問わず、全文を Markdown にする。

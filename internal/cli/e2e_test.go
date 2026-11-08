@@ -106,18 +106,18 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err = json.Unmarshal(b, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	project := config
-	if err = os.WriteFile(filepath.Join(project, "inbox", "notes.md"), []byte(cli.SourceContentForTest("https://example.com/notes", "# Architecture\nAll application code is Go. Objects live in S3.")), 0600); err != nil {
+	source := filepath.Join(t.TempDir(), "notes.md")
+	if err = os.WriteFile(source, []byte(cli.SourceContentForTest("https://example.com/notes", "# Architecture\nAll application code is Go. Objects live in S3.")), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run("put", "--source-url", "https://example.com/override", filepath.Join(project, "inbox", "notes.md")); err == nil {
+	if _, err := run("put", "--source-url", "https://example.com/override", source); err == nil {
 		t.Fatal("accepted removed source-url flag")
 	}
-	must("put")
+	must("put", source)
 	if out := must("status"); !strings.Contains(out, `"inbox_count": 1`) {
 		t.Fatal(out)
 	}
-	if out := must("put"); !strings.Contains(out, "新しい投入ファイルはありません") {
+	if out := must("put", source); !strings.Contains(out, "accepted notes.md") {
 		t.Fatal(out)
 	}
 	must("logout")

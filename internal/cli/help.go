@@ -25,7 +25,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove sources at the next generation
-  put [FILES...] Save sources, or changed inbox files
+  put FILE...                        Save sources from files or directories
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [--description TEXT]           Bind on first pull; fetch one project
   status | open
@@ -43,7 +43,7 @@ The CLI maintains ~/.config/kioku/projects.json; --description updates its entry
 A different existing path stays in projects.json; the CLI prints it to stderr.
 First authentication to a non-default server requires approval in a terminal.
 Default server: https://kioku.magicians.ee
-wiki/, maps/ and inbox/ live in the selected directory; transfer metadata lives in .kioku/.
+wiki/ and maps/ live in the selected directory; transfer metadata lives in .kioku/.
 Credentials are stored per server in ~/.config/kioku/auth.
 Connector agent credentials are stored per project in ~/.config/kioku/agents.
 `

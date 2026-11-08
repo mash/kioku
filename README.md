@@ -128,7 +128,7 @@ source_updated_at=$(gh api "repos/mash/kioku/commits/$source_commit" --jq '.comm
 ./bin/kioku -n "$NAMESPACE" open
 ```
 
-プロジェクトのメンバーは、公開した source ページと Wiki を閲覧できます。投入時の追加フラグや個別の共有設定はありません。投入した内容は設定したLLM事業者にも送信されます。変更のないinboxファイルは再送しません。
+プロジェクトのメンバーは、公開した source ページと Wiki を閲覧できます。投入時の追加フラグや個別の共有設定はありません。サーバーは投入した内容を設定したLLM事業者にも送信します。
 
 ```bash
 kioku -n "$NAMESPACE" put ./payment-api-design.md  # Artifactから抽出し、capture.md の規則で準備した設計書
@@ -195,7 +195,7 @@ kioku -n "$NAMESPACE" put ./payment-api-design.md
 
 ファイルの put は `fetched` の項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `status: removed` があっても状態は変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 
-複数ファイルは1件ずつ別の要求で送ります。引数なしの `kioku -n "$NAMESPACE" put` はローカルの `inbox/` の変更分を送ります。成功したファイルごとに receipt を保存するため、途中で失敗しても成功分は再送しません。
+`kioku -n "$NAMESPACE" put FILE...` にはファイルかディレクトリのパスを1つ以上指定します。複数ファイルは1件ずつ別の要求で送ります。put は送信元のファイルを削除しません。途中で失敗した場合は `accepted <path>` を確認し、未受付のファイルだけを指定して再送します。
 
 ### 2. 原資料を取り除く
 
@@ -368,7 +368,7 @@ The web path is `/acme/platform`. `-n ORG/PROJECT` selects the projects.json pat
 - [Generation worker architecture](docs/WORKERS.md): durable queue, one generation worker, and independent cleanup maintenance.
 
 
-`kioku -n "$NAMESPACE" put [FILES...]` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
+`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
 
 CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together. Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 
@@ -393,9 +393,10 @@ CLI が認証を `~/.config/kioku/auth/<server-hash>.json` に接続先別で保
 
 ### ローカル配置と取得
 
+スキルは `mktemp -d` を単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使います。シェル変数や `$(...)` は使いません。一時ディレクトリに原資料の Markdown を書き、`kioku -n "$NAMESPACE" put FILE` に実際のファイルパスを指定して送信します。
+
 - `wiki/` と `maps/`: 保存先直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
-- `inbox/`: 保存先直下の原資料投入領域。pull による上書き・削除の対象外です。
-- `.kioku/`: config、receipts.json、ファイル更新ロック。config は server と namespace のみを保存し、Git で共有できます。
+- `.kioku/`: config、ファイル更新ロック。config は server と namespace のみを保存し、Git で共有できます。
 
 設定の初回作成では、既存の非空 wiki/maps があれば紐付けを拒否します。config がある場合、wiki/maps は管理対象のミラーとして扱うため、独自資料は置かないでください。管理対象の symlink も拒否します。公開・取得ともページ単位の順次反映なので、新旧混在を許容します。部分失敗でも成功したページは残ります。復旧後の pull は実ファイルとサーバーの一覧を比較して再同期します。前回の取得 revision や同期未完了状態はローカルに保存せず、status にも表示しません。
 

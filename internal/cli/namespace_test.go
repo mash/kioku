@@ -13,13 +13,15 @@ func TestNamespaceStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"", "inbox", "wiki", "maps", ".kioku"} {
+	for _, name := range []string{"", "wiki", "maps", ".kioku"} {
 		info, err := os.Lstat(filepath.Join(a.Dir, name))
 		if err != nil || !info.IsDir() {
 			t.Fatal("expected real directory", name, err)
 		}
 	}
-
+	if _, err := os.Stat(filepath.Join(a.Dir, "inbox")); !os.IsNotExist(err) {
+		t.Fatal("created local inbox", err)
+	}
 }
 
 func TestNamespaceStorageRejectsUnsafePaths(t *testing.T) {

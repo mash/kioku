@@ -76,8 +76,8 @@ func TestSyncDeltaOverwriteDeleteAndPartialFailure(t *testing.T) {
 	if err != nil || len(r.Added) != 2 {
 		t.Fatal(r, err)
 	}
-	inbox := filepath.Join(a.localDir(), "inbox", "draft.md")
-	os.WriteFile(inbox, []byte("private draft"), 0600)
+	draft := filepath.Join(a.localDir(), "draft.md")
+	os.WriteFile(draft, []byte("private draft"), 0600)
 	_, err = a.syncWiki()
 	if err != nil || (*hits)["wiki/index.md"] != 1 {
 		t.Fatal("unchanged body fetched", *hits, err)
@@ -106,9 +106,9 @@ func TestSyncDeltaOverwriteDeleteAndPartialFailure(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(a.localDir(), "wiki", "old.md")); !os.IsNotExist(err) {
 		t.Fatal("obsolete file retained", err)
 	}
-	b, _ = os.ReadFile(inbox)
+	b, _ = os.ReadFile(draft)
 	if string(b) != "private draft" {
-		t.Fatal("inbox changed")
+		t.Fatal("draft changed")
 	}
 	(*files)["wiki/broken.md"] = "fixed"
 	r, err = a.syncWiki()

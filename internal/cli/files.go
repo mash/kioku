@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// A process lock protects config-adjacent receipt and snapshot publication.
+// A process lock protects project configuration and snapshot publication.
 func (a *App) localLock() (func(), error) {
 	if err := ensureDirectory(a.metadataDir()); err != nil {
 		return nil, err

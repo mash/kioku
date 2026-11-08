@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,10 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
-	"github.com/mash/kioku/internal/store"
 )
 
 func (a *App) put(args []string) error {
@@ -20,6 +17,9 @@ func (a *App) put(args []string) error {
 	f.SetOutput(a.Err)
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if f.NArg() == 0 {
+		return errors.New("usage: kioku put FILE...")
 	}
 	p, err := a.projectPath()
 	if err != nil {
@@ -33,20 +33,8 @@ func (a *App) put(args []string) error {
 		return err
 	}
 	defer unlock()
-	r, err := a.readReceipts()
-	if err != nil {
-		return err
-	}
-	type filePut struct {
-		file       model.FileInput
-		path, hash string
-	}
-	inputs := []filePut{}
+	inputs := []model.FileInput{}
 	paths := f.Args()
-	inbox := len(paths) == 0
-	if inbox {
-		paths = []string{filepath.Join(a.localDir(), "inbox")}
-	}
 	for _, root := range paths {
 		info, err := os.Lstat(root)
 		if err != nil {
@@ -80,14 +68,6 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return err
 			}
-			h := auth.Hash(string(b))
-			abs, err := filepath.Abs(p)
-			if err != nil {
-				return err
-			}
-			if inbox && r.Hashes[abs] == h {
-				return nil
-			}
 			name, err := filepath.Rel(base, p)
 			if err != nil {
 				return err
@@ -98,7 +78,7 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
 			}
-			inputs = append(inputs, filePut{model.FileInput{Name: filepath.ToSlash(name), Content: content}, abs, h})
+			inputs = append(inputs, model.FileInput{Name: filepath.ToSlash(name), Content: content})
 			return nil
 		})
 		if err != nil {
@@ -110,15 +90,10 @@ func (a *App) put(args []string) error {
 		return nil
 	}
 	for _, input := range inputs {
-		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input.file}, nil); err != nil {
+		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input}, nil); err != nil {
 			return err
 		}
-		r.Hashes[input.path] = input.hash
-		b, _ := json.MarshalIndent(r, "", "  ")
-		if err = store.AtomicWrite(filepath.Join(a.metadataDir(), "receipts.json"), b, 0600); err != nil {
-			return err
-		}
-		if _, err = fmt.Fprintf(a.Out, "accepted %s\n", input.file.Name); err != nil {
+		if _, err = fmt.Fprintf(a.Out, "accepted %s\n", input.Name); err != nil {
 			return err
 		}
 	}

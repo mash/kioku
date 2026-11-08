@@ -97,11 +97,15 @@ func (a *App) agentLogin(args []string) error {
 	if current.Server != "" && current.Server != a.Config.Server {
 		return errors.New("server conflicts with .kioku/config")
 	}
+	namespace := current.Namespace
+	if namespace == "" {
+		namespace = a.projectNamespace
+	}
 	// The one-use code is the only credential sent to the exchange endpoint.
 	client := *a
 	client.AgentToken, client.Config.Token, client.kind = "", "", credentialNone
 	var issued agentCredentials
-	if _, err = client.request("POST", "/api/agent/login", map[string]string{"code": args[0], "name": name, "namespace": current.Namespace}, &issued); err != nil {
+	if _, err = client.request("POST", "/api/agent/login", map[string]string{"code": args[0], "name": name, "namespace": namespace}, &issued); err != nil {
 		return err
 	}
 	stored := false
@@ -114,7 +118,7 @@ func (a *App) agentLogin(args []string) error {
 	if err = issued.validate(false); err != nil {
 		return err
 	}
-	if current.Namespace != "" && current.Namespace != issued.Namespace {
+	if namespace != "" && namespace != issued.Namespace {
 		return errors.New("working directory is already bound to a different project")
 	}
 	issued.Server = a.Config.Server

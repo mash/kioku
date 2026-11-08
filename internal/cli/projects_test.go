@@ -35,7 +35,7 @@ func TestProjectsNoOpDescriptionAndDelete(t *testing.T) {
 	path := writeProjectsFixture(t, a, `{"projects":[{"path":"/original","namespace":"org/p","server":"https://kioku.magicians.ee","description":"old"},{"path":"/other","namespace":"org/q","server":"https://kioku.magicians.ee"}]}`)
 	before, _ := os.ReadFile(path)
 	info, _ := os.Stat(path)
-	if err := a.addProjectEntry(nil); err != nil {
+	if err := a.addProjectEntry(a.Config.Server, a.Config.Namespace, a.Dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(path)
@@ -47,7 +47,7 @@ func TestProjectsNoOpDescriptionAndDelete(t *testing.T) {
 		t.Fatal("missing existing path warning")
 	}
 	description := "new description"
-	if err := a.addProjectEntry(&description); err != nil {
+	if err := a.addProjectEntry(a.Config.Server, a.Config.Namespace, a.Dir, &description); err != nil {
 		t.Fatal(err)
 	}
 	p, err := readProjects(path)
@@ -98,7 +98,7 @@ func TestProjectsRejectInvalidInputWithoutRewriting(t *testing.T) {
 		t.Run(contents, func(t *testing.T) {
 			a := projectEntryApp(t)
 			path := writeProjectsFixture(t, a, contents)
-			for _, update := range []func() error{func() error { return a.addProjectEntry(nil) }, a.deleteProjectEntry} {
+			for _, update := range []func() error{func() error { return a.addProjectEntry(a.Config.Server, a.Config.Namespace, a.Dir, nil) }, a.deleteProjectEntry} {
 				err := a.projectEntryResult(update(), "retry after repair")
 				if err == nil || !strings.Contains(err.Error(), path) {
 					t.Fatal("invalid file did not stop command", err)
@@ -121,7 +121,7 @@ func TestProjectsConcurrentRegistrationAndPermissions(t *testing.T) {
 			copy := *a
 			copy.Err = io.Discard
 			copy.Config.Namespace = fmt.Sprintf("org/p%d", i)
-			errors <- copy.addProjectEntry(nil)
+			errors <- copy.addProjectEntry(copy.Config.Server, copy.Config.Namespace, copy.Dir, nil)
 		}(i)
 	}
 	for range count {
@@ -151,6 +151,14 @@ func TestProjectConfigRegistersAndPullRepairsEntry(t *testing.T) {
 	a, _, _, _ := syncFixture(t)
 	a.AuthDir = filepath.Join(t.TempDir(), "kioku", "auth")
 	if err := a.bindPullProject("org/project"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(a.metadataDir(), "config"), a.projectsPath()} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("binding saved config before sync", path, err)
+		}
+	}
+	if err := a.pull(); err != nil {
 		t.Fatal(err)
 	}
 	path := a.projectsPath()
@@ -204,7 +212,14 @@ func TestProjectCreateJoinAndDeleteUpdateProjects(t *testing.T) {
 			}))
 			defer ts.Close()
 			a.Client, a.Config.Server, a.Config.Namespace = ts.Client(), ts.URL, ""
-			if err := a.dispatch([]string{"project", command, "org/p"}); err != nil {
+			if command == "create" {
+				a.projectNamespace = "org/p"
+			}
+			args := []string{"project", command}
+			if command == "join" {
+				args = append(args, "org/p")
+			}
+			if err := a.dispatch(args); err != nil {
 				t.Fatal(err)
 			}
 			path := a.projectsPath()

@@ -17,15 +17,17 @@ import (
 )
 
 type App struct {
-	AuthDir         string
-	Dir             string
-	Config          Config
-	Client          *http.Client
-	Out, Err        io.Writer
-	ctx             context.Context
-	AgentToken      string
-	storedAgentPath string
-	kind            credentialKind
+	AuthDir          string
+	Dir              string
+	Config           Config
+	Client           *http.Client
+	Out, Err         io.Writer
+	ctx              context.Context
+	AgentToken       string
+	storedAgentPath  string
+	projectNamespace string
+	description      *string
+	kind             credentialKind
 }
 
 // credentialKind names the credential that Run selects for every request.
@@ -48,6 +50,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	global := flag.NewFlagSet("kioku", flag.ContinueOnError)
 	global.SetOutput(errOut)
 	dir := global.String("C", ".", "working directory (before command)")
+	project := global.String("n", "", "project namespace ORG/PROJECT (before command)")
 	server := global.String("server", config.Env("KIOKU_SERVER", ""), "server origin (before command)")
 	if err = global.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -64,41 +67,68 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if os.Getenv("KIOKU_AGENT_TOKEN") != "" {
 		return errors.New("KIOKU_AGENT_TOKEN is no longer supported; unset it and use kioku agent login")
 	}
-	workingDir, err := filepath.Abs(*dir)
+	a := &App{
+		AuthDir: filepath.Join(home, ".config", "kioku", "auth"),
+		Client:  &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		Out:     out, Err: errOut, ctx: ctx,
+	}
+	var projectSet, dirSet bool
+	global.Visit(func(f *flag.Flag) {
+		projectSet = projectSet || f.Name == "n"
+		dirSet = dirSet || f.Name == "C"
+	})
+	var origin string
+	if projectSet {
+		if !validNamespace(*project) {
+			return errors.New("-n namespace must be organization/project")
+		}
+		a.projectNamespace = *project
+		origin, err = resolveServer(*server)
+		if err != nil {
+			return err
+		}
+		if !dirSet {
+			*dir, err = a.resolveProjectDir(origin, *project)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	a.Dir, err = filepath.Abs(*dir)
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(workingDir)
+	info, err := os.Stat(a.Dir)
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
 		return errors.New("working directory must be a directory")
 	}
-	a := &App{Dir: workingDir,
-		AuthDir: filepath.Join(home, ".config", "kioku", "auth"),
-		Client:  &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		Out:     out, Err: errOut, ctx: ctx}
 	local, err := a.readProjectConfig()
 	if err != nil {
 		return err
 	}
-	a.Config = local
-	if *server != "" {
-		origin, e := normalizeOrigin(*server)
-		if e != nil {
-			return e
+	if projectSet {
+		if local.Server != "" && (local.Server != origin || local.Namespace != *project) {
+			return errors.New("-n conflicts with .kioku/config; working directory is already bound to a different project")
 		}
+		if local.Server == "" && !allowsUnboundProject(commands) {
+			return fmt.Errorf("no project configured; run kioku -n %s pull first", *project)
+		}
+	}
+	a.Config = local
+	if origin == "" && (*server != "" || local.Server == "") {
+		origin, err = resolveServer(*server)
+		if err != nil {
+			return err
+		}
+	}
+	if origin != "" {
 		if local.Server != "" && local.Server != origin {
 			return errors.New("server conflicts with .kioku/config")
 		}
 		a.Config.Server = origin
-	}
-	if a.Config.Server == "" {
-		a.Config.Server = defaultServer
-	}
-	if _, err := normalizeOrigin(a.Config.Server); err != nil {
-		return err
 	}
 	// Project configuration may come from an untrusted checkout. It cannot
 	// authorize sending login codes or establishing credentials on another server.
@@ -126,6 +156,14 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 	}
 	return a.dispatch(global.Args())
+}
+
+// The flag value includes KIOKU_SERVER's default from global flag parsing.
+func resolveServer(flag string) (string, error) {
+	if flag == "" {
+		flag = defaultServer
+	}
+	return normalizeOrigin(flag)
 }
 
 // selectCredential prefers the human credential. Only without one does a bound
@@ -186,4 +224,17 @@ func (a *App) dispatch(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; run kioku help", args[0])
 	}
+}
+
+// Creation establishes a new project; other project operations require pull.
+func allowsUnboundProject(commands []string) bool {
+	switch commands[0] {
+	case "pull", "whoami", "login", "logout":
+		return true
+	case "agent":
+		return len(commands) >= 2 && commands[1] == "login"
+	case "project":
+		return len(commands) >= 2 && (commands[1] == "create" || commands[1] == "join")
+	}
+	return false
 }

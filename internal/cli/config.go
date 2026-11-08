@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/url"
@@ -94,6 +95,14 @@ func (a *App) readProjectConfig() (Config, error) {
 	return c, nil
 }
 
+func (a *App) descriptionFlag(f *flag.FlagSet) {
+	a.description = nil
+	f.Func("description", "project description in projects.json", func(value string) error {
+		a.description = &value
+		return nil
+	})
+}
+
 // Call under localLock when binding a directory; concurrent CLI calls cannot
 // replace a different binding. Credentials are never serialized into this file.
 func (a *App) saveProjectConfig() error {
@@ -119,7 +128,7 @@ func (a *App) saveProjectConfig() error {
 			return err
 		}
 	}
-	return a.projectEntryResult(a.addProjectEntry(nil), "the next pull will add the project entry")
+	return a.projectEntryResult(a.addProjectEntry(a.Config.Server, a.Config.Namespace, a.Dir, a.description), "the next pull will add the project entry")
 }
 
 func (a *App) removeProjectEntry() error {

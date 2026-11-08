@@ -12,7 +12,7 @@ import (
 
 func (a *App) projectPath() (string, error) {
 	if !validNamespace(a.Config.Namespace) {
-		return "", errors.New("no project configured; run kioku pull organization/project")
+		return "", errors.New("no project configured; run kioku -n organization/project pull")
 	}
 	return "/api/projects/" + a.Config.Namespace, nil
 }
@@ -32,7 +32,7 @@ func safeID(s string) bool {
 func (a *App) selectProject(p model.Project) error {
 	a.Config.Namespace = p.Namespace
 	if err := a.saveProjectConfig(); err != nil {
-		return fmt.Errorf("remote operation succeeded for %s, but saving .kioku/config failed: %w; retry kioku --server %s pull %s after fixing the local path", p.Namespace, err, a.Config.Server, p.Namespace)
+		return fmt.Errorf("remote operation succeeded for %s, but saving .kioku/config failed: %w; retry kioku --server %s -n %s pull after fixing the local path", p.Namespace, err, a.Config.Server, p.Namespace)
 	}
 	if err := a.ensureProject(); err != nil {
 		return fmt.Errorf("remote operation succeeded for %s and configuration was saved, but local setup failed: %w; fix the local path and run kioku pull", p.Namespace, err)
@@ -49,7 +49,7 @@ func (a *App) ensureProject() error {
 		return err
 	}
 	if !validNamespace(a.Config.Namespace) {
-		return errors.New("no project configured; run kioku pull organization/project")
+		return errors.New("no project configured; run kioku -n organization/project pull")
 	}
 	for _, dir := range []string{a.metadataDir(), filepath.Join(a.Dir, "inbox"), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps")} {
 		if err := ensureDirectory(dir); err != nil {

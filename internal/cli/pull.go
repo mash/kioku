@@ -13,18 +13,15 @@ func (a *App) pull() error { return a.pullCommand(nil) }
 func (a *App) pullCommand(args []string) error {
 	f := flag.NewFlagSet("pull", flag.ContinueOnError)
 	f.SetOutput(a.Err)
+	a.descriptionFlag(f)
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if f.NArg() > 1 {
-		return errors.New("usage: kioku pull [organization/project]")
+	if f.NArg() != 0 {
+		return errors.New("usage: kioku [-n ORG/PROJECT] pull [--description TEXT]")
 	}
-	if f.NArg() == 1 {
-		namespace := f.Arg(0)
-		if !validNamespace(namespace) {
-			return errors.New("namespace must be organization/project")
-		}
-		if err := a.bindPullProject(namespace); err != nil {
+	if a.Config.Namespace == "" && a.projectNamespace != "" {
+		if err := a.bindPullProject(a.projectNamespace); err != nil {
 			return err
 		}
 	}
@@ -52,6 +49,9 @@ func (a *App) bindPullProject(namespace string) error {
 	if current.Server != "" && (current.Server != a.Config.Server || current.Namespace != namespace) {
 		return errors.New("working directory is already bound to a different project")
 	}
+	if err := a.checkUnboundMirror(); err != nil {
+		return err
+	}
 	a.Config.Namespace = namespace
 	if _, err := a.projectPath(); err != nil {
 		return err
@@ -62,7 +62,7 @@ func (a *App) bindPullProject(namespace string) error {
 	}
 	for _, project := range projects {
 		if project.Namespace == namespace {
-			return a.saveProjectConfig()
+			return nil
 		}
 	}
 	return errSyncForbidden

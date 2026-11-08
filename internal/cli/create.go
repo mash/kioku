@@ -2,13 +2,20 @@ package cli
 
 import (
 	"errors"
+	"flag"
 
 	"github.com/mash/kioku/internal/model"
 )
 
 func (a *App) createProject(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: kioku project create <name>")
+	f := flag.NewFlagSet("project create", flag.ContinueOnError)
+	f.SetOutput(a.Err)
+	a.descriptionFlag(f)
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	if f.NArg() != 0 || a.projectNamespace == "" {
+		return errors.New("usage: kioku -n ORG/PROJECT project create [--description TEXT]")
 	}
 	unlock, err := a.localLock()
 	if err != nil {
@@ -26,7 +33,7 @@ func (a *App) createProject(args []string) error {
 		return err
 	}
 	var p model.Project
-	if _, err := a.request("POST", "/api/projects", map[string]string{"name": args[0]}, &p); err != nil {
+	if _, err := a.request("POST", "/api/projects", map[string]string{"name": a.projectNamespace}, &p); err != nil {
 		return err
 	}
 	return a.selectProject(p)

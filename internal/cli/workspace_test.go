@@ -45,7 +45,7 @@ func TestPullBindsCWDWithoutLeakingCredentialsOrSession(t *testing.T) {
 	run := func(dir string, args ...string) error {
 		return Run(context.Background(), append([]string{"-C", dir}, args...), &bytes.Buffer{}, &bytes.Buffer{})
 	}
-	if err := run(root, "--server", ts.URL, "pull", "org/p"); err != nil {
+	if err := run(root, "--server", ts.URL, "-n", "org/p", "pull"); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(root, ".kioku/config"))
@@ -70,7 +70,7 @@ func TestPullBindsCWDWithoutLeakingCredentialsOrSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := requests
-	if err := run(root, "pull", "org/q"); err == nil {
+	if err := run(root, "--server", ts.URL, "-n", "org/q", "pull"); err == nil {
 		t.Fatal("rebound an existing directory")
 	}
 	if requests != before {
@@ -85,7 +85,7 @@ func TestPullBindsCWDWithoutLeakingCredentialsOrSession(t *testing.T) {
 		t.Fatal("parent config used", err)
 	}
 	other := t.TempDir()
-	if err := run(other, "--server", ts.URL, "pull", "org/q"); err != nil {
+	if err := run(other, "--server", ts.URL, "-n", "org/q", "pull"); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(filepath.Join(other, ".kioku/config"))
@@ -150,7 +150,8 @@ func TestBindingCommandsRejectExistingConfigBeforeRemoteMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	unlock()
-	if err := a.createProject([]string{"org/other"}); err == nil {
+	a.projectNamespace = "org/other"
+	if err := a.createProject(nil); err == nil {
 		t.Fatal("create overwrote config")
 	}
 	if err := a.join([]string{"https://example.test/invite/token"}); err == nil {
@@ -173,7 +174,12 @@ func TestCreateAndJoinPreflightBeforePOST(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(a.Dir, "wiki"), []byte("private"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := a.dispatch([]string{"project", command, "org/p"}); err == nil {
+		a.projectNamespace = "org/p"
+		args := []string{"project", command}
+		if command == "join" {
+			args = append(args, "org/p")
+		}
+		if err := a.dispatch(args); err == nil {
 			t.Fatal("invalid path accepted")
 		}
 		if calls != 0 {

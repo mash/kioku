@@ -2,13 +2,24 @@ package cli
 
 import (
 	"errors"
+	"flag"
 
 	"github.com/mash/kioku/internal/model"
 )
 
 func (a *App) join(args []string) error {
+	if a.projectNamespace != "" {
+		return errors.New("-n cannot be used with project join; use cwd or -C")
+	}
+	f := flag.NewFlagSet("project join", flag.ContinueOnError)
+	f.SetOutput(a.Err)
+	a.descriptionFlag(f)
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	args = f.Args()
 	if len(args) != 1 {
-		return errors.New("usage: kioku project join <invite-url>")
+		return errors.New("usage: kioku project join [--description TEXT] <invite-url>")
 	}
 	unlock, err := a.localLock()
 	if err != nil {

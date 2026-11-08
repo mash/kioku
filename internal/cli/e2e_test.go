@@ -94,7 +94,8 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	must("whoami")
-	must("project", "create", "Test project")
+	must("org", "create", "test-org")
+	must("-n", "test-org/test-project", "project", "create")
 	must("project", "share", "list")
 	must("project", "share", "invite", "bob@example.com")
 	b, err := os.ReadFile(filepath.Join(config, ".kioku", "config"))

@@ -56,6 +56,29 @@ func (a *App) projectsPath() string {
 	return filepath.Join(filepath.Dir(a.AuthDir), "projects.json")
 }
 
+// Resolve the normalized origin without a lock; localLock always comes first.
+func (a *App) resolveProjectDir(origin, namespace string) (string, error) {
+	path := a.projectsPath()
+	projects, err := readProjects(path)
+	if err != nil {
+		return "", err
+	}
+	var dir string
+	if i := projects.find(origin, namespace); i >= 0 {
+		dir = projects.Projects[i].Path
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".local", "share", "kioku", "projects", filepath.FromSlash(namespace))
+	}
+	if err := ensureDirectory(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // Call after localLock. Lock the directory so AtomicWrite cannot replace the
 // locked inode, and no separate lock file is needed.
 func updateProjects(path string, change func(*projectsFile) bool) error {
@@ -81,16 +104,16 @@ func updateProjects(path string, change func(*projectsFile) bool) error {
 	return store.AtomicWrite(path, append(b, '\n'), 0600)
 }
 
-func (a *App) addProjectEntry(description *string) error {
+func (a *App) addProjectEntry(server, namespace, dir string, description *string) error {
 	path := a.projectsPath()
 	return updateProjects(path, func(p *projectsFile) bool {
-		i := p.find(a.Config.Server, a.Config.Namespace)
+		i := p.find(server, namespace)
 		added := i < 0
 		if added {
-			p.Projects = append(p.Projects, projectEntry{Server: a.Config.Server, Namespace: a.Config.Namespace, Path: a.Dir})
+			p.Projects = append(p.Projects, projectEntry{Server: server, Namespace: namespace, Path: dir})
 			i = len(p.Projects) - 1
-		} else if existing := p.Projects[i].Path; existing != a.Dir && a.Err != nil {
-			fmt.Fprintf(a.Err, "warning: %s already lists %s at %s; keeping that path\n", path, a.Config.Namespace, existing)
+		} else if existing := p.Projects[i].Path; existing != dir && a.Err != nil {
+			fmt.Fprintf(a.Err, "warning: %s already lists %s at %s; keeping that path\n", path, namespace, existing)
 		}
 		if description != nil && p.Projects[i].Description != *description {
 			p.Projects[i].Description = *description

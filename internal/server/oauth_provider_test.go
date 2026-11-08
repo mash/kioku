@@ -244,6 +244,10 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 	if err := f.db.Update(func(st *model.State) error {
 		grant := st.OAuthTokens[auth.Hash(tokens.Refresh)]
 		grant.Kind, grant.Expires = "access", time.Now().Add(time.Hour)
+		// These unrelated grants only occupy capacity; their Fosite request bodies
+		// are never read. Avoid serializing 20,000 copies of the real request on
+		// every database transaction, while keeping the real refresh grant intact.
+		grant.Request = nil
 		for i := 0; len(st.OAuthTokens) < 20000; i++ {
 			grant.RequestID = "capacity-test-" + strconv.Itoa(i)
 			st.OAuthTokens[auth.Hash("capacity-test-"+strconv.Itoa(i))] = grant

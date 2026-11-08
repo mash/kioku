@@ -44,12 +44,12 @@ Configure its absolute path as seen by the process. PKCS#1 and PKCS#8 RSA keys
 of at least 2048 bits are accepted. Keep server time synchronized.
 
 ```dotenv
-KIOKU_GITHUB_APP_ENABLED=false
-KIOKU_GITHUB_APP_ID=APP_ID
-KIOKU_GITHUB_APP_CLIENT_ID=CLIENT_ID
-KIOKU_GITHUB_APP_SLUG=ACTUAL_REGISTERED_SLUG
-KIOKU_GITHUB_APP_CLIENT_SECRET=SECRET_FROM_OPERATOR_SECRET_STORE
-KIOKU_GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/kioku-github-app.pem
+GITHUB_APP_ENABLED=false
+GITHUB_APP_ID=APP_ID
+GITHUB_APP_CLIENT_ID=CLIENT_ID
+GITHUB_APP_SLUG=ACTUAL_REGISTERED_SLUG
+GITHUB_APP_CLIENT_SECRET=SECRET_FROM_OPERATOR_SECRET_STORE
+GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/kioku-github-app.pem
 ```
 
 These five App settings must be complete together. They do not replace

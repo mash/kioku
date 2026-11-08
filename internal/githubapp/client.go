@@ -42,7 +42,7 @@ func (c Config) Configured() bool {
 
 func LoadConfig(get func(string) string) (Config, error) {
 	var c Config
-	enabled := get("KIOKU_GITHUB_APP_ENABLED")
+	enabled := get("GITHUB_APP_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return c, errors.New("invalid GitHub App enabled setting")
 	}
@@ -51,7 +51,7 @@ func LoadConfig(get func(string) string) (Config, error) {
 	values := make([]string, len(keys))
 	count := 0
 	for i, k := range keys {
-		values[i] = get("KIOKU_GITHUB_APP_" + k)
+		values[i] = get("GITHUB_APP_" + k)
 		if values[i] != "" {
 			count++
 		}

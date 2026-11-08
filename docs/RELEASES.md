@@ -54,7 +54,7 @@ The inbox release uses version 0.1.0 as the minimum CLI version. PR-1 adds the v
 ## GitHub App source-access transition
 
 Ship the four GitHub App commits together (client/persistence, connect/status,
-runner integration, CLI/plugin/migration/docs). Keep `KIOKU_GITHUB_APP_ENABLED=false`
+runner integration, CLI/plugin/migration/docs). Keep `GITHUB_APP_ENABLED=false`
 until the server, CLI/plugin and both deployed runner prompts agree. Follow the
 [exact App registration and migration runbook](GITHUB_APP.md). The rollout must
 include the one-time removal of old OAuth source ciphertext, user revocation of

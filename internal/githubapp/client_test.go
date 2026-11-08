@@ -63,7 +63,7 @@ func TestConfigAndJWT(t *testing.T) {
 	path, _ := filepath.Abs(filepath.Join(t.TempDir(), "key.pem"))
 	_ = os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(c.PrivateKey)}), 0600)
 	settings := map[string]string{"ID": "7", "CLIENT_ID": c.ClientID, "SLUG": c.Slug, "CLIENT_SECRET": "fixture", "PRIVATE_KEY_FILE": path}
-	get := func(k string) string { return settings[strings.TrimPrefix(k, "KIOKU_GITHUB_APP_")] }
+	get := func(k string) string { return settings[strings.TrimPrefix(k, "GITHUB_APP_")] }
 	if got, err := LoadConfig(get); err != nil || got.Enabled || !got.Configured() {
 		t.Fatal(got.Configured(), err)
 	}

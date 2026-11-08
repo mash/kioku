@@ -1,7 +1,8 @@
 # Kioku plugin for Claude
 
 会話の対象・ローカル保存先・取得タイミングを管理するプラグイン。
-CLI は cwd の `.kioku/config` に従って1プロジェクトを操作する。
+CLI（コマンドラインの操作ツール）は、cwd（作業ディレクトリ）の設定で1プロジェクトを操作する。
+CLI は設定を `.kioku/config` に置く。
 
 ## 責務
 
@@ -35,9 +36,20 @@ CLI はユーザー共通領域で接続先別に認証を管理する。スキ�
 
 ## 原資料の投入
 
-GitHub、Google Docs、公開 Web は `kioku put URL`、Artifact など取得できない資料は `kioku put FILE` で原文と source_url を送る。人・agent・MCP で同じ手順を使う。git 文書はファイルを指す URL を使う。操作の要約やイベント記録は別途送らない。
+ユーザー自身の Claude が、コネクター、CLI、手元のファイル、ユーザーが貼った本文から原文を読む。
+資料の種類を問わず、全文を Markdown にし、原本の HTTPS URL と一緒に送る。
+サーバーは原資料を取得しない。操作の要約やイベント記録は送らない。
 
-put は inbox の ID と status を返し、取得・生成を待たない。資料の削除は `kioku delete URL`。定期生成か `kioku generate --wait` で Wiki を更新する。取得失敗は Runner が wiki/log.md に書き、利用者が尋ねたときにスキルが読む。詳しくは [capture.md](skills/kioku/references/capture.md) を参照する。
+Claude Code は `.md` ファイルを `kioku put FILE` で送る。
+claude.ai chat は MCP（Model Context Protocol）の `source_put` に本文を渡す。
+共通の取得規則、frontmatter、送信前の確認は [capture.md](skills/kioku/references/capture.md) に従う。
+原本の HTTPS URL がない資料は送らず、未保存と伝える。
+`source_url` は送信者の申告であり、サーバーは本文と原本の一致を検証しない。
+
+put は本文を受け付け、inbox の ID と status を返す。Wiki の生成を待たない。
+資料の削除は `kioku delete URL` を使う。定期生成か `kioku generate --wait` で Wiki を更新する。
+原本が変わった時は Claude が本文を読み直して送る。
+同じ `source_url` の本文は後に届いた版が優先され、古い版でも新しい版を上書きする。
 
 ## Claude Code
 

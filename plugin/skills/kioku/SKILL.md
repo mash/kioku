@@ -5,6 +5,12 @@ description: Kiokuで共有するプロジェクトの作業時に、対象の�
 
 # Kiokuの共有コンテクスト
 
+原資料は、ユーザー自身の Claude セッションが全文を読み、Markdown にして Kioku に送る。
+コネクター、CLI（コマンドラインの操作ツール）、手元のファイル、ユーザーが貼った本文を使える。
+資料の種類にかかわらず、[capture.md](references/capture.md) の共通規則と送信前の確認に従う。
+原本の HTTPS URL がなければ送らず、未保存と伝える。サーバーは原資料を取得しない。
+Kioku への送信には、local mode で CLI、remote mode で MCP（Model Context Protocol）を使う。
+
 ## モード選択
 
 画面の名前ではなく、使える機能からモードを決める。local mode を優先する。
@@ -69,7 +75,8 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 対象を選んだ直後に pull し、完了を待つ。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
-どちらのモードでも、重要文書を参照・作成した時と結論を変えた文書を確定した時は、[capture.md](references/capture.md) で原資料を投入する。GitHub、Google Docs、公開 Web は URL、Artifact など取得できない資料は本文と原本 URL を渡す。操作や要約の「記録」を別途 put しない。
+どちらのモードでも、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送る。
+操作や要約の「記録」を別途 put しない。
 複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。
 「今どこ？」には保存済みマップを根拠に答える。
 
@@ -80,7 +87,9 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 - local mode: `P` はスキルが決めたプロジェクトの絶対パス。接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。maps は `P/maps/`、投入資料は `P/inbox/` に置く。親ディレクトリの設定は探索しない。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが選択を会話内で保持し、カタログだけを管理する。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を投入用の資料にする。source ページの `source_url` から原本を確認する。
-- local mode: `put` は inbox の ID と status を返し、取得・生成を待たない。Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。後者は生成完了後に pull する。`status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。取得失敗は Runner が `wiki/log.md` に書く。利用者が尋ねたときに読む。
+- local mode: `put` は本文を受け付け、inbox の ID と status を返す。Wiki の生成を待たない。
+  Wiki は定期生成（既定は毎日）か `generate --wait` で更新する。`generate --wait` は生成完了後に pull する。
+  `status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。
 - local mode: 読み取り専用の認証では `put`、`delete`、`generate`、`job retry` を実行しない。即時更新の依頼も認証の権限を増やさない。
 - 426 は CLI 更新が必要なエラー。別の認証や remote mode で回避せず、plugin／CLI の更新を案内する。

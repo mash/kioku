@@ -109,8 +109,34 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+  verify-plugin:
+    needs: [source, build]
+    if: needs.source.outputs.released == 'false'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: kioku-cli-release
+          path: dist
+      - name: Verify the packaged native CLI and context hook
+        env:
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir extracted
+          tar -xzf "dist/kioku-codex_${RELEASE_VERSION}.tar.gz" -C extracted
+          plugin="$PWD/extracted/kioku-codex/plugins/kioku"
+          "$plugin/bin/kioku" version > version.json
+          python3 -c 'import json, os; v=json.load(open("version.json")); assert v["version"] == os.environ["RELEASE_VERSION"]; assert v["commit"] == os.environ["RELEASE_COMMIT"]'
+          sh "$plugin/hooks/session-start.sh" > context.txt
+          grep -F "$plugin/bin/kioku" context.txt
   publish:
-    needs: [source, checks, build]
+    needs: [source, checks, build, verify-plugin]
     if: github.ref == 'refs/heads/main' && needs.source.outputs.released == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-latest
     permissions:
@@ -132,6 +158,6 @@ jobs:
           if [ "$(gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
             gh release delete "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --yes
           fi
-          gh release create "$RELEASE_VERSION" dist/kioku_*.tar.gz dist/SHA256SUMS.txt \
+          gh release create "$RELEASE_VERSION" dist/kioku_*.tar.gz dist/kioku-codex_*.tar.gz dist/kioku-codex-npm_*.tgz dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" --latest \
             --title "Kioku $RELEASE_VERSION" --notes-file dist/RELEASE_NOTES.md

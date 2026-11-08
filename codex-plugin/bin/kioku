@@ -1,0 +1,31 @@
+#!/bin/sh
+# Execute only the CLI shipped with this plugin; never search PATH for kioku.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+fail() { printf 'Kioku plugin: %s\n' "$*" >&2; exit 1; }
+case $(uname -s) in
+    Darwin) OS=darwin ;;
+    Linux) OS=linux ;;
+    *) fail 'unsupported operating system (supported: macOS and Linux)' ;;
+esac
+case $(uname -m) in
+    arm64|aarch64) ARCH=arm64 ;;
+    amd64|x86_64) ARCH=amd64 ;;
+    *) fail 'unsupported CPU (supported: arm64 and amd64)' ;;
+esac
+DIR="$ROOT/libexec/$OS-$ARCH"
+CLI="$DIR/kioku"
+[ -f "$CLI" ] && [ -x "$CLI" ] && [ ! -L "$CLI" ] || fail 'bundled CLI is missing or not executable; reinstall the plugin'
+[ -f "$DIR/SHA256SUM" ] || fail 'bundled checksum is missing; reinstall the plugin'
+EXPECTED=$(cat "$DIR/SHA256SUM")
+case "$EXPECTED" in ''|*[!0-9a-f]*) fail 'invalid bundled checksum; reinstall the plugin' ;; esac
+[ ${#EXPECTED} -eq 64 ] || fail 'invalid bundled checksum; reinstall the plugin'
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum < "$CLI")
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 < "$CLI")
+else
+    fail 'SHA-256 verification requires sha256sum or shasum'
+fi
+[ "${ACTUAL%% *}" = "$EXPECTED" ] || fail 'bundled CLI checksum mismatch; reinstall the plugin'
+exec "$CLI" "$@"

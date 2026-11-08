@@ -1,11 +1,13 @@
-.PHONY: build test check release
+.PHONY: build test check release test-codex-plugin
 BUILDINFO := github.com/mash/kioku/internal/buildinfo
 build:
 	@set -eu; \
 	ldflags="-X $(BUILDINFO).Version=$(or $(VERSION),dev) -X $(BUILDINFO).Commit=$$(git rev-parse HEAD)"; \
 	go build -trimpath -ldflags "$$ldflags" -o bin/kioku ./cmd/kioku; \
 	go build -trimpath -ldflags "$$ldflags" -o bin/kiokud ./cmd/kiokud
-test:
+test-codex-plugin:
+	python3 -m unittest discover -s codex-plugin/tests
+test: test-codex-plugin
 	go test -race ./...
 check: test
 	go vet ./...
@@ -27,6 +29,7 @@ release:
 		os=$${target%/*}; arch=$${target#*/}; tmp=bin/release/$${os}_$${arch}; mkdir -p $$tmp; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "$$ldflags" -o $$tmp/kioku ./cmd/kioku; \
 		chmod 0755 $$tmp/kioku; \
+		python3 codex-plugin/tools/stamp.py $$tmp/kioku "$(VERSION)" "$(COMMIT)" $${os}-$${arch}; \
 		if [ $$target = $$host ]; then \
 			$$tmp/kioku version | grep -q '"commit":"$(COMMIT)".*"version":"$(VERSION)"' || { echo 'built client version check failed' >&2; exit 1; }; \
 		fi; \
@@ -39,3 +42,7 @@ release:
 		'Verify the archive against SHA256SUMS.txt, extract `kioku`, and run `kioku version`. macOS users can verify with `shasum -a 256 -c SHA256SUMS.txt`; Linux users can use `sha256sum -c SHA256SUMS.txt` after downloading the archives being verified.' '' \
 		'The CLI requires a Kioku server and an authorized account. The archives contain only the client binary; they contain no server binary, credentials or production configuration.' '' \
 		'Source revision: `$(COMMIT)`.' > dist/RELEASE_NOTES.md
+
+	python3 codex-plugin/tools/package.py --binaries bin/release --output dist/codex --version "$(VERSION)" --commit "$(COMMIT)"
+	cp dist/codex/kioku-codex_*.tar.gz dist/codex/kioku-codex-npm_*.tgz dist/
+	@cd dist && { sha256sum kioku-codex_*.tar.gz kioku-codex-npm_*.tgz 2>/dev/null || shasum -a 256 kioku-codex_*.tar.gz kioku-codex-npm_*.tgz; } >> SHA256SUMS.txt

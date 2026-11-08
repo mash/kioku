@@ -50,3 +50,7 @@ may still name the previous release while working on the next one. Use
 ## Inbox release transition
 
 The inbox release uses version 0.1.0 as the minimum CLI version. PR-1 adds the version header and the `project` command group; PR-2 through PR-6 must ship together after the operator has stopped the server and manually deleted old project content. The version bump is included with PR-6 for this coordinated change. Do not deploy a partial series. No release or remote change is performed by the six local implementation commits.
+
+## Codex artifacts
+
+The same release build now creates `kioku-codex_vX.Y.Z.tar.gz` (local marketplace) and `kioku-codex-npm_vX.Y.Z.tgz` (npm package), both listed in `SHA256SUMS.txt`. They contain the canonical skill, a context-only SessionStart hook, and all four matching CLI binaries. The package builder checks Go build metadata for the target and checksum-bound build receipts for the version and source commit before packaging. npm publication is separate and is not performed by this workflow; the default npm name must be verified before publishing. See [Codex setup](../codex-plugin/README.md).

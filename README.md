@@ -468,3 +468,7 @@ This integration is covered by local HTTP contract tests; real API permissions,
 budget enforcement, hosted networking, and generated wiki quality still require
 an isolated live smoke test before production rollout.
 See the [Agents API documentation](https://developers.openai.com/api/docs/guides/agents-api/overview).
+
+## Codex plugin
+
+[Codex plugin](codex-plugin/README.md) bundles the skill, session-start hook, and matching CLI. Release archives can be installed from a local marketplace without adding Kioku to PATH.

@@ -68,5 +68,6 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-vet-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-vet-${{ hashFiles('go.mod', 'go.sum') }}-
+      - run: make test-codex-plugin
       - run: go vet ./...
       - run: go build ./cmd/...

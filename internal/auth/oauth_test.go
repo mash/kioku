@@ -113,7 +113,7 @@ func TestProviderAuthorizationOptions(t *testing.T) {
 				if purpose == "connect" && (q.Get("access_type") != "offline" || q.Get("prompt") != "consent" || !strings.Contains(q.Get("scope"), "drive.readonly")) {
 					t.Fatal("lost Google connection options")
 				}
-			} else if q.Get("nonce") != "" || strings.Contains(q.Get("scope"), "repo") || q.Get("scope") != "read:user user:email" {
+			} else if q.Get("nonce") != "" || q.Has("scope") {
 				t.Fatal("incorrect GitHub options")
 			}
 		}
@@ -148,23 +148,58 @@ func TestRefreshPreservesOrRotatesToken(t *testing.T) {
 	}
 }
 
-func TestGitHubExchangeWithoutIDToken(t *testing.T) {
-	p := Provider{Name: "github", ClientID: "id", ClientSecret: "secret", Client: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		switch r.URL.Path {
-		case "/login/oauth/access_token":
-			return jsonResponse(t, map[string]any{"access_token": "github-token"}), nil
-		case "/user":
-			return jsonResponse(t, map[string]any{"id": 123, "login": "user"}), nil
-		case "/user/emails":
-			return jsonResponse(t, []map[string]any{{"email": "user@example.com", "primary": true, "verified": true}}), nil
-		default:
-			t.Fatalf("unexpected request %s", r.URL)
-		}
-		return nil, nil
-	})}}
-	c, identity, err := p.Exchange(context.Background(), "code", Token())
-	if err != nil || identity.ID != "123" || c.AccessToken != "github-token" {
-		t.Fatalf("GitHub exchange: %+v %v", identity, err)
+func TestGitHubAppExchangeVerifiesIdentityAndEmail(t *testing.T) {
+	for _, outcome := range []string{"valid", "unverified", "not-primary", "no-email", "denied", "invalid-user"} {
+		t.Run(outcome, func(t *testing.T) {
+			verifier := Token()
+			p := Provider{Name: "github", ClientID: "Iv.fixture", ClientSecret: "app-secret", RedirectURL: "https://kioku.example/auth/github/callback"}
+			p.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host == "github.com" && r.URL.Path == "/login/oauth/access_token" {
+					if err := r.ParseForm(); err != nil {
+						t.Fatal(err)
+					}
+					if r.Method != "POST" || r.Form.Get("client_id") != p.ClientID || r.Form.Get("client_secret") != p.ClientSecret || r.Form.Get("redirect_uri") != p.RedirectURL || r.Form.Get("code_verifier") != verifier || r.Form.Get("code") != "code" || r.Form.Has("scope") {
+						t.Fatal("incorrect App login exchange")
+					}
+					return jsonResponse(t, map[string]any{"access_token": "ghu_login", "refresh_token": "ghr_login", "expires_in": 28800}), nil
+				}
+				if r.Method != "GET" || r.URL.Host != "api.github.com" || r.Header.Get("Authorization") != "Bearer ghu_login" {
+					t.Fatal("incorrect identity request")
+				}
+				switch r.URL.Path {
+				case "/user":
+					id := 123
+					if outcome == "invalid-user" {
+						id = 0
+					}
+					return jsonResponse(t, map[string]any{"id": id, "login": "user"}), nil
+				case "/user/emails":
+					if outcome == "denied" {
+						resp := jsonResponse(t, map[string]string{"message": "forbidden"})
+						resp.StatusCode = 403
+						return resp, nil
+					}
+					emails := []map[string]any{{"email": "USER@example.com", "primary": outcome != "not-primary", "verified": outcome != "unverified"}}
+					if outcome == "no-email" {
+						emails = nil
+					}
+					return jsonResponse(t, emails), nil
+				default:
+					t.Fatalf("unexpected request %s", r.URL)
+					return nil, nil
+				}
+			})}
+			c, identity, err := p.Exchange(context.Background(), "code", verifier)
+			if outcome != "valid" {
+				if err == nil || identity.ID != "" || c.AccessToken != "" {
+					t.Fatal("accepted invalid identity or email")
+				}
+				return
+			}
+			if err != nil || identity.ID != "123" || identity.Email != "user@example.com" || identity.Name != "user" || c.AccessToken != "ghu_login" || c.RefreshToken != "ghr_login" || c.ExpiresAt.IsZero() {
+				t.Fatalf("GitHub App exchange failed: %v", err)
+			}
+		})
 	}
 }
 

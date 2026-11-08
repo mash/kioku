@@ -53,15 +53,16 @@ The inbox release uses version 0.1.0 as the minimum CLI version. PR-1 adds the v
 
 ## GitHub App source-access transition
 
-Ship the four GitHub App commits together (client/persistence, connect/status,
-runner integration, CLI/plugin/migration/docs). Keep `GITHUB_APP_ENABLED=false`
-until the server, CLI/plugin and both deployed runner prompts agree. Follow the
-[exact App registration and migration runbook](GITHUB_APP.md). The rollout must
-include the one-time removal of old OAuth source ciphertext, user revocation of
-the old GitHub OAuth `repo` grant, and new narrow-scope login sessions. Account
-sessions are preserved during migration but their old GitHub identity proof is
-cleared. Test catalog backup/restore with the database encryption key. Never open
-a catalog with the new record kinds using the old binary.
+Ship the complete GitHub App implementation (client/persistence, connect/status,
+runner integration, CLI/plugin/docs and App login). Keep `GITHUB_APP_ENABLED=false`
+until the server, CLI/plugin and both deployed runner prompts agree; this switch
+does not disable App login. Follow the [exact App registration runbook](GITHUB_APP.md),
+including both callback URLs and Email addresses: Read-only. Production data was
+wiped, so no extra login-row migration is needed. The existing one-time cleanup
+removes legacy source ciphertext and old GitHub session identity proofs while
+preserving sessions and identity rows. Test catalog backup/restore with the
+database encryption key. Never open a catalog with the new record kinds using
+the old binary.
 
 Local implementation and fake tests do not register an App, publish a release,
 update a deployed Anthropic agent or run a real sandbox smoke test. Those remain

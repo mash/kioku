@@ -47,8 +47,8 @@ In Claude Desktop or Cowork, add the marketplace `mash/kioku` and install `kioku
 
 You can run your own server, but self-hosting is not supported. There is no compatibility promise between versions, and no help for operations. The minimal start uses the `final` target of the `Dockerfile`:
 
-1. Register a Google or GitHub OAuth app with the callback `<KIOKU_BASE_URL>/auth/google/callback` or `<KIOKU_BASE_URL>/auth/github/callback`.
-2. Copy `.env.example` to `.env`. Set `KIOKU_BASE_URL` and at least one Google or GitHub OAuth client ID and secret. `KIOKU_ENCRYPTION_KEY` is optional: when unset, the server generates and persists a key at `<KIOKU_DATA>/encryption.key` (0600) and reuses it on restart. Preserve this file with your deployment; encrypted credentials cannot be recovered without the same key.
+1. Register Google OAuth with `<KIOKU_BASE_URL>/auth/google/callback`, or one [GitHub App](docs/GITHUB_APP.md) with both `/auth/github/callback` and `/auth/github-app/callback` on that origin.
+2. Copy `.env.example` to `.env`. Set `KIOKU_BASE_URL` and Google OAuth credentials or all five `GITHUB_APP_*` settings. For GitHub, also mount the RSA private key read-only at `GITHUB_APP_PRIVATE_KEY_FILE` inside the container. `KIOKU_ENCRYPTION_KEY` is optional: when unset, the server generates and persists a key at `<KIOKU_DATA>/encryption.key` (0600) and reuses it on restart. Preserve this file with your deployment; encrypted credentials cannot be recovered without the same key.
 3. Build and start the server with a persistent volume:
 
    ```sh
@@ -144,17 +144,22 @@ export KIOKU_BASE_URL=https://kioku.example.com
 # KIOKU_ENCRYPTION_KEY は任意。未設定なら KIOKU_DATA/encryption.key を使用
 export GOOGLE_CLIENT_ID=...
 export GOOGLE_CLIENT_SECRET=...
-export GITHUB_CLIENT_ID=...
-export GITHUB_CLIENT_SECRET=...
+# GitHub ログインも使う場合は以下をすべて設定
+export GITHUB_APP_ID=...
+export GITHUB_APP_CLIENT_ID=...
+export GITHUB_APP_CLIENT_SECRET=...
+export GITHUB_APP_SLUG=...
+export GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/kioku-github-app.pem
+export GITHUB_APP_ENABLED=false # 原資料接続・発行だけを停止。ログインは利用可能
 ./bin/kiokud --addr 0.0.0.0:8080 --data /var/lib/kioku
 ```
 
-OAuthアプリのcallback URL:
+登録するcallback URL:
 
 - Google: `https://kioku.example.com/auth/google/callback`
-- GitHub: `https://kioku.example.com/auth/github/callback`
+- GitHub App（同じAppに両方登録）: `https://kioku.example.com/auth/github/callback` と `https://kioku.example.com/auth/github-app/callback`
 
-開発時は `http://127.0.0.1:8080/auth/<provider>/callback` を登録します。GoogleではDocs / Drive APIを有効化し、OAuthテストユーザーを登録してください。外部公開時はGoogleによるスコープ審査が必要になる場合があります。
+開発時は各URLのoriginを `http://127.0.0.1:8080` に置き換えます。GoogleではDocs / Drive APIを有効化し、OAuthテストユーザーを登録してください。外部公開時はGoogleによるスコープ審査が必要になる場合があります。
 
 ```bash
 kioku --server https://kioku.magicians.ee login --provider google
@@ -168,7 +173,7 @@ kioku connect github
 
 `login`・`connect`・`agent login` では、標準サーバー（`https://kioku.magicians.ee`）以外への初回認証時に接続先を表示し、信頼するか確認します。承認はユーザーの `~/.config/kioku/auth/` に接続先ごとに保存し、次回から確認を省略します。別の接続先には改めて承認が必要です。未承認の接続先は、`--server ORIGIN` や `KIOKU_SERVER` で指定した場合も端末での承認が必要です。非対話実行で未承認の接続先を選ぶと、通信前に終了します。明示した接続先と `.kioku/config` が異なる場合は拒否します。通常の `pull` などは引き続き `.kioku/config` の接続先を使用します。
 
-ログインと原資料への認可は別です。Google の接続は Docs／Drive の読み取りスコープを使います。GitHub の OAuth App はログイン専用で `read:user user:email` だけを要求します。`connect github` は別の GitHub App を認可し、owner が複数の installation を選択できます。GitHub App の Contents・Metadata・Issues は Read-only、Pull requests は No access です。登録画面の正確な設定値、秘密鍵配置、旧 `repo` grant の取消と移行は [GitHub App 運用手順](docs/GITHUB_APP.md) を参照してください。
+ログインと原資料への認可は別です。Google の接続は Docs／Drive の読み取りスコープを使います。GitHub は1つの App でログインと `connect github` を扱います。ログインは確認済み主メールを必要とするため、Account permissions の Email addresses を Read-only にし、`GET /user/emails` で確認します。ログイン token は本人再確認専用で、原資料接続には保存・流用しません。owner は別途 `connect github` で installation を選び、資料取得には inbox の repo に絞った installation token を使います。App 未設定時は GitHub ログインを利用できず、設定済みの Google ログインを使います。Contents・Metadata・Issues は Read-only、Pull requests は No access です。正確な登録設定と鍵配置は [GitHub App 運用手順](docs/GITHUB_APP.md) を参照してください。
 
 `connect` は原資料の取得権限だけを接続します。ログイン方法の追加、プロフィールの変更、ブラウザへのKiokuログインは行いません。既存のログイン用の紐付けは維持します。既存アカウントでCLIにログインしてから実行してください。login／connect は同じ端末のブラウザとloopback、state、PKCEを使用します。connect はOAuthの承認後も、認証済みCLIが単回・短命のコードを交換するまで接続を確定しません。旧CLIのチケット方式は受け付けないため、サーバー更新時にはCLIも更新してください。
 

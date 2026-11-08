@@ -246,6 +246,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		user.Email = identity.Email
 		user.Name = identity.Name
 		st.Users[uid] = user
+		// Login tokens only prove identity; source access requires a separate connect.
 		credentialJSON, _ := json.Marshal(credential)
 		sealedIdentity := s.Cipher.Seal(string(credentialJSON), identityContext(uid, pending.Provider, identity.ID))
 		if pending.Device != "" {

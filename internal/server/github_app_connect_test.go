@@ -87,7 +87,7 @@ func startApp(t *testing.T, f *fixture, token string) (loopbackAttempt, *http.Co
 	}
 	target, _ := url.Parse(w.Header().Get("Location"))
 	if target.Query().Get("scope") != "" || target.Query().Get("client_id") != "Iv.fixture" {
-		t.Fatal("OAuth login configuration reused")
+		t.Fatal("incorrect source-connect App authorization")
 	}
 	return a, cookies[0], target.Query().Get("state")
 }

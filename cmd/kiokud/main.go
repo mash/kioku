@@ -115,19 +115,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	providers := map[string]auth.Provider{}
-	for _, name := range registry.Names() {
-		prefix := strings.ToUpper(name)
-		id, secret := os.Getenv(prefix+"_CLIENT_ID"), os.Getenv(prefix+"_CLIENT_SECRET")
-		if id != "" || secret != "" {
-			if id == "" || secret == "" {
-				return errors.New(prefix + "_CLIENT_ID and " + prefix + "_CLIENT_SECRET are both required")
-			}
-			providers[name] = auth.Provider{Name: name, ClientID: id, ClientSecret: secret, RedirectURL: base + "/auth/" + name + "/callback"}
-		}
-	}
-	if len(providers) == 0 {
-		return errors.New("configure at least one Google or GitHub OAuth provider")
+	providers, err := loginProviders(base, githubConfig, os.Getenv)
+	if err != nil {
+		return err
 	}
 	selection := os.Getenv("KIOKU_RUNNER")
 	command, err := runners.ParseCommand(selection, os.Getenv("KIOKU_RUNNER_COMMAND"))
@@ -193,4 +183,30 @@ func run() error {
 }
 func env(key, fallback string) string {
 	return config.Env(key, fallback)
+}
+
+// loginProviders keeps GitHub login and source access on the same App registration.
+func loginProviders(base string, app githubapp.Config, get func(string) string) (map[string]auth.Provider, error) {
+	providers := map[string]auth.Provider{}
+	for _, name := range registry.Names() {
+		if name == "github" {
+			// The source-access switch does not disable login or identity proof.
+			if app.Configured() {
+				providers[name] = auth.Provider{Name: name, ClientID: app.ClientID, ClientSecret: string(app.ClientSecret), RedirectURL: base + "/auth/github/callback"}
+			}
+			continue
+		}
+		prefix := strings.ToUpper(name)
+		id, secret := get(prefix+"_CLIENT_ID"), get(prefix+"_CLIENT_SECRET")
+		if id != "" || secret != "" {
+			if id == "" || secret == "" {
+				return nil, errors.New(prefix + "_CLIENT_ID and " + prefix + "_CLIENT_SECRET are both required")
+			}
+			providers[name] = auth.Provider{Name: name, ClientID: id, ClientSecret: secret, RedirectURL: base + "/auth/" + name + "/callback"}
+		}
+	}
+	if len(providers) == 0 {
+		return nil, errors.New("configure Google OAuth or a GitHub App for login")
+	}
+	return providers, nil
 }

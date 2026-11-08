@@ -1,10 +1,22 @@
 # GitHub App source access
 
-GitHub login and GitHub source access are separate applications. The existing
-OAuth App remains the login/identity-proof provider with `read:user user:email`.
-The source GitHub App reads only selected repositories for the project owner.
-Google-authenticated Kioku users can connect it too. This integration supports
-**github.com only**, and is disabled by default.
+One GitHub App handles both login and source access, with separate authorization
+flows and credential storage. Login uses the App Client ID and client secret;
+`GET /user` supplies the numeric identity ID, and `GET /user/emails` supplies the
+verified primary email required for invitations and account administration.
+Login tokens stay in encrypted session identity proofs, never in source
+connections or runner credentials. Source access requires `connect github` and
+uses installation tokens restricted to inbox repositories. Google-authenticated
+Kioku users can connect it too. This integration supports **github.com only**.
+
+GitHub login is available only with complete App settings. The source-access
+switch defaults to disabled and does not disable login. With App settings unset,
+Google login still works when configured.
+
+The [user authorization web flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)
+uses the existing state, PKCE and CSRF checks without OAuth scopes. App registration
+permissions control access; [Email addresses: read](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#user-permissions-for-email-addresses)
+permits `GET /user/emails` (documentation checked 2026-11-08).
 
 ## Create the App (operator)
 
@@ -17,9 +29,9 @@ The App owner is an operator decision; this repository does not register an App.
 | GitHub setting | Exact value |
 |---|---|
 | GitHub App name | `Kioku Readonly Sources` (append a deployment name if taken) |
-| Description | `Read selected GitHub source repositories for Kioku wikis.` |
+| Description | `Sign in to Kioku and read selected GitHub source repositories.` |
 | Homepage URL | `https://kioku.magicians.ee` |
-| Callback URL | `https://kioku.magicians.ee/auth/github-app/callback` |
+| Callback URLs (register both, in this order) | `https://kioku.magicians.ee/auth/github/callback`<br>`https://kioku.magicians.ee/auth/github-app/callback` |
 | Expire user authorization tokens | **Enabled** |
 | Request user authorization (OAuth) during installation | **Disabled** |
 | Enable Device Flow | **Disabled** |
@@ -33,8 +45,13 @@ The App owner is an operator decision; this repository does not register an App.
 | Repository permissions → Pull requests | **No access** |
 | All other Repository permissions | **No access** |
 | Organization permissions | **All No access** |
-| Account permissions | **All No access** |
+| Account permissions → Email addresses | **Read-only** |
+| All other Account permissions | **No access** |
 | Where can this GitHub App be installed? | **Any account** |
+
+Keep **Request user authorization (OAuth) during installation Disabled**: login
+and source connect start their own authorization flows with explicit callback
+URLs; installation returns to the Setup URL and does not establish a connection.
 
 After creating the App, copy its **App ID**, **Client ID**, and the actual slug
 from its public App URL. Generate a **client secret** and an **RSA private key**.
@@ -52,18 +69,17 @@ GITHUB_APP_CLIENT_SECRET=SECRET_FROM_OPERATOR_SECRET_STORE
 GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/kioku-github-app.pem
 ```
 
-These five App settings must be complete together. They do not replace
-`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`, which belong to the **login OAuth
-App**. Callback and setup origins come from `KIOKU_BASE_URL`. Preserve
-`KIOKU_ENCRYPTION_KEY`, or the generated `<KIOKU_DATA>/encryption.key`, separately
+These five App settings must be complete together and supply both login and source
+access. No separate login app is needed. Callback and setup origins come from
+`KIOKU_BASE_URL`. Preserve `KIOKU_ENCRYPTION_KEY`, or the generated `<KIOKU_DATA>/encryption.key`, separately
 from the App private key. User credentials and cleanup tokens in SQLite require
 the same database encryption key after restart or restore.
 
 | Startup configuration | Result |
 |---|---|
-| All five settings empty, enabled=false | Starts; no new App connections/issuance; cleanup continues |
-| Complete settings, enabled=false | Starts; no new App connections/issuance; cleanup continues |
-| Complete settings, enabled=true | Recovers durable records before accepting new work |
+| All five settings empty, enabled=false | Starts with Google login configured; GitHub login unavailable; cleanup continues |
+| Complete settings, enabled=false | GitHub login available; no new source connections/issuance; cleanup continues |
+| Complete settings, enabled=true | GitHub login available; recovers durable records before accepting new source work |
 | Partial settings, invalid key, or enabled=true with no settings | Refuses startup |
 | Stored App credentials cannot be decrypted | Refuses startup; restore the database encryption key |
 
@@ -120,7 +136,12 @@ is repo-wide, not limited to the one submitted file. Reconnect invalidates all o
 the owner's old-version attempts; owner transfer affects only the transferred
 project. Refresh does not change connection_version.
 
-## Rollout and migrate old OAuth source grants
+## Rollout and existing data
+
+Production data was wiped before this change, so no additional migration of old
+login rows is needed. Identity lookup still uses the provider name and numeric
+GitHub user ID; changing the app type does not change that key. The existing
+one-time cleanup of legacy source credentials remains for other catalogs.
 
 1. Locate the deployment's actual environment/secret mounts and agent update
    mechanism. This checkout does not supply the production deployment settings.
@@ -128,11 +149,11 @@ project. Refresh does not change connection_version.
    encryption key. Verify restore on an isolated copy with the same binary.
 2. Register a test App using the settings above. Install it on selected public and
    private fixture repositories. Record the operator's App owner and actual slug.
-3. Ship **all four implementation commits**, initially with enabled=false. The
+3. Ship the complete implementation, initially with enabled=false. The
    first startup removes old GitHub source ciphertext, pending source-connect
    tickets/OAuth states, and pre-migration GitHub session identity credentials.
    Sessions themselves and login identities remain. The migration marker is
-   durable and later narrow-scope login credentials are not cleared again.
+   durable and later App login identity proofs are not cleared again.
 4. Update the Anthropic agent to the new `prompts/kioku-wiki.md` and pin its agent
    version. Ship the OpenAI server binary containing that same prompt. Permit
    `api.github.com` in both sandbox network policies. App secrets/user tokens stay
@@ -146,17 +167,11 @@ project. Refresh does not change connection_version.
    deselection and organization departure. Verify secret isolation, publication,
    session/vault archive/deletion and token cleanup. Record live results separately
    from local fake tests. Do not claim this smoke test ran merely because CI passed.
-7. Each user opens GitHub **Settings → Applications → Authorized OAuth Apps** and
-   revokes the old **login OAuth App** grant (which may still include `repo`). Then
-   run `kioku login --provider github` again: new authorization requests only
-   `read:user user:email` and creates a new session. Old sessions are not upgraded;
-   their identity-confirming account operations require relogin. Stopping future
-   `repo` requests or deleting Kioku ciphertext does not revoke GitHub's old grant.
 
 ## Failure, monitoring and key rotation
 
-User access/refresh tokens are encrypted and never enter a runner. Access tokens
-are refreshed with less than five minutes remaining; refresh has a durable intent
+Source-connect user access/refresh tokens are encrypted separately from login
+identity proofs and never enter a runner. Source access tokens are refreshed with less than five minutes remaining; refresh has a durable intent
 and no automatic resend. JWT uses RS256, iss=client_id, iat=now−60s, exp=now+9m.
 REST calls use `X-GitHub-Api-Version: 2026-03-10`, a 10-second deadline and no
 redirects. An issuance request always specifies nonempty repository IDs (at most

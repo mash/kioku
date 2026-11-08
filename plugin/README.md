@@ -165,6 +165,7 @@ KIOKU_TEST_BINARY=/absolute/path/to/kioku python3 -m unittest discover -s tests
 旧コマンド・互換エイリアスは用意しない。
 プラグインは自分と同じバージョンの CLI を使う。
 
+GitHub ログインと資料接続は同じ App を使い、認可を分ける。ログインだけでは資料接続を作らない。
 GitHub 資料の取得はプロジェクト owner の読み取り専用 GitHub App 接続を使う。
 プラグインは App の秘密鍵・user token を受け取らない。失敗を解消する場合は
 対象ディレクトリの接続先で owner が `kioku connect github` を完了し、元 URL

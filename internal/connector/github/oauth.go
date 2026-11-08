@@ -12,10 +12,10 @@ import (
 )
 
 func (Connector) OAuth(purpose, verifier string) connector.OAuth {
-	scopes := []string{"read:user", "user:email"}
+	// GitHub App permissions come from its registration, not OAuth scopes.
 	endpoint := oauthprovider.Endpoint
 	endpoint.AuthStyle = oauth2.AuthStyleInParams
-	return connector.OAuth{Endpoint: endpoint, Scopes: scopes}
+	return connector.OAuth{Endpoint: endpoint}
 }
 
 func (p Connector) Identity(ctx context.Context, get connector.Get, token string) (connector.Identity, error) {

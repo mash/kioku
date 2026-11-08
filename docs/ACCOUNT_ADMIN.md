@@ -16,7 +16,7 @@ kioku account delete --yes
 
 Session listings contain opaque revocation IDs, expiry and provider names, not bearer tokens or provider credentials. `revoke-all` invalidates all of the account's current sessions, outstanding bound device/connect flows, and all its delegated agent credentials. It does not prevent a later legitimate OAuth sign-in.
 
-`disconnect` removes the stored source-access connection. It preserves the login identity and does not revoke the OAuth app grant at Google/GitHub; users can manage those grants at the provider. Reconnect with `kioku connect PROVIDER`. `unlink` removes a login identity as well as its source connection, revokes sessions issued through that provider and all delegated agent credentials. The last login identity cannot be removed. To unlink a provider, sign in through another linked provider first.
+`disconnect` removes the stored source-access connection. It preserves the login identity and does not revoke the Google OAuth or GitHub App user authorization; users can manage those grants at the provider. Reconnect with `kioku connect PROVIDER`. `unlink` removes a login identity as well as its source connection, revokes sessions issued through that provider and all delegated agent credentials. The last login identity cannot be removed. To unlink a provider, sign in through another linked provider first.
 
 Project ownership can be transferred to another existing project member; the previous owner becomes a member. Organization ownership can be transferred to an existing organization/project member. Organization ownership does not implicitly grant project-content access.
 

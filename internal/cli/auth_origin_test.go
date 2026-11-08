@@ -12,7 +12,7 @@ import (
 
 func TestAuthenticationRequiresTerminalApprovalRegardlessOfServerSelection(t *testing.T) {
 	for _, selection := range []string{"project", "flag", "environment"} {
-		for _, command := range [][]string{{"login"}, {"connect", "google"}, {"agent", "login", "kioku_code.secret"}} {
+		for _, command := range [][]string{{"login"}, {"agent", "login", "kioku_code.secret"}} {
 			t.Run(selection+"/"+strings.Join(command, " "), func(t *testing.T) {
 				f := newOrderFixture(t)
 				f.bind()
@@ -52,7 +52,7 @@ func TestAuthenticationRequiresTerminalApprovalRegardlessOfServerSelection(t *te
 }
 
 func TestAuthenticationKeepsServerConflictGuard(t *testing.T) {
-	for _, command := range [][]string{{"login"}, {"connect", "github"}, {"agent", "login", "kioku_code.secret"}} {
+	for _, command := range [][]string{{"login"}, {"agent", "login", "kioku_code.secret"}} {
 		f := newOrderFixture(t)
 		f.bind()
 		err := f.run(append([]string{"--server", defaultServer}, command...)...)

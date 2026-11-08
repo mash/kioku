@@ -179,9 +179,8 @@ func TestCleanupJoinsFailures(t *testing.T) {
 	}
 }
 
-func TestMultipleCredentialsShareOneVaultWithHeaderDestinations(t *testing.T) {
+func TestVaultContainsOnlyJobTokenWithHeaderDestination(t *testing.T) {
 	r, f, spec := fixture(t)
-	spec.SourceCredentials = []runner.Credential{{Name: "GITHUB_TOKEN_ACME", Value: "github-secret", AllowedHosts: []string{"api.github.com"}}, {Name: "GOOGLE_ACCESS_TOKEN", Value: "google-secret", AllowedHosts: []string{"docs.googleapis.com", "www.googleapis.com"}}}
 	ref := start(t, r, spec)
 	count := 0
 	for _, req := range f.Requests() {
@@ -192,22 +191,16 @@ func TestMultipleCredentialsShareOneVaultWithHeaderDestinations(t *testing.T) {
 			a := req.Body["auth"].(map[string]any)
 			name := a["secret_name"].(string)
 			hosts := []any{"kioku.test"}
-			if name == "GITHUB_TOKEN_ACME" {
-				hosts = []any{"api.github.com"}
-			}
-			if name == "GOOGLE_ACCESS_TOKEN" {
-				hosts = []any{"docs.googleapis.com", "www.googleapis.com"}
-			}
-			if a["type"] != "environment_variable" || !reflect.DeepEqual(a["networking"].(map[string]any)["allowed_hosts"], hosts) || !reflect.DeepEqual(a["injection_location"], map[string]any{"header": true}) {
+			if name != "KIOKU_JOB_TOKEN" || a["type"] != "environment_variable" || !reflect.DeepEqual(a["networking"].(map[string]any)["allowed_hosts"], hosts) || !reflect.DeepEqual(a["injection_location"], map[string]any{"header": true}) {
 				t.Fatal(a)
 			}
 			count++
 		}
-		if req.Path == "/v1/sessions" && strings.Contains(fmt.Sprint(req.Body), "-secret") {
+		if req.Path == "/v1/sessions" && strings.Contains(fmt.Sprint(req.Body), string(spec.Token)) {
 			t.Fatal("credential in first message")
 		}
 	}
-	if count != 3 {
+	if count != 1 {
 		t.Fatal(count)
 	}
 	if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec.Key, Run: ref}); err != nil {

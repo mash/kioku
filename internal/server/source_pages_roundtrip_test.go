@@ -8,25 +8,24 @@ import (
 )
 
 // The fake supplies model output. This verifies the archive/publication contract,
-// not whether a real model follows the prompt's filename and fetch rules.
+// not whether a real model follows the prompt's filename rules.
 func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	urls := []string{"https://example.com/a", "https://example.com/b"}
-	putURL := func(url string) {
+	putText := func(url, body string) {
 		t.Helper()
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{URL: url}, nil); c != 202 {
+		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: body, SourceURL: url}}, nil); c != 202 {
 			t.Fatal(c)
 		}
 	}
-	for _, url := range urls {
-		putURL(url)
-	}
+	putText(urls[0], "# Title\nFirst")
+	putText(urls[1], "# Title\nSecond")
 	pages := map[string]string{
 		"wiki/index.md":          "# Wiki\n[Analysis](analysis.md)",
 		"wiki/analysis.md":       "[One](source-title.md) and [Two](source-title-2.md)",
 		"wiki/source-title.md":   "---\nsource_url: " + urls[0] + "\n---\n# Title\nFirst",
 		"wiki/source-title-2.md": "---\nsource_url: " + urls[1] + "\n---\n# Title\nSecond",
-		"wiki/log.md":            "# Log\nFetched two sources",
+		"wiki/log.md":            "# Log\nAdded two sources",
 	}
 	publish := func(j model.Job) {
 		t.Helper()
@@ -40,7 +39,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 		}
 	}
 	publish(startManaged(t, f, token, p.ID, false))
-	putURL(urls[0])
+	putText(urls[0], "# Title\nFirst\nUpdated from same URL")
 	j := startManaged(t, f, token, p.ID, false)
 	c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "GET", "input", nil)
 	if c != 200 {

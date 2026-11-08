@@ -50,13 +50,13 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 			t.Errorf("prompt lacks %q", rule)
 		}
 	}
-	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_JOB_TOKEN", "inbox/", "source_url", "1 MiB", "100 entries", "Kioku-Client-Version"} {
+	for _, text := range []string{"untrusted data", "up to 30 times", "10 seconds", "tarfile", "Authorization: Bearer $KIOKU_JOB_TOKEN", "inbox/", "source_url", "100 entries", "Kioku-Client-Version"} {
 		if !strings.Contains(system, text) {
 			t.Error("prompt missing", text)
 		}
 	}
 }
-func TestEnvironmentAllowsOnlyKiokuAndSourceAPIs(t *testing.T) {
+func TestEnvironmentAllowsOnlyKioku(t *testing.T) {
 	b, err := os.ReadFile("../../environments/kioku-wiki.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestEnvironmentAllowsOnlyKiokuAndSourceAPIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := env.Config.Networking
-	if env.Name != "kioku-wiki" || env.Config.Type != "cloud" || n.Type != "limited" || !slices.Equal(n.Hosts, []string{"kioku.magicians.ee", "api.github.com", "docs.googleapis.com", "www.googleapis.com", "docs.google.com"}) || n.Packages == nil || *n.Packages || n.MCP == nil || *n.MCP {
+	if env.Name != "kioku-wiki" || env.Config.Type != "cloud" || n.Type != "limited" || !slices.Equal(n.Hosts, []string{"kioku.magicians.ee"}) || n.Packages == nil || *n.Packages || n.MCP == nil || *n.MCP {
 		t.Fatal(env)
 	}
 }

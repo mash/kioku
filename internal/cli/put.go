@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
@@ -34,12 +33,7 @@ func (a *App) put(args []string) error {
 	if err != nil {
 		return err
 	}
-	locked := true
-	defer func() {
-		if locked {
-			unlock()
-		}
-	}()
+	defer unlock()
 	r, err := a.readReceipts()
 	if err != nil {
 		return err
@@ -51,7 +45,7 @@ func (a *App) put(args []string) error {
 	inputs := []filePut{}
 	paths := f.Args()
 	if *sourceURL != "" {
-		if len(paths) != 1 || strings.HasPrefix(paths[0], "https://") {
+		if len(paths) != 1 {
 			return errors.New("--source-url requires one explicit file")
 		}
 		info, err := os.Lstat(paths[0])
@@ -61,15 +55,6 @@ func (a *App) put(args []string) error {
 		if !info.Mode().IsRegular() {
 			return errors.New("--source-url requires one regular file")
 		}
-	}
-	if len(paths) == 1 && strings.HasPrefix(paths[0], "https://") {
-		var item model.InboxItem
-		if _, err = a.request("POST", p+"/put", model.PutRequest{URL: paths[0]}, &item); err != nil {
-			return err
-		}
-		unlock()
-		locked = false
-		return a.print(item)
 	}
 	inbox := len(paths) == 0
 	if inbox {

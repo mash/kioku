@@ -9,6 +9,4 @@
 
 To add another connector, implement it in its own package and register it in `registry`. Daemon OAuth environment configuration uses the registered names (`<NAME>_CLIENT_ID` and `<NAME>_CLIENT_SECRET`). Add authentication tests and update CLI help and user documentation when exposing a new connector.
 
-Notion is not implemented here. Do not assume that a Notion connection is also a Kioku login identity. The current interface captures the existing GitHub and Google behavior.
-
-Source retrieval belongs to the current runner/inbox flow. This refactor does not restore the legacy source fetcher removed from main.
+GitHub and Google provide Kioku login identities. The client retrieves source text with its own tools and sends the text with source_url. Kioku holds no source-access credentials. source_url is client-asserted provenance; the server does not verify the text against the URL.

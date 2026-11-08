@@ -21,7 +21,7 @@ type OAuth struct {
 
 // Connector owns service-specific OAuth settings and identity verification.
 type Connector interface {
-	OAuth(purpose, verifier string) OAuth
+	OAuth(verifier string) OAuth
 	LoginIdentity(ctx context.Context, get Get, clientID string, token *oauth2.Token, verifier string) (Identity, error)
 	Identity(ctx context.Context, get Get, accessToken string) (Identity, error)
 }

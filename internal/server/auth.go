@@ -1,9 +1,7 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/runner"
 )
 
 func loopbackRedirect(value string) bool {
@@ -80,12 +77,12 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 	err := s.DB.Update(func(st *model.State) error {
 		d, ok := st.Devices[req.Device]
 		// Persist consumption even on failure; returning an error here rolls it back.
-		if ok && d.Purpose == "" {
+		if ok {
 			used := d
 			used.Used = true
 			st.Devices[req.Device] = used
 		}
-		if !ok || d.Purpose != "" || d.Used || !d.Expires.After(time.Now()) || d.LoopbackChallenge == "" || d.UserID == "" || d.LoopbackCodeHash == "" || d.LoopbackCodeHash != auth.Hash(req.Code) || !validVerifier(req.Verifier) || auth.Challenge(req.Verifier) != d.LoopbackChallenge {
+		if !ok || d.Used || !d.Expires.After(time.Now()) || d.LoopbackChallenge == "" || d.UserID == "" || d.LoopbackCodeHash == "" || d.LoopbackCodeHash != auth.Hash(req.Code) || !validVerifier(req.Verifier) || auth.Challenge(req.Verifier) != d.LoopbackChallenge {
 			problem = fail(410, "login request expired; run kioku login again")
 			return nil
 		}
@@ -106,7 +103,7 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 
 // Only an unbound, live loopback request may receive a callback.
 func pendingLoopback(d model.Device) bool {
-	return d.Purpose == "" && d.LoopbackChallenge != "" && !d.Used && d.UserID == "" && d.Expires.After(time.Now())
+	return d.LoopbackChallenge != "" && !d.Used && d.UserID == "" && d.Expires.After(time.Now())
 }
 
 func loopbackExpired(w http.ResponseWriter) error {
@@ -119,7 +116,7 @@ func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, rea
 	var target string
 	err := s.DB.Update(func(st *model.State) error {
 		d := st.Devices[id]
-		if pendingLoopback(d) || pendingConnect(d) {
+		if pendingLoopback(d) {
 			target = d.LoopbackRedirectURI + "?" + url.Values{"error": {reason}, "state": {d.LoopbackState}}.Encode()
 		}
 		return nil
@@ -145,21 +142,13 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) er
 		return err
 	}
 	state, verifier := auth.Token(), auth.Token()
-	pending := model.OAuthState{ReturnPath: returnPath, Provider: provider, Purpose: "login", Verifier: verifier, Expires: time.Now().Add(10 * time.Minute), Device: r.URL.Query().Get("device")}
+	pending := model.OAuthState{ReturnPath: returnPath, Provider: provider, Verifier: verifier, Expires: time.Now().Add(10 * time.Minute), Device: r.URL.Query().Get("device")}
 	err = s.DB.Update(func(st *model.State) error {
 		prune(st)
 		if len(st.OAuth) > 10000 {
 			return fail(429, "too many login attempts")
 		}
-		if id := r.URL.Query().Get("connect"); id != "" {
-			d, ok := st.Devices[id]
-			if !ok || !pendingConnect(d) || d.IdentityProvider != provider || pending.Device != "" {
-				return fail(403, "invalid connection request; run kioku connect again")
-			}
-			pending.Purpose = "connect"
-			pending.UserID = d.UserID
-			pending.Device = id
-		} else if pending.Device != "" {
+		if pending.Device != "" {
 			d, ok := st.Devices[pending.Device]
 			if !ok || !pendingLoopback(d) {
 				return fail(410, "login request expired")
@@ -173,7 +162,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) er
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: state, Path: "/auth/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 600})
-	http.Redirect(w, r, p.URL(state, verifier, pending.Purpose), http.StatusFound)
+	http.Redirect(w, r, p.URL(state, verifier), http.StatusFound)
 	return nil
 }
 func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string) error {
@@ -206,13 +195,6 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		return fail(502, "OAuth exchange failed; restart login")
 	}
-	if pending.Purpose == "connect" {
-		b, err := json.Marshal(credential)
-		if err != nil {
-			return err
-		}
-		return s.connectCallback(w, r, pending, string(b))
-	}
 	var uid, loopbackURL string
 	token := auth.Token()
 	code := "kioku_loopback." + auth.Token()
@@ -231,7 +213,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		if uid == "" {
 			// Never merge accounts based on email alone.
 			uid = auth.Token()[:20]
-			st.Users[uid] = model.User{ID: uid, Name: identity.Name, Email: identity.Email, Identities: map[string]string{pending.Provider: identity.ID}, Connections: map[string]string{}}
+			st.Users[uid] = model.User{ID: uid, Name: identity.Name, Email: identity.Email, Identities: map[string]string{pending.Provider: identity.ID}}
 		}
 		// Refresh displayed profile data on every verified login. Membership is
 		// still keyed by immutable user ID, never merged by email.
@@ -315,55 +297,6 @@ func prune(st *model.State) {
 			delete(st.Sessions, k)
 		}
 	}
-}
-
-func (s *Server) providerCredential(ctx context.Context, uid, provider string) (runner.Secret, error) {
-	unlock, err := s.lockProject(ctx, "provider:"+uid+":"+provider)
-	if err != nil {
-		return "", err
-	}
-	defer unlock()
-	var sealed string
-	if err := s.DB.View(func(st model.State) error { sealed = st.Users[uid].Connections[provider]; return nil }); err != nil {
-		return "", err
-	}
-	if sealed == "" {
-		return "", fail(400, "run kioku connect "+provider+" first")
-	}
-	plain, err := s.Cipher.Open(sealed, uid+":"+provider)
-	if err != nil {
-		return "", err
-	}
-	var c auth.Credential
-	if err = json.Unmarshal([]byte(plain), &c); err != nil {
-		return "", err
-	}
-	p, ok := s.Config.Providers[provider]
-	if !ok {
-		return "", errors.New("provider unavailable")
-	}
-	original := c
-	c.ExpiresAt = time.Now().Add(-time.Minute)
-	fresh, err := p.Refresh(ctx, c)
-	if err != nil {
-		return "", fail(400, "connection expired; run kioku connect "+provider)
-	}
-	if fresh != original {
-		b, _ := json.Marshal(fresh)
-		err = s.DB.Update(func(st *model.State) error {
-			u := st.Users[uid]
-			if u.Connections[provider] != sealed {
-				return fail(409, "connection changed; retry")
-			}
-			u.Connections[provider] = s.Cipher.Seal(string(b), uid+":"+provider)
-			st.Users[uid] = u
-			return nil
-		})
-		if err != nil {
-			return "", err
-		}
-	}
-	return runner.Secret(fresh.AccessToken), nil
 }
 
 func identityContext(uid, provider, id string) string {

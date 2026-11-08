@@ -96,54 +96,54 @@ func TestGoogleExchangeValidatesOIDC(t *testing.T) {
 func TestProviderAuthorizationOptions(t *testing.T) {
 	verifier := Token()
 	for _, name := range []string{"google", "github"} {
-		for _, purpose := range []string{"login", "connect"} {
-			p := Provider{Name: name, ClientID: "id", RedirectURL: "https://kioku.example/callback"}
-			u, err := url.Parse(p.URL("state", verifier, purpose))
-			if err != nil {
-				t.Fatal(err)
+		p := Provider{Name: name, ClientID: "id", RedirectURL: "https://kioku.example/callback"}
+		u, err := url.Parse(p.URL("state", verifier))
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		if q.Get("state") != "state" || q.Get("code_challenge") != Challenge(verifier) || q.Get("code_challenge_method") != "S256" {
+			t.Fatal("missing state or PKCE")
+		}
+		if name == "google" {
+			if q.Get("nonce") != Challenge("kioku-oidc-nonce:"+verifier) || q.Get("nonce") == q.Get("code_challenge") {
+				t.Fatal("invalid nonce")
 			}
-			q := u.Query()
-			if q.Get("state") != "state" || q.Get("code_challenge") != Challenge(verifier) || q.Get("code_challenge_method") != "S256" {
-				t.Fatal("missing state or PKCE")
+			if q.Get("scope") != "openid email profile" || q.Get("access_type") != "" || q.Get("prompt") != "" {
+				t.Fatal("incorrect Google login options", q)
 			}
-			if name == "google" {
-				if q.Get("nonce") != Challenge("kioku-oidc-nonce:"+verifier) || q.Get("nonce") == q.Get("code_challenge") {
-					t.Fatal("invalid nonce")
-				}
-				if purpose == "connect" && (q.Get("access_type") != "offline" || q.Get("prompt") != "consent" || !strings.Contains(q.Get("scope"), "drive.readonly")) {
-					t.Fatal("lost Google connection options")
-				}
-			} else if q.Get("nonce") != "" || strings.Contains(q.Get("scope"), "repo") != (purpose == "connect") {
-				t.Fatal("incorrect GitHub options")
-			}
+		} else if q.Get("nonce") != "" || q.Get("scope") != "read:user user:email" {
+			t.Fatal("incorrect GitHub login options", q)
 		}
 	}
 }
 
 func TestRefreshPreservesOrRotatesToken(t *testing.T) {
-	for _, replacement := range []string{"", "rotated"} {
-		calls := 0
-		p := Provider{Name: "google", ClientID: "id", ClientSecret: "secret", Client: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-			calls++
-			if err := r.ParseForm(); err != nil {
-				t.Fatal(err)
+	for _, name := range []string{"google", "github"} {
+		for _, replacement := range []string{"", "rotated"} {
+			calls := 0
+			p := Provider{Name: name, ClientID: "id", ClientSecret: "secret", Client: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if err := r.ParseForm(); err != nil {
+					t.Fatal(err)
+				}
+				if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "original" || r.Form.Get("scope") != "" {
+					t.Fatal("incorrect refresh")
+				}
+				return jsonResponse(t, map[string]any{"access_token": "fresh", "refresh_token": replacement, "expires_in": 3600}), nil
+			})}}
+			c := Credential{AccessToken: "old", RefreshToken: "original", ExpiresAt: time.Now().Add(30 * time.Second)}
+			fresh, err := p.Refresh(context.Background(), c)
+			want := replacement
+			if want == "" {
+				want = "original"
 			}
-			if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "original" {
-				t.Fatal("incorrect refresh")
+			if err != nil || fresh.AccessToken != "fresh" || fresh.RefreshToken != want || calls != 1 {
+				t.Fatalf("refresh: %+v %v calls=%d", fresh, err, calls)
 			}
-			return jsonResponse(t, map[string]any{"access_token": "fresh", "refresh_token": replacement, "expires_in": 3600}), nil
-		})}}
-		c := Credential{AccessToken: "old", RefreshToken: "original", ExpiresAt: time.Now().Add(30 * time.Second)}
-		fresh, err := p.Refresh(context.Background(), c)
-		want := replacement
-		if want == "" {
-			want = "original"
-		}
-		if err != nil || fresh.AccessToken != "fresh" || fresh.RefreshToken != want || calls != 1 {
-			t.Fatalf("refresh: %+v %v calls=%d", fresh, err, calls)
-		}
-		if _, err := p.Refresh(context.Background(), fresh); err != nil || calls != 1 {
-			t.Fatal("unnecessary refresh")
+			if _, err := p.Refresh(context.Background(), fresh); err != nil || calls != 1 {
+				t.Fatal("unnecessary refresh")
+			}
 		}
 	}
 }
@@ -173,7 +173,7 @@ func TestUnknownProviderDoesNotUseAnotherProvider(t *testing.T) {
 		t.Fatal("unknown provider made a request")
 		return nil, nil
 	})}}
-	if p.URL("state", "verifier", "login") != "" {
+	if p.URL("state", "verifier") != "" {
 		t.Fatal("unknown provider produced an authorization URL")
 	}
 	if _, _, err := p.Exchange(context.Background(), "code", "verifier"); err == nil {

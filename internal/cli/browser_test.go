@@ -55,43 +55,31 @@ func TestBrowserOrigin(t *testing.T) {
 	}
 }
 
-func TestLoginAndConnectRejectUnsafeBrowserURLs(t *testing.T) {
-	for _, command := range []string{"login", "connect"} {
-		for _, target := range []string{"https://evil.example/auth/start", "file:///tmp/page.html", "kioku://login", "/auth/start", "-a Terminal"} {
-			t.Run(command+"/"+target, func(t *testing.T) {
-				redirect := make(chan string, 1)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if command == "login" {
-						var req map[string]string
-						if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-							t.Error(err)
-						}
-						redirect <- req["redirect_uri"]
-					}
-					w.WriteHeader(201)
-					json.NewEncoder(w).Encode(map[string]string{"device": "test-device", "url": target})
-				}))
-				defer server.Close()
-				var out bytes.Buffer
-				a := &App{Config: Config{Server: server.URL}, Client: server.Client(), Out: &out, Err: &out, ctx: context.Background()}
-				opened := false
-				stubBrowser(t, func(_, _ string) error { opened = true; return nil })
-				var err error
-				if command == "login" {
-					err = a.login(nil)
-				} else {
-					err = a.connect([]string{"google"})
+func TestLoginRejectsUnsafeBrowserURLs(t *testing.T) {
+	for _, target := range []string{"https://evil.example/auth/start", "file:///tmp/page.html", "kioku://login", "/auth/start", "-a Terminal"} {
+		t.Run(target, func(t *testing.T) {
+			redirect := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
 				}
-				if err == nil || !strings.Contains(err.Error(), server.URL) || opened || out.Len() != 0 {
-					t.Fatal("unsafe browser URL accepted or displayed", err, opened, out.String())
-				}
-				if command == "login" {
-					if response := fetchLoginPage(<-redirect); response.err == nil {
-						t.Fatal("listener leaked on invalid origin")
-					}
-				}
-			})
-		}
+				redirect <- req["redirect_uri"]
+				w.WriteHeader(201)
+				json.NewEncoder(w).Encode(map[string]string{"device": "test-device", "url": target})
+			}))
+			defer server.Close()
+			var out bytes.Buffer
+			a := &App{Config: Config{Server: server.URL}, Client: server.Client(), Out: &out, Err: &out, ctx: context.Background()}
+			opened := false
+			stubBrowser(t, func(_, _ string) error { opened = true; return nil })
+			if err := a.login(nil); err == nil || !strings.Contains(err.Error(), server.URL) || opened || out.Len() != 0 {
+				t.Fatal("unsafe browser URL accepted or displayed", err, opened, out.String())
+			}
+			if response := fetchLoginPage(<-redirect); response.err == nil {
+				t.Fatal("listener leaked on invalid origin")
+			}
+		})
 	}
 }
 

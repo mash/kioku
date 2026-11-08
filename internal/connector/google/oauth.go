@@ -13,14 +13,11 @@ import (
 	oauthprovider "golang.org/x/oauth2/google"
 )
 
-func (Connector) OAuth(purpose, verifier string) connector.OAuth {
+func (Connector) OAuth(verifier string) connector.OAuth {
 	scopes := []string{oidc.ScopeOpenID, "email", "profile"}
-	if purpose == "connect" {
-		scopes = append(scopes, "https://www.googleapis.com/auth/documents.readonly", "https://www.googleapis.com/auth/drive.readonly")
-	}
 	endpoint := oauthprovider.Endpoint
 	endpoint.AuthStyle = oauth2.AuthStyleInParams
-	return connector.OAuth{Endpoint: endpoint, Scopes: scopes, Options: authOptions(verifier, purpose)}
+	return connector.OAuth{Endpoint: endpoint, Scopes: scopes, Options: []oauth2.AuthCodeOption{oidc.Nonce(loginNonce(verifier))}}
 }
 
 // Bind the OIDC nonce to the one-use pending verifier without storing another
@@ -28,14 +25,6 @@ func (Connector) OAuth(purpose, verifier string) connector.OAuth {
 func loginNonce(verifier string) string {
 	h := sha256.Sum256([]byte("kioku-oidc-nonce:" + verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-func authOptions(verifier, purpose string) []oauth2.AuthCodeOption {
-	opts := []oauth2.AuthCodeOption{oidc.Nonce(loginNonce(verifier))}
-	if purpose == "connect" {
-		opts = append(opts, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
-	}
-	return opts
 }
 
 func (p Connector) LoginIdentity(ctx context.Context, get connector.Get, clientID string, token *oauth2.Token, verifier string) (connector.Identity, error) {

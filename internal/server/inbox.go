@@ -53,18 +53,16 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 	}
 	var body string
 	switch {
-	case req.URL != "" && req.File == nil && !req.Remove && req.SourceURL == "":
-		item.SourceURL, item.Status = req.URL, "pending"
-	case req.URL == "" && req.File != nil && !req.Remove && req.SourceURL == "":
+	case req.File != nil && !req.Remove && req.SourceURL == "":
 		doc, err := source.FileWithURL(req.File.Name, req.File.Content, req.File.SourceURL)
 		if err != nil {
 			return item, fail(400, err.Error())
 		}
 		item.SourceURL, item.Status, body = doc.URL, "fetched", req.File.Content
-	case req.URL == "" && req.File == nil && req.Remove && req.SourceURL != "":
+	case req.File == nil && req.Remove && req.SourceURL != "":
 		item.SourceURL, item.Status = req.SourceURL, "removed"
 	default:
-		return item, fail(400, "provide one URL, one file, or remove and source_url")
+		return item, fail(400, "provide one file, or remove and source_url")
 	}
 	if err := source.ValidateSourceURL(item.SourceURL); err != nil {
 		return item, fail(400, err.Error())

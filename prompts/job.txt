@@ -4,9 +4,7 @@ job: %s
 project: %s
 input: %s
 output: %s
-fetch_allowed: %t
 
-Read inbox/ and the existing wiki/. If fetch_allowed is false, report every
-pending item as a fetch failure; do not make outbound source requests.
+Read inbox/ and the existing wiki/. Process fetched and removed items.
 
 %s

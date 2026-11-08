@@ -14,7 +14,7 @@ func TestInboxSurvivesReopen(t *testing.T) {
 	}
 	if err = s.Update(func(st *model.State) error {
 		st.Projects["p"] = model.Project{ID: "p"}
-		st.Inbox["i"] = model.InboxItem{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", Status: "pending", RunID: "attempt"}
+		st.Inbox["i"] = model.InboxItem{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", Status: "fetched", RunID: "attempt"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -18,7 +18,7 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 	private := securityProject(t, f, other)
 	if err := f.db.Update(func(st *model.State) error {
 		st.Inbox["one"] = model.InboxItem{ID: "one", ProjectID: p.ID, SourceURL: "https://example.com/a", Status: "fetched", RunID: "pinned", Submitter: "owner"}
-		st.Inbox["two"] = model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Status: "pending"}
+		st.Inbox["two"] = model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Status: "fetched"}
 		st.Inbox["private"] = model.InboxItem{ID: "private", ProjectID: private.ID, SourceURL: "https://example.com/private", Status: "removed"}
 		return nil
 	}); err != nil {
@@ -47,7 +47,7 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 					for i, item := range entry.Inbox {
 						wantURL, wantStatus := "https://example.com/a", "fetched"
 						if i == 1 {
-							wantURL, wantStatus = "https://example.com/b", "pending"
+							wantURL, wantStatus = "https://example.com/b", "fetched"
 						}
 						if len(item) != 2 || item["source_url"] != wantURL || item["status"] != wantStatus {
 							t.Fatal(item)

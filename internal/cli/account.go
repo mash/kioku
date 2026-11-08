@@ -7,7 +7,7 @@ import (
 
 func (a *App) account(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: kioku account status|sessions|revoke-session|revoke-all|disconnect|unlink|delete")
+		return errors.New("usage: kioku account status|sessions|revoke-session|revoke-all|unlink|delete")
 	}
 	switch args[0] {
 	case "status":
@@ -18,8 +18,6 @@ func (a *App) account(args []string) error {
 		return a.accountRevokeSession(args)
 	case "revoke-all":
 		return a.accountRevokeAll(args)
-	case "disconnect":
-		return a.accountDisconnect(args)
 	case "unlink":
 		return a.accountUnlink(args)
 	case "delete":

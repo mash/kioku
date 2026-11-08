@@ -30,13 +30,9 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) err
 	err := s.DB.View(func(st model.State) error {
 		u := st.Users[uid]
 		identities := []string{}
-		connections := []string{}
 		sessions := []map[string]any{}
 		for provider := range u.Identities {
 			identities = append(identities, provider)
-		}
-		for provider := range u.Connections {
-			connections = append(connections, provider)
 		}
 		for id, session := range st.Sessions {
 			if session.UserID == uid && session.Expires.After(time.Now()) {
@@ -44,9 +40,8 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) err
 			}
 		}
 		sort.Strings(identities)
-		sort.Strings(connections)
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i]["id"].(string) < sessions[j]["id"].(string) })
-		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "identities": identities, "connections": connections, "sessions": sessions})
+		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "identities": identities, "sessions": sessions})
 		return nil
 	})
 	return err
@@ -80,11 +75,6 @@ func revokeAccountAccess(st *model.State, uid string) {
 			delete(st.Devices, id)
 		}
 	}
-	for id, pending := range st.OAuth {
-		if pending.UserID == uid {
-			delete(st.OAuth, id)
-		}
-	}
 	for key, grant := range st.OAuthTokens {
 		if grant.UserID == uid {
 			delete(st.OAuthTokens, key)
@@ -112,25 +102,6 @@ func (s *Server) revokeAllSessions(w http.ResponseWriter, r *http.Request, uid s
 	jsonOut(w, 200, map[string]bool{"revoked": true})
 	return nil
 }
-func (s *Server) disconnectProvider(w http.ResponseWriter, r *http.Request, uid string) error {
-	if err := s.confirmAccount(r, uid); err != nil {
-		return err
-	}
-	provider := r.PathValue("provider")
-	if provider != "google" && provider != "github" {
-		return fail(400, "unknown provider")
-	}
-	if err := s.updateAccount(r, uid, func(st *model.State) error {
-		user := st.Users[uid]
-		delete(user.Connections, provider)
-		st.Users[uid] = user
-		return nil
-	}); err != nil {
-		return err
-	}
-	jsonOut(w, 200, map[string]bool{"disconnected": true})
-	return nil
-}
 func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid string) error {
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
@@ -149,7 +120,6 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 			return fail(409, "sign in with another linked provider before unlinking this identity")
 		}
 		delete(user.Identities, provider)
-		delete(user.Connections, provider)
 		st.Users[uid] = user
 		for id, session := range st.Sessions {
 			if session.UserID == uid && session.IdentityProvider == provider {
@@ -159,11 +129,6 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 		for id, device := range st.Devices {
 			if device.UserID == uid && device.IdentityProvider == provider {
 				delete(st.Devices, id)
-			}
-		}
-		for id, pending := range st.OAuth {
-			if pending.UserID == uid && pending.Provider == provider {
-				delete(st.OAuth, id)
 			}
 		}
 		revokeAgents(st, uid, "")

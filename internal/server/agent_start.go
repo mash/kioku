@@ -125,11 +125,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		return err
 	}
 	base := s.Config.BaseURL + "/api/projects/" + job.ProjectID + "/jobs/" + job.ID + "/agent/"
-	fetchAllowed := false
-	if capable, ok := r.(interface{ SupportsSourceCredentials() bool }); ok {
-		fetchAllowed = capable.SupportsSourceCredentials()
-	}
-	spec := agentgen.InputSpec{JobID: job.ID, ProjectID: job.ProjectID, InputURL: base + "input", OutputURL: base + "output", FetchAllowed: fetchAllowed, Wiki: map[string]string{}}
+	spec := agentgen.InputSpec{JobID: job.ID, ProjectID: job.ProjectID, InputURL: base + "input", OutputURL: base + "output", Wiki: map[string]string{}}
 	for _, item := range items {
 		in := agentgen.InboxText{Item: item}
 		if item.Status == "fetched" {
@@ -152,14 +148,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
 		return err
 	}
-	var credentials []runner.Credential
-	if fetchAllowed {
-		credentials, err = s.sourceCredentials(ctx, &job, items)
-		if err != nil {
-			return err
-		}
-	}
-	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec) + credentialHints(credentials), SourceCredentials: credentials, BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
+	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: agentgen.FirstMessage(spec), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
 	if errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}

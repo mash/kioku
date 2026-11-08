@@ -109,15 +109,14 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 			Name      *string `json:"name"`
 			Content   *string `json:"content"`
 			SourceURL string  `json:"source_url"`
-			URL       string  `json:"url"`
 			Remove    bool    `json:"remove"`
 		}
 		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil {
 			return nil, invalid
 		}
-		req := model.PutRequest{URL: args.URL, Remove: args.Remove, SourceURL: args.SourceURL}
+		req := model.PutRequest{Remove: args.Remove, SourceURL: args.SourceURL}
 		if args.Name != nil || args.Content != nil {
-			if args.Name == nil || args.Content == nil || args.Remove || args.URL != "" {
+			if args.Name == nil || args.Content == nil || args.Remove {
 				return nil, invalid
 			}
 			req.File = &model.FileInput{Name: *args.Name, Content: *args.Content, SourceURL: args.SourceURL}

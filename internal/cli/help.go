@@ -6,10 +6,9 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
 
   version                             Show client build information
   agent login CODE | list|revoke      Manage project-scoped agent credentials
-  account status|sessions|revoke-session|revoke-all|disconnect|unlink|delete
+  account status|sessions|revoke-session|revoke-all|unlink|delete
   login [--provider google|github]      Browser login
   logout | whoami
-  connect google|github                Authorize source access
   org create SLUG | org list
   project create ORG/PROJECT | project join INVITE_URL        Create or join a project
   project list                                List participating projects
@@ -19,7 +18,7 @@ Global flags (before command): -C DIRECTORY --server ORIGIN
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove sources at the next generation
-  put [URL|FILES...] Save sources, or changed inbox files
+  put [FILES...] Save sources, or changed inbox files
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [ORG/PROJECT]          Bind cwd on first pull; fetch one project
   status | open

@@ -36,18 +36,18 @@ func (p Provider) oauthContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, oauth2.HTTPClient, client)
 }
 
-func (p Provider) config(purpose, verifier string) (oauth2.Config, []oauth2.AuthCodeOption, error) {
+func (p Provider) config(verifier string) (oauth2.Config, []oauth2.AuthCodeOption, error) {
 	implementation, ok := registry.ByName(p.Name)
 	if !ok {
 		return oauth2.Config{}, nil, fmt.Errorf("unsupported provider %q", p.Name)
 	}
-	settings := implementation.OAuth(purpose, verifier)
+	settings := implementation.OAuth(verifier)
 
 	return oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: p.RedirectURL, Endpoint: settings.Endpoint, Scopes: settings.Scopes}, settings.Options, nil
 }
 
-func (p Provider) URL(state, verifier, purpose string) string {
-	config, options, err := p.config(purpose, verifier)
+func (p Provider) URL(state, verifier string) string {
+	config, options, err := p.config(verifier)
 	if err != nil {
 		return ""
 	}
@@ -61,10 +61,10 @@ func credential(token *oauth2.Token) Credential {
 }
 
 // Exchange verifies the login identity before returning credentials to the caller.
-// ID tokens are transient and are never persisted in a session or connection.
+// ID tokens are transient and are never persisted in a session.
 func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, connector.Identity, error) {
 	ctx = p.oauthContext(ctx)
-	config, _, err := p.config("login", verifier)
+	config, _, err := p.config(verifier)
 	if err != nil {
 		return Credential{}, connector.Identity{}, err
 	}
@@ -86,9 +86,9 @@ func (p Provider) Refresh(ctx context.Context, c Credential) (Credential, error)
 		return c, nil
 	}
 	if c.RefreshToken == "" {
-		return c, errors.New("connection expired; reconnect the provider")
+		return c, errors.New("login expired; sign in again")
 	}
-	config, _, err := p.config("connect", "")
+	config, _, err := p.config("")
 	if err != nil {
 		return Credential{}, err
 	}

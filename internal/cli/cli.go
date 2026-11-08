@@ -102,7 +102,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	// Project configuration may come from an untrusted checkout. It cannot
 	// authorize sending login codes or establishing credentials on another server.
-	authenticating := commands[0] == "login" || commands[0] == "connect" ||
+	authenticating := commands[0] == "login" ||
 		(len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login")
 	if authenticating {
 		if err := a.trustAuthenticationServer(); err != nil {
@@ -165,8 +165,6 @@ func (a *App) dispatch(args []string) error {
 		return a.logout()
 	case "whoami":
 		return a.whoami()
-	case "connect":
-		return a.connect(args[1:])
 	case "org":
 		return a.organization(args[1:])
 	case "project":

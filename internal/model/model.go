@@ -62,11 +62,10 @@ func (o Organization) MarshalJSON() ([]byte, error) {
 }
 
 type User struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Email       string            `json:"email"`
-	Identities  map[string]string `json:"identities,omitempty"`
-	Connections map[string]string `json:"connections,omitempty"` // encrypted OAuth credentials
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Email      string            `json:"email"`
+	Identities map[string]string `json:"identities,omitempty"`
 }
 type Project struct {
 	StorageBucket           string            `json:"storage_bucket,omitempty"`
@@ -123,14 +122,11 @@ type Session struct {
 type OAuthState struct {
 	ReturnPath string    `json:"return_path,omitempty"`
 	Provider   string    `json:"provider"`
-	Purpose    string    `json:"purpose"`
-	UserID     string    `json:"user_id,omitempty"`
 	Device     string    `json:"device,omitempty"`
 	Verifier   string    `json:"verifier"`
 	Expires    time.Time `json:"expires"`
 }
 type Device struct {
-	Purpose             string    `json:"purpose,omitempty"`
 	LoopbackChallenge   string    `json:"loopback_challenge,omitempty"`
 	LoopbackRedirectURI string    `json:"loopback_redirect_uri,omitempty"`
 	LoopbackState       string    `json:"loopback_state,omitempty"`
@@ -209,7 +205,6 @@ type FileInput struct {
 	Content   string `json:"content"`
 }
 type PutRequest struct {
-	URL       string     `json:"url,omitempty"`
 	File      *FileInput `json:"file,omitempty"`
 	Remove    bool       `json:"remove,omitempty"`
 	SourceURL string     `json:"source_url,omitempty"`

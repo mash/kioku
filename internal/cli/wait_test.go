@@ -49,7 +49,6 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	}
 	operations := []func() error{
 		func() error { return a.put([]string{file}) },
-		func() error { return a.put([]string{"https://example.com/evidence"}) },
 		func() error { return a.deleteSources([]string{"https://example.com/source"}) },
 		func() error { return a.job([]string{"retry", "job"}) },
 		func() error { return a.generate(nil) },

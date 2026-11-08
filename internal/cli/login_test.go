@@ -42,15 +42,8 @@ type loginFixture struct {
 }
 
 func newLoginFixture(t *testing.T) *loginFixture {
-	return newAuthFixture(t, false)
-}
-
-func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 	t.Helper()
 	startPath, finishPath, header := "/api/auth/loopback", "/api/auth/loopback/token", ""
-	if connect {
-		startPath, finishPath, header = "/api/connect/google", "/api/connect/google/complete", "Bearer existing-human-token"
-	}
 	f := &loginFixture{started: make(chan map[string]string, 1)}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.Header.Get("Authorization") != header {
@@ -89,10 +82,6 @@ func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 				f.token(w)
 				return
 			}
-			if connect {
-				json.NewEncoder(w).Encode(map[string]any{"connected": true, "provider": "google"})
-				return
-			}
 			json.NewEncoder(w).Encode(map[string]string{"token": loopbackTestToken, "provider": "google", "name": "Test User", "email": "user@example.com"})
 		default:
 			t.Error("unexpected request", r.URL.Path)
@@ -103,13 +92,6 @@ func newAuthFixture(t *testing.T, connect bool) *loginFixture {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	f.app = &App{AuthDir: t.TempDir(), Config: Config{Server: f.server.URL}, Client: f.server.Client(), Out: &f.out, Err: &f.errOut, ctx: ctx}
-	if connect {
-		f.app.kind = credentialHuman
-		f.app.Config.Token = "existing-human-token"
-		if err := f.app.saveCredentials(); err != nil {
-			t.Fatal(err)
-		}
-	}
 	f.app.Client.Timeout = 3 * time.Second
 	return f
 }

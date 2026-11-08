@@ -248,7 +248,7 @@ func TestLostCreateResponseIsRecoveredByAttempt(t *testing.T) {
 	}
 }
 
-func TestMultipleCredentialsShareOneVaultWithHeaderDestinations(t *testing.T) {
+func TestVaultContainsOnlyJobTokenWithHeaderDestination(t *testing.T) {
 	count := 0
 	r := setup(t, func(w http.ResponseWriter, q *http.Request) {
 		var b map[string]any
@@ -260,20 +260,14 @@ func TestMultipleCredentialsShareOneVaultWithHeaderDestinations(t *testing.T) {
 			a := b["auth"].(map[string]any)
 			name := a["secret_name"].(string)
 			want := "kioku.test"
-			if name == "GITHUB_TOKEN_ACME" {
-				want = "api.github.com"
-			}
-			if name == "GOOGLE_ACCESS_TOKEN" {
-				want = "docs.googleapis.com"
-			}
 			hosts := a["networking"].(map[string]any)["allowed_hosts"].([]any)
-			if a["type"] != "environment_variable" || len(hosts) != 1 || hosts[0] != want || a["injection_location"].(map[string]any)["header"] != true {
+			if name != "KIOKU_JOB_TOKEN" || a["type"] != "environment_variable" || len(hosts) != 1 || hosts[0] != want || a["injection_location"].(map[string]any)["header"] != true {
 				t.Fatal(a)
 			}
 			count++
 			fmt.Fprint(w, `{"id":"credential"}`)
 		case "/agents/sessions":
-			if strings.Contains(fmt.Sprint(b), "-secret") {
+			if strings.Contains(fmt.Sprint(b), string(spec().Token)) {
 				t.Fatal("secret in session")
 			}
 			fmt.Fprint(w, `{"id":"session"}`)
@@ -282,11 +276,10 @@ func TestMultipleCredentialsShareOneVaultWithHeaderDestinations(t *testing.T) {
 		}
 	})
 	s := spec()
-	s.SourceCredentials = []runner.Credential{{Name: "GITHUB_TOKEN_ACME", Value: "github-secret", AllowedHosts: []string{"api.github.com"}}, {Name: "GOOGLE_ACCESS_TOKEN", Value: "google-secret", AllowedHosts: []string{"docs.googleapis.com"}}}
 	if _, err := r.Start(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
-	if count != 3 {
+	if count != 1 {
 		t.Fatal(count)
 	}
 }

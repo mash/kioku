@@ -320,17 +320,9 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 	}
 }
 
-func TestLoopbackAndConnectSeparation(t *testing.T) {
+func TestLoopbackExpiredRequest(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
-	if status := f.request("GET", "/auth/google/start?connect="+a.device+"&ticket=anything", "", nil, nil); status != 403 {
-		t.Fatal(status)
-	}
-	token := f.login("owner@example.com")
-	connection := newConnectAttempt(t, f, token)
-	if status := f.request("GET", "/auth/google/start?device="+connection.device, "", nil, nil); status != 410 {
-		t.Fatal(status)
-	}
 	if err := f.db.Update(func(st *model.State) error {
 		d := st.Devices[a.device]
 		d.Expires = time.Now().Add(-time.Second)

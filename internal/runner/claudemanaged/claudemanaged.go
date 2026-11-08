@@ -130,5 +130,3 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	}
 	return errors.Join(errs...)
 }
-
-func (r *Runner) SupportsSourceCredentials() bool { return true }

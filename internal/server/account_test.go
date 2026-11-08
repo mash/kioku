@@ -25,24 +25,14 @@ func TestAccountSessionRevocationAndCredentialRedaction(t *testing.T) {
 	human := f.login("owner@example.com")
 	second := f.login("owner@example.com")
 	other := f.login("other@example.com")
-	uid := accountID(t, f, human)
 	p := securityProject(t, f, human)
 	_, agent := testAgent(t, f, human, p.ID, "read")
-	_ = f.db.Update(func(st *model.State) error {
-		u := st.Users[uid]
-		if u.Connections == nil {
-			u.Connections = map[string]string{}
-		}
-		u.Connections["github"] = "encrypted-private-value"
-		st.Users[uid] = u
-		return nil
-	})
 	var status map[string]any
 	if c := f.request("GET", "/api/account", human, nil, &status); c != 200 {
 		t.Fatal(c)
 	}
 	text, _ := json.Marshal(status)
-	if strings.Contains(string(text), "encrypted-private-value") || strings.Contains(string(text), "identity_credential") || strings.Contains(string(text), human) {
+	if strings.Contains(string(text), "identity_credential") || strings.Contains(string(text), human) {
 		t.Fatal("account view exposed credentials")
 	}
 	if c := f.request("DELETE", "/api/account/sessions/"+auth.Hash(other), human, nil, nil); c != 404 {
@@ -66,7 +56,7 @@ func TestAccountSessionRevocationAndCredentialRedaction(t *testing.T) {
 		t.Fatal("other account affected", c)
 	}
 }
-func TestProviderAdministrationPreservesLoginAndRevokesUnlinkedIdentity(t *testing.T) {
+func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	uid := accountID(t, f, human)
@@ -78,22 +68,9 @@ func TestProviderAdministrationPreservesLoginAndRevokesUnlinkedIdentity(t *testi
 	extra := auth.Token()
 	_ = f.db.Update(func(st *model.State) error {
 		u := st.Users[uid]
-		if u.Connections == nil {
-			u.Connections = map[string]string{}
-		}
 		u.Identities["github"] = "github-user"
-		u.Connections["github"] = "encrypted-test"
 		st.Users[uid] = u
 		st.Sessions[auth.Hash(extra)] = model.Session{UserID: uid, IdentityProvider: "github", IdentityID: "github-user", Expires: time.Now().Add(time.Hour)}
-		return nil
-	})
-	if c := f.request("DELETE", "/api/account/connections/github", human, nil, nil); c != 200 {
-		t.Fatal(c)
-	}
-	_ = f.db.View(func(st model.State) error {
-		if st.Users[uid].Identities["github"] == "" || st.Users[uid].Connections["github"] != "" {
-			t.Error("disconnect also unlinked login or retained source credentials")
-		}
 		return nil
 	})
 	if c := f.request("DELETE", "/api/account/identities/google", human, nil, nil); c != 409 {

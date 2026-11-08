@@ -310,6 +310,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		args    map[string]any
 		message string
 	}{
+		{map[string]any{"project": project.Namespace, "url": "https://example.com"}, "unknown tool or invalid arguments"},
 		{map[string]any{"project": project.Namespace, "name": "record.pdf", "content": "text"}, "unsupported file extension; use text, Markdown, HTML or code"},
 		{map[string]any{"project": project.Namespace, "name": "record.md"}, "unknown tool or invalid arguments"},
 		{map[string]any{"project": project.Namespace, "name": "record.md", "content": "Evidence"}, "original source URL is required: use source_url frontmatter or --source-url"},

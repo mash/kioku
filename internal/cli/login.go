@@ -8,7 +8,6 @@ import (
 	"html"
 	"net"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -22,17 +21,12 @@ func (a *App) login(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	return a.loopback(*provider, false)
+	return a.loopback(*provider)
 }
 
-func (a *App) loopback(provider string, connect bool) error {
+func (a *App) loopback(provider string) error {
 	startPath, finishPath := "/api/auth/loopback", "/api/auth/loopback/token"
 	action, label := "login", "ログイン"
-	if connect {
-		startPath = "/api/connect/" + url.PathEscape(provider)
-		finishPath = startPath + "/complete"
-		action, label = "connect "+provider, "接続"
-	}
 	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Minute)
 	defer cancel()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -88,7 +82,6 @@ func (a *App) loopback(provider string, connect bool) error {
 		var err error
 		var response struct {
 			Token, Provider, Name, Email string
-			Connected                    bool
 		}
 		switch {
 		case q.Has("error"):
@@ -101,16 +94,13 @@ func (a *App) loopback(provider string, connect bool) error {
 			err = fmt.Errorf("%s callback did not include a code", action)
 		default:
 			_, err = attempt.request("POST", finishPath, map[string]string{"device": device.Device, "code": q.Get("code"), "code_verifier": verifier}, &response)
-			if err == nil && connect && (!response.Connected || response.Provider != provider) {
-				err = errors.New("server did not confirm the connection")
-			}
-			if err == nil && !connect && response.Token == "" {
+			if err == nil && response.Token == "" {
 				err = errors.New("server returned an empty login token")
 			}
 			if err == nil {
 				err = ctx.Err()
 			}
-			if err == nil && !connect {
+			if err == nil {
 				attempt.Config.Token = response.Token
 				err = attempt.saveCredentials()
 			}
@@ -119,9 +109,6 @@ func (a *App) loopback(provider string, connect bool) error {
 			loginPage(w, http.StatusBadRequest, label+"に失敗しました", err.Error()+"\nkioku "+action+" をもう一度実行してください。")
 		} else {
 			accountMessage = fmt.Sprintf("ログインしました: %s (%s)", response.Email, response.Provider)
-			if connect {
-				accountMessage = fmt.Sprintf("接続しました: %s", response.Provider)
-			}
 			loginPage(w, http.StatusOK, accountMessage, response.Name+"\nこのタブを閉じて CLI に戻ってください。")
 		}
 		result <- err

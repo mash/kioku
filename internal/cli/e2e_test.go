@@ -72,7 +72,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 	// Authentication is seeded only in this test, never through a server route.
 	token := auth.Token()
 	if err = db.Update(func(st *model.State) error {
-		st.Users["test-user"] = model.User{ID: "test-user", Name: "Alice", Email: "alice@example.com", Identities: map[string]string{"test": "alice"}, Connections: map[string]string{}}
+		st.Users["test-user"] = model.User{ID: "test-user", Name: "Alice", Email: "alice@example.com", Identities: map[string]string{"test": "alice"}}
 		st.Sessions[auth.Hash(token)] = model.Session{UserID: "test-user", Expires: time.Now().Add(time.Hour)}
 		return nil
 	}); err != nil {

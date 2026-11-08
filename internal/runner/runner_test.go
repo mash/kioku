@@ -26,19 +26,28 @@ func TestZeroStatusIsUnknown(t *testing.T) {
 	}
 }
 
-func TestCredentialRedactionAndDestinationValidation(t *testing.T) {
-	credential := Credential{Name: "GOOGLE_ACCESS_TOKEN", Value: "private-value", AllowedHosts: []string{"docs.googleapis.com"}}
-	spec := RunSpec{Token: "job-private", SourceCredentials: []Credential{credential}}
+func TestVaultCredentialsContainsOnlyJobToken(t *testing.T) {
+	spec := RunSpec{Token: "job-private"}
+	credentials, err := VaultCredentials(spec, "kioku.test")
+	if err != nil || len(credentials) != 1 {
+		t.Fatal(credentials, err)
+	}
+	c := credentials[0]
+	if c.Name != "KIOKU_JOB_TOKEN" || c.Value != spec.Token || len(c.AllowedHosts) != 1 || c.AllowedHosts[0] != "kioku.test" {
+		t.Fatal(c)
+	}
 	b, _ := json.Marshal(spec)
-	for _, rendered := range []string{string(b), fmt.Sprintf("%+v", spec), fmt.Sprintf("%#v", spec)} {
-		if strings.Contains(rendered, "private-value") || strings.Contains(rendered, "job-private") {
+	for _, rendered := range []string{string(b), fmt.Sprintf("%+v", spec), fmt.Sprintf("%#v", credentials)} {
+		if strings.Contains(rendered, "job-private") {
 			t.Fatal("secret leaked")
 		}
 	}
-	for _, c := range []Credential{{Name: "KIOKU_JOB_TOKEN", Value: "x", AllowedHosts: []string{"evil.test"}}, {Name: "BAD-NAME", Value: "x", AllowedHosts: []string{"example.com"}}, {Name: "TOKEN", Value: "x"}, {Name: "TOKEN", Value: "x", AllowedHosts: []string{"*"}}} {
-		spec.SourceCredentials = []Credential{c}
-		if _, err := VaultCredentials(spec, "kioku.test"); err == nil {
-			t.Fatal("invalid destination accepted")
+	for _, host := range []string{"", "*", "bad/host", "bad@host", "bad host"} {
+		if _, err := VaultCredentials(spec, host); err == nil {
+			t.Fatal("invalid destination accepted", host)
 		}
+	}
+	if _, err := VaultCredentials(RunSpec{}, "kioku.test"); err == nil {
+		t.Fatal("empty token accepted")
 	}
 }

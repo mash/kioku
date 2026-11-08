@@ -47,7 +47,6 @@ type Runners interface {
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
-	GitHubTokens GitHubTokenProvider
 	runners      Runners
 	Config       Config
 	DB           *store.Store
@@ -160,7 +159,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/account", s.wrap(s.deleteAccount, true))
 	s.mux.HandleFunc("DELETE /api/account/sessions/{session}", s.wrap(s.revokeSession, true))
 	s.mux.HandleFunc("POST /api/account/revoke-all", s.wrap(s.revokeAllSessions, true))
-	s.mux.HandleFunc("DELETE /api/account/connections/{provider}", s.wrap(s.disconnectProvider, true))
 	s.mux.HandleFunc("DELETE /api/account/identities/{provider}", s.wrap(s.unlinkIdentity, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/owner", s.wrap(s.transferProject, true))
 	s.mux.HandleFunc("POST /api/orgs/{org}/owner", s.wrap(s.transferOrganization, true))
@@ -193,8 +191,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /auth/{provider}/callback", s.wrap(s.oauthCallback, false))
 	s.mux.HandleFunc("POST /api/logout", s.wrap(s.logout, true))
 	s.mux.HandleFunc("GET /api/me", s.wrap(s.me, true))
-	s.mux.HandleFunc("POST /api/connect/{provider}", s.wrap(s.connect, true))
-	s.mux.HandleFunc("POST /api/connect/{provider}/complete", s.wrap(s.completeConnect, true))
 	s.mux.HandleFunc("GET /api/projects", s.wrap(s.projects, true))
 	s.mux.HandleFunc("POST /api/projects", s.wrap(s.createProject, true))
 	s.mux.HandleFunc("POST /api/join", s.wrap(s.join, true))
@@ -338,12 +334,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
 	}
 	return s.DB.View(func(st model.State) error {
 		u := st.Users[uid]
-		providers := []string{}
-		for p := range u.Connections {
-			providers = append(providers, p)
-		}
-		sort.Strings(providers)
-		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "connections": providers})
+		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email})
 		return nil
 	})
 }

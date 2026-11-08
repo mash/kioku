@@ -42,7 +42,6 @@ type RunSpec struct {
 	Key                 AttemptKey
 	InputURL, OutputURL string
 	Token               Secret
-	SourceCredentials   []Credential
 	FirstMessage        string
 	BudgetCents         int64
 	Deadline            time.Time

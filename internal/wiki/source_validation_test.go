@@ -20,7 +20,7 @@ func TestSourceValidationRules(t *testing.T) {
 		{"c", map[string]string{"wiki/source-a.md": page("https://example.com/a")}, nil, []model.InboxItem{{Status: "removed", SourceURL: "https://example.com/a"}}, "(c)"},
 		{"d", nil, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, nil, "(d)"},
 		{"e", nil, nil, []model.InboxItem{{Status: "fetched", SourceURL: "https://example.com/a"}}, "(e)"},
-		{"updated-name", map[string]string{"wiki/source-new.md": page("https://example.com/a")}, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, []model.InboxItem{{Status: "pending", SourceURL: "https://example.com/a"}}, ""},
+		{"updated-name", map[string]string{"wiki/source-new.md": page("https://example.com/a")}, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, []model.InboxItem{{Status: "fetched", SourceURL: "https://example.com/a"}}, ""},
 		{"slug-collision", map[string]string{"wiki/source-title.md": page("https://example.com/a"), "wiki/source-title-2.md": page("https://example.com/b")}, nil, nil, ""},
 		{"removed", nil, map[string]string{"wiki/source-a.md": page("https://example.com/a")}, []model.InboxItem{{Status: "removed", SourceURL: "https://example.com/a"}}, ""},
 	} {

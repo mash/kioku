@@ -15,7 +15,7 @@ import (
 )
 
 func TestStatusReadsInboxFromProjectListing(t *testing.T) {
-	for _, items := range [][]model.InboxEntry{{}, {{SourceURL: "https://example.com/a", Status: "pending"}, {SourceURL: "https://example.com/b", Status: "removed"}}} {
+	for _, items := range [][]model.InboxEntry{{}, {{SourceURL: "https://example.com/a", Status: "fetched"}, {SourceURL: "https://example.com/b", Status: "removed"}}} {
 		t.Run(fmt.Sprint(len(items)), func(t *testing.T) {
 			requests := 0
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

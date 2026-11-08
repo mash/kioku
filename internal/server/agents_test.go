@@ -69,7 +69,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		}
 	}
 	for _, route := range []struct{ method, path string }{
-		{"POST", "/api/projects"}, {"GET", "/api/orgs"}, {"GET", "/api/account"}, {"POST", "/api/account/revoke-all"}, {"POST", "/api/connect/github"},
+		{"POST", "/api/projects"}, {"GET", "/api/orgs"}, {"GET", "/api/account"}, {"POST", "/api/account/revoke-all"},
 		{"POST", "/api/projects/" + a.ID + "/invites"}, {"DELETE", "/api/projects/" + a.ID},
 		{"POST", "/api/projects/" + a.ID + "/put"},
 	} {
@@ -107,7 +107,7 @@ func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
 	p := securityProject(t, f, human)
 	id, token := testAgent(t, f, human, p.ID, "write")
 	for _, u := range []string{"https://docs.google.com/document/d/private/edit", "https://github.com/example/private/blob/main/secret.md", "https://example.com"} {
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{URL: u}, nil); c != 202 {
+		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: "Source body", SourceURL: u}}, nil); c != 202 {
 			t.Fatal("provider/URL delegation", c)
 		}
 	}

@@ -122,7 +122,7 @@ func (f *fixture) login(email string) string {
 		}
 		if uid == "" {
 			uid = auth.Token()[:20]
-			st.Users[uid] = model.User{ID: uid, Name: strings.Split(email, "@")[0], Email: email, Identities: map[string]string{"google": uid}, Connections: map[string]string{}}
+			st.Users[uid] = model.User{ID: uid, Name: strings.Split(email, "@")[0], Email: email, Identities: map[string]string{"google": uid}}
 		}
 		data, _ := json.Marshal(auth.Credential{AccessToken: uid})
 		proof := f.s.Cipher.Seal(string(data), identityContext(uid, "google", uid))

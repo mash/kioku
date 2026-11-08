@@ -27,7 +27,7 @@ type Variables struct {
 	BaseURL, ClientVersion string
 	MaxOutputBytes         int64
 }
-type JobVariables struct{ JobID, ProjectID, InputURL, OutputURL string }
+type JobVariables struct{ JobID, Namespace, InputURL, OutputURL string }
 type Model struct{ ID, Effort, Speed, InferenceGeo string }
 type Source struct{ File, Source, SHA256 string }
 
@@ -50,11 +50,11 @@ func (r *Rendered) Log() {
 	}
 }
 
-var jobVariableNames = []string{"JobID", "ProjectID", "InputURL", "OutputURL"}
+var jobVariableNames = []string{"JobID", "Namespace", "InputURL", "OutputURL"}
 
 func (r *Rendered) User(job JobVariables) string {
 	values := maps.Clone(r.vars)
-	for i, value := range []string{job.JobID, job.ProjectID, job.InputURL, job.OutputURL} {
+	for i, value := range []string{job.JobID, job.Namespace, job.InputURL, job.OutputURL} {
 		values[jobVariableNames[i]] = value
 	}
 	return r.user.render(values)
@@ -139,7 +139,7 @@ func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered
 		return nil, err
 	}
 	// Job values arrive at runtime; use non-empty placeholders for validation.
-	if strings.TrimSpace(r.User(JobVariables{JobID: "job", ProjectID: "project", InputURL: "input", OutputURL: "output"})) == "" {
+	if strings.TrimSpace(r.User(JobVariables{JobID: "job", Namespace: "project", InputURL: "input", OutputURL: "output"})) == "" {
 		return nil, invalid(UserFile, "empty body", 1)
 	}
 	if !fields["InputURL"] || !fields["OutputURL"] {

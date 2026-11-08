@@ -19,8 +19,8 @@ func TestNamespaceSelectionAndCLIOutput(t *testing.T) {
 		routes = append(routes, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/projects":
-			json.NewEncoder(w).Encode([]map[string]string{{"id": internalID, "namespace": "acme/platform", "name": "Platform"}})
-		case "/api/projects/" + internalID + "/usage":
+			json.NewEncoder(w).Encode([]map[string]string{{"namespace": "acme/platform", "name": "Platform"}})
+		case "/api/projects/acme/platform/usage":
 			w.Write([]byte(`{"project_id":"private-project-id","count":9007199254740993}`))
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
@@ -77,7 +77,7 @@ func TestConfigStoresNamespaceOnly(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"server":"https://example.test","token":"test-token","project":"old-id","namespace":"acme/platform"}`), &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Project != "" || config.Namespace != "acme/platform" || config.Token != "" {
+	if config.Namespace != "acme/platform" || config.Token != "" {
 		t.Fatal("namespace not loaded or internal ID accepted")
 	}
 	b, err := json.Marshal(config)

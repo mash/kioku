@@ -125,8 +125,12 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err != nil || job.Run == nil {
 		return err
 	}
-	base := s.Config.BaseURL + "/api/projects/" + job.ProjectID + "/jobs/" + job.ID + "/agent/"
-	spec := agentgen.InputSpec{JobID: job.ID, ProjectID: job.ProjectID, InputURL: base + "input", OutputURL: base + "output", Wiki: map[string]string{}}
+	var namespace string
+	if err := s.DB.View(func(st model.State) error { namespace = st.Projects[job.ProjectID].Namespace; return nil }); err != nil {
+		return err
+	}
+	base := s.Config.BaseURL + "/api/projects/" + namespace + "/jobs/" + job.ID + "/agent/"
+	spec := agentgen.InputSpec{JobID: job.ID, Namespace: namespace, InputURL: base + "input", OutputURL: base + "output", Wiki: map[string]string{}}
 	for _, item := range items {
 		in := agentgen.InboxText{Item: item}
 		if item.Status == "fetched" {
@@ -149,7 +153,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
 		return err
 	}
-	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: s.Config.Prompts.User(prompts.JobVariables{JobID: spec.JobID, ProjectID: spec.ProjectID, InputURL: spec.InputURL, OutputURL: spec.OutputURL}), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
+	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: s.Config.Prompts.User(prompts.JobVariables{JobID: spec.JobID, Namespace: spec.Namespace, InputURL: spec.InputURL, OutputURL: spec.OutputURL}), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
 	if errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}

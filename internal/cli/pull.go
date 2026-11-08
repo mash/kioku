@@ -4,6 +4,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+
+	"github.com/mash/kioku/internal/model"
 )
 
 func (a *App) pull() error { return a.pullCommand(nil) }
@@ -51,9 +53,17 @@ func (a *App) bindPullProject(namespace string) error {
 		return errors.New("working directory is already bound to a different project")
 	}
 	a.Config.Namespace = namespace
-	a.Config.Project = ""
 	if _, err := a.projectPath(); err != nil {
 		return err
 	}
-	return a.saveProjectConfig()
+	var projects []model.Project
+	if _, err := a.request("GET", "/api/projects", nil, &projects); err != nil {
+		return err
+	}
+	for _, project := range projects {
+		if project.Namespace == namespace {
+			return a.saveProjectConfig()
+		}
+	}
+	return errSyncForbidden
 }

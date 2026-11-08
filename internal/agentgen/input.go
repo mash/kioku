@@ -25,7 +25,7 @@ type InboxText struct {
 	Text string
 }
 type InputSpec struct {
-	JobID, ProjectID, InputURL, OutputURL string
+	JobID, Namespace, InputURL, OutputURL string
 	Inbox                                 []InboxText
 	Wiki                                  map[string]string
 }

@@ -10,7 +10,6 @@ type input struct {
 	Version      int       `json:"version"`
 	JobID        string    `json:"job_id"`
 	AttemptID    string    `json:"attempt_id"`
-	ProjectID    string    `json:"project_id"`
 	InputURL     string    `json:"input_url"`
 	OutputURL    string    `json:"output_url"`
 	JobToken     string    `json:"job_token"`

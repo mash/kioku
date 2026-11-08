@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -47,20 +46,14 @@ func (a *App) status() error {
 	if err != nil {
 		return err
 	}
-	var local manifest
-	if b, err := os.ReadFile(filepath.Join(a.metadataDir(), "manifest.json")); err == nil {
-		if err = json.Unmarshal(b, &local); err != nil {
-			return err
-		}
-	}
-	result := map[string]any{"namespace": a.Config.Namespace, "server": a.Config.Server, "local_revision": local.Revision, "local_sync_incomplete": local.Incomplete, "pending_files": changed}
+	result := map[string]any{"namespace": a.Config.Namespace, "server": a.Config.Server, "pending_files": changed}
 	var projects []model.ProjectEntry
 	if _, err = a.request("GET", "/api/projects", nil, &projects); err != nil {
 		return err
 	}
 	found := false
 	for _, p := range projects {
-		if p.ID == a.Config.Project {
+		if p.Namespace == a.Config.Namespace {
 			result["inbox"] = p.Inbox
 			result["inbox_count"] = p.InboxCount
 			result["remote_revision"] = p.Revision

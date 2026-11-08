@@ -36,7 +36,7 @@ func TestEmailInviteUsesCurrentProviderProof(t *testing.T) {
 	var invite struct {
 		URL string `json:"url"`
 	}
-	f.request("POST", "/api/projects/"+p.ID+"/invites", owner, map[string]string{"email": "former@company.example"}, &invite)
+	f.request("POST", "/api/projects/"+p.Namespace+"/invites", owner, map[string]string{"email": "former@company.example"}, &invite)
 	provider := f.s.Config.Providers["google"]
 	provider.Client = &http.Client{Transport: oauthTransport(func(*http.Request) (*http.Response, error) {
 		b, _ := json.Marshal(map[string]any{"sub": user.ID, "name": "Current user", "email": "new@elsewhere.example", "email_verified": true})
@@ -55,7 +55,7 @@ func TestEmailInviteUsesCurrentProviderProof(t *testing.T) {
 		}
 		return nil
 	})
-	f.request("POST", "/api/projects/"+p.ID+"/invites", owner, map[string]string{"email": "new@elsewhere.example"}, &invite)
+	f.request("POST", "/api/projects/"+p.Namespace+"/invites", owner, map[string]string{"email": "new@elsewhere.example"}, &invite)
 	if c := f.request("POST", "/api/join", token, map[string]string{"token": invite.URL}, nil); c != 200 {
 		t.Fatalf("current email denied: %d", c)
 	}
@@ -70,7 +70,7 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 			var invite struct {
 				URL string `json:"url"`
 			}
-			f.request("POST", "/api/projects/"+p.ID+"/invites", owner, map[string]string{"email": "member@example.com"}, &invite)
+			f.request("POST", "/api/projects/"+p.Namespace+"/invites", owner, map[string]string{"email": "member@example.com"}, &invite)
 			expected := 502
 			if mode == "legacy session" {
 				if err := f.db.Update(func(st *model.State) error {
@@ -141,7 +141,7 @@ func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
 	defer unlock()
 	body := &pausedReader{make(chan struct{}), make(chan struct{})}
 	defer close(body.release)
-	req := httptest.NewRequest("POST", "/api/projects/"+p.ID+"/maintenance", body)
+	req := httptest.NewRequest("POST", "/api/projects/"+p.Namespace+"/maintenance", body)
 	req.Header.Set("Authorization", "Bearer "+attacker)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	rec := httptest.NewRecorder()
@@ -166,7 +166,7 @@ func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
 	var once sync.Once
 	release := func() { once.Do(func() { close(body.release) }) }
 	defer release()
-	req := httptest.NewRequest("POST", "/api/projects/"+p.ID+"/maintenance", body)
+	req := httptest.NewRequest("POST", "/api/projects/"+p.Namespace+"/maintenance", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	done := make(chan struct{})

@@ -96,7 +96,7 @@ func apiError(err error) error {
 }
 
 func (a *API) CreateJobVault(ctx context.Context, in VaultInput) (string, error) {
-	v, err := a.sdk.Vaults.New(ctx, anthropic.BetaVaultNewParams{DisplayName: "kioku-job-" + in.JobID, Metadata: map[string]string{"kioku_job_id": in.JobID, "kioku_attempt_id": in.AttemptID, "kioku_project_id": in.ProjectID}})
+	v, err := a.sdk.Vaults.New(ctx, anthropic.BetaVaultNewParams{DisplayName: "kioku-job-" + in.JobID, Metadata: map[string]string{"kioku_job_id": in.JobID, "kioku_attempt_id": in.AttemptID}})
 	if err != nil {
 		return "", apiError(err)
 	}

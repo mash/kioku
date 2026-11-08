@@ -136,10 +136,10 @@ func TestDiscoveryAndCleanupPartialStarts(t *testing.T) {
 			return
 		}
 		if q.URL.Query().Get("after") == "" {
-			fmt.Fprint(w, `{"data":[{"id":"foreign","metadata":{"kioku_job_id":"job","kioku_attempt_id":"other","kioku_project_id":"project"}}],"has_more":true,"last_id":"foreign"}`)
+			fmt.Fprint(w, `{"data":[{"id":"foreign","metadata":{"kioku_job_id":"job","kioku_attempt_id":"other"}}],"has_more":true,"last_id":"foreign"}`)
 			return
 		}
-		fmt.Fprint(w, `{"data":[{"id":"orphan","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt","kioku_project_id":"project"}}]}`)
+		fmt.Fprint(w, `{"data":[{"id":"orphan","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"}}]}`)
 	})
 	if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec().Key}); err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestLostCreateResponseIsRecoveredByAttempt(t *testing.T) {
 			if !created {
 				t.Error("session not created")
 			}
-			fmt.Fprint(w, `{"data":[{"id":"session","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt","kioku_project_id":"project"}}]}`)
+			fmt.Fprint(w, `{"data":[{"id":"session","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"}}]}`)
 		case "GET /agents/sessions/session":
 			fmt.Fprint(w, `{"id":"session","status":"in_progress","vault_ids":["vault"]}`)
 		default:

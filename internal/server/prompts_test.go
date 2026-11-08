@@ -90,15 +90,15 @@ func TestMCPPromptOverridesOnWire(t *testing.T) {
 }
 func TestUserOverrideKeepsJOBMetadata(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
-	overridePrompts(t, f, "", "Read {{.InputURL}} and write {{.OutputURL}} for {{.JobID}} / {{.ProjectID}}", "")
+	overridePrompts(t, f, "", "Read {{.InputURL}} and write {{.OutputURL}} for {{.JobID}} / {{.Namespace}}", "")
 	j := startManaged(t, f, token, p.ID, true)
-	base := f.s.Config.BaseURL + "/api/projects/" + p.ID + "/jobs/" + j.ID + "/agent/"
+	base := f.s.Config.BaseURL + "/api/projects/" + p.Namespace + "/jobs/" + j.ID + "/agent/"
 	found := false
 	for _, req := range ma.Requests() {
 		if req.Path == "/v1/sessions" && req.Method == "POST" {
 			found = true
 			text := req.Body["initial_events"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"]
-			if text != "Read "+base+"input and write "+base+"output for "+j.ID+" / "+p.ID {
+			if text != "Read "+base+"input and write "+base+"output for "+j.ID+" / "+p.Namespace {
 				t.Fatal(text)
 			}
 		}
@@ -111,7 +111,7 @@ func TestUserOverrideKeepsJOBMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := readInput(t, data)
-	want := agentgen.JobMetadata(agentgen.InputSpec{JobID: j.ID, ProjectID: p.ID, InputURL: base + "input", OutputURL: base + "output"})
+	want := agentgen.JobMetadata(agentgen.InputSpec{JobID: j.ID, Namespace: p.Namespace, InputURL: base + "input", OutputURL: base + "output"})
 	if files["JOB.md"] != want || strings.Contains(files["JOB.md"], "Read ") {
 		t.Fatal(files["JOB.md"])
 	}

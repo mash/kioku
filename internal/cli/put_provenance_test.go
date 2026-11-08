@@ -47,7 +47,7 @@ func TestPutProvenance(t *testing.T) {
 			}))
 			defer server.Close()
 			var out bytes.Buffer
-			a := &App{Dir: t.TempDir(), Config: Config{Server: server.URL, Project: "project", Namespace: "acme/platform"}, Client: server.Client(), Out: &out, Err: &out, ctx: context.Background()}
+			a := &App{Dir: t.TempDir(), Config: Config{Server: server.URL, Namespace: "acme/platform"}, Client: server.Client(), Out: &out, Err: &out, ctx: context.Background()}
 			file := filepath.Join(t.TempDir(), "notes.md")
 			if err := os.WriteFile(file, []byte(tc.body), 0600); err != nil {
 				t.Fatal(err)

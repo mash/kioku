@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -104,6 +103,9 @@ func (a *App) syncWiki() (syncResult, error) {
 		return result, err
 	}
 	defer unlock()
+	if err := a.saveProjectConfig(); err != nil {
+		return result, err
+	}
 	var remote model.SyncManifest
 	if status, e := a.syncRequest(endpoint+"/snapshot?manifest=1", &remote); e != nil {
 		if status == 403 || status == 404 {
@@ -128,22 +130,6 @@ func (a *App) syncWiki() (syncResult, error) {
 	if err != nil {
 		return result, err
 	}
-	m := manifest{Revision: remote.Revision, Server: a.Config.Server, Project: a.Config.Project, Hashes: map[string]string{}}
-	manifestExists := false
-	if b, e := readRegular(filepath.Join(a.metadataDir(), "manifest.json")); e == nil {
-		manifestExists = true
-		if e = json.Unmarshal(b, &m); e != nil {
-			return result, e
-		}
-		if m.Server != a.Config.Server || m.Project != a.Config.Project {
-			return result, errors.New("local snapshot belongs to a different project or server")
-		}
-	} else if !os.IsNotExist(e) {
-		return result, e
-	}
-	if m.Hashes == nil {
-		m.Hashes = map[string]string{}
-	}
 	// Enumerate actual files too: local edits and extra generated pages are overwritten/deleted.
 	local := map[string]bool{}
 	for _, tree := range []string{"wiki", "maps"} {
@@ -167,19 +153,6 @@ func (a *App) syncWiki() (syncResult, error) {
 			return result, err
 		}
 	}
-	if !manifestExists && len(local) > 0 {
-		return result, errors.New("refusing to overwrite non-empty wiki/maps without Kioku metadata")
-	}
-	// Establish ownership before the first file write, so an interrupted initial
-	// pull can resume without treating its already downloaded files as user data.
-	m.Incomplete = true
-	checkpoint, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return result, err
-	}
-	if err := store.AtomicWrite(filepath.Join(a.metadataDir(), "manifest.json"), checkpoint, 0400); err != nil {
-		return result, err
-	}
 	var failures []error
 	for _, name := range sortedKeys(local) {
 		if _, ok := remote.Files[name]; ok {
@@ -193,7 +166,6 @@ func (a *App) syncWiki() (syncResult, error) {
 			failures = append(failures, e)
 			continue
 		}
-		delete(m.Hashes, name)
 		result.Deleted = append(result.Deleted, name)
 	}
 	for _, name := range sortedKeys(remote.Files) {
@@ -204,7 +176,6 @@ func (a *App) syncWiki() (syncResult, error) {
 		}
 		old, e := os.ReadFile(path)
 		if e == nil && auth.Hash(string(old)) == remote.Files[name].Hash {
-			m.Hashes[name] = remote.Files[name].Hash
 			continue
 		}
 		var file model.SnapshotFile
@@ -222,18 +193,11 @@ func (a *App) syncWiki() (syncResult, error) {
 			continue
 		}
 		total += int64(len(file.Body)) - remote.Files[name].Bytes
-		m.Hashes[name] = file.Hash
 		if local[name] {
 			result.Updated = append(result.Updated, name)
 		} else {
 			result.Added = append(result.Added, name)
 		}
-	}
-	m.Revision = remote.Revision
-	m.Incomplete = len(failures) > 0
-	b, _ := json.MarshalIndent(m, "", "  ")
-	if e := store.AtomicWrite(filepath.Join(a.metadataDir(), "manifest.json"), b, 0400); e != nil {
-		failures = append(failures, e)
 	}
 	return result, errors.Join(failures...)
 }

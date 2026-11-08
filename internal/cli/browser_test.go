@@ -127,7 +127,7 @@ func TestOpenUsesValidatedBrowserURL(t *testing.T) {
 		targets = append(targets, target)
 		return nil
 	})
-	a := &App{Config: Config{Server: "https://kioku.test", Namespace: "org/project", Project: "project-id"}, Out: io.Discard, Err: io.Discard}
+	a := &App{Config: Config{Server: "https://kioku.test", Namespace: "org/project"}, Out: io.Discard, Err: io.Discard}
 	if err := a.open(); err != nil {
 		t.Fatal(err)
 	}

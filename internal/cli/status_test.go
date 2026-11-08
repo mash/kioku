@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -27,14 +29,29 @@ func TestStatusReadsInboxFromProjectListing(t *testing.T) {
 				}
 				json.NewEncoder(w).Encode([]model.ProjectEntry{
 					{Project: model.Project{ID: "other"}, InboxCount: 1, Inbox: []model.InboxEntry{{SourceURL: "https://example.com/other", Status: "fetched"}}},
-					{Project: model.Project{ID: "selected", Revision: "current"}, InboxCount: len(items), Inbox: items},
+					{Project: model.Project{Namespace: "org/selected", Revision: "current"}, InboxCount: len(items), Inbox: items},
 				})
 			}))
 			defer ts.Close()
 			var out bytes.Buffer
-			a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Project: "selected", Namespace: "org/selected"}, Client: ts.Client(), Out: &out, Err: io.Discard, ctx: context.Background()}
+			a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/selected"}, Client: ts.Client(), Out: &out, Err: io.Discard, ctx: context.Background()}
+			if err := os.MkdirAll(a.metadataDir(), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(a.metadataDir(), "manifest.json"), []byte("invalid old manifest"), 0400); err != nil {
+				t.Fatal(err)
+			}
 			if err := a.status(); err != nil {
 				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(out.Bytes(), &fields); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"local_revision", "local_sync_incomplete"} {
+				if _, ok := fields[key]; ok {
+					t.Fatalf("obsolete status field %s", key)
+				}
 			}
 			var result struct {
 				InboxCount int                `json:"inbox_count"`

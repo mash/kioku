@@ -16,7 +16,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
-	base := "/api/projects/" + p.ID
+	base := "/api/projects/" + p.Namespace
 	for _, tc := range []struct {
 		req    model.PutRequest
 		status string
@@ -90,11 +90,11 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 		model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("http://example.com/a", "Source body")}}, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://127.0.0.1/a", "Source body")}},
 		model.PutRequest{File: &model.FileInput{Name: "a.md", Content: "body"}},
 	} {
-		if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, req, nil); c != 400 {
+		if c := f.request("POST", "/api/projects/"+p.Namespace+"/put", token, req, nil); c != 400 {
 			t.Fatal(c, req)
 		}
 	}
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", strings.Repeat("a", 1<<20))}}, nil); c != 413 {
+	if c := f.request("POST", "/api/projects/"+p.Namespace+"/put", token, model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", strings.Repeat("a", 1<<20))}}, nil); c != 413 {
 		t.Fatal(c)
 	}
 	f.db.View(func(st model.State) error {
@@ -147,7 +147,7 @@ func TestConnectorAndAgentInboxPuts(t *testing.T) {
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
 	_, agent := testAgent(t, f, human, p.ID, "write")
-	if c := f.request("POST", "/api/projects/"+p.ID+"/put", agent, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/agent", "Source body")}}, nil); c != 202 {
+	if c := f.request("POST", "/api/projects/"+p.Namespace+"/put", agent, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/agent", "Source body")}}, nil); c != 202 {
 		t.Fatal(c)
 	}
 	access := connectorAccessToken(t, f, human, p.ID)
@@ -162,7 +162,7 @@ func TestConnectorAndAgentInboxPuts(t *testing.T) {
 	}
 	// No version header must be rejected by the real HTTP middleware.
 	b, _ := json.Marshal(model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/old", "Source body")}})
-	req, _ := http.NewRequest("POST", f.url+"/api/projects/"+p.ID+"/put", bytes.NewReader(b))
+	req, _ := http.NewRequest("POST", f.url+"/api/projects/"+p.Namespace+"/put", bytes.NewReader(b))
 	req.Header.Set("Authorization", "Bearer "+human)
 	resp, err := f.client.Do(req)
 	if err != nil {

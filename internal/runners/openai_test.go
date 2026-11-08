@@ -75,8 +75,8 @@ func TestOpenAIPromptOverridesOnWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := prompts.JobVariables{JobID: "job", ProjectID: "project", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output"}
-	_, err = r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: job.JobID, ProjectID: job.ProjectID, AttemptID: "attempt"}, Token: "job-token", InputURL: job.InputURL, OutputURL: job.OutputURL, FirstMessage: rendered.User(job), BudgetCents: 50})
+	job := prompts.JobVariables{JobID: "job", Namespace: "acme/project", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output"}
+	_, err = r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: job.JobID, ProjectID: "internal-project", AttemptID: "attempt"}, Token: "job-token", InputURL: job.InputURL, OutputURL: job.OutputURL, FirstMessage: rendered.User(job), BudgetCents: 50})
 	if err != nil || !found {
 		t.Fatal(err, found)
 	}

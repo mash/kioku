@@ -21,7 +21,6 @@ type Config struct {
 	Server    string `json:"server"`
 	Namespace string `json:"namespace"`
 	Token     string `json:"-"`
-	Project   string `json:"-"`
 }
 
 func normalizeOrigin(value string) (string, error) {
@@ -110,6 +109,9 @@ func (a *App) saveProjectConfig() error {
 	}
 	if current.Server != "" {
 		return nil
+	}
+	if err := a.checkUnboundMirror(); err != nil {
+		return err
 	}
 	b, err := json.MarshalIndent(a.Config, "", "  ")
 	if err != nil {

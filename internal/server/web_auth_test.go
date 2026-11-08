@@ -18,7 +18,7 @@ import (
 
 func browserPage(t *testing.T, f *fixture, path, token string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest("GET", path, nil)
+	req := httptest.NewRequest("GET", f.publicPath(path), nil)
 	if token != "" {
 		req.AddCookie(&http.Cookie{Name: "kioku_session", Value: token})
 	}
@@ -48,7 +48,7 @@ func TestWikiBrowserAccess(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/acme/platform", "/projects/" + p.ID} {
+	for _, path := range []string{"/acme/platform"} {
 		for _, tc := range []struct {
 			name, token string
 			status      int
@@ -117,12 +117,12 @@ func TestWikiBrowserAccess(t *testing.T) {
 }
 
 func TestLoginReturnPaths(t *testing.T) {
-	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/u-abc/project", "/projects/AbC_d-123", "/oauth/wiki", "/oauth/token"} {
+	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/u-abc/project", "/oauth/wiki", "/oauth/token"} {
 		if got, err := authorizeReturn(value); err != nil || got != value {
 			t.Errorf("valid %q: %q %v", value, got, err)
 		}
 	}
-	for _, value := range []string{"https://evil.test/acme/wiki", "//evil.test/acme/wiki", "/\\evil.test/wiki", "/acme/../wiki", "/acme/%2e%2e", "/%2facme/wiki", "/acme%2fwiki", "/api/me", "/auth/start", "/oauth/token/extra", "/invite/token", "/acme/wiki#x", "/acme/wiki#", "/acme/wiki%0a", "acme/wiki", "/projects/..", "/projects/a%5cb"} {
+	for _, value := range []string{"/projects/AbC_d-123", "https://evil.test/acme/wiki", "//evil.test/acme/wiki", "/\\evil.test/wiki", "/acme/../wiki", "/acme/%2e%2e", "/%2facme/wiki", "/acme%2fwiki", "/api/me", "/auth/start", "/oauth/token/extra", "/invite/token", "/acme/wiki#x", "/acme/wiki#", "/acme/wiki%0a", "acme/wiki", "/projects/..", "/projects/a%5cb"} {
 		if _, err := authorizeReturn(value); err == nil {
 			t.Errorf("accepted %q", value)
 		}

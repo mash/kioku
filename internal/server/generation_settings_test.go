@@ -16,7 +16,7 @@ func TestServerGenerationBudget(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
 			putFile(t, f, token, p.ID, "budget.md", "Evidence")
 			var j model.Job
-			if code := f.request("POST", "/api/projects/"+p.ID+"/generate", token, map[string]any{"budget_cents": budget}, &j); code != 202 {
+			if code := f.request("POST", "/api/projects/"+p.Namespace+"/generate", token, map[string]any{"budget_cents": budget}, &j); code != 202 {
 				t.Fatal(code)
 			}
 			if err := f.db.Update(func(st *model.State) error {
@@ -42,7 +42,7 @@ func TestServerGenerationBudget(t *testing.T) {
 	}
 	f, token, p, _ := managedFixture(t)
 	for _, budget := range []int64{-1, 49, f.s.Config.AgentMaxSessionCents + 1} {
-		if code := f.request("POST", "/api/projects/"+p.ID+"/generate", token, map[string]any{"budget_cents": budget}, nil); code != 400 {
+		if code := f.request("POST", "/api/projects/"+p.Namespace+"/generate", token, map[string]any{"budget_cents": budget}, nil); code != 400 {
 			t.Fatal(budget, code)
 		}
 	}
@@ -59,7 +59,7 @@ func TestRetiredBYOKJobCannotRetry(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if code := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, nil); code != 409 {
+	if code := f.request("POST", "/api/projects/"+p.Namespace+"/jobs/"+j.ID+"/retry", token, nil, nil); code != 409 {
 		t.Fatal(code)
 	}
 	if got := storedJob(t, f, j.ID); got.Status != "failed" {
@@ -72,7 +72,7 @@ func TestRetiredBYOKJobCannotRetry(t *testing.T) {
 
 func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	f, token, p, _ := managedFixture(t)
-	req, _ := http.NewRequest("GET", f.url+"/projects/"+p.ID, nil)
+	req, _ := http.NewRequest("GET", f.url+"/"+p.Namespace, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	resp, err := f.client.Do(req)
@@ -87,7 +87,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "budget_usd") || strings.Contains(string(body), "/settings/anthropic") {
 		t.Fatal(resp.StatusCode, string(body))
 	}
-	req, _ = http.NewRequest("POST", f.url+"/api/projects/"+p.ID+"/generate", strings.NewReader("budget_usd=0.50"))
+	req, _ = http.NewRequest("POST", f.url+"/api/projects/"+p.Namespace+"/generate", strings.NewReader("budget_usd=0.50"))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

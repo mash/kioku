@@ -55,10 +55,10 @@ func (s *Server) authorizeAgent(r *http.Request, principal model.Session) error 
 	}
 	switch r.Pattern {
 	case "GET /api/me", "GET /api/projects", "POST /api/logout",
-		"GET /api/projects/{project}/snapshot",
-		"GET /api/projects/{project}/jobs/{job}", "GET /api/projects/{project}/usage":
+		"GET /api/projects/{org}/{slug}/snapshot",
+		"GET /api/projects/{org}/{slug}/jobs/{job}", "GET /api/projects/{org}/{slug}/usage":
 		return nil
-	case "POST /api/projects/{project}/put", "POST /api/projects/{project}/generate", "POST /api/projects/{project}/jobs/{job}/retry":
+	case "POST /api/projects/{org}/{slug}/put", "POST /api/projects/{org}/{slug}/generate", "POST /api/projects/{org}/{slug}/jobs/{job}/retry":
 		if principal.Role == "write" {
 			return nil
 		}
@@ -66,7 +66,7 @@ func (s *Server) authorizeAgent(r *http.Request, principal model.Session) error 
 	return fail(403, "agent credential does not permit this operation")
 }
 func publicAgent(t model.AgentToken) map[string]any {
-	return map[string]any{"id": t.ID, "project_id": t.ProjectID, "issuer_id": t.UserID, "name": t.Name, "role": t.Role, "created": t.Created, "expires": t.Expires, "revoked_at": t.RevokedAt}
+	return map[string]any{"id": t.ID, "issuer_id": t.UserID, "name": t.Name, "role": t.Role, "created": t.Created, "expires": t.Expires, "revoked_at": t.RevokedAt}
 }
 func mintAgent(st *model.State, uid, pid, name, role string, lifetime time.Duration) (string, model.AgentToken, error) {
 	if _, err := member(*st, pid, uid); err != nil {
@@ -153,8 +153,8 @@ func checkJobAgent(st model.State, job model.Job) error {
 	return nil
 }
 
-const agentInputRoute = "GET /api/projects/{project}/jobs/{job}/agent/input"
-const agentOutputRoute = "PUT /api/projects/{project}/jobs/{job}/agent/output"
+const agentInputRoute = "GET /api/projects/{org}/{slug}/jobs/{job}/agent/input"
+const agentOutputRoute = "PUT /api/projects/{org}/{slug}/jobs/{job}/agent/output"
 
 func issueJobToken(st *model.State, job model.Job, expires time.Time) (string, model.AgentToken) {
 	id := auth.Token()[:20]

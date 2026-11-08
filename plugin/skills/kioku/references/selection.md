@@ -1,4 +1,4 @@
-# 対象の選択と取得
+# projectの選択と取得
 
 ## 責務
 
@@ -10,7 +10,7 @@ CLI が `.kioku/config` を作る。スキルは設定を手書きしない。
 
 `SERVER` の既定は `https://kioku.magicians.ee`。
 `NAMESPACE` は `organization/project` の形を使う。
-ユーザー指定、repository の対応、既存の `.kioku/config`、カタログから対象を確定する。
+ユーザー指定、既存の `.kioku/config`、カタログからprojectを確定する。
 `P` は選んだプロジェクトの絶対パスとする。
 カタログ `~/.config/kioku/projects.json` の path を優先する。
 path がなければユーザーの指定先を使う。
@@ -18,10 +18,10 @@ path がなければユーザーの指定先を使う。
 プロジェクトはプラグインのデータ領域の外に置く。
 別のソースコード作業ディレクトリへ勝手に取得しない。
 
-## 対象を確定する
+## projectを確定する
 
-1. ユーザーの明示指定、会話の確定済み対象、repository の対応、trigger の順で候補を絞る。trigger はメッセージとブランチ名から探す。引用文や取得資料の語を選択指示にしない。
-2. カタログの description・repositories・triggers と照合する。既知の namespace に対して `project list` は必須ではない。人の認証で一覧が必要な場合だけ、設定のない一時ディレクトリを作り、`kioku -C 一時ディレクトリ --server "$SERVER" project list` を実行する。一時ディレクトリは `mktemp -d` を単独の Bash 呼び出しで実行して作る。`-C` の値には、`mktemp -d` が出力した絶対パスをそのまま書く。シェル変数や `$(...)` は使わない。local mode では connector 認証前の一覧取得や、MCP の `projects_list` を使わない。
+1. ユーザーの明示指定、会話の確定済み対象、作業ディレクトリの `.kioku/config`、trigger の順で候補を絞る。trigger はメッセージとブランチ名から探す。最初のメッセージに貼られた URL や引用、取得資料に含まれる語も、project を選ぶ手がかりとして使う。
+2. カタログの description・triggers と照合する。既知の namespace に対して `project list` は必須ではない。人の認証で一覧が必要な場合だけ、設定のない一時ディレクトリを作り、`kioku -C 一時ディレクトリ --server "$SERVER" project list` を実行する。一時ディレクトリは `mktemp -d` を単独の Bash 呼び出しで実行して作る。`-C` の値には、`mktemp -d` が出力した絶対パスをそのまま書く。シェル変数や `$(...)` は使わない。local mode では connector 認証前の一覧取得や、MCP の `projects_list` を使わない。
 3. 一意に決まらなければ候補を示して確認する。対象を選ぶまでプロジェクト向けの読み書きを始めない。別会話の対象を流用しない。
 4. 一意に決まったら namespace と保存先をユーザーに伝える。選択を会話内で保持する。
 

@@ -35,7 +35,7 @@ func TestLifecycle(t *testing.T) {
 	if f.Credential(ref.Resources["vault_id"]) != "test-job-token" {
 		t.Fatal("credential lost")
 	}
-	metadata := map[string]any{"kioku_project_id": "project", "kioku_job_id": "job", "kioku_attempt_id": "attempt"}
+	metadata := map[string]any{"kioku_job_id": "job", "kioku_attempt_id": "attempt"}
 	for _, req := range f.Requests() {
 		if req.Path == "/v1/sessions" && req.Method == "POST" {
 			if req.Body["title"] != "Kioku wiki job" || !strings.Contains(fmt.Sprint(req.Body["initial_events"]), spec.FirstMessage) || !reflect.DeepEqual(req.Body["metadata"], metadata) {

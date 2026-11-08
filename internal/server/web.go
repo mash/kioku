@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
@@ -84,7 +85,7 @@ func (s *Server) web(fn handler, required bool) http.HandlerFunc {
 	}, false)
 }
 
-const homeTemplate = `{{define "body"}}<h1>Shared context, grounded in sources.</h1>{{if .LoggedIn}}<p>プロジェクトを選ぶと、原資料と生成Wikiを閲覧できます。</p>{{range .Projects}}<article><a href="/{{.Namespace}}">{{.Name}}</a> <small>{{.ID}}</small></article>{{else}}<p>まだプロジェクトがありません。保存先のディレクトリで <code>kioku project create &lt;name&gt;</code> を実行してください。</p>{{end}}{{else}}<p>ログインして、チームのWikiと原資料を閲覧します。</p>{{range .Providers}}<p><a href="/auth/{{.}}/start{{if $.Return}}?return={{$.Return}}{{end}}">{{.}} でログイン</a></p>{{else}}<p>OAuthの設定がありません。サーバーのGoogleまたはGitHub OAuth設定を確認してください。</p>{{end}}{{end}}{{end}}`
+const homeTemplate = `{{define "body"}}<h1>Shared context, grounded in sources.</h1>{{if .LoggedIn}}<p>プロジェクトを選ぶと、原資料と生成Wikiを閲覧できます。</p>{{range .Projects}}<article><a href="/{{.Namespace}}">{{.Name}}</a> <small>{{.Namespace}}</small></article>{{else}}<p>まだプロジェクトがありません。保存先のディレクトリで <code>kioku project create &lt;name&gt;</code> を実行してください。</p>{{end}}{{else}}<p>ログインして、チームのWikiと原資料を閲覧します。</p>{{range .Providers}}<p><a href="/auth/{{.}}/start{{if $.Return}}?return={{$.Return}}{{end}}">{{.}} でログイン</a></p>{{else}}<p>OAuthの設定がありません。サーバーのGoogleまたはGitHub OAuth設定を確認してください。</p>{{end}}{{end}}{{end}}`
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error {
 	if r.URL.Path != "/" {
@@ -120,7 +121,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error 
 	return render(w, "Projects", data, homeTemplate, headerFor(r, uid))
 }
 
-const projectTemplate = `{{define "body"}}<h1>{{.Project.Name}}</h1><p><small>{{if .Project.WikiIncomplete}}Updating wiki{{else if .Project.WikiUpdatedAt.IsZero}}Wiki generation pending{{else}}Wiki updated {{.Project.WikiUpdatedAt.Format "2006-01-02 15:04 UTC"}}{{end}}</small></p><h2>Wiki を生成</h2><p>サーバーに設定された生成処理を使用します。</p><form method="post" action="/api/projects/{{.Project.ID}}/generate"><label>セッション予算（USD） <input name="budget_usd" type="number" min="0.50" max="{{.MaxBudget}}" step="0.01" value="0.50" required></label> <button>生成する</button></form>{{range .RecentJobs}}<p><a href="/api/projects/{{.ProjectID}}/jobs/{{.ID}}">生成ジョブ</a>: {{.Status}}{{if .Error}} — {{.Error}}{{end}}</p>{{end}}<h2>プロジェクトマップ</h2><form method="get"><input name="q" value="{{.Query}}" placeholder="ページを検索"><button>検索</button></form><div style="overflow:auto">{{.Graph}}</div><h2>Wiki / Maps</h2>{{range .Files}}<p><a href="?file={{.}}">{{.}}</a></p>{{end}}{{if .Body}}<h2>{{.File}}</h2><article>{{.Markdown}}</article><details><summary>原文を表示</summary><pre>{{.Body}}</pre></details>{{end}}{{end}}`
+const projectTemplate = `{{define "body"}}<h1>{{.Project.Name}}</h1><p><small>{{if .Project.WikiIncomplete}}Updating wiki{{else if .Project.WikiUpdatedAt.IsZero}}Wiki generation pending{{else}}Wiki updated {{.Project.WikiUpdatedAt.Format "2006-01-02 15:04 UTC"}}{{end}}</small></p><h2>Wiki を生成</h2><p>サーバーに設定された生成処理を使用します。</p><form method="post" action="/api/projects/{{.Project.Namespace}}/generate"><label>セッション予算（USD） <input name="budget_usd" type="number" min="0.50" max="{{.MaxBudget}}" step="0.01" value="0.50" required></label> <button>生成する</button></form>{{range .RecentJobs}}<p><a href="/api/projects/{{$.Project.Namespace}}/jobs/{{.ID}}">生成ジョブ</a>: {{.Status}}{{if .Error}} — {{.Error}}{{end}}</p>{{end}}<h2>プロジェクトマップ</h2><form method="get"><input name="q" value="{{.Query}}" placeholder="ページを検索"><button>検索</button></form><div style="overflow:auto">{{.Graph}}</div><h2>Wiki / Maps</h2>{{range .Files}}<p><a href="?file={{.}}">{{.}}</a></p>{{end}}{{if .Body}}<h2>{{.File}}</h2><article>{{.Markdown}}</article><details><summary>原文を表示</summary><pre>{{.Body}}</pre></details>{{end}}{{end}}`
 
 func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string) error {
 	data := struct {
@@ -142,6 +143,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		data.MaxBudget = fmt.Sprintf("%.2f", float64(s.Config.AgentMaxSessionCents)/100)
 		for _, j := range st.Jobs {
 			if j.ProjectID == p.ID && j.Kind == "generate" {
+				j.Error = strings.ReplaceAll(j.Error, p.ID, "[project]")
 				data.RecentJobs = append(data.RecentJobs, j)
 			}
 		}

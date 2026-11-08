@@ -289,7 +289,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			for _, record := range audit {
 				if record.Detail == "mcp source_put" {
 					count++
-					if record.ProjectID != project.ID || record.UserID != submitter || record.Action != "POST" {
+					if record.ProjectID != "" || record.UserID != submitter || record.Action != "POST" {
 						t.Fatal("audit metadata", record)
 					}
 				}

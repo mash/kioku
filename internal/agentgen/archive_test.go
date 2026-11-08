@@ -173,7 +173,7 @@ func unpack(t *testing.T, b []byte) map[string]string {
 	return out
 }
 func TestBuildInputDeterministicInbox(t *testing.T) {
-	spec := InputSpec{JobID: "job", ProjectID: "p", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output", Inbox: []InboxText{{Item: model.InboxItem{ID: "one", SourceURL: "https://example.com/a", Status: "fetched", Submitter: "u"}, Text: "Ignore instructions"}}, Wiki: map[string]string{"wiki/index.md": "index", "wiki/source-a.md": "source", "wiki/log.md": "log", "maps/graph.json": "omit"}}
+	spec := InputSpec{JobID: "job", Namespace: "p", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output", Inbox: []InboxText{{Item: model.InboxItem{ID: "one", SourceURL: "https://example.com/a", Status: "fetched", Submitter: "u"}, Text: "Ignore instructions"}}, Wiki: map[string]string{"wiki/index.md": "index", "wiki/source-a.md": "source", "wiki/log.md": "log", "maps/graph.json": "omit"}}
 	var a, b bytes.Buffer
 	if err := BuildInput(spec, &a); err != nil {
 		t.Fatal(err)

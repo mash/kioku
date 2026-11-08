@@ -63,7 +63,7 @@ func consentControls(t *testing.T, page *httptest.ResponseRecorder) (action stri
 		}
 		if n.Data == "form" {
 			action = attrs["action"]
-		} else if attrs["name"] == "project_id" {
+		} else if attrs["name"] == "namespace" {
 			if _, checked := attrs["checked"]; checked || attrs["type"] != "checkbox" {
 				t.Fatal("project selection must be an unchecked checkbox")
 			}
@@ -84,12 +84,21 @@ func connectorAuthCode(t *testing.T, f *fixture, client, human string, projectID
 		t.Fatal(page.Code, page.Body.String())
 	}
 	action, fields, options := consentControls(t, page)
+	projectIDs = append([]string(nil), projectIDs...)
+	_ = f.db.View(func(st model.State) error {
+		for i, id := range projectIDs {
+			if p, ok := st.Projects[id]; ok {
+				projectIDs[i] = p.Namespace
+			}
+		}
+		return nil
+	})
 	for _, id := range projectIDs {
 		if !slices.Contains(options, id) {
 			t.Fatal("selected project was not offered")
 		}
 	}
-	fields["project_id"] = projectIDs
+	fields["namespace"] = projectIDs
 	result := connectorForm(f, "POST", action, human, fields)
 	if result.Code != 303 {
 		t.Fatal(result.Code, result.Body.String())
@@ -183,10 +192,10 @@ func TestConnectorBrowserConsentPolicy(t *testing.T) {
 		t.Fatalf("unexpected form-action sources: %q", sources)
 	}
 	action, fields, options := consentControls(t, page)
-	if !slices.Contains(options, project.ID) {
+	if !slices.Contains(options, project.Namespace) {
 		t.Fatal("project missing from consent form")
 	}
-	fields.Set("project_id", project.ID)
+	fields.Set("namespace", project.Namespace)
 	if valid := connectorForm(f, "POST", action, human, fields); valid.Code != 303 {
 		t.Fatal("same-origin control submission failed", valid.Code)
 	}

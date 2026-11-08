@@ -19,8 +19,6 @@ import (
 
 const connectorScope = "cli_login"
 
-var projectReturnID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-
 func authorizeReturn(value string) (string, error) {
 	if value == "" {
 		return "", nil
@@ -34,7 +32,7 @@ func authorizeReturn(value string) (string, error) {
 	if strings.HasPrefix(u.Path, "/") && len(parts) == 2 {
 		// Personal namespaces (u-...) are valid too. Reserve service route prefixes.
 		org := parts[0]
-		allowed = allowed || (org == "projects" && projectReturnID.MatchString(parts[1])) || (validSlug(parts[1]) && validSlug(org) && (!reservedNamespace(org) || strings.HasPrefix(org, "u-")))
+		allowed = allowed || (validSlug(parts[1]) && validSlug(org) && (!reservedNamespace(org) || strings.HasPrefix(org, "u-")))
 	}
 	if !allowed {
 		return "", fail(400, "invalid login return path")
@@ -184,7 +182,7 @@ const connectorConsent = `{{define "body"}}<h1>Authorize Kioku connector</h1>
 Only allow this destination if you trust it to read and search the wikis, add sources, and issue kioku CLI login codes for the projects you select.</p>
 <form method="post" action="{{.Action}}"><input type="hidden" name="consent_user" value="{{.UserID}}">
 <fieldset><legend>Select at least one project</legend>
-{{range .Projects}}<div><label><input type="checkbox" name="project_id" value="{{.ID}}"> {{.Namespace}}</label></div>{{end}}
+{{range .Projects}}<div><label><input type="checkbox" name="namespace" value="{{.Namespace}}"> {{.Namespace}}</label></div>{{end}}
 </fieldset><button type="submit">Allow</button></form>
 {{else}}<p>You have no projects to share. Create or join a Kioku project, then connect again.</p>{{end}}{{end}}`
 
@@ -217,15 +215,15 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	}
 	// A client controls the authorization URL. Only checked boxes from the
 	// user's POST body can authorize a project, never query parameters.
-	projectIDs := r.PostForm["project_id"]
+	namespaces := append([]string(nil), r.PostForm["namespace"]...)
 	// maxConsentProjects bounds the work done under the DB write lock.
 	const maxConsentProjects = 200
-	if len(projectIDs) > maxConsentProjects {
+	if len(namespaces) > maxConsentProjects {
 		return fail(400, "too many projects selected")
 	}
 	accountChanged := r.Method == "POST" && r.PostForm.Get("consent_user") != session.UserID
-	if r.Method == "GET" || len(projectIDs) == 0 || accountChanged {
-		r.Form.Del("project_id")
+	if r.Method == "GET" || len(namespaces) == 0 || accountChanged {
+		r.Form.Del("namespace")
 		r.Form.Del("consent_user")
 		data := struct {
 			UserID, Email, Name, Action, CallbackOrigin, Problem string
@@ -268,12 +266,19 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 		if !ok || current.UserID != session.UserID || !current.Expires.After(time.Now()) {
 			return fail(401, "browser session expired")
 		}
-		slices.Sort(projectIDs)
-		projectIDs = slices.Compact(projectIDs)
-		for _, id := range projectIDs {
-			if _, err := member(*st, id, current.UserID); err != nil {
+		slices.Sort(namespaces)
+		namespaces = slices.Compact(namespaces)
+		projectIDs := make([]string, len(namespaces))
+		for i, namespace := range namespaces {
+			parts := strings.Split(namespace, "/")
+			if len(parts) != 2 {
 				return fail(400, "selected project is unavailable; reopen the consent page")
 			}
+			project, err := namespaceProject(*st, parts[0], parts[1], current.UserID)
+			if err != nil {
+				return fail(400, "selected project is unavailable; reopen the consent page")
+			}
+			projectIDs[i] = project.ID
 		}
 		provider, _ = s.connectorOAuth(st)
 		request, err = provider.NewAuthorizeRequest(r.Context(), r)

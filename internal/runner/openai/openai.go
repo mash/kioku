@@ -83,7 +83,7 @@ func (r *Runner) request(ctx context.Context, method, path string, body, out any
 	return nil
 }
 func metadata(k runner.AttemptKey) map[string]string {
-	return map[string]string{"kioku_job_id": k.JobID, "kioku_attempt_id": k.AttemptID, "kioku_project_id": k.ProjectID}
+	return map[string]string{"kioku_job_id": k.JobID, "kioku_attempt_id": k.AttemptID}
 }
 
 type resource struct {

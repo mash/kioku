@@ -43,7 +43,7 @@ func outputArchive(t *testing.T, pages map[string]string) []byte {
 }
 func agentRequest(t *testing.T, f *fixture, job model.Job, raw, method, suffix string, body []byte) (int, []byte) {
 	t.Helper()
-	req, err := http.NewRequest(method, f.url+"/api/projects/"+job.ProjectID+"/jobs/"+job.ID+"/agent/"+suffix, bytes.NewReader(body))
+	req, err := http.NewRequest(method, f.url+f.publicPath("/api/projects/"+job.ProjectID+"/jobs/"+job.ID+"/agent/"+suffix), bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

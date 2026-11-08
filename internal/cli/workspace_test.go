@@ -63,7 +63,7 @@ func TestPullBindsCWDWithoutLeakingCredentialsOrSession(t *testing.T) {
 			t.Fatal(name, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, ".kioku/manifest.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, ".kioku/manifest.json")); !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	if err := run(root, "pull"); err != nil {
@@ -185,34 +185,58 @@ func TestCreateAndJoinPreflightBeforePOST(t *testing.T) {
 	}
 }
 
-func TestPullPersistsOwnershipCheckpointBeforeFileTransfer(t *testing.T) {
-	dir := t.TempDir()
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("file") == "" {
-			json.NewEncoder(w).Encode(model.SyncManifest{Revision: "r", Files: map[string]model.SyncFile{"wiki/a.md": {Hash: auth.Hash("a"), Bytes: 1}}})
-			return
-		}
-		b, err := os.ReadFile(filepath.Join(dir, ".kioku/manifest.json"))
-		if err != nil {
-			t.Error("checkpoint missing before first file", err)
-		}
-		var m manifest
-		json.Unmarshal(b, &m)
-		if !m.Incomplete || m.Project != "p" {
-			t.Error("checkpoint lacks ownership/incomplete state", string(b))
-		}
-		json.NewEncoder(w).Encode(model.SnapshotFile{Body: "a", Hash: auth.Hash("a")})
-	}))
-	defer ts.Close()
-	a := &App{Dir: dir, Config: Config{Server: ts.URL, Project: "p", Namespace: "org/p"}, Client: ts.Client(), ctx: context.Background()}
+func TestPullIgnoresExistingManifest(t *testing.T) {
+	a, _, _, _ := syncFixture(t)
 	if _, err := a.syncWiki(); err != nil {
 		t.Fatal(err)
 	}
-	// An interrupted download leaves this checkpoint and partially downloaded files.
-	b, _ := json.Marshal(manifest{Revision: "r", Server: ts.URL, Project: "p", Incomplete: true, Hashes: map[string]string{}})
-	os.Chmod(filepath.Join(dir, ".kioku/manifest.json"), 0600)
-	os.WriteFile(filepath.Join(dir, ".kioku/manifest.json"), b, 0400)
+	path := filepath.Join(a.metadataDir(), "manifest.json")
+	if err := os.WriteFile(path, []byte("obsolete invalid metadata"), 0400); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := a.syncWiki(); err != nil {
-		t.Fatal("could not resume interrupted initial transfer", err)
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "obsolete invalid metadata" {
+		t.Fatal("existing manifest was modified", string(b), err)
+	}
+}
+
+func TestBindingRefusesUnmanagedMirrorsOnRetry(t *testing.T) {
+	for _, tree := range []string{"wiki", "maps"} {
+		t.Run(tree, func(t *testing.T) {
+			a, _, _, _ := syncFixture(t)
+			if err := os.Mkdir(filepath.Join(a.Dir, tree), 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(a.Dir, tree, "private.md")
+			if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				if err := a.bindPullProject("org/project"); err == nil {
+					t.Fatal("unmanaged files adopted")
+				}
+				if _, err := os.Stat(filepath.Join(a.metadataDir(), "config")); !os.IsNotExist(err) {
+					t.Fatal("failed binding saved config", err)
+				}
+				if err := a.preflightProjectStorage(); err == nil {
+					t.Fatal("remote mutation preflight accepted unmanaged files")
+				}
+				if b, err := os.ReadFile(path); err != nil || string(b) != "keep" {
+					t.Fatal("unmanaged content changed", err)
+				}
+			}
+		})
+	}
+}
+
+func TestBindingRejectsUnavailableNamespaceWithoutSavingConfig(t *testing.T) {
+	a, _, _, _ := syncFixture(t)
+	if err := a.bindPullProject("org/not-a-member"); err == nil {
+		t.Fatal("unavailable project accepted")
+	}
+	if _, err := os.Stat(filepath.Join(a.metadataDir(), "config")); !os.IsNotExist(err) {
+		t.Fatal("invalid binding persisted", err)
 	}
 }

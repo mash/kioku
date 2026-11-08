@@ -14,25 +14,7 @@ func (a *App) projectPath() (string, error) {
 	if !validNamespace(a.Config.Namespace) {
 		return "", errors.New("no project configured; run kioku pull organization/project")
 	}
-	if a.Config.Project == "" {
-		var projects []model.Project
-		if _, err := a.request("GET", "/api/projects", nil, &projects); err != nil {
-			return "", err
-		}
-		for _, p := range projects {
-			if p.Namespace == a.Config.Namespace {
-				a.Config.Project = p.ID
-				break
-			}
-		}
-		if a.Config.Project == "" {
-			return "", errSyncForbidden
-		}
-	}
-	if !safeID(a.Config.Project) {
-		return "", errors.New("invalid project ID")
-	}
-	return "/api/projects/" + a.Config.Project, nil
+	return "/api/projects/" + a.Config.Namespace, nil
 }
 
 func safeID(s string) bool {
@@ -48,7 +30,6 @@ func safeID(s string) bool {
 }
 
 func (a *App) selectProject(p model.Project) error {
-	a.Config.Project = p.ID
 	a.Config.Namespace = p.Namespace
 	if err := a.saveProjectConfig(); err != nil {
 		return fmt.Errorf("remote operation succeeded for %s, but saving .kioku/config failed: %w; retry kioku --server %s pull %s after fixing the local path", p.Namespace, err, a.Config.Server, p.Namespace)
@@ -100,6 +81,9 @@ func validNamespace(s string) bool {
 // Preflight local paths before create/join can mutate cloud membership. Actual
 // config persistence remains atomic after the server returns its namespace.
 func (a *App) preflightProjectStorage() error {
+	if err := a.checkUnboundMirror(); err != nil {
+		return err
+	}
 	for _, path := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps"), filepath.Join(a.Dir, "inbox")} {
 		if err := ensureDirectory(path); err != nil {
 			return err
@@ -115,4 +99,38 @@ func (a *App) preflightProjectStorage() error {
 		return err
 	}
 	return os.Remove(name)
+}
+
+// Call under localLock before binding or mutating remote membership. A saved
+// config declares wiki/maps to be mirrors; without one, existing content is owned
+// by the user and must not be adopted by a failed or retried command.
+func (a *App) checkUnboundMirror() error {
+	current, err := a.readProjectConfig()
+	if err != nil {
+		return err
+	}
+	if current.Server != "" {
+		return nil
+	}
+	for _, name := range []string{"wiki", "maps"} {
+		path := filepath.Join(a.Dir, name)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("mirror directory is not a real directory: %s", path)
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		if len(entries) != 0 {
+			return errors.New("refusing to bind non-empty wiki/maps without .kioku/config")
+		}
+	}
+	return nil
 }

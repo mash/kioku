@@ -1,4 +1,4 @@
 job: {{.JobID}}
-project: {{.ProjectID}}
+namespace: {{.Namespace}}
 input: {{.InputURL}}
 output: {{.OutputURL}}

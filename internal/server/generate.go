@@ -62,7 +62,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	s.notify()
 	if form {
-		return render(w, "生成開始", struct{ ProjectID, JobID string }{job.ProjectID, job.ID}, `{{define "body"}}<h1>生成ジョブを開始しました</h1><p>サーバーに設定された生成処理を使用します。</p><p><a href="/api/projects/{{.ProjectID}}/jobs/{{.JobID}}">ジョブの状態を確認</a></p><p><a href="/">プロジェクト一覧へ</a></p>{{end}}`, headerFor(r, uid))
+		return render(w, "生成開始", struct{ Namespace, JobID string }{r.PathValue("org") + "/" + r.PathValue("slug"), job.ID}, `{{define "body"}}<h1>生成ジョブを開始しました</h1><p>サーバーに設定された生成処理を使用します。</p><p><a href="/api/projects/{{.Namespace}}/jobs/{{.JobID}}">ジョブの状態を確認</a></p><p><a href="/">プロジェクト一覧へ</a></p>{{end}}`, headerFor(r, uid))
 	}
 	jsonOut(w, http.StatusAccepted, job)
 	return nil

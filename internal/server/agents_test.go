@@ -57,7 +57,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 	runGeneration(t, f, human, a.ID)
 	id, token := testAgent(t, f, human, a.ID, "read")
 	var projects []model.Project
-	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].ID != a.ID {
+	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].Namespace != a.Namespace {
 		t.Fatal("project enumeration", c, projects)
 	}
 	if c := f.request("GET", "/api/projects/"+a.ID+"/snapshot", token, nil, nil); c != 200 {
@@ -205,7 +205,7 @@ func TestRevokingAgentDuringRequestCannotBroadenItsIdentity(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &projects); err != nil {
 		t.Fatal(err)
 	}
-	if recorder.Code != 200 || len(projects) != 1 || projects[0].ID != p.ID {
+	if recorder.Code != 200 || len(projects) != 1 || projects[0].Namespace != p.Namespace {
 		t.Fatal("revocation broadened credential into human identity", recorder.Code, projects)
 	}
 }

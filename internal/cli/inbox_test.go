@@ -33,7 +33,7 @@ func TestPutCheckpointsEachAcceptedFile(t *testing.T) {
 		w.Write([]byte(`{"id":"accepted","status":"fetched"}`))
 	}))
 	defer ts.Close()
-	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Project: "p", Namespace: "org/p"}, Client: ts.Client(), Out: io.Discard, Err: io.Discard, ctx: context.Background()}
+	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/p"}, Client: ts.Client(), Out: io.Discard, Err: io.Discard, ctx: context.Background()}
 	if err := a.ensureProject(); err != nil {
 		t.Fatal(err)
 	}

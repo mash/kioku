@@ -353,7 +353,7 @@ kioku project create acme/platform
 kioku pull acme/platform
 ```
 
-The web path is `/acme/platform`. The caller chooses a working directory; `.kioku/config` in that directory stores the server and namespace. Server-side project IDs and bucket mappings remain internal.
+The web path is `/acme/platform`. The caller chooses a working directory; `.kioku/config` in that directory stores the server and namespace. Server-side project IDs and bucket mappings remain internal. Public project API paths use `/api/projects/<organization>/<project>`, and responses identify projects by `namespace`.
 
 ## Cloud operations and releases
 
@@ -387,9 +387,9 @@ kioku pull                   # cwd の設定から同じプロジェクトを取
 
 - `wiki/` と `maps/`: cwd 直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
 - `inbox/`: cwd 直下の原資料投入領域。pull による上書き・削除の対象外です。
-- `.kioku/`: config、manifest.json、receipts.json、ファイル更新ロック。取得状態はここに集約します。
+- `.kioku/`: config、receipts.json、ファイル更新ロック。config は server と namespace のみを保存し、Git で共有できます。
 
-初回取得では、Kioku のメタデータがない既存の非空 wiki/maps を上書きしません。管理対象の symlink も拒否します。公開・取得ともページ単位の順次反映なので、新旧混在を許容します。部分失敗でも成功したページは残ります。復旧後の pull で再取得できます。
+設定の初回作成では、既存の非空 wiki/maps があれば紐付けを拒否します。config がある場合、wiki/maps は管理対象のミラーとして扱うため、独自資料は置かないでください。管理対象の symlink も拒否します。公開・取得ともページ単位の順次反映なので、新旧混在を許容します。部分失敗でも成功したページは残ります。復旧後の pull は実ファイルとサーバーの一覧を比較して再同期します。前回の取得 revision や同期未完了状態はローカルに保存せず、status にも表示しません。
 
 ### 取得結果
 
@@ -467,7 +467,7 @@ BYOK 対応版から更新する場合は、先に旧版で新規投入を止め
 
 `prompts/` 全体はコピーしないでください。DIR 直下の未知の名前（symlink を含む）は起動エラーです。`.` で始まる名前だけを無視します。MCP のツール名・順序・schema と wiki agent の tools は Go に固定されています。`output-rules.txt` と hook の文は差し替え対象ではありません。
 
-全ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.ProjectID}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` は固定のジョブ情報4行を保持します。
+全ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` は固定のジョブ情報4行を保持します。
 
 Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
 

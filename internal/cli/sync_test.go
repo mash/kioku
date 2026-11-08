@@ -52,7 +52,7 @@ func syncFixture(t *testing.T) (*App, *map[string]string, *map[string]int, *int)
 		json.NewEncoder(w).Encode(manifest)
 	}))
 	t.Cleanup(ts.Close)
-	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Project: "project", Namespace: "org/project"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
+	a := &App{Dir: t.TempDir(), Config: Config{Server: ts.URL, Namespace: "org/project"}, Client: ts.Client(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, ctx: context.Background()}
 	return a, &files, &hits, &status
 }
 
@@ -96,11 +96,8 @@ func TestSyncDeltaOverwriteDeleteAndPartialFailure(t *testing.T) {
 	if err == nil || len(r.Deleted) != 1 || len(r.Updated) != 1 {
 		t.Fatal("partial result lost", r, err)
 	}
-	var partial manifest
-	checkpoint, _ := os.ReadFile(filepath.Join(a.metadataDir(), "manifest.json"))
-	json.Unmarshal(checkpoint, &partial)
-	if !partial.Incomplete {
-		t.Fatal("partial sync reported complete")
+	if _, err := os.Stat(filepath.Join(a.metadataDir(), "manifest.json")); !os.IsNotExist(err) {
+		t.Fatal("sync created a manifest", err)
 	}
 	b, _ := os.ReadFile(path)
 	if string(b) != "# changed" {

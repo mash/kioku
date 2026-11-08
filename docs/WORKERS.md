@@ -26,7 +26,7 @@ Updates confined to content do not write SQLite. Changes spanning configuration 
 
 ## Put and inbox
 
-POST `/api/projects/{id}/put` accepts one file or one removal:
+POST `/api/projects/{organization}/{project}/put` accepts one file or one removal:
 
 ```json
 {"file":{"name":"doc.md","content":"---\nsource_url: https://example.com/doc\nupdated_at: 2026-11-07T18:00:00+09:00\n---\nDocument text"}}
@@ -131,12 +131,11 @@ The command receives one JSON object on stdin, followed by EOF:
   "version": 1,
   "job_id": "j_01",
   "attempt_id": "a1b2c3",
-  "project_id": "p_01",
-  "input_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/input",
-  "output_url": "https://kioku.example/api/projects/p_01/jobs/j_01/agent/output",
+  "input_url": "https://kioku.example/api/projects/acme/platform/jobs/j_01/agent/input",
+  "output_url": "https://kioku.example/api/projects/acme/platform/jobs/j_01/agent/output",
   "job_token": "<secret>",
   "model": "claude-opus-5-5",
-  "first_message": "job: j_01\nproject: p_01\ninput: https://...\noutput: https://...\n",
+  "first_message": "job: j_01\nnamespace: acme/platform\ninput: https://...\noutput: https://...\n",
   "prompt": "You maintain a team wiki ...",
   "budget_cents": 1000,
   "deadline": "2026-11-07T12:00:00Z"

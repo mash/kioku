@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/mash/kioku/internal/publicapi"
 )
 
 func (a *App) print(v any) error {
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(publicapi.Value(v))
 	if err != nil {
 		return err
 	}
@@ -31,8 +33,8 @@ func (a *App) publicProjectNames(value any) {
 	switch v := value.(type) {
 	case map[string]any:
 		for _, key := range []string{"project_id", "project"} {
-			if id, ok := v[key]; ok {
-				if id == a.Config.Project && a.Config.Namespace != "" {
+			if _, ok := v[key]; ok {
+				if a.Config.Namespace != "" {
 					v["namespace"] = a.Config.Namespace
 				}
 				delete(v, key)

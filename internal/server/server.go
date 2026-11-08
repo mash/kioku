@@ -19,6 +19,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/publicapi"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
@@ -166,11 +167,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/account/sessions/{session}", s.wrap(s.revokeSession, true))
 	s.mux.HandleFunc("POST /api/account/revoke-all", s.wrap(s.revokeAllSessions, true))
 	s.mux.HandleFunc("DELETE /api/account/identities/{provider}", s.wrap(s.unlinkIdentity, true))
-	s.mux.HandleFunc("POST /api/projects/{project}/owner", s.wrap(s.transferProject, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/owner", s.wrap(s.transferProject, true))
 	s.mux.HandleFunc("POST /api/orgs/{org}/owner", s.wrap(s.transferOrganization, true))
 
-	s.mux.HandleFunc("GET /api/projects/{project}/agents", s.wrap(s.agents, true))
-	s.mux.HandleFunc("DELETE /api/projects/{project}/agents/{agent}", s.wrap(s.revokeAgent, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/agents", s.wrap(s.agents, true))
+	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}/agents/{agent}", s.wrap(s.revokeAgent, true))
 
 	s.mux.HandleFunc("POST /webhooks/anthropic", s.anthropicWebhook)
 
@@ -179,10 +180,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{org}/{slug}", s.web(s.namespacePage, true))
 
 	s.mux.HandleFunc("GET /metrics", s.metrics)
-	s.mux.HandleFunc("GET /api/projects/{project}/usage", s.wrap(s.usage, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/audit", s.wrap(s.audit, true))
-	s.mux.HandleFunc("POST /api/projects/{project}/maintenance", s.wrap(s.cleanup, true))
-	s.mux.HandleFunc("DELETE /api/projects/{project}", s.wrap(s.deleteProject, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/usage", s.wrap(s.usage, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/audit", s.wrap(s.audit, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/maintenance", s.wrap(s.cleanup, true))
+	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}", s.wrap(s.deleteProject, true))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.DB.View(func(model.State) error { return nil }); err != nil {
@@ -200,16 +201,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects", s.wrap(s.projects, true))
 	s.mux.HandleFunc("POST /api/projects", s.wrap(s.createProject, true))
 	s.mux.HandleFunc("POST /api/join", s.wrap(s.join, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/members", s.wrap(s.members, true))
-	s.mux.HandleFunc("POST /api/projects/{project}/invites", s.wrap(s.invite, true))
-	s.mux.HandleFunc("DELETE /api/projects/{project}/members/{member}", s.wrap(s.removeMember, true))
-	s.mux.HandleFunc("POST /api/projects/{project}/put", s.wrap(s.put, true))
-	s.mux.HandleFunc("POST /api/projects/{project}/generate", s.wrap(s.generate, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/jobs/{job}", s.wrap(s.job, true))
-	s.mux.HandleFunc("POST /api/projects/{project}/jobs/{job}/retry", s.wrap(s.retry, true))
-	s.mux.HandleFunc("GET /api/projects/{project}/snapshot", s.wrap(s.snapshot, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/members", s.wrap(s.members, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/invites", s.wrap(s.invite, true))
+	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}/members/{member}", s.wrap(s.removeMember, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/put", s.wrap(s.put, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/generate", s.wrap(s.generate, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/jobs/{job}", s.wrap(s.job, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/jobs/{job}/retry", s.wrap(s.retry, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/snapshot", s.wrap(s.snapshot, true))
 	s.mux.HandleFunc("GET /", s.web(s.home, false))
-	s.mux.HandleFunc("GET /projects/{project}", s.web(s.projectPage, true))
 	s.mux.HandleFunc("GET /invite/{invite}", s.web(s.invitePage, false))
 }
 
@@ -226,6 +226,31 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 		key, principal := s.session(r)
 		r = r.WithContext(context.WithValue(r.Context(), authContextKey{}, requestIdentity{key: key, principal: principal}))
 		uid := principal.UserID
+		if principal.Role == "job" && r.Pattern != agentInputRoute && r.Pattern != agentOutputRoute {
+			writeError(w, fail(403, "job credential permits only job input and output"))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/projects/") && r.PathValue("slug") != "" && r.PathValue("org") != "" {
+			if uid == "" {
+				if err := s.authorizeAgent(r, principal); err != nil {
+					writeError(w, err)
+					return
+				}
+				writeError(w, fail(401, "login required"))
+				return
+			}
+			err := s.DB.View(func(st model.State) error {
+				p, err := namespaceProject(st, r.PathValue("org"), r.PathValue("slug"), uid)
+				if err == nil {
+					r.SetPathValue("project", p.ID)
+				}
+				return err
+			})
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+		}
 		if err := s.authorizeAgent(r, principal); err != nil {
 			writeError(w, err)
 			return
@@ -272,7 +297,7 @@ func writeError(w http.ResponseWriter, err error) {
 func jsonOut(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(publicapi.Value(v))
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
@@ -335,8 +360,10 @@ func (s *Server) check(pid, uid string) error {
 }
 func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
 	if _, principal := s.session(r); principal.AgentID != "" {
-		jsonOut(w, 200, map[string]any{"agent_id": principal.AgentID, "project_id": principal.ProjectID, "role": principal.Role, "expires": principal.Expires})
-		return nil
+		return s.DB.View(func(st model.State) error {
+			jsonOut(w, 200, map[string]any{"agent_id": principal.AgentID, "namespace": st.Projects[principal.ProjectID].Namespace, "role": principal.Role, "expires": principal.Expires})
+			return nil
+		})
 	}
 	return s.DB.View(func(st model.State) error {
 		u := st.Users[uid]

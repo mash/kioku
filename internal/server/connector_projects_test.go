@@ -54,19 +54,19 @@ func TestConnectorConsentProjectSelection(t *testing.T) {
 	a := consentProject(t, f, human, "alpha")
 	b := consentProject(t, f, human, "beta")
 	foreign := consentProject(t, f, f.login("outsider@example.com"), "private")
-	params.Set("project_id", b.ID) // An untrusted connector supplies the authorization URL.
+	params.Set("namespace", b.Namespace) // An untrusted connector supplies the authorization URL.
 	page := connectorForm(f, "GET", "/oauth/authorize", human, params)
 	if page.Code != 200 || !strings.Contains(page.Body.String(), a.Namespace) || !strings.Contains(page.Body.String(), b.Namespace) || strings.Contains(page.Body.String(), foreign.Namespace) {
 		t.Fatal("consent must list only the user's project namespaces")
 	}
 	action, fields, options := consentControls(t, page)
-	if !slices.Equal(options, []string{a.ID, b.ID}) || strings.Contains(action, "project_id") {
+	if !slices.Equal(options, []string{a.Namespace, b.Namespace}) || strings.Contains(action, "namespace") {
 		t.Fatal("expected exactly two unchecked projects in namespace order")
 	}
-	if res := connectorForm(f, "POST", action+"&project_id="+b.ID, human, fields); res.Code != 400 || res.Header().Get("Location") != "" || !strings.Contains(res.Body.String(), "No project was selected") {
+	if res := connectorForm(f, "POST", action+"&namespace="+b.Namespace, human, fields); res.Code != 400 || res.Header().Get("Location") != "" || !strings.Contains(res.Body.String(), "No project was selected") {
 		t.Fatal("query-only consent granted access", res.Code)
 	}
-	fields["project_id"] = []string{a.ID, foreign.ID}
+	fields["namespace"] = []string{a.Namespace, foreign.Namespace}
 	if res := connectorForm(f, "POST", action, human, fields); res.Code != 400 || res.Header().Get("Location") != "" {
 		t.Fatal("forged non-member selection granted access", res.Code)
 	}
@@ -87,7 +87,7 @@ func TestConnectorRefreshPreservesSelectedProjects(t *testing.T) {
 		connectorCode(t, f, access, b.Namespace)
 		expectProjectDenied(t, f, access, unselected.Namespace)
 		expectProjectDenied(t, f, access, newProject.Namespace)
-		form = url.Values{"grant_type": {"refresh_token"}, "client_id": {client}, "refresh_token": {refresh}, "project_id": {unselected.ID}}
+		form = url.Values{"grant_type": {"refresh_token"}, "client_id": {client}, "refresh_token": {refresh}, "namespace": {unselected.ID}}
 	}
 }
 
@@ -103,16 +103,16 @@ func TestConnectorConsentRequiresTheDisplayedAccount(t *testing.T) {
 		t.Fatal("expected Alice's consent page")
 	}
 	action, fields, _ := consentControls(t, page)
-	fields.Set("project_id", shared.ID)
+	fields.Set("namespace", shared.Namespace)
 	res := connectorForm(f, "POST", action, bob, fields)
 	if res.Code != 409 || res.Header().Get("Location") != "" || !strings.Contains(res.Body.String(), "account changed") || !strings.Contains(res.Body.String(), "bob@example.com") {
 		t.Fatal("account switch must require fresh consent even for a shared project", res.Code)
 	}
 	action, fields, options := consentControls(t, res)
-	if !slices.Contains(options, shared.ID) {
+	if !slices.Contains(options, shared.Namespace) {
 		t.Fatal("shared project missing on Bob's consent page")
 	}
-	fields.Set("project_id", shared.ID)
+	fields.Set("namespace", shared.Namespace)
 	if res := connectorForm(f, "POST", action, bob, fields); res.Code != 303 {
 		t.Fatal("Bob could not consent from the new form", res.Code)
 	}
@@ -287,9 +287,9 @@ func TestConnectorConsentLimitsSelectedProjects(t *testing.T) {
 	action, fields, _ := consentControls(t, connectorForm(f, "GET", "/oauth/authorize", alice, params))
 	ids := make([]string, 201)
 	for i := range ids {
-		ids[i] = p.ID
+		ids[i] = p.Namespace
 	}
-	fields["project_id"] = ids
+	fields["namespace"] = ids
 	if res := connectorForm(f, "POST", action, alice, fields); res.Code != 400 || res.Header().Get("Location") != "" {
 		t.Fatal("too many selected projects accepted", res.Code)
 	}

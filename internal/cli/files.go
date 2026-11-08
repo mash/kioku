@@ -37,11 +37,3 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(out)
 	return out
 }
-
-type manifest struct {
-	Incomplete bool              `json:"incomplete,omitempty"`
-	Revision   string            `json:"revision"`
-	Server     string            `json:"server"`
-	Project    string            `json:"project"`
-	Hashes     map[string]string `json:"hashes"`
-}

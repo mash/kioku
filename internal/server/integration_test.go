@@ -83,6 +83,8 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 }
 func (f *fixture) request(method, path, token string, in, out any) int {
 	f.t.Helper()
+	// Test callers use internal IDs to arrange state. Public requests use names.
+	path = f.publicPath(path)
 	var b []byte
 	if in != nil {
 		b, _ = json.Marshal(in)
@@ -106,6 +108,24 @@ func (f *fixture) request(method, path, token string, in, out any) int {
 		if err = json.Unmarshal(raw, out); err != nil {
 			f.t.Fatalf("decode %s: %v: %s", path, err, raw)
 		}
+	}
+	if resp.StatusCode < 300 {
+		_ = f.db.View(func(st model.State) error {
+			switch v := out.(type) {
+			case *model.Project:
+				for _, p := range st.Projects {
+					if p.Namespace == v.Namespace {
+						*v = p
+						break
+					}
+				}
+			case *model.Job:
+				if j, ok := st.Jobs[v.ID]; ok {
+					*v = j
+				}
+			}
+			return nil
+		})
 	}
 	return resp.StatusCode
 }
@@ -357,4 +377,21 @@ func configureAutoRunner(t *testing.T, f *fixture) {
 }
 func sourcePage(id string) string {
 	return "wiki/source-" + strings.ReplaceAll(strings.ToLower(id), "_", "-") + ".md"
+}
+
+// publicPath resolves internal fixture references before sending a real request.
+func (f *fixture) publicPath(path string) string {
+	_ = f.db.View(func(st model.State) error {
+		for id, p := range st.Projects {
+			path = strings.ReplaceAll(path, "/api/projects/"+id+"/", "/api/projects/"+p.Namespace+"/")
+			if path == "/api/projects/"+id {
+				path = "/api/projects/" + p.Namespace
+			}
+			if path == "/projects/"+id {
+				path = "/" + p.Namespace
+			}
+		}
+		return nil
+	})
+	return path
 }

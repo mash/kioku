@@ -63,7 +63,7 @@ func TestDefaultsAndCopiedFiles(t *testing.T) {
 		t.Fatal("default variables missing")
 	}
 	job := JobVariables{"j", "p", "https://kioku.test/input", "https://kioku.test/output"}
-	if got.User(job) != "job: j\nproject: p\ninput: https://kioku.test/input\noutput: https://kioku.test/output\n" {
+	if got.User(job) != "job: j\nnamespace: p\ninput: https://kioku.test/input\noutput: https://kioku.test/output\n" {
 		t.Fatal(got.User(job))
 	}
 	if strings.Contains(got.System(), job.InputURL) {
@@ -382,7 +382,7 @@ func TestDirectoryValidation(t *testing.T) {
 func TestTemplatesMCPMergeAndSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	writePrompt(t, dir, SystemFile, "---\nmodel: {id: custom, effort: high, speed: fast, inference_geo: us}\n---\n{{.BaseURL}} {{.ClientVersion}} {{.MaxOutputBytes}} {{\"{{\"}} $KIOKU_JOB_TOKEN")
-	writePrompt(t, dir, UserFile, "custom {{.JobID}} {{.ProjectID}} {{.InputURL}} {{.OutputURL}} {{.BaseURL}}")
+	writePrompt(t, dir, UserFile, "custom {{.JobID}} {{.Namespace}} {{.InputURL}} {{.OutputURL}} {{.BaseURL}}")
 	writePrompt(t, dir, MCPFile, "instructions: 'Welcome {{.BaseURL}}'\ntools:\n  wiki_read:\n    description: '{{.BaseURL}} wiki'\n    properties:\n      project:\n        description: |\n          Select {{.BaseURL}}\n")
 	r := loadTest(t, dir)
 	if r.System() != "https://kioku.test 9.8.7 2468 {{ $KIOKU_JOB_TOKEN" {

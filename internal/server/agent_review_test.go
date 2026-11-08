@@ -15,7 +15,7 @@ func TestManagedIOBoundsConcurrentBodyReads(t *testing.T) {
 	second := &pausedReader{make(chan struct{}), make(chan struct{})}
 	call := func(body *pausedReader, done chan struct{}) {
 		defer close(done)
-		r := httptest.NewRequest("PUT", "/api/projects/"+j.ProjectID+"/jobs/"+j.ID+"/agent/output", body)
+		r := httptest.NewRequest("PUT", f.publicPath("/api/projects/"+j.ProjectID+"/jobs/"+j.ID+"/agent/output"), body)
 		r.Header.Set("Authorization", "Bearer "+raw)
 		r.Header.Set("Kioku-Client-Version", "dev")
 		f.s.Handler().ServeHTTP(httptest.NewRecorder(), r)

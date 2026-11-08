@@ -170,7 +170,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("POST /api/orgs", s.wrap(s.createOrganization, true))
 	s.mux.HandleFunc("GET /api/orgs", s.wrap(s.organizations, true))
-	s.mux.HandleFunc("GET /{org}/{slug}", s.wrap(s.namespacePage, true))
+	s.mux.HandleFunc("GET /{org}/{slug}", s.web(s.namespacePage, true))
 
 	s.mux.HandleFunc("GET /metrics", s.metrics)
 	s.mux.HandleFunc("GET /api/projects/{project}/usage", s.wrap(s.usage, true))
@@ -202,9 +202,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/projects/{project}/jobs/{job}", s.wrap(s.job, true))
 	s.mux.HandleFunc("POST /api/projects/{project}/jobs/{job}/retry", s.wrap(s.retry, true))
 	s.mux.HandleFunc("GET /api/projects/{project}/snapshot", s.wrap(s.snapshot, true))
-	s.mux.HandleFunc("GET /", s.wrap(s.home, false))
-	s.mux.HandleFunc("GET /projects/{project}", s.wrap(s.projectPage, true))
-	s.mux.HandleFunc("GET /invite/{invite}", s.wrap(s.invitePage, false))
+	s.mux.HandleFunc("GET /", s.web(s.home, false))
+	s.mux.HandleFunc("GET /projects/{project}", s.web(s.projectPage, true))
+	s.mux.HandleFunc("GET /invite/{invite}", s.web(s.invitePage, false))
 }
 
 type authContextKey struct{}

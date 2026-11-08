@@ -19,12 +19,24 @@ import (
 
 const connectorScope = "cli_login"
 
+var projectReturnID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 func authorizeReturn(value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
 	u, err := url.Parse(value)
-	if err != nil || u.IsAbs() || u.Host != "" || u.Path != "/oauth/authorize" || u.RawPath != "" || u.Fragment != "" {
+	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Opaque != "" || u.RawPath != "" || strings.Contains(value, "#") || strings.ContainsAny(u.Path, "\\\r\n\t") {
+		return "", fail(400, "invalid login return path")
+	}
+	allowed := u.Path == "/" || u.Path == "/oauth/authorize"
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if strings.HasPrefix(u.Path, "/") && len(parts) == 2 {
+		// Personal namespaces (u-...) are valid too. Reserve service route prefixes.
+		org := parts[0]
+		allowed = allowed || (org == "projects" && projectReturnID.MatchString(parts[1])) || (validSlug(parts[1]) && validSlug(org) && (!reservedNamespace(org) || strings.HasPrefix(org, "u-")))
+	}
+	if !allowed {
 		return "", fail(400, "invalid login return path")
 	}
 	return u.String(), nil
@@ -245,7 +257,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(status)
 		}
-		return render(w, "Authorize connector", data, connectorConsent)
+		return render(w, "Authorize connector", data, connectorConsent, headerFor(r, session.UserID))
 	}
 	var provider fosite.OAuth2Provider
 	var request fosite.AuthorizeRequester

@@ -4,14 +4,18 @@ on:
     branches: [main]
     paths: ['plugin/.claude-plugin/plugin.json']
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify without publishing a release
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  build:
-    if: github.ref == 'refs/heads/main'
+  source:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.source.outputs.version }}
@@ -30,6 +34,13 @@ jobs:
         run: |
           set -euo pipefail
           manifest=plugin/.claude-plugin/plugin.json
+          if [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.dry_run }}" == true ]]; then
+            echo "version=v$(jq -r .version "$manifest")" >> "$GITHUB_OUTPUT"
+            echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$GITHUB_REF" == refs/heads/main ]] || exit 1
           # The tag names the latest commit that changed the version line, also on a retry.
           commit=$(git log -1 -G'"version"' --format=%H -- "$manifest")
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
@@ -59,30 +70,48 @@ jobs:
             exit 1
           fi
           echo "released=false" >> "$GITHUB_OUTPUT"
+  checks:
+    needs: source
+    if: needs.source.outputs.released == 'false'
+    uses: ./.github/workflows/checks.yml
+    with:
+      ref: ${{ needs.source.outputs.commit }}
+  build:
+    needs: source
+    if: needs.source.outputs.released == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        if: steps.source.outputs.released == 'false'
         with:
           go-version-file: go.mod
-      - if: steps.source.outputs.released == 'false'
-        run: go test -race ./...
-      - if: steps.source.outputs.released == 'false'
-        run: go vet ./...
+          cache: false
+      # Separate workloads and refresh compiled packages after source changes.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('go.mod', 'go.sum') }}-
       - name: Build client archives and checksums
-        if: steps.source.outputs.released == 'false'
         env:
-          RELEASE_VERSION: ${{ steps.source.outputs.version }}
-          RELEASE_COMMIT: ${{ steps.source.outputs.commit }}
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
         run: make release VERSION="$RELEASE_VERSION" COMMIT="$RELEASE_COMMIT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: steps.source.outputs.released == 'false'
         with:
           name: kioku-cli-release
           path: dist/
           if-no-files-found: error
           retention-days: 14
   publish:
-    needs: build
-    if: needs.build.outputs.released == 'false'
+    needs: [source, checks, build]
+    if: github.ref == 'refs/heads/main' && needs.source.outputs.released == 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -94,8 +123,8 @@ jobs:
       - name: Create the tag and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          RELEASE_COMMIT: ${{ needs.build.outputs.commit }}
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail

@@ -1,0 +1,72 @@
+name: Go checks
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [core, server-0, server-1, server-2, server-3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Separate workloads and refresh compiled packages after source changes.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-race-${{ matrix.suite }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-race-${{ matrix.suite }}-${{ hashFiles('go.mod', 'go.sum') }}-
+      - name: Race tests (always execute, including on cache hits)
+        env:
+          SUITE: ${{ matrix.suite }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SUITE" == core ]]; then
+            mapfile -t packages < <(go list ./... | grep -v '^github.com/mash/kioku/internal/server$')
+            go test -race -count=1 "${packages[@]}"
+          else
+            # Discover every Test, Example and Fuzz seed; partition without omissions.
+            go test -race -list . ./internal/server > "$RUNNER_TEMP/server-tests"
+            pattern=$(awk -v shard="${SUITE#server-}" '/^(Test|Example|Fuzz)[[:alnum:]_]*$/ { if (n++ % 4 == shard) { printf "%s%s", sep, $0; sep="|" } }' "$RUNNER_TEMP/server-tests")
+            test -n "$pattern"
+            go test -race -count=1 -run "^($pattern)$" ./internal/server
+          fi
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Separate workloads and refresh compiled packages after source changes.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-vet-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-vet-${{ hashFiles('go.mod', 'go.sum') }}-
+      - run: go vet ./...
+      - run: go build ./cmd/...

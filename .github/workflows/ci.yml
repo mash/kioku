@@ -4,15 +4,9 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-      - run: go test -race ./...
-      - run: go vet ./...
-      - run: go build ./cmd/...
+    uses: ./.github/workflows/checks.yml
+    with:
+      ref: ${{ github.sha }}
   image:
     runs-on: ubuntu-latest
     steps:
@@ -20,11 +14,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Image version
+        id: version
+        run: echo "value=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
       - name: Build the self-hosting image
-        run: |
-          docker build --target final -t kioku:ci \
-            --build-arg VERSION="$(git describe --tags --always)" \
-            --build-arg COMMIT="$GITHUB_SHA" .
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: final
+          load: true
+          tags: kioku:ci
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=ci-image
+          cache-to: type=gha,mode=max,scope=ci-image
       - name: Check the image CLI and server
         run: |
           docker run --rm --entrypoint kioku kioku:ci version | grep -F "\"commit\":\"$GITHUB_SHA\""
@@ -44,6 +49,16 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          cache: false
+      # Separate workloads and refresh compiled packages after source changes.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ runner.arch }}-plugin-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-plugin-${{ hashFiles('go.mod', 'go.sum') }}-
       - name: Check plugin shell scripts
         run: for f in plugin/hooks/*.sh; do sh -n "$f"; done
       - name: Run plugin tests

@@ -5,16 +5,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mash/kioku/internal/managedagents"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 )
 
 type pauseSessionClient struct {
-	managedagents.Client
+	claudemanaged.Client
 	entered, release chan struct{}
 	once             sync.Once
 }
 
-func (c *pauseSessionClient) GetSession(ctx context.Context, id string) (managedagents.Session, error) {
+func (c *pauseSessionClient) GetSession(ctx context.Context, id string) (claudemanaged.Session, error) {
 	c.once.Do(func() { close(c.entered); <-c.release })
 	return c.Client.GetSession(ctx, id)
 }

@@ -218,7 +218,7 @@ export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
 
-kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` は最初のメッセージと同一で、job ID・project ID・入力 URL・出力 URL の4行だけを含みます。指示と出力規則はシステムプロンプトにあります。Runner が fetched と removed を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
+kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付された入力ファイルを読み、ローカルに出力ファイルを書きます。指示と出力規則はシステムプロンプトにあります。Runner が fetched と removed を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
 
 Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。概念・エンティティ・分析・概要ページから source ページを引用します。`wiki/index.md` は種類ごとの目録で、source ページを載せません。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
@@ -432,17 +432,16 @@ kiokud sends this agent's system prompt with every session. A session without th
 | 手順 | 操作 |
 | --- | --- |
 | S1 | console または `ant` で Agent を作成する（`POST /v1/agents`）。model は任意、system は上記の文、tools は不要。 |
-| S2 | Environment を作成する（`POST /v1/environments`）。cloud 環境で [Kioku へのネットワーク方針](docs/WORKERS.md#job-credential-and-network-policy)を設定する。 |
+| S2 | Environment を作成する（`POST /v1/environments`）。cloud 環境で [`limited` で許可ホストを空にする](docs/WORKERS.md#job-credential-and-network-policy)。 |
 | S3 | 差し替える場合だけ、動かす kiokud と同じ版の repo の `prompts/` から、下記3ファイルのうち必要なものを専用の DIR にコピーする。 |
 | S4 | DIR 内のファイルを編集する。既定値を使う場合は S3・S4 は不要。 |
 | S5 | `KIOKU_MA_AGENT_ID` と `KIOKU_MA_ENVIRONMENT_ID` に作成した ID を設定する。差し替える場合は `KIOKU_PROMPTS_DIR=DIR` も設定する。 |
 | S6 | kiokud を再起動する。検証に失敗すると起動しない。起動ログの `source` と `sha256` を確認する。 |
 
-Environment の package managers と MCP servers は無効にし、デプロイごとに別の Environment を作成します。異なるデプロイで `allowed_hosts` を共有・上書きしないでください。kiokud は Agent や Environment を起動時に作成・更新しません。
+Environment の package managers と MCP servers は無効にし、デプロイごとに別の Environment を作成します。kiokud は各実行前に設定をAPIから読み戻し、外向き通信を許可する環境では生成を開始しません。旧版から切り替える前に稼働中のジョブと後片付けを完了させ、新しい環境のIDを設定してください。
 
 kiokud はセッションごとに `agent_with_overrides` で system、model（指定時）、固定 tools を送信し、`mcp_servers` と `skills` は空配列で置き換えます。Agent 側に追加したツール設定は使いません。`KIOKU_MA_AGENT_VERSION` が設定されていれば version も送信します。Agent の console に表示される system はプレースホルダなので、実際の文は kiokud の起動ログで特定します。
 
-Managed Agents からその HTTPS URL に到達できる必要があります。
 通常の OAuth・ストレージ設定は [Self-hosting](#self-hosting) を参照してください。
 
 CLI は `kioku --server https://kioku.example.com login` で接続し、
@@ -467,7 +466,7 @@ BYOK 対応版から更新する場合は、先に旧版で新規投入を止め
 
 `prompts/` 全体はコピーしないでください。DIR 直下の未知の名前（symlink を含む）は起動エラーです。`.` で始まる名前だけを無視します。MCP のツール名・順序・schema と wiki agent の tools は Go に固定されています。`output-rules.txt` と hook の文は差し替え対象ではありません。
 
-全ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` は固定のジョブ情報4行を保持します。
+全ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` の項目は固定です。managed runner では `BaseURL` は空になり、`InputURL` と `OutputURL` はローカルパスになります。system ファイルには `{{.ReadJobInput}}` と `{{.SubmitJobOutput}}` でrunnerに合った入出力手順を差し込めます。
 
 Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
 
@@ -504,22 +503,17 @@ MA のセッション作成が4xxで拒否されると `session create rejected 
 
 `KIOKU_RUNNER=openai` selects the OpenAI-managed agent and hosted sandbox for
 operator-key generation. Set `OPENAI_API_KEY` and `KIOKU_OPENAI_MODEL` explicitly.
-The application key needs `api.agents.read`, `api.agents.write`,
-`api.responses.write`, `api.vaults.read`, and `api.vaults.write` permissions.
-`KIOKU_BASE_URL` must use HTTPS on port 443 or 8443 and be reachable from OpenAI.
+The application key needs access to Agents sessions and the Files API. The runner
+creates a small hosted environment with networking disabled, attaches the
+input archive, and checks the effective network policy before starting the turn.
+It retrieves the expected artifact from that completed turn. The input archive
+must fit within the Files attachment limit of 50 MiB.
 
-The runner reuses the wiki prompt body and input/output archive contract, injects each short-lived vault credential only into headers for its allowed hosts, disables subagents,
-and requests a small hosted container. The operator configures sandbox egress; the runner does not override it with a Kioku-only allowlist. The existing per-job budget is sent as
-`spend_control.limit`; this is not a guarantee that total charges, including
-sandbox compute, cannot exceed that amount. Reported provider spend is provisional,
-so this runner leaves the common settled cost unknown. Inspect billing in OpenAI.
-
-Cancellation and session/vault deletion are separate operations. Kioku revokes the
-job token and retries cleanup through reconciliation. Do not change runner type
-while jobs or resource cleanup are pending, including starts whose responses were
-lost. Session creation is not automatically retried; discovery matches project,
-job, and attempt metadata. OpenAI currently documents US-only data residency and
-no Zero Data Retention for Agents API.
+Kioku sends the per-job budget as `spend_control.limit`. Provider spend is
+provisional, so the runner leaves the common settled cost unknown.
+After completion or cancellation, Kioku deletes artifacts, the session and
+the input file. Keep the configured credentials and runner type available
+until pending cleanup finishes.
 
 This integration is covered by local HTTP contract tests; real API permissions,
 budget enforcement, hosted networking, and generated wiki quality still require

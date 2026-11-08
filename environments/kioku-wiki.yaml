@@ -3,6 +3,6 @@ config:
   type: cloud
   networking:
     type: limited
-    allowed_hosts: ["kioku.magicians.ee"]
+    allowed_hosts: []
     allow_package_managers: false
     allow_mcp_servers: false

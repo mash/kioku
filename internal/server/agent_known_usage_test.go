@@ -4,19 +4,19 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 )
 
 type failSecondSessionLookup struct {
-	managedagents.Client
+	claudemanaged.Client
 	calls int
 }
 
-func (c *failSecondSessionLookup) GetSession(ctx context.Context, id string) (managedagents.Session, error) {
+func (c *failSecondSessionLookup) GetSession(ctx context.Context, id string) (claudemanaged.Session, error) {
 	c.calls++
 	if c.calls == 2 {
-		return managedagents.Session{}, managedagents.ErrTemporary
+		return claudemanaged.Session{}, claudemanaged.ErrTemporary
 	}
 	return c.Client.GetSession(ctx, id)
 }

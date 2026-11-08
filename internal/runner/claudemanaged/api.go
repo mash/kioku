@@ -1,4 +1,4 @@
-package managedagents
+package claudemanaged
 
 import (
 	"context"
@@ -40,6 +40,7 @@ type SessionInput struct {
 	Title                  string
 	Metadata               map[string]string
 	FirstMessage           string
+	InputFileID            string
 }
 type Session struct {
 	ID, Status, LastStopReason string
@@ -52,7 +53,7 @@ var ErrTemporary = runner.ErrTemporary
 
 type API struct{ sdk anthropic.BetaService }
 
-func New(baseURL, apiKey string, client *http.Client) *API {
+func NewAPI(baseURL, apiKey string, client *http.Client) *API {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}
@@ -176,7 +177,15 @@ func (a *API) CreateSession(ctx context.Context, in SessionInput) (string, error
 	}
 	agent := anthropic.BetaSessionNewParamsAgentUnion{OfBetaManagedAgentsAgentWithOverridess: &overrides}
 
-	v, err := a.sdk.Sessions.New(ctx, anthropic.BetaSessionNewParams{Agent: agent, EnvironmentID: in.EnvironmentID, VaultIDs: []string{in.VaultID}, Metadata: in.Metadata, Title: anthropic.String(in.Title), Budget: anthropic.BetaManagedAgentsBudgetLimitParam{MaxListCost: anthropic.BetaMonetaryAmountParam{Amount: strconv.FormatInt(in.BudgetCents, 10), Currency: "USD"}}, InitialEvents: []anthropic.BetaSessionNewParamsInitialEventUnion{{OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{OfText: &anthropic.BetaManagedAgentsTextBlockParam{Text: in.FirstMessage}}}}}}})
+	params := anthropic.BetaSessionNewParams{Agent: agent, EnvironmentID: in.EnvironmentID, Metadata: in.Metadata, Title: anthropic.String(in.Title), Budget: anthropic.BetaManagedAgentsBudgetLimitParam{MaxListCost: anthropic.BetaMonetaryAmountParam{Amount: strconv.FormatInt(in.BudgetCents, 10), Currency: "USD"}}, InitialEvents: []anthropic.BetaSessionNewParamsInitialEventUnion{{OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{OfText: &anthropic.BetaManagedAgentsTextBlockParam{Text: in.FirstMessage}}}}}}}
+	if in.InputFileID != "" {
+		params.Resources = []anthropic.BetaSessionNewParamsResourceUnion{{OfFile: &anthropic.BetaManagedAgentsFileResourceParams{
+			FileID: in.InputFileID, MountPath: anthropic.String("/input.tar.gz"),
+		}}}
+	} else if in.VaultID != "" {
+		params.VaultIDs = []string{in.VaultID}
+	}
+	v, err := a.sdk.Sessions.New(ctx, params)
 	if err != nil {
 		return "", apiError(err)
 	}

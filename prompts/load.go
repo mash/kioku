@@ -33,17 +33,19 @@ type Source struct{ File, Source, SHA256 string }
 
 // Rendered owns a startup snapshot. No job or caller can mutate its templates.
 type Rendered struct {
-	system  string
-	model   Model
-	user    textTemplate
-	vars    map[string]string
-	mcp     MCP
-	sources []Source
+	system     string
+	fileSystem string
+	model      Model
+	user       textTemplate
+	vars       map[string]string
+	mcp        MCP
+	sources    []Source
 }
 
-func (r *Rendered) System() string    { return r.system }
-func (r *Rendered) Model() Model      { return r.model }
-func (r *Rendered) Sources() []Source { return slices.Clone(r.sources) }
+func (r *Rendered) System() string     { return r.system }
+func (r *Rendered) FileSystem() string { return r.fileSystem }
+func (r *Rendered) Model() Model       { return r.model }
+func (r *Rendered) Sources() []Source  { return slices.Clone(r.sources) }
 func (r *Rendered) Log() {
 	for _, s := range r.sources {
 		slog.Info("prompt loaded", "file", s.File, "source", s.Source, "sha256", s.SHA256)
@@ -52,8 +54,13 @@ func (r *Rendered) Log() {
 
 var jobVariableNames = []string{"JobID", "Namespace", "InputURL", "OutputURL"}
 
-func (r *Rendered) User(job JobVariables) string {
+func (r *Rendered) User(job JobVariables) string     { return r.renderUser(job, false) }
+func (r *Rendered) FileUser(job JobVariables) string { return r.renderUser(job, true) }
+func (r *Rendered) renderUser(job JobVariables, files bool) string {
 	values := maps.Clone(r.vars)
+	if files {
+		values["BaseURL"] = ""
+	}
 	for i, value := range []string{job.JobID, job.Namespace, job.InputURL, job.OutputURL} {
 		values[jobVariableNames[i]] = value
 	}
@@ -121,11 +128,18 @@ func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered
 	if err != nil {
 		return nil, err
 	}
-	system, _, err := parseText(SystemFile, body, line, r.vars)
+	systemVars := maps.Clone(r.vars)
+	systemVars["ReadJobInput"] = "Download the input with curl using \"Authorization: Bearer $KIOKU_JOB_TOKEN\" and \"Kioku-Client-Version: " + vars.ClientVersion + "\". On 409, 5xx or connection failure wait 10 seconds and retry, up to 30 times. Extract with tar or Python's tarfile."
+	systemVars["SubmitJobOutput"] = "Tar and gzip wiki/ only, upload to the output URL with the same two Kioku headers. On 400 read the problems, fix the output and upload again. On 409 or authentication failure stop; the job may have ended."
+	system, _, err := parseText(SystemFile, body, line, systemVars)
 	if err != nil {
 		return nil, err
 	}
-	r.system = system.render(r.vars)
+	r.system = system.render(systemVars)
+	systemVars["BaseURL"] = ""
+	systemVars["ReadJobInput"] = "Extract the mounted input archive from the local input path."
+	systemVars["SubmitJobOutput"] = "Tar and gzip wiki/ only and atomically rename the completed archive to the local output path."
+	r.fileSystem = system.render(systemVars) + "\n\nThis session uses local files only. The input and output in the user message are local paths. Read the mounted archive and write the completed archive at the output path, creating its parent directory as needed. These instructions supersede any download or upload steps. Do not use the network or credentials. Finish only after writing the archive."
 	if strings.TrimSpace(r.system) == "" {
 		return nil, invalid(SystemFile, "empty body", line)
 	}

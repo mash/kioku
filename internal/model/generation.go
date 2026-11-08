@@ -30,6 +30,7 @@ type AgentRun struct {
 	BudgetCents     int64         `json:"budget_cents"`
 	BaseRevision    string        `json:"base_revision,omitempty"`
 	OutputKey       blob.Key      `json:"output_key,omitempty"`
+	OutputWaitSince *time.Time    `json:"output_wait_since,omitempty"`
 	OutputHash      string        `json:"output_hash,omitempty"`
 }
 

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mash/kioku/internal/managedagents"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 	execrunner "github.com/mash/kioku/internal/runner/exec"
 	openairunner "github.com/mash/kioku/internal/runner/openai"
 	"github.com/mash/kioku/prompts"
@@ -37,7 +37,7 @@ func (s *Set) prepareManaged() error {
 			return errors.New("managed generation requires a valid KIOKU_BASE_URL origin")
 		}
 		if c.ManagedAgents == nil {
-			c.ManagedAgents = managedagents.New(c.MABaseURL, c.AnthropicAPIKey, nil)
+			c.ManagedAgents = claudemanaged.NewAPI(c.MABaseURL, c.AnthropicAPIKey, nil)
 		}
 	}
 	return nil
@@ -55,7 +55,7 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 		if s.config.Prompts == nil {
 			return errors.New("prompts are not configured")
 		}
-		if kind == "claudemanaged" && utf8.RuneCountInString(s.config.Prompts.System()) > 100000 {
+		if kind == "claudemanaged" && utf8.RuneCountInString(s.config.Prompts.FileSystem()) > 100000 {
 			return fmt.Errorf("prompts: %s: too long (line 1)", prompts.SystemFile)
 		}
 	}
@@ -80,11 +80,7 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 		if strings.TrimSpace(s.config.OpenAIAPIKey) == "" || strings.TrimSpace(s.config.OpenAIModel) == "" {
 			return errors.New("KIOKU_RUNNER=openai requires OPENAI_API_KEY and KIOKU_OPENAI_MODEL")
 		}
-		u, err := url.Parse(s.config.BaseURL)
-		if err != nil || !validBaseOrigin(s.config.BaseURL) || u.Scheme != "https" || (u.Port() != "" && u.Port() != "443" && u.Port() != "8443") {
-			return errors.New("OpenAI generation requires an HTTPS KIOKU_BASE_URL on port 443 or 8443")
-		}
-		s.openaiRunner = openairunner.New(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: s.config.Prompts.System()})
+		s.openaiRunner = openairunner.NewFiles(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: s.config.Prompts.FileSystem()})
 	case "exec":
 		model := s.config.Prompts.Model()
 		if model.ID == "" {

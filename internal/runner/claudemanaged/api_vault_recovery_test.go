@@ -1,4 +1,4 @@
-package managedagents_test
+package claudemanaged_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mash/kioku/internal/managedagents"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 )
 
 func TestFindJobVaultsPaginatesAndIsolatesAttempts(t *testing.T) {
@@ -14,7 +14,7 @@ func TestFindJobVaultsPaginatesAndIsolatesAttempts(t *testing.T) {
 	f.SetPageSize(1)
 	ctx := context.Background()
 	var want []string
-	for _, in := range []managedagents.VaultInput{
+	for _, in := range []claudemanaged.VaultInput{
 		{JobID: "other", AttemptID: "attempt"},
 		{JobID: "job", AttemptID: "old-attempt"},
 		{JobID: "job", AttemptID: "attempt"},
@@ -40,7 +40,7 @@ func TestFindJobVaultsPaginatesAndIsolatesAttempts(t *testing.T) {
 		t.Fatal("archived vault rediscovered", got, err)
 	}
 	f.SetError("GET", "/v1/vaults", 503)
-	if _, err := a.FindJobVaults(ctx, "job", "attempt"); !errors.Is(err, managedagents.ErrTemporary) {
+	if _, err := a.FindJobVaults(ctx, "job", "attempt"); !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal(err)
 	}
 }

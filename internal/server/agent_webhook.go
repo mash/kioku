@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 )
 
 func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +19,7 @@ func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid webhook body", http.StatusBadRequest)
 		return
 	}
-	typ, id, err := managedagents.VerifyWebhook(s.Config.AnthropicWebhookSigningKey, body, r.Header)
+	typ, id, err := claudemanaged.VerifyWebhook(s.Config.AnthropicWebhookSigningKey, body, r.Header)
 	if err != nil {
 		http.Error(w, "invalid webhook signature", http.StatusBadRequest)
 		return

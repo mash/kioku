@@ -47,7 +47,7 @@ Each put request is at most 1 MiB including JSON overhead (413 on excess). Each 
 
 ## One current wiki
 
-Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md is identical to the first message: four lines containing the job ID, project ID, input URL and output URL. Instructions and output rules are in the system prompt. The outer YAML contains source_url, status and submitter. The runner copies updated_at from the submitted file frontmatter inside the item body into the source page YAML frontmatter and uses source times to date facts. Nested frontmatter remains source content; only the outer YAML controls item status. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
+Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md contains the job ID and project namespace. Exec also receives the input and output URLs in JOB.md. Instructions and output rules are in the system prompt. The outer YAML contains source_url, status and submitter. The runner copies updated_at from the submitted file frontmatter inside the item body into the source page YAML frontmatter and uses source times to date facts. Nested frontmatter remains source content; only the outer YAML controls item status. No provider tokens enter this tar. Expanded input is limited to 256 MiB. A large combined inbox/wiki can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
 
 The runner processes fetched and removed items, edits source and concept/entity/analysis/overview pages, and returns the complete wiki/*.md set. Existing sources are identified by exact frontmatter source_url and keep their filenames. New slug collisions use -2, -3, etc. The index omits source pages; log.md records changes, newest first, up to 100 entries. The prompt requires these content rules and forbids tokens and signed URL secrets in log.md.
 
@@ -69,7 +69,7 @@ There is one current wiki/maps tree, updated in place. File hashes avoid unchang
 
 Generation uses the operator's runner configuration. Personal generation keys require self-hosting. Do not change runner type until running attempts and cleanup finish.
 
-Each attempt persists Job.Run with attempt ID, pinned inbox IDs, phase, budget, deadline and job token identity before external resources are created. Start returns a runner-neutral ref. Recovery uses the same configured runner and attempt metadata; the runner type is not persisted.
+Each attempt persists its ID, pinned inbox, phase, budget and deadline before it creates external resources. Managed attempts also persist their provider, transport, and resource IDs. Exec persists its job token identity. Recovery uses the saved provider and attempt metadata.
 
 ## Prompt configuration
 
@@ -83,13 +83,27 @@ Existing MA/OpenAI sessions retain their original prompts across restart. Discov
 
 ## Job credential and network policy
 
-Managed runners create one vault per attempt. The vault contains only KIOKU_JOB_TOKEN as a runner.Secret. The vault injects the token into request headers for the Kioku host. The input tar, JOB.md, first message, logs and API responses contain no token values. Kioku holds no GitHub or Google credentials for source access. The client retrieves every source before submission.
+Managed generation uses only attached files and provider APIs. Kioku uploads the
+input archive with an expiry, attaches it to the session, and retrieves the
+output after successful completion. New managed attempts do not issue a job
+token or attach a vault. The client retrieves source text before submission.
 
-**The operator must configure runner networking outside Kioku.** The checked-in environments/kioku-wiki.yaml allows only kioku.magicians.ee and disables package-manager networking and MCP servers. The fixed toolset in `internal/managedagents` disables web_fetch and web_search on every MA session. The session also clears inherited MCP servers and skills. Kioku does not apply the environment file at startup. Update the deployed environment and read back allowed_hosts through the provider API. Vault host restrictions limit secret injection; the environment policy limits network egress. The OpenAI runner uses the operator's environment policy without a networking override.
+Create the Claude environment from [environments/kioku-wiki.yaml](../environments/kioku-wiki.yaml).
+Kioku reads back the policy before starting the session. It requires a cloud
+environment with `limited` networking, an empty allowlist, and no MCP or package
+manager exceptions. Kioku also clears inherited MCP servers and skills, disables
+web fetch and web search, and pins the inspected single-agent version. Manage
+the environment per deployment and avoid modifying it while the deployment runs.
 
-Exec processes fetched and removed items using the submitted text. The trusted command must enforce its own network sandbox.
+OpenAI uses a hosted environment with networking disabled. Kioku confirms the
+effective policy before sending the first turn. The input is limited to 50 MiB
+compressed, and an oversized input fails without dropping any inbox items.
+Use provider projects or workspaces dedicated to the corresponding trust
+boundary before attaching real tenant data. In Anthropic, uploaded files are
+workspace-scoped even when their mounted copies are session-scoped.
 
-Local fake-provider tests cover job token injection and resource cleanup. Validate the deployed vault, network policy and model behavior in a real managed session before production use. Google Docs and Drive APIs are unnecessary for Kioku login; operators can disable those APIs in a Google Cloud project dedicated to Kioku.
+Exec processes the same submitted text over its authenticated HTTP contract.
+The trusted command enforces its own network sandbox.
 
 ## Storage selection and recovery
 
@@ -97,9 +111,9 @@ Select `KIOKU_STORAGE=local|s3` (or `--storage`, which takes precedence). The de
 
 Queued/running generation jobs live in project storage. Generation has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts a run and proceeds to another project; there are no intake workers.
 
-Generation phases are `preparing`, `agent_running`, `output_received`, and `finalizing`. The server validates output at upload and stores its hash; finalization pins that output against replacement. Only the reconciler calls `Runner.Inspect`, once per job per pass, and passes its `Status` to finalization, failure handling and cleanup. Passes run every 30 seconds, at worker startup, and on signed MA webhooks or exec exit callbacks. The four states are None, Running, Stopped and Unknown; the zero value is Unknown.
+Generation phases are `preparing`, `agent_running`, `output_received`, and `finalizing`. The server validates output on retrieval or upload and stores its hash; finalization pins that output against replacement. Only the reconciler calls `Runner.Inspect`, once per job per pass, and passes its `Status` to finalization, failure handling and cleanup. Passes run every 30 seconds, at worker startup, and on signed MA webhooks or exec exit callbacks. The four states are None, Running, Stopped and Unknown; the zero value is Unknown.
 
-For a missing run handle, `Inspect` searches by job and attempt metadata and saves any recovered handle before continuing. A None result waits until five minutes after preparation, then fails with `session creation did not finish`. A recovered running run continues normally. A Stopped run with accepted output is published regardless of its stop reason, unless an `AbortReason` already exists. Without output it fails. Unknown or Running waits until the deadline, then failure handling revokes the token, records `AbortReason` and requests `Stop`. A later pass confirms the stop and records the final cost; unknown cost is omitted (`cost_cents` is absent), not recorded as zero. Persistent inspection or stop failures keep the job running until its token deadline (job deadline plus ten minutes), after which it fails with unknown cost. Unavailable runner type configuration fails a running job at its job deadline and defers cleanup until configuration is restored.
+For a missing run handle, `Inspect` searches by job and attempt metadata and saves any recovered handle before continuing. A None result waits until five minutes after preparation, then fails with `session creation did not finish`. A recovered running run continues normally. A file-based run must finish successfully. Kioku then waits up to 90 seconds, bounded by the job deadline, for its session or turn to publish the expected output. Ambiguous or invalid outputs fail the attempt. For the existing HTTP contract, accepted output can be published after the run stops unless it was aborted. Unknown or Running waits until the deadline, then failure handling revokes the token, records `AbortReason` and requests `Stop`. A later pass confirms the stop and records the final cost; unknown cost is omitted (`cost_cents` is absent), not recorded as zero. Persistent inspection or stop failures keep the job running until its token deadline (job deadline plus ten minutes), after which it fails with unknown cost. Unavailable runner type configuration fails a running job at its job deadline and defers cleanup until configuration is restored.
 
 Completed/failed jobs retain a cleanup marker and remain in the hot index until resource cleanup and tar removal finish. A late-discovered running run is stopped before cleanup. Retry waits for cleanup and creates a new attempt; discovery matches that attempt ID, so previous attempts cannot supply its run or cost. Stop confirmation and publication can take until the next pass (up to 30 seconds).
 

@@ -29,4 +29,4 @@ The user's Claude fetches each source with the user's own connectors or CLI. The
 
 source_url is client-asserted provenance. The server validates the URL format but does not verify that the text came from that URL or that the submitter can read the original. A member can submit different text under an existing source_url. A later submission replaces an earlier waiting item with the same exact URL, even if the later text is older.
 
-Kioku holds no source-access credentials and never retrieves source text. GitHub and Google OAuth authorize login only. Login credentials remain available for identity verification during account administration. Runners receive the submitted text and process fetched and removed items. Each managed attempt's vault contains only KIOKU_JOB_TOKEN.
+Kioku holds no source-access credentials and never retrieves source text. GitHub and Google OAuth authorize login only. Login credentials remain available for identity verification during account administration. Runners receive the submitted text and process fetched and removed items. Managed attempts exchange input and output files through provider APIs.

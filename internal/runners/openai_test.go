@@ -24,10 +24,10 @@ func TestOpenAISelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := r.(*openairunner.Runner); !ok {
+	if _, ok := r.(*openairunner.FileRunner); !ok {
 		t.Fatalf("%T", r)
 	}
-	for _, change := range []func(*Config){func(c *Config) { c.OpenAIAPIKey = "" }, func(c *Config) { c.OpenAIModel = "" }, func(c *Config) { c.BaseURL = "http://kioku.test" }, func(c *Config) { c.BaseURL = "https://kioku.test:8080" }} {
+	for _, change := range []func(*Config){func(c *Config) { c.OpenAIAPIKey = "" }, func(c *Config) { c.OpenAIModel = "" }} {
 		bad := c
 		change(&bad)
 		if _, err := Load(bad, nil); err == nil {
@@ -45,22 +45,27 @@ func TestOpenAIPromptOverridesOnWire(t *testing.T) {
 	defer func() { http.DefaultTransport = old }()
 	found := false
 	http.DefaultTransport = promptTransport(func(req *http.Request) (*http.Response, error) {
-		response := `{"id":"vault"}`
+		var response string
 		switch req.URL.Path {
-		case "/v1/vaults":
-		case "/v1/vaults/vault/credentials":
-			response = `{"id":"credential"}`
+		case "/v1/files":
+			response = `{"id":"file"}`
 		case "/v1/agents/sessions":
-			found = true
 			var body map[string]any
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
 			agent := body["agent"].(map[string]any)
-			if agent["model"] != "openai-model" || agent["instructions"] != "Custom https://kioku.test instructions" || body["input"] != "Fetch https://kioku.test/input and upload https://kioku.test/output" {
+			if agent["model"] != "openai-model" || !strings.HasPrefix(agent["instructions"].(string), "Custom  instructions") || body["input"] != nil || body["vault_ids"] != nil {
 				t.Fatal(body)
 			}
-			response = `{"id":"session"}`
+			response = `{"id":"session","environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`
+		case "/v1/agents/sessions/session/events":
+			found = true
+			data, err := io.ReadAll(req.Body)
+			if err != nil || !strings.Contains(string(data), "Fetch /workspace/input.tar.gz and upload /workspace/outputs/output.tar.gz") {
+				t.Fatal(string(data), err)
+			}
+			response = `{}`
 		default:
 			t.Fatalf("unexpected request: %s", req.URL.Path)
 		}
@@ -75,8 +80,10 @@ func TestOpenAIPromptOverridesOnWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := prompts.JobVariables{JobID: "job", Namespace: "acme/project", InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output"}
-	_, err = r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: job.JobID, ProjectID: "internal-project", AttemptID: "attempt"}, Token: "job-token", InputURL: job.InputURL, OutputURL: job.OutputURL, FirstMessage: rendered.User(job), BudgetCents: 50})
+	job := prompts.JobVariables{JobID: "job", Namespace: "acme/project", InputURL: "/workspace/input.tar.gz", OutputURL: "/workspace/outputs/output.tar.gz"}
+	_, err = r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: job.JobID, ProjectID: "internal-project", AttemptID: "attempt"},
+		InputArchive: []byte("fixture"), SaveRef: func(runner.RunRef) error { return nil },
+		FirstMessage: rendered.FileUser(job), BudgetCents: 50})
 	if err != nil || !found {
 		t.Fatal(err, found)
 	}

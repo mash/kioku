@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/url"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/prompts"
 )
@@ -17,13 +16,13 @@ const tokenName = "KIOKU_JOB_TOKEN"
 type Runner struct {
 	system        string
 	model         prompts.Model
-	client        func() (managedagents.Client, error)
+	client        func() (Client, error)
 	agentID       string
 	agentVersion  int64
 	environmentID string
 }
 
-func New(client func() (managedagents.Client, error), agentID string, agentVersion int64, environmentID string, system string, model prompts.Model) *Runner {
+func New(client func() (Client, error), agentID string, agentVersion int64, environmentID string, system string, model prompts.Model) *Runner {
 	return &Runner{system: system, model: model, client: client, agentID: agentID, agentVersion: agentVersion, environmentID: environmentID}
 }
 
@@ -40,11 +39,11 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 	if err != nil {
 		return runner.RunRef{}, err
 	}
-	vault, err := client.CreateJobVault(ctx, managedagents.VaultInput{JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, ProjectID: spec.Key.ProjectID, Credentials: credentials})
+	vault, err := client.CreateJobVault(ctx, VaultInput{JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, ProjectID: spec.Key.ProjectID, Credentials: credentials})
 	if err == nil {
 		var id string
-		id, err = client.CreateSession(ctx, managedagents.SessionInput{System: r.system, Model: r.model, MAAgentID: r.agentID, MAAgentVersion: r.agentVersion, EnvironmentID: r.environmentID, VaultID: vault, BudgetCents: spec.BudgetCents, Title: "Kioku wiki " + spec.Key.JobID, Metadata: map[string]string{"kioku_job_id": spec.Key.JobID, "kioku_attempt_id": spec.Key.AttemptID}, FirstMessage: spec.FirstMessage})
-		var rejected *managedagents.APIError
+		id, err = client.CreateSession(ctx, SessionInput{System: r.system, Model: r.model, MAAgentID: r.agentID, MAAgentVersion: r.agentVersion, EnvironmentID: r.environmentID, VaultID: vault, BudgetCents: spec.BudgetCents, Title: "Kioku wiki " + spec.Key.JobID, Metadata: map[string]string{"kioku_job_id": spec.Key.JobID, "kioku_attempt_id": spec.Key.AttemptID}, FirstMessage: spec.FirstMessage})
+		var rejected *APIError
 		if errors.As(err, &rejected) && rejected.Status >= 400 && rejected.Status < 500 {
 			slog.Error("session create rejected", "status", rejected.Status, "type", rejected.Type)
 		}

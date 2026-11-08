@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -76,7 +75,7 @@ func TestSessionRejectedLogsOnlyStatusAndType(t *testing.T) {
 		slog.SetDefault(slog.New(slog.NewTextHandler(&b, nil)))
 		_, err := r.Start(t.Context(), spec)
 		slog.SetDefault(old)
-		var api *managedagents.APIError
+		var api *APIError
 		if !errors.As(err, &api) || api.Status != code || api.Type != "api_error" {
 			t.Fatal(err)
 		}

@@ -16,9 +16,9 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
-	"github.com/mash/kioku/internal/managedagents"
-	"github.com/mash/kioku/internal/managedagents/fake"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
@@ -372,7 +372,7 @@ func configureAutoRunner(t *testing.T, f *fixture) {
 	ma := fake.New()
 	t.Cleanup(ma.Close)
 	f.auto = ma
-	f.runnerConfig = runners.Config{Prompts: f.s.Config.Prompts, AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: managedagents.New(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
+	f.runnerConfig = runners.Config{Prompts: f.s.Config.Prompts, AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: legacyManagedClient{claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client())}, BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 }
 func sourcePage(id string) string {

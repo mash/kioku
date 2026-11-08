@@ -1,4 +1,4 @@
-package managedagents
+package claudemanaged
 
 import "github.com/anthropics/anthropic-sdk-go/v2"
 

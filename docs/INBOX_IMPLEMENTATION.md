@@ -15,8 +15,8 @@ inbox はクライアントが送った本文を fetched として保存する�
 - 生成対象の容量判定には、直前に公開を完了した時点の容量を使う。途中公開中は Revision.CompleteBytes にその値を保持し、公開完了時に消す。途中書き込みだけで容量を超えても残った inbox を再実行でき、以前の公開ですでに超過していた場合は復旧中も removed だけを固定する。Revision.StoredBytes と新しい put の受付は、復旧中も現在の容量を使う。
 - 出力の (a)〜(e) は source_url の完全一致で検査する。URL の正規化やリダイレクト先への置換をしない。slug、原文の忠実な保持、引用、index の分類、log の100項目・秘密除去はプロンプト規則であり、サーバーは内容を検査しない。
 - source_url はクライアントが申告する出典である。サーバーは URL の形式を検査するが、本文と原本の一致や投稿者の原本への閲覧権限を検証しない。
-- runner は fetched と removed を処理する。vault には KIOKU_JOB_TOKEN だけを入れる。Google／GitHub の OAuth はログインに使う。
-- 環境テンプレートの allowed_hosts は kioku.magicians.ee だけにする。kiokud は起動時に環境設定を反映しない。運用者が設定を適用し、provider API で反映結果を確認する。
+- runner は fetched と removed を処理する。managed runner の入出力はプロバイダーのファイルAPIで受け渡す。Google／GitHub の OAuth はログインに使う。
+- Claudeの環境テンプレートでは allowed_hosts を空にする。運用者が環境を用意し、kiokud が起動前のprovider API照合で通信制限を確認する。OpenAIはセッション作成時に通信を無効にする。
 - macOS の Unix socket のパス長に合わせ、バックアップのテスト用ソケットには短い相対パスを使った。製品のバックアップ API は変えていない。
 - source_url 検査の HTTP 応答テストを PR-5、source ページ名・slug 衝突の公開往復テストを PR-6 で補った。実装の依存順は変えていない。
 
@@ -32,7 +32,7 @@ inbox はクライアントが送った本文を fetched として保存する�
 | 出力 (a)〜(e)、容量、受理済みハッシュ、公開時の上限超過 | server/output_source_validation_test.go、server/agent_io_test.go、server/agent_guards_review_test.go、server/agent_storage_reserve_test.go |
 | source_url による更新・slug の -2、原文を公開 | wiki/source_validation_test.go、server/source_pages_roundtrip_test.go、wiki/assemble_test.go |
 | 途中公開・期限切れ・再起動・片付け | server/inbox_generation_test.go、server/agent_lifecycle_test.go、server/agent_recovery_test.go、server/agent_cleanup_review_test.go |
-| ジョブトークンだけの vault、Kioku だけの allowed_hosts、exec、秘密の非露出 | runner/* のテスト、agentgen/config_test.go、managedagents/client_test.go |
+| managed runner のファイル入出力と通信遮断、自前の exec とジョブトークン | runner/* のテスト、agentgen/config_test.go、runner/claudemanaged/api_test.go |
 
 表のパスは `internal/` 以下。slug や原文保持の期待値は fake が作る出力で確かめる。実モデルがプロンプトどおりに編集する保証を、このテスト結果から主張しない。
 

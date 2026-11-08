@@ -34,7 +34,7 @@ func agentIOJob(st model.State, principal model.Session, pid, jid string) (model
 		return model.Job{}, err
 	}
 	job, ok := st.Jobs[jid]
-	if !ok || job.ProjectID != pid || !acceptsAgentIO(job) {
+	if !ok || job.ProjectID != pid || !acceptsAgentIO(job) || job.Run.Ref.UsesProviderFiles {
 		return model.Job{}, fail(409, "job no longer accepts agent input or output")
 	}
 	return job, nil
@@ -142,12 +142,11 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 		}
 		return fail(400, "could not read output")
 	}
-	pages, err := agentgen.ReadOutput(bytes.NewReader(body), lim)
+	current := func(st model.State) (model.Job, error) {
+		return agentIOJob(st, principal, job.ProjectID, job.ID)
+	}
+	pages, hash, err := s.saveAgentOutput(r.Context(), job, body, current)
 	if err != nil {
-		if errors.Is(err, agentgen.ErrOutputTooLarge) {
-			jsonOut(w, 400, map[string]any{"error": "invalid output", "problems": []string{"expanded output exceeds twice max-wiki-bytes"}})
-			return nil
-		}
 		var invalid *agentgen.OutputError
 		if errors.As(err, &invalid) {
 			jsonOut(w, 400, map[string]any{"error": "invalid output", "problems": invalid.Problems})
@@ -155,54 +154,69 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 		}
 		return err
 	}
-	previous, items, err := s.outputContext(r.Context(), job)
+	jsonOut(w, 200, map[string]any{"pages": pages, "bytes": len(body), "sha256": hash})
+	return nil
+}
+
+func (s *Server) saveAgentOutput(ctx context.Context, job model.Job, body []byte, currentJob func(model.State) (model.Job, error)) (int, string, error) {
+	lim := s.outputLimits()
+	if int64(len(body)) > lim.MaxCompressed {
+		return 0, "", &agentgen.OutputError{Problems: []string{"compressed output exceeds twice max-wiki-bytes"}}
+	}
+	pages, err := agentgen.ReadOutput(bytes.NewReader(body), lim)
+	if errors.Is(err, agentgen.ErrOutputTooLarge) {
+		return 0, "", &agentgen.OutputError{Problems: []string{"expanded output exceeds twice max-wiki-bytes"}}
+	}
 	if err != nil {
-		return err
+		return 0, "", err
+	}
+	previous, items, err := s.outputContext(ctx, job)
+	if err != nil {
+		return 0, "", err
 	}
 	if problems := wiki.ValidateSources(pages, previous, items); len(problems) > 0 {
-		jsonOut(w, 400, map[string]any{"error": "invalid output", "problems": problems})
-		return nil
+		return 0, "", &agentgen.OutputError{Problems: problems}
 	}
 	// Serialize object writes against source/project deletion and cleanup.
-	unlock, err := s.lockProject(r.Context(), job.ProjectID)
+	unlock, err := s.lockProject(ctx, job.ProjectID)
 	if err != nil {
-		return err
+		return 0, "", err
 	}
 	defer unlock()
 	var selectedKey blob.Key
 	if err = s.DB.View(func(st model.State) error {
-		current, e := agentIOJob(st, principal, job.ProjectID, job.ID)
+		current, e := currentJob(st)
 		if e == nil {
 			selectedKey = current.Run.OutputKey
 		}
 		return e
 	}); err != nil {
-		return err
+		return 0, "", err
 	}
 	// Retain at most the selected output plus one replacement. If deletion is
 	// unavailable, stop before writing another version rather than accumulating.
-	keys, err := s.Blobs.List(r.Context(), agentJobPrefix(job)+"output-")
+	keys, err := s.Blobs.List(ctx, agentJobPrefix(job)+"output-")
 	if err != nil {
-		return err
+		return 0, "", err
 	}
 	for _, key := range keys {
 		if key != selectedKey {
-			if err = s.Blobs.Delete(r.Context(), key); err != nil {
-				return fail(503, "previous output cleanup pending")
+			if err = s.Blobs.Delete(ctx, key); err != nil {
+				return 0, "", fail(503, "previous output cleanup pending")
 			}
 		}
 	}
 	hash := auth.Hash(string(body))
 	key := agentJobKey(job, "output-"+hash+".tar.gz")
-	if err = s.Blobs.Put(r.Context(), key, body); err != nil {
-		return err
+	if err = s.Blobs.Put(ctx, key, body); err != nil {
+		return 0, "", err
 	}
 	selected := false
 	var previousKey blob.Key
 	err = s.DB.Update(func(st *model.State) error {
 		current := st.Jobs[job.ID]
 		selected = current.Run != nil && current.Run.OutputKey == key
-		current, e := agentIOJob(*st, principal, job.ProjectID, job.ID)
+		current, e := currentJob(*st)
 		if e != nil {
 			return e
 		}
@@ -216,19 +230,18 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	if err != nil {
 		// Identical retries share a key: never delete the version being finalized.
 		if !selected {
-			if cleanupErr := s.Blobs.Delete(r.Context(), key); cleanupErr != nil {
+			if cleanupErr := s.Blobs.Delete(ctx, key); cleanupErr != nil {
 				slog.Error("rejected agent output cleanup failed", "job", job.ID, "error", cleanupErr)
 			}
 		}
-		return err
+		return 0, "", err
 	}
 	if previousKey != "" && previousKey != key {
-		if err = s.Blobs.Delete(r.Context(), previousKey); err != nil {
+		if err = s.Blobs.Delete(ctx, previousKey); err != nil {
 			slog.Warn("superseded agent output cleanup deferred", "job", job.ID, "error", err)
 		}
 	}
-	jsonOut(w, 200, map[string]any{"pages": len(pages), "bytes": len(body), "sha256": hash})
-	return nil
+	return len(pages), hash, nil
 }
 
 func agentJobKey(job model.Job, name string) blob.Key { return blob.Key(agentJobPrefix(job) + name) }

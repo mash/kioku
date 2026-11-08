@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 )
 
 type crashAfterVaultCreate struct {
-	managedagents.Client
+	claudemanaged.Client
 	vault string
 }
 
-func (c *crashAfterVaultCreate) CreateJobVault(ctx context.Context, in managedagents.VaultInput) (string, error) {
+func (c *crashAfterVaultCreate) CreateJobVault(ctx context.Context, in claudemanaged.VaultInput) (string, error) {
 	id, err := c.Client.CreateJobVault(ctx, in)
 	if err != nil {
 		return id, err

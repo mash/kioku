@@ -1,4 +1,4 @@
-package managedagents_test
+package claudemanaged_test
 
 import (
 	"context"
@@ -10,20 +10,20 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mash/kioku/internal/managedagents"
-	"github.com/mash/kioku/internal/managedagents/fake"
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
 )
 
-func newClient(t *testing.T) (*managedagents.API, *fake.Server) {
+func newClient(t *testing.T) (*claudemanaged.API, *fake.Server) {
 	t.Helper()
 	f := fake.New()
 	t.Cleanup(f.Close)
-	return managedagents.New(f.URL(), "test-api-key", f.HTTP.Client()), f
+	return claudemanaged.NewAPI(f.URL(), "test-api-key", f.HTTP.Client()), f
 }
-func createSession(t *testing.T, a *managedagents.API, job string) string {
+func createSession(t *testing.T, a *claudemanaged.API, job string) string {
 	t.Helper()
-	id, err := a.CreateSession(context.Background(), managedagents.SessionInput{MAAgentID: "agent", EnvironmentID: "env", VaultID: "vault", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job}, FirstMessage: "Input and output URLs"})
+	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", VaultID: "vault", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job}, FirstMessage: "Input and output URLs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +32,11 @@ func createSession(t *testing.T, a *managedagents.API, job string) string {
 func TestClientLifecycleAndWireContract(t *testing.T) {
 	a, f := newClient(t)
 	ctx := context.Background()
-	vault, err := a.CreateJobVault(ctx, managedagents.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "test-job-secret", AllowedHosts: []string{"kioku.test"}}}})
+	vault, err := a.CreateJobVault(ctx, claudemanaged.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "test-job-secret", AllowedHosts: []string{"kioku.test"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := a.CreateSession(ctx, managedagents.SessionInput{MAAgentID: "agent", MAAgentVersion: 3, EnvironmentID: "env", VaultID: vault, BudgetCents: 1234, Title: "Wiki job", Metadata: map[string]string{"kioku_job_id": "job", "kioku_project_id": "project"}, FirstMessage: "Read input then upload output"})
+	id, err := a.CreateSession(ctx, claudemanaged.SessionInput{MAAgentID: "agent", MAAgentVersion: 3, EnvironmentID: "env", VaultID: vault, BudgetCents: 1234, Title: "Wiki job", Metadata: map[string]string{"kioku_job_id": "job"}, FirstMessage: "Read input then upload output"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestClientLifecycleAndWireContract(t *testing.T) {
 			event := events[0].(map[string]any)
 			content := event["content"].([]any)[0].(map[string]any)
 			metadata := r.Body["metadata"].(map[string]any)
-			if event["type"] != "user.message" || content["text"] != "Read input then upload output" || metadata["kioku_job_id"] != "job" || metadata["kioku_project_id"] != "project" {
+			if event["type"] != "user.message" || content["text"] != "Read input then upload output" || metadata["kioku_job_id"] != "job" {
 				t.Fatal(r.Body)
 			}
 		case r.Method == "POST" && strings.HasSuffix(r.Path, "/events"):
@@ -144,7 +144,7 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 	for _, code := range []int{429, 503, 400} {
 		f.SetError("GET", "/v1/sessions/"+id, code)
 		_, err := a.GetSession(context.Background(), id)
-		if err == nil || errors.Is(err, managedagents.ErrTemporary) != (code != 400) || strings.Contains(err.Error(), "secrets") {
+		if err == nil || errors.Is(err, claudemanaged.ErrTemporary) != (code != 400) || strings.Contains(err.Error(), "secrets") {
 			t.Fatal(err)
 		}
 	}
@@ -165,20 +165,20 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 		t.Fatal("non-USD cost must remain unknown", got, err)
 	}
 	f.SetError("POST", "/v1/vaults/vault_1/credentials", 503)
-	vault, err := a.CreateJobVault(context.Background(), managedagents.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "secret", AllowedHosts: []string{"kioku.test"}}}})
-	if vault != "vault_1" || !errors.Is(err, managedagents.ErrTemporary) {
+	vault, err := a.CreateJobVault(context.Background(), claudemanaged.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "secret", AllowedHosts: []string{"kioku.test"}}}})
+	if vault != "vault_1" || !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal("lost vault cleanup handle", vault, err)
 	}
 	before := len(f.Requests())
 	f.SetError("POST", "/v1/sessions", 503)
-	if _, err := a.CreateSession(context.Background(), managedagents.SessionInput{BudgetCents: 50}); !errors.Is(err, managedagents.ErrTemporary) {
+	if _, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{BudgetCents: 50}); !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal(err)
 	}
 	if len(f.Requests()) != before+1 {
 		t.Fatal("creation was retried")
 	}
 	f.HTTP.Close()
-	if _, err := a.GetSession(context.Background(), id); !errors.Is(err, managedagents.ErrTemporary) {
+	if _, err := a.GetSession(context.Background(), id); !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal(err)
 	}
 }
@@ -188,8 +188,8 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	defer target.Close()
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 307) }))
 	defer origin.Close()
-	a := managedagents.New(origin.URL, "test", origin.Client())
-	if _, err := a.CreateSession(context.Background(), managedagents.SessionInput{BudgetCents: 50}); err == nil {
+	a := claudemanaged.NewAPI(origin.URL, "test", origin.Client())
+	if _, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{BudgetCents: 50}); err == nil {
 		t.Fatal("redirect accepted")
 	}
 	if received.Load() != 0 {

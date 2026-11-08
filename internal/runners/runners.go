@@ -11,7 +11,6 @@ import (
 
 	execrunner "github.com/mash/kioku/internal/runner/exec"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
@@ -30,7 +29,7 @@ type Config struct {
 	MAAgentVersion       int64
 	MAEnvironmentID      string
 	MABaseURL            string
-	ManagedAgents        managedagents.Client
+	ManagedAgents        claudemanaged.Client
 	BaseURL              string
 	AgentMaxSessions     int
 	AgentJobTimeout      time.Duration
@@ -40,7 +39,7 @@ type Config struct {
 type Set struct {
 	config       Config
 	execRunner   *execrunner.Runner
-	openaiRunner *openairunner.Runner
+	openaiRunner *openairunner.FileRunner
 }
 
 func Load(c Config, onExit func(string, string)) (*Set, error) {
@@ -68,11 +67,19 @@ func (s *Set) New(job model.Job) (runner.Runner, error) {
 	if job.AnthropicConnectionID != "" {
 		return nil, errors.New("BYOK has been removed; this job cannot run")
 	}
-	if job.Run != nil && job.Run.Ref.Resources["provider"] == "openai" {
-		if s.openaiRunner == nil {
-			return nil, errors.New("OpenAI runner unavailable")
+	if job.Run != nil {
+		switch job.Run.Ref.Resources["provider"] {
+		case "openai":
+			if s.openaiRunner == nil {
+				return nil, errors.New("OpenAI runner unavailable")
+			}
+			return s.openaiRunner, nil
+		case "claudemanaged":
+			if _, ok := s.config.ManagedAgents.(claudemanaged.FileClient); !ok {
+				return nil, errors.New("Claude file runner unavailable")
+			}
+			return s.claudeRunner(), nil
 		}
-		return s.openaiRunner, nil
 	}
 	if s.config.Type == "openai" {
 		if job.Run != nil && job.Run.Ref.ID != "" {
@@ -86,5 +93,17 @@ func (s *Set) New(job model.Job) (runner.Runner, error) {
 	if s.config.ManagedAgents == nil {
 		return nil, runner.ErrNotConfigured
 	}
-	return claudemanaged.New(func() (managedagents.Client, error) { return s.config.ManagedAgents, nil }, s.config.MAAgentID, s.config.MAAgentVersion, s.config.MAEnvironmentID, s.config.Prompts.System(), s.config.Prompts.Model()), nil
+	return s.claudeRunner(), nil
+}
+
+func (s *Set) claudeRunner() runner.Runner {
+	c := s.config
+	r := claudemanaged.New(func() (claudemanaged.Client, error) { return c.ManagedAgents, nil },
+		c.MAAgentID, c.MAAgentVersion, c.MAEnvironmentID, c.Prompts.System(), c.Prompts.Model())
+	// The production SDK client always supports file transport. The narrow
+	// Client interface also supports injected legacy lifecycle test fixtures.
+	if files, ok := c.ManagedAgents.(claudemanaged.FileClient); ok {
+		return r.WithFiles(files, c.Prompts.FileSystem())
+	}
+	return r
 }

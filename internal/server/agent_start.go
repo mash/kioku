@@ -59,7 +59,13 @@ func (s *Server) startAgentJob(ctx context.Context, job model.Job) error {
 	if viewErr := s.DB.View(func(st model.State) error { job = st.Jobs[job.ID]; return nil }); viewErr != nil {
 		return viewErr
 	}
-	return s.failAgentJobLocked(cleanupCtx, job, err.Error(), nil)
+	var status *runner.Status
+	if job.Run != nil && job.Run.Ref.UsesProviderFiles &&
+		job.Run.Ref.Resources["upload_started"] != "true" {
+		// The attempt was rejected before any provider writes.
+		status = &runner.Status{State: runner.StateStopped}
+	}
+	return s.failAgentJobLocked(cleanupCtx, job, err.Error(), status)
 }
 func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if s.runners == nil {
@@ -69,15 +75,18 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err != nil {
 		return err
 	}
+	files, offline := r.(runner.FileRunner)
 	var items []model.InboxItem
 	var published model.Revision
 	var incomplete bool
+	var namespace string
 	var raw string
 	err = s.DB.Update(func(st *model.State) error {
 		if err := validateGeneration(*st, job); err != nil {
 			return err
 		}
 		p := st.Projects[job.ProjectID]
+		namespace = p.Namespace
 		published = st.Revisions[p.Revision]
 		incomplete = p.WikiIncomplete
 		over := completedWikiBytes(published) > s.Config.MaxWikiBytes
@@ -115,9 +124,14 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 			st.Inbox[item.ID] = item
 			run.InboxIDs = append(run.InboxIDs, item.ID)
 		}
-		var token model.AgentToken
-		raw, token = issueJobToken(st, job, run.Deadline.Add(10*time.Minute))
-		run.TokenID = token.ID
+		if offline {
+			run.Ref.UsesProviderFiles = true
+			run.Ref.Resources = map[string]string{"provider": files.Provider()}
+		} else {
+			var token model.AgentToken
+			raw, token = issueJobToken(st, job, run.Deadline.Add(10*time.Minute))
+			run.TokenID = token.ID
+		}
 		job.Run = run
 		st.Jobs[job.ID] = job
 		return nil
@@ -125,12 +139,11 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err != nil || job.Run == nil {
 		return err
 	}
-	var namespace string
-	if err := s.DB.View(func(st model.State) error { namespace = st.Projects[job.ProjectID].Namespace; return nil }); err != nil {
-		return err
+	spec := agentgen.InputSpec{JobID: job.ID, Namespace: namespace}
+	if !offline {
+		base := s.Config.BaseURL + "/api/projects/" + namespace + "/jobs/" + job.ID + "/agent/"
+		spec.InputURL, spec.OutputURL = base+"input", base+"output"
 	}
-	base := s.Config.BaseURL + "/api/projects/" + namespace + "/jobs/" + job.ID + "/agent/"
-	spec := agentgen.InputSpec{JobID: job.ID, Namespace: namespace, InputURL: base + "input", OutputURL: base + "output", Wiki: map[string]string{}}
 	for _, item := range items {
 		in := agentgen.InboxText{Item: item}
 		if item.Status == "fetched" {
@@ -153,7 +166,28 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
 		return err
 	}
-	ref, err := r.Start(ctx, runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), FirstMessage: s.Config.Prompts.User(prompts.JobVariables{JobID: spec.JobID, Namespace: spec.Namespace, InputURL: spec.InputURL, OutputURL: spec.OutputURL}), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline})
+	runSpec := runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL,
+		Token: runner.Secret(raw), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline}
+	vars := prompts.JobVariables{JobID: spec.JobID, Namespace: spec.Namespace, InputURL: spec.InputURL, OutputURL: spec.OutputURL}
+	if offline {
+		vars.InputURL, vars.OutputURL = files.FilePaths()
+		runSpec.InputArchive = archive.Bytes()
+		runSpec.FirstMessage = s.Config.Prompts.FileUser(vars)
+		runSpec.SaveRef = func(ref runner.RunRef) error {
+			return s.DB.Update(func(st *model.State) error {
+				if err := validateGeneration(*st, job); err != nil {
+					return err
+				}
+				current := st.Jobs[job.ID]
+				current.Run.Ref = ref
+				st.Jobs[job.ID] = current
+				return nil
+			})
+		}
+	} else {
+		runSpec.FirstMessage = s.Config.Prompts.User(vars)
+	}
+	ref, err := r.Start(ctx, runSpec)
 	if errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}

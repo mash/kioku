@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mash/kioku/internal/managedagents"
-	"github.com/mash/kioku/internal/managedagents/fake"
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
 )
 
 func fixture(t *testing.T) (*Runner, *fake.Server, runner.RunSpec) {
@@ -18,7 +17,7 @@ func fixture(t *testing.T) (*Runner, *fake.Server, runner.RunSpec) {
 	f := fake.New()
 	t.Cleanup(f.Close)
 	rendered := defaultPrompts(t)
-	r := New(func() (managedagents.Client, error) { return managedagents.New(f.URL(), "key", nil), nil }, "agent", 3, "environment", rendered.System(), rendered.Model())
+	r := New(func() (Client, error) { return NewAPI(f.URL(), "key", nil), nil }, "agent", 3, "environment", rendered.System(), rendered.Model())
 	return r, f, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Token: runner.Secret("test-job-token"), OutputURL: "https://kioku.test:8443/output", BudgetCents: 50, FirstMessage: "message"}
 }
 func start(t *testing.T, r *Runner, spec runner.RunSpec) runner.RunRef {
@@ -141,7 +140,7 @@ func TestClientResolvedOnEveryOperation(t *testing.T) {
 	calls := 0
 	unavailable := false
 	sentinel := errors.New("Anthropic connection unavailable; reconnect the original workspace")
-	r.client = func() (managedagents.Client, error) {
+	r.client = func() (Client, error) {
 		calls++
 		if unavailable {
 			return nil, sentinel

@@ -2,7 +2,6 @@ package agentgen
 
 import (
 	"os"
-	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +29,7 @@ func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
 		}
 	}
 }
-func TestEnvironmentAllowsOnlyKioku(t *testing.T) {
+func TestEnvironmentDeniesOutboundNetwork(t *testing.T) {
 	b, err := os.ReadFile("../../environments/kioku-wiki.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +50,7 @@ func TestEnvironmentAllowsOnlyKioku(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := env.Config.Networking
-	if env.Name != "kioku-wiki" || env.Config.Type != "cloud" || n.Type != "limited" || !slices.Equal(n.Hosts, []string{"kioku.magicians.ee"}) || n.Packages == nil || *n.Packages || n.MCP == nil || *n.MCP {
+	if env.Name != "kioku-wiki" || env.Config.Type != "cloud" || n.Type != "limited" || n.Hosts == nil || len(n.Hosts) != 0 || n.Packages == nil || *n.Packages || n.MCP == nil || *n.MCP {
 		t.Fatal(env)
 	}
 }

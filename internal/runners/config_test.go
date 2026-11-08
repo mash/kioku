@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/prompts"
@@ -29,8 +30,10 @@ func TestManagedConfigRequiresCompleteSettings(t *testing.T) {
 }
 
 func TestPromptValidationForSelectedRunner(t *testing.T) {
+	sample := loadPrompts(t, map[string]string{prompts.SystemFile: "a"})
+	overhead := utf8.RuneCountInString(sample.FileSystem()) - utf8.RuneCountInString(sample.System())
 	for _, count := range []int{100000, 100001} {
-		rendered := loadPrompts(t, map[string]string{prompts.SystemFile: strings.Repeat("あ", count)})
+		rendered := loadPrompts(t, map[string]string{prompts.SystemFile: strings.Repeat("あ", count-overhead)})
 		for _, kind := range []string{"", "claudemanaged", "exec", "openai"} {
 			c := execConfig(t)
 			c.Type, c.Prompts = kind, rendered

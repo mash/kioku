@@ -81,7 +81,7 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 		if !errors.Is(inspectErr, runner.ErrTemporary) {
 			slog.Warn("agent inspect failed", "job", job.ID, "error", inspectErr)
 		}
-	} else if status.Run.ID != "" && status.Run.ID != job.Run.Ref.ID {
+	} else if status.Run.ID != "" && (status.Run.ID != job.Run.Ref.ID || job.Run.Phase == model.PhasePreparing) {
 		if err := s.DB.Update(func(st *model.State) error {
 			j := st.Jobs[job.ID]
 			if !sameManagedRun(j, job) {
@@ -107,8 +107,15 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 	}
 	switch status.State {
 	case runner.StateStopped:
+		files := job.Run.Ref.UsesProviderFiles
+		if files && status.Reason != "" {
+			return s.failAgentJobLocked(ctx, job, status.Reason, &status)
+		}
 		if job.Run.Phase == model.PhaseOutputReceived || job.Run.Phase == model.PhaseFinalizing {
 			return s.finalizeAgentJobLocked(ctx, job, status)
+		}
+		if files {
+			return s.collectAgentOutput(ctx, r, job, status)
 		}
 		reason := status.Reason
 		if reason == "" {
@@ -126,6 +133,52 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 	}
 	return nil
 }
+func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job model.Job, status runner.Status) error {
+	files, ok := r.(runner.FileRunner)
+	if !ok || job.Run.Ref.ID == "" || status.Run.ID != job.Run.Ref.ID {
+		return s.failAgentJobLocked(ctx, job, "cannot identify managed agent output", &status)
+	}
+	check := func(st model.State) (model.Job, error) {
+		current := st.Jobs[job.ID]
+		if err := validateGeneration(st, job); err != nil {
+			return model.Job{}, err
+		}
+		if current.Run.Ref.ID != job.Run.Ref.ID || current.Run.AbortReason != "" ||
+			current.Run.Phase != model.PhaseAgentRunning || !current.Run.Ref.UsesProviderFiles {
+			return model.Job{}, fail(409, "job no longer accepts managed agent output")
+		}
+		return current, nil
+	}
+	now := time.Now().UTC()
+	if job.Run.OutputWaitSince == nil {
+		if err := s.DB.Update(func(st *model.State) error {
+			current, err := check(*st)
+			if err == nil {
+				current.Run.OutputWaitSince = &now
+				st.Jobs[job.ID] = current
+				job = current
+			}
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	if !now.Before(job.Run.Deadline) || now.Sub(*job.Run.OutputWaitSince) >= 90*time.Second {
+		return s.failAgentJobLocked(ctx, job, "managed agent output did not become available before the deadline", &status)
+	}
+	body, err := files.CollectOutput(ctx, attempt(job), status, s.outputLimits().MaxCompressed)
+	if errors.Is(err, runner.ErrOutputPending) || errors.Is(err, runner.ErrTemporary) {
+		return nil
+	}
+	if err == nil {
+		_, _, err = s.saveAgentOutput(ctx, job, body, check)
+	}
+	if err != nil {
+		return s.failAgentJobLocked(ctx, job, err.Error(), &status)
+	}
+	return s.finalizeAgentJobLocked(ctx, job, status)
+}
+
 func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, status runner.Status) error {
 	if status.State != runner.StateStopped {
 		return nil

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 )
 
 func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
@@ -24,7 +24,7 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 		return nil
 	})
 	err := f.s.reconcileAgentJob(context.Background(), j)
-	if err != nil && !errors.Is(err, managedagents.ErrTemporary) {
+	if err != nil && !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal(err)
 	}
 	_ = f.db.View(func(st model.State) error {

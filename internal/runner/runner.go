@@ -12,8 +12,10 @@ type AttemptKey struct{ JobID, AttemptID, ProjectID string }
 
 // RunRef points at a run and the resources needed for cleanup.
 type RunRef struct {
-	ID        string            `json:"id,omitempty"`
-	Resources map[string]string `json:"resources,omitempty"`
+	// UsesProviderFiles distinguishes file-based managed runs from HTTP runs.
+	UsesProviderFiles bool              `json:"uses_provider_files,omitempty"`
+	ID                string            `json:"id,omitempty"`
+	Resources         map[string]string `json:"resources,omitempty"`
 }
 
 type Attempt struct {
@@ -38,6 +40,15 @@ func (Secret) String() string               { return "[redacted]" }
 func (Secret) LogValue() slog.Value         { return slog.StringValue("[redacted]") }
 func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
 
+type FileRunner interface {
+	Runner
+	Provider() string
+	FilePaths() (input, output string)
+	CollectOutput(context.Context, Attempt, Status, int64) ([]byte, error)
+}
+
+var ErrOutputPending = errors.New("agent output is not available yet")
+
 type RunSpec struct {
 	Key                 AttemptKey
 	InputURL, OutputURL string
@@ -45,6 +56,9 @@ type RunSpec struct {
 	FirstMessage        string
 	BudgetCents         int64
 	Deadline            time.Time
+	InputArchive        []byte `json:"-"`
+	// SaveRef records provider resources before another external side effect.
+	SaveRef func(RunRef) error `json:"-"`
 }
 
 type Status struct {
@@ -52,6 +66,7 @@ type Status struct {
 	State  State
 	Reason string
 	Cost   *int64
+	TurnID string
 }
 
 var ErrTemporary = errors.New("managed agents: temporary failure")

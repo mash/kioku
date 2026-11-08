@@ -57,24 +57,11 @@ func (r *Runner) request(ctx context.Context, method, path string, body, out any
 		}
 		input = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(r.config.BaseURL, "/")+path, input)
+	res, err := r.send(ctx, method, path, input, "application/json")
 	if err != nil {
-		return errors.New("invalid OpenAI API endpoint")
-	}
-	req.Header.Set("Authorization", "Bearer "+r.config.APIKey)
-	req.Header.Set("OpenAI-Beta", "agents=v1")
-	req.Header.Set("Content-Type", "application/json")
-	res, err := r.client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("%w: OpenAI request failed", runner.ErrTemporary)
+		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return apiError(res.StatusCode)
-	}
 	if out != nil {
 		if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out); err != nil {
 			return fmt.Errorf("%w: invalid OpenAI response", runner.ErrTemporary)
@@ -82,15 +69,44 @@ func (r *Runner) request(ctx context.Context, method, path string, body, out any
 	}
 	return nil
 }
+func (r *Runner) send(ctx context.Context, method, path string, input io.Reader, contentType string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(r.config.BaseURL, "/")+path, input)
+	if err != nil {
+		return nil, errors.New("invalid OpenAI API endpoint")
+	}
+	req.Header.Set("Authorization", "Bearer "+r.config.APIKey)
+	req.Header.Set("OpenAI-Beta", "agents=v1")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	res, err := r.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("%w: OpenAI request failed", runner.ErrTemporary)
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		res.Body.Close()
+		return nil, apiError(res.StatusCode)
+	}
+	return res, nil
+}
 func metadata(k runner.AttemptKey) map[string]string {
 	return map[string]string{"kioku_job_id": k.JobID, "kioku_attempt_id": k.AttemptID}
 }
 
 type resource struct {
-	ID       string            `json:"id"`
-	Metadata map[string]string `json:"metadata"`
-	Status   string            `json:"status"`
-	VaultIDs []string          `json:"vault_ids"`
+	ID          string            `json:"id"`
+	Metadata    map[string]string `json:"metadata"`
+	Status      string            `json:"status"`
+	VaultIDs    []string          `json:"vault_ids"`
+	Environment struct {
+		Type    string `json:"type"`
+		Network struct {
+			Access string `json:"access"`
+		} `json:"network"`
+	} `json:"environment"`
 }
 
 func ref(s resource) runner.RunRef {
@@ -230,6 +246,24 @@ func (r *Runner) Inspect(ctx context.Context, a runner.Attempt) (runner.Status, 
 		return runner.Status{}, fmt.Errorf("%w: invalid OpenAI session identity", runner.ErrTemporary)
 	}
 	out := runner.Status{Run: ref(s)}
+	fileRun := a.Run.UsesProviderFiles
+	if fileRun {
+		for key, value := range metadata(a.Key) {
+			if s.Metadata[key] != value {
+				return runner.Status{}, errors.New("OpenAI session does not match the generation attempt")
+			}
+		}
+		a.Run.ID = s.ID
+		out.Run = a.Run
+		if !s.offline() {
+			const reason = "OpenAI session does not report network access disabled"
+			if s.Status == "idle" || s.Status == "failed" {
+				out.State, out.Reason = runner.StateStopped, reason
+				return out, nil
+			}
+			return runner.Status{}, errors.New(reason)
+		}
+	}
 	// spend_control.consumed is best-effort, rounded down, and may exclude charges.
 	// Do not publish it as the runner's settled cost.
 	switch s.Status {
@@ -243,17 +277,28 @@ func (r *Runner) Inspect(ctx context.Context, a runner.Attempt) (runner.Status, 
 		out.Reason = "OpenAI session requires action"
 	case "idle":
 		var turns struct {
-			Data []struct {
+			HasMore bool `json:"has_more"`
+			Data    []struct {
+				ID     string `json:"id"`
 				Status string `json:"status"`
 			} `json:"data"`
 		}
-		if err = r.request(ctx, "GET", "/agents/sessions/"+url.PathEscape(s.ID)+"/turns?order=desc&limit=1", nil, &turns); err != nil {
+		limit := "1"
+		if fileRun {
+			limit = "2"
+		}
+		if err = r.request(ctx, "GET", "/agents/sessions/"+url.PathEscape(s.ID)+"/turns?order=desc&limit="+limit, nil, &turns); err != nil {
 			return runner.Status{}, err
 		}
 		if len(turns.Data) == 0 {
 			out.State = runner.StateRunning
 			break
 		}
+		if fileRun && (turns.HasMore || len(turns.Data) != 1 || turns.Data[0].ID == "") {
+			out.State, out.Reason = runner.StateStopped, "OpenAI session has ambiguous turn identity"
+			break
+		}
+		out.TurnID = turns.Data[0].ID
 		switch turns.Data[0].Status {
 		case "completed":
 			out.State = runner.StateStopped

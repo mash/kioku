@@ -11,20 +11,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/managedagents"
-	"github.com/mash/kioku/internal/managedagents/fake"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/wiki"
 )
+
+// These fixtures exercise the pre-cutover HTTP lifecycle.
+type legacyManagedClient struct{ claudemanaged.Client }
 
 func managedFixture(t *testing.T) (*fixture, string, model.Project, *fake.Server) {
 	t.Helper()
 	f, token, p := orgProject(t)
 	ma := fake.New()
 	t.Cleanup(ma.Close)
-	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: managedagents.New(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
+	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: legacyManagedClient{claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client())}, BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 	return f, token, p, ma
 }

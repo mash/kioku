@@ -1,4 +1,4 @@
-package managedagents
+package claudemanaged
 
 import (
 	"encoding/json"

@@ -11,19 +11,19 @@ import (
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/blob/local"
-	"github.com/mash/kioku/internal/managedagents"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
-type unavailableCleanupClient struct{ managedagents.Client }
+type unavailableCleanupClient struct{ claudemanaged.Client }
 
 func (unavailableCleanupClient) ArchiveSession(context.Context, string) error {
-	return managedagents.ErrTemporary
+	return claudemanaged.ErrTemporary
 }
 func (unavailableCleanupClient) ArchiveVault(context.Context, string) error {
-	return managedagents.ErrTemporary
+	return claudemanaged.ErrTemporary
 }
 
 type unavailableCleanupStore struct{ blob.Store }

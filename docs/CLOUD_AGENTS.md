@@ -90,13 +90,23 @@ The server has one mutable wiki/maps tree. Pull can include partial progress whi
 
 LLM wiki generation uses a third role, `job`, issued only by kiokud. Users cannot obtain it. It permits only GET input and PUT output for one project and one job; human sessions and read/write agents cannot use those two endpoints. The server stores only its hash and issues a fresh token expiring at the job deadline plus ten minutes. Successful completion, failure handling and deletion revoke it. The worker reconciles lost exec runs before dequeuing new jobs after a restart, revoking their job tokens when the run completes or fails.
 
-Each managed attempt has one vault containing only `KIOKU_JOB_TOKEN`. The vault injects the token into request headers for the kiokud host. The sandbox receives a placeholder. The token stays in `runner.Secret` and never enters the input tar, JOB.md, first message, persisted job or API response.
+Kioku attaches the input archive to an offline managed session and retrieves
+the output from the provider API. Claude requires a cloud environment with an
+empty host allowlist and disables network tools. OpenAI uses a hosted environment
+with networking disabled. New managed attempts carry no vault or job token.
+See [worker operations](WORKERS.md#job-credential-and-network-policy).
 
-The operator configures network policy on the managed environment. Allow only kiokud. Disable package-manager networking, MCP servers, web fetch and web search. Kioku does not install the allowlist at startup. Host-limited vault injection and network egress are separate controls. See [worker operations](WORKERS.md#job-credential-and-network-policy). All runners process fetched and removed items using the submitted text.
+The runner tracks the session and input file for cleanup. Deleting a Claude
+session removes its scoped output files. Kioku deletes OpenAI artifacts before
+deleting the session. Cleanup retries across restarts and blocks job retries
+until it completes.
 
-The runner owns its session and vault resources. Cleanup revokes the job token and removes the vault and temporary tar objects. Failed or unavailable cleanup remains pending across restart and blocks retry until resolved.
-
-Source text is untrusted data. The input contains JOB.md, server-owned outer metadata for inbox items and the entire current wiki. JOB.md repeats only the first message's four metadata lines: job ID, project ID, input URL and output URL. Instructions and output rules are in the system prompt. Output contains the complete wiki/*.md set, including source pages. At upload, Kioku checks archive paths/types, duplicates, UTF-8, index.md, compressed/expanded size (twice max-wiki-bytes) and source_url invariants: every source has a nonempty string URL, URLs are unique, existing sources survive unless removed, removed sources disappear, and fetched items have a matching source. There is no fixed page count or per-page byte limit. A 400 response lists problems for the runner to repair. Finalization checks the accepted archive hash and publishes without a second source validation.
+The input contains JOB.md, server-owned inbox metadata and the current wiki.
+For managed sessions JOB.md contains the job ID and project namespace. The runner writes a
+complete wiki archive to the designated local output path. Kioku checks the
+archive layout, encoding, size and source URLs before saving its hash and
+publishing. The existing exec HTTP endpoint reports validation problems in
+its response.
 
 The prompt requires source citations, an index without source pages and a newest-first log capped at 100 entries. It forbids tokens and signed URL secrets in the log. These content rules are prompt instructions, not server checks. Run failure preserves the inbox for retry.
 

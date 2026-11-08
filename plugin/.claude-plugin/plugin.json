@@ -1,6 +1,6 @@
 {
   "name": "kioku",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Kioku shared project wiki for Claude chat, Cowork and Claude Code: project selection, wiki reading, source recording",
   "mcpServers": {"kioku": {"type": "http", "url": "https://kioku.magicians.ee/mcp"}}
 }

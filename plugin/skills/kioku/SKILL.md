@@ -5,6 +5,8 @@ description: Kiokuで共有するプロジェクトの対象選択、Wikiの参�
 
 # Kiokuの共有コンテクスト
 
+「Kioku にフィードバックして」などの投稿依頼では、[feedback.md](references/feedback.md) だけを読み、その手順を使う。フィードバック投稿だけなら、以下のモード判定・プロジェクト選択・pull・原資料送信は不要。
+
 原資料は、ユーザー自身の Claude セッションが全文を読み、Markdown にして Kioku に送信する。
 コネクター、CLI（コマンドラインの操作ツール）、手元のファイル、ユーザーが貼った本文を使える。
 資料の種類にかかわらず、[capture.md](references/capture.md) の共通規則と送信前の確認に従う。

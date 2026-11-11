@@ -1,7 +1,7 @@
 #!/bin/sh
 exec 2>/dev/null
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-cat >/dev/null
+INPUT=$(cat)
 DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
 TARGET="$DATA/bin/kioku"
 T=
@@ -92,9 +92,22 @@ download() {
 }
 
 if [ "${1:-}" = compact ]; then
-    # Compact never installs, so an older session cannot replace a newer CLI here.
+    # Compact and resume never install or replace the CLI.
+    CONTEXT=$(printf '%s' "$INPUT" | "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
+    if [ -n "$CONTEXT" ]; then
+        printf '%s\n' "$CONTEXT"
+        exit 0
+    fi
     cat "$ROOT/prompts/hook-compact.txt"
     current_version >/dev/null || cat "$ROOT/prompts/hook-no-cli.txt"
+    exit 0
+fi
+if [ "${1:-}" = precompact ]; then
+    cat "$ROOT/prompts/hook-precompact.txt"
+    exit 0
+fi
+if [ "${1:-}" = capture ]; then
+    printf '%s' "$INPUT" | "$TARGET" session hook --prompts "$ROOT/prompts"
     exit 0
 fi
 if [ -n "${KIOKU_CLI:-}" ]; then

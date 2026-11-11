@@ -1,0 +1,1 @@
+要約に Kioku の選択を残す。namespace、server、mode、local mode の保存先 P、最後の pull の時刻と結果を書く。選択と取得が済んでいれば、再選択と再 pull は不要と書く。pull の失敗を成功と書かない。remote mode でも選択と取得結果を残す。未選択なら未選択と書く。

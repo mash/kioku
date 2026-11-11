@@ -2,12 +2,27 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|fork",
+        "matcher": "startup|clear|fork",
         "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" start", "timeout": 120}]
       },
       {
-        "matcher": "compact",
+        "matcher": "compact|resume",
         "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" compact", "timeout": 120}]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" precompact", "timeout": 10}]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" capture", "timeout": 10}]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" capture", "timeout": 10}]
       }
     ]
   }

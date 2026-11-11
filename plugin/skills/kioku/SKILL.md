@@ -14,6 +14,15 @@ description: Kiokuで共有するプロジェクトの対象選択、Wikiの参�
 未保存と伝える。サーバーは原資料を取得しない。
 Kioku への送信には、local mode で CLI、remote mode で MCP（Model Context Protocol）を使う。
 
+## 原資料の取り込みを任せる
+
+Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
+会話に現れるすべての HTTPS URL を対象に、Agent で `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
+同じ URL の子が動いている間は、次の子を起動しない。
+子は URL ごとに全文取得・検証・put を行い、URL・namespace・結果・理由を1行で返す。
+`kioku-capture` として親から対象を受け取ったときは、対象選択と pull を繰り返さず、[capture.md](references/capture.md) の手順で取り込む。
+Codex では今どおり直接 put する。Claude Chat と Cowork も直接 put する。
+
 ## モード選択
 
 画面の名前ではなく、使える機能からモードを決める。local mode を優先する。
@@ -86,7 +95,8 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 新規作成時と projects.json に description（プロジェクトの説明）がない時は、[selection.md](references/selection.md) に従って説明案を作り、ユーザーの確認後に `--description` で渡す。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
-どちらのモードでも、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送信する。
+Claude Code では、会話に現れるすべての HTTPS URL の原資料を送信対象にする。
+その他の環境では、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送信する。
 操作や要約の「記録」を別途 put しない。
 複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。
 「今どこ？」には保存済みマップを根拠に答える。
@@ -101,7 +111,7 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
   maps は `P/maps/` に置く。親ディレクトリの設定は探索しない。
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
-- local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが選択を会話内で保持する。CLI が projects.json を管理し、スキルは読むだけにする。
+- local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
   source ページの `source_url` から原本を確認する。
 - 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。

@@ -68,6 +68,9 @@ remote mode の削除は `source_put` の `remove` を使い、Wiki は定期生
 
 ## Claude Code
 
+Claude Code 2.1.322 以上を使う。それ未満の動作は保証しない。
+Claude Chat と Cowork は hook と plugin の agent を持たないため、今の skill の手順で動かす。
+
 | 利用環境 | インストール | Kioku MCP の接続 | 初回の動作 |
 | --- | --- | --- | --- |
 | Claude Code | `/plugin marketplace add mash/kioku` の後に `/plugin install kioku@kioku`。開発時は `claude --plugin-dir /absolute/path/to/kioku/plugin` も使える。 | `/mcp` | SessionStart が取得した CLI で local mode を使う。CLI やサーバーを使えなければ、モード判定に従う。 |
@@ -83,13 +86,15 @@ marketplace からのインストール処理は、リンク先の内容をプ�
 
 SessionStart フックは POSIX（移植可能なシステム操作の規格）の sh を使う。Python は不要。
 CLI のパスは `${CLAUDE_PLUGIN_DATA}/bin/kioku` の1つだけで、実体の実行ファイルを置く。
-startup・resume・clear・fork では、フックが `bin/kioku version` を実行し、次の場合だけプラグインと同じバージョンの CLI を取得する。
+startup・clear・fork では、フックが `bin/kioku version` を実行し、次の場合だけプラグインと同じバージョンの CLI を取得する。
 
 - `bin/kioku` がない、実行できない、または `version` が失敗する。
 - 入っている CLI のバージョンの文字列が、`.claude-plugin/plugin.json` の `version` に `v` を付けた値と異なる。古くても新しくても取得する。
 
 同じバージョンなら、フックは何もしない。フックはバージョンの新旧を比べない。
-compact ではフックが CLI を取得せず、文を出すだけにする。
+compact・resume ではフックが CLI を取得せず、会話の状態ファイルから選択を復元する。
+CLI の `session context --session SID` と同じ1行を `hookSpecificOutput.additionalContext` に入れる。
+状態ファイルが無い・壊れている・30日を超えた場合は、今の hook-compact.txt を出す。
 古いプラグインのセッションも compact でフックを再実行するので、この規則で古いバージョンへ戻る主な経路をなくす。
 ただし古いセッションでプラグインの更新後に `/clear` を実行すると、古いバージョンの CLI を一度取得することがある。
 次の新しいセッションが、現在のバージョンの CLI を再び取得する。
@@ -105,31 +110,50 @@ compact ではフックが CLI を取得せず、文を出すだけにする。
 対応環境は macOS と Linux の amd64・arm64。
 CLI の取得には `github.com` と転送先へのネットワーク接続が必要になる。
 転送先は `release-assets.githubusercontent.com` または `objects.githubusercontent.com` とする。
-取得失敗はセッションを止めない。古い CLI が動けばそれを使い、次の startup・resume・clear・fork が再度取得を試みる。
+取得失敗はセッションを止めない。古い CLI が動けばそれを使い、次の startup・clear・fork が再度取得を試みる。
 `plugin.json` の `version` が `X.Y.Z` の形でなければ、フックは取得しない。動く `bin/kioku` がなければ、CLI が無いことを伝える文を出す。
 そのバージョンのリリースがまだ無いときも取得に失敗し、フックは今の CLI を使い続ける。
 
 スキルは CLI のパスをそのままコマンド名に書き、変数や `cd` を前に付けない。
 
 開発時は Claude Code の起動前に `KIOKU_CLI=/abs/path/to/kioku` を設定する。
-startup・resume・clear・fork では、フックが取得とバージョン確認を省き、そのファイルを `bin/kioku` へコピーする。
-コピーも同じ一時ファイルと `mv -f` を使う。compact ではコピーしない。
+startup・clear・fork では、フックが取得とバージョン確認を省き、そのファイルを `bin/kioku` へコピーする。
+コピーも同じ一時ファイルと `mv -f` を使う。compact・resume ではコピーしない。
 スキルは `KIOKU_CLI` を読まず、常に `bin/kioku` を使う。
 ローカルでビルドした CLI のバージョン（`git describe` の値や `dev`）はプラグインと異なる。
 `KIOKU_CLI` を外すと、次の startup がプラグインと同じバージョンの CLI を取得する。
 通常のプラグインは PATH の `kioku` を使わない。
 `/reload-plugins` は CLI を取得しない。新しいバージョンの CLI は次の startup などが取得する。
 
-フックは SessionStart だけで動く。
+フックは SessionStart・PreCompact・PostToolUse・UserPromptSubmit で動く。
+PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。
+PostToolUse は全ツールを対象とし、UserPromptSubmit はユーザープロンプトを対象とする。
+両方の hook は入力の JSON 内の文字列を再帰的に調べ、すべての HTTPS URL を拾う。
+親は通知を読み、共有範囲・機密・保存禁止を確認して送信の要否を決める。
+送る場合は `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
+子は sonnet で各 URL の全文取得・検証・put を行い、URL・namespace・結果・理由を1行ずつ返す。
+同じ URL の子を並行に起動しない。Codex は今どおり直接 put する。
+
+CLI は `CLAUDE_CODE_SESSION_ID` がある場合だけ、pull・project join・project create の結果と選択を
+`${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/<sid>.json` に書く。
+CLI は書くたびに30日を超えたファイルを消す。状態ファイルを送信先や認証・共有権限の正本にしない。
+受付状態の台帳を作らない。通知済み URL は会話ごとに直近1000件を保持し、新しい URL だけをまとめて通知する。
+上限を超えた URL は古い順に外し、次に現れた時に再び通知する。
+PostToolUse と UserPromptSubmit は入力に `agent_id` がある場合や、状態ファイルが無い場合には何も出さない。
+
+sh は stdin を読み、`session hook [--event EVENT] --prompts DIR` に JSON の解析と状態更新を任せる。
+この CLI コマンドは通信・対象選択・認証を行わない。jq と Python は不要。
+URL の抽出はツール名・操作・応答の成否で分けない。
+Stop hook・`session skip` は実装しない。
 スキルは最初のユーザーメッセージから対象を選び、会話ごとに一度 pull の完了を待つ。
 pull の後に `wiki/index.md` と関連ページを grep やファイルツールで読む。
 追加の pull は、ユーザーの依頼か、作業に新しい内容が必要な場合だけ実行する。
 pull に失敗した場合は、既存コピーを最新と呼ばない。
 Claude Code のサンドボックスを使う場合は、`kioku.magicians.ee` への通信を設定で許す。
-`~/.local/share/kioku/projects`・`~/.config/kioku` への書き込みも許す。
+`~/.local/share/kioku/projects`・`~/.config/kioku`・`${XDG_STATE_HOME:-~/.local/state}/kioku/sessions` への書き込みも許す。
 既定以外のプロジェクトの path にも書き込みを許す。権限が足りないと pull が失敗する。
 
-選択は会話内で保持し、スキルは projects.json を読むだけにする。
+選択を会話と要約に残し、Claude Code の CLI は状態ファイルにも30日まで置く。スキルは projects.json を読むだけにする。
 CLI は create・join・pull・agent login の紐づけ成功時と、毎回の pull で項目を足す。project delete の成功時は項目を消す。
 既存の path は変えない。別の path へ紐づけた場合は既存 path を stderr（標準エラー出力）に示す。
 書き込みだけに失敗した場合は終了コード0と警告を返す。登録失敗には次の pull、削除失敗にはファイルの修復と該当項目の削除を案内する。壊れた JSON（データ交換形式）はファイル名を示して止まる。

@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import re
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -40,16 +42,27 @@ class ManifestTest(unittest.TestCase):
         self.assertFalse((ROOT / 'cli-pin').exists())
         self.assertFalse((ROOT / 'tools').exists())
 
-    def test_only_session_start(self):
+    def test_stage_one_hooks(self):
         config = json.loads((ROOT / 'hooks/hooks.json').read_text())
         groups = []
-        for matcher, argument in [('startup|resume|clear|fork', 'start'), ('compact', 'compact')]:
+        for matcher, argument in [('startup|clear|fork', 'start'), ('compact|resume', 'compact')]:
             groups.append({'matcher': matcher, 'hooks': [{
                 'type': 'command',
                 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" ' + argument,
                 'timeout': 120,
             }]})
-        self.assertEqual(config, {'hooks': {'SessionStart': groups}})
+        self.assertEqual(config, {'hooks': {
+            'SessionStart': groups,
+            'PreCompact': [{'hooks': [{
+                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" precompact', 'timeout': 10,
+            }]}],
+            'PostToolUse': [{'hooks': [{
+                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" capture', 'timeout': 10,
+            }]}],
+            'UserPromptSubmit': [{'hooks': [{
+                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" capture', 'timeout': 10,
+            }]}],
+        }})
         self.assertNotIn('python', json.dumps(config))
         self.assertEqual(list((ROOT / 'hooks').glob('*.py')), [])
 
@@ -90,6 +103,7 @@ class HooksTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         self.env = dict(os.environ, HOME=str(self.work / 'home'),
                         CLAUDE_PLUGIN_DATA=str(self.data),
+                        XDG_STATE_HOME=str(self.work / 'state'), CLAUDE_CODE_SESSION_ID='',
                         KIOKU_CLI_DOWNLOAD_BASE=f'http://127.0.0.1:{server.server_port}')
         self.env.pop('KIOKU_CLI', None)
         self.make_release('v9.9.9')
@@ -359,6 +373,218 @@ class HooksTest(unittest.TestCase):
         self.assertIn(len(self.requests), (2, 4))
         self.assert_installed(cli('v9.9.9'))
         self.assert_tmp_empty()
+
+
+class SessionHooksTest(unittest.TestCase):
+    """Run the manifest's commands with the actual CLI and isolated session state."""
+
+    @classmethod
+    def setUpClass(cls):
+        if os.environ.get('KIOKU_TEST_BINARY'):
+            cls.cli = Path(os.environ['KIOKU_TEST_BINARY']).resolve()
+        else:
+            tmp = tempfile.TemporaryDirectory(prefix='kioku-session-cli-')
+            cls.addClassCleanup(tmp.cleanup)
+            cls.cli = Path(tmp.name) / 'kioku'
+            subprocess.run(['go', 'build', '-o', str(cls.cli), './cmd/kioku'],
+                           cwd=ROOT.parent, check=True, capture_output=True)
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix='kioku session hook ')
+        self.addCleanup(tmp.cleanup)
+        self.work = Path(tmp.name).resolve()
+        self.root = self.work / 'plugin'
+        for directory in ('hooks', 'prompts', '.claude-plugin'):
+            shutil.copytree(ROOT / directory, self.root / directory)
+        self.data = self.work / 'data'
+        (self.data / 'bin').mkdir(parents=True)
+        shutil.copy2(self.cli, self.data / 'bin/kioku')
+        self.env = dict(os.environ, HOME=str(self.work / 'home'),
+                        XDG_STATE_HOME=str(self.work / 'state'),
+                        CLAUDE_PLUGIN_DATA=str(self.data),
+                        CLAUDE_CODE_SESSION_ID='environment-is-not-the-hook-id',
+                        KIOKU_CLI=str(self.cli))
+        for key in ('KIOKU_SERVER', 'KIOKU_AGENT_TOKEN'):
+            self.env.pop(key, None)
+        self.state_path = self.work / 'state/kioku/sessions/session-1.json'
+        self.state = {
+            'server': 'https://kioku.magicians.ee', 'namespace': 'org/project',
+            'mode': 'local', 'path': str(self.work / 'project'),
+            'operation': 'pull', 'result': 'success',
+            'updated_at': self.timestamp(),
+            'last_pull_at': '2026-11-11T11:40:00Z', 'last_pull_result': 'success',
+        }
+        self.save_state()
+
+    def timestamp(self, seconds_ago=0):
+        return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - seconds_ago))
+
+    def save_state(self):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps(self.state))
+
+    def hook(self, event, **fields):
+        payload = dict(session_id='session-1', hook_event_name=event, **fields)
+        config = json.loads((self.root / 'hooks/hooks.json').read_text())
+        results = []
+        for group in config['hooks'][event]:
+            match = fields.get('source', '') if event == 'SessionStart' else fields.get('tool_name', '')
+            if 'matcher' in group and not re.fullmatch(group['matcher'], match):
+                continue
+            for command in group['hooks']:
+                args = shlex.split(command['command'].replace('${CLAUDE_PLUGIN_ROOT}', str(self.root)))
+                result = subprocess.run(args, input=json.dumps(payload), text=True,
+                                        capture_output=True, env=self.env, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, '')
+                results.append(result.stdout)
+        return ''.join(results)
+
+    def context(self, output, event):
+        obj = json.loads(output)
+        self.assertEqual(set(obj), {'hookSpecificOutput'})
+        self.assertEqual(obj['hookSpecificOutput']['hookEventName'], event)
+        return obj['hookSpecificOutput']['additionalContext']
+
+    def post(self, url='https://github.com/org/repo/pull/42', command='gh pr create', **extra):
+        return self.hook('PostToolUse', tool_name='Bash', tool_input={'command': command},
+                         tool_response={'stdout': url, 'stderr': '', 'interrupted': False}, **extra)
+
+    def test_compact_resume_and_failed_pull_context(self):
+        for result in ('success', 'failure'):
+            self.state.update(result=result, last_pull_result=result)
+            self.save_state()
+            for source in ('compact', 'resume'):
+                with self.subTest(result=result, source=source):
+                    context = self.context(self.hook('SessionStart', source=source), 'SessionStart')
+                    self.assertIn('org/project', context)
+                    self.assertIn('失敗' if result == 'failure' else '成功', context)
+                    self.assertNotIn('\n', context)
+                    if result == 'failure':
+                        self.assertNotIn('再 pull は不要', context)
+
+    def test_new_session_sources_never_read_or_write_state(self):
+        original = self.state_path.read_bytes()
+        for source in ('startup', 'clear', 'fork'):
+            with self.subTest(source=source):
+                output = self.hook('SessionStart', source=source)
+                self.assertEqual(output, (self.root / 'prompts/hook-start.txt').read_text())
+                self.assertNotIn('org/project', output)
+                self.assertEqual(self.state_path.read_bytes(), original)
+                self.assertEqual(list(self.state_path.parent.glob('*.json')), [self.state_path])
+
+    def test_missing_corrupt_and_expired_state_fall_back(self):
+        for content in (None, '{', '{}', json.dumps(dict(self.state, updated_at=self.timestamp(31 * 86400)))):
+            if content is None:
+                self.state_path.unlink()
+            else:
+                self.state_path.write_text(content)
+            for source in ('compact', 'resume'):
+                self.assertEqual(self.hook('SessionStart', source=source),
+                                 (self.root / 'prompts/hook-compact.txt').read_text())
+            self.assertEqual(self.post(), '')
+            self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com'), '')
+
+    def test_precompact_works_without_cli_or_state(self):
+        (self.data / 'bin/kioku').unlink()
+        self.state_path.unlink()
+        self.assertEqual(self.hook('PreCompact'),
+                         (self.root / 'prompts/hook-precompact.txt').read_text())
+
+    def test_urls_from_all_inputs_and_deduplication(self):
+        prompt_url = 'https://example.com/prompt'
+        context = self.context(self.hook('UserPromptSubmit', prompt=prompt_url + ' ' + prompt_url), 'UserPromptSubmit')
+        self.assertEqual(context.count(prompt_url), 1)
+        output = self.hook('PostToolUse', tool_name='AnyTool',
+                           tool_input={'url': 'https://example.com/input'},
+                           tool_response={'success': False, 'nested': [{'text': prompt_url + ' https://example.com/response'}]})
+        context = self.context(output, 'PostToolUse')
+        self.assertNotIn(prompt_url, context)
+        self.assertIn('https://example.com/input', context)
+        self.assertIn('https://example.com/response', context)
+        self.assertIn('org/project', context)
+        self.assertIn('kioku-capture', context)
+        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/input'), '')
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(len(state['notified_urls']), 3)
+        self.assertEqual(state['last_pull_result'], 'success')
+
+    def test_notification_history_cap(self):
+        urls = [f'https://example.com/{n}' for n in range(1001)]
+        output = self.hook('UserPromptSubmit', prompt=' '.join(urls))
+        context = self.context(output, 'UserPromptSubmit')
+        for url in urls:
+            self.assertIn(url, context)
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state['notified_urls'], urls[1:])
+        self.assertEqual(self.hook('UserPromptSubmit', prompt=urls[-1]), '')
+        self.assertNotEqual(self.hook('UserPromptSubmit', prompt=urls[0]), '')
+        self.assertEqual(len(json.loads(self.state_path.read_text())['notified_urls']), 1000)
+
+    def test_child_operations_do_not_notify_or_update(self):
+        original = self.state_path.read_bytes()
+        for agent_id in ('child', '', None):
+            self.assertEqual(self.post(agent_id=agent_id), '')
+            self.assertEqual(self.hook('UserPromptSubmit', agent_id=agent_id, prompt='https://example.com'), '')
+            self.assertEqual(self.state_path.read_bytes(), original)
+        self.assertNotEqual(self.post(), '')
+
+    def test_no_url_or_no_namespace_is_silent(self):
+        self.assertEqual(self.post(url='no URL'), '')
+        self.assertEqual(self.hook('UserPromptSubmit', prompt='http://example.com'), '')
+        self.state['namespace'] = ''
+        self.save_state()
+        self.assertEqual(self.post(), '')
+        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com'), '')
+
+    def test_nested_tool_response_collects_every_url(self):
+        urls = ['https://claude.ai/artifact/abc', 'https://example.com/second']
+        output = self.hook('PostToolUse', tool_name='Read',
+                           tool_input={'command': 'read'},
+                           tool_response={'content': [{'text': json.dumps({'links': urls})}]})
+        context = self.context(output, 'PostToolUse')
+        for url in urls:
+            self.assertIn(url, context)
+
+    def test_no_jq_or_python_in_hook_runtime(self):
+        path = self.work / 'path'
+        path.mkdir()
+        for command in ('sh', 'dirname', 'cat', 'sed'):
+            (path / command).symlink_to(shutil.which(command))
+        self.env['PATH'] = str(path)
+        self.assertIn('org/project', self.context(self.hook('SessionStart', source='compact'), 'SessionStart'))
+        self.assertNotEqual(self.post(), '')
+
+    def test_real_pull_failure_then_compact(self):
+        status = [200]
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if status[0] != 200:
+                    self.send_error(status[0])
+                    return
+                self.send_response(200)
+                self.end_headers()
+                data = [{'namespace': 'org/project'}] if self.path == '/api/projects' else {'revision': 'r', 'files': {}}
+                self.wfile.write(json.dumps(data).encode())
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        env = dict(self.env, CLAUDE_CODE_SESSION_ID='session-1')
+        command = [str(self.cli), '--server', f'http://127.0.0.1:{server.server_port}', '-n', 'org/project', 'pull']
+        first = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        status[0] = 403
+        failure = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(failure.returncode, 0)
+        output = self.context(self.hook('SessionStart', source='compact'), 'SessionStart')
+        self.assertIn('pull 失敗', output)
+        self.assertNotIn('再 pull は不要', output)
 
 
 if __name__ == '__main__':

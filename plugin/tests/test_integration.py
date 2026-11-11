@@ -47,7 +47,8 @@ class IntegrationTest(unittest.TestCase):
             project = base / 'home' / '.local/share/kioku/projects/org/p'
             server_url = f'http://127.0.0.1:{server.server_port}'
             cli = str(Path(os.environ['KIOKU_TEST_BINARY']).resolve())
-            env = dict(os.environ, HOME=str(base / 'home'))
+            env = dict(os.environ, HOME=str(base / 'home'),
+                       XDG_STATE_HOME=str(base / 'state'), CLAUDE_CODE_SESSION_ID='')
             env.pop('KIOKU_AGENT_TOKEN', None)
             env.pop('KIOKU_SERVER', None)
             # The CLI chooses and creates the directory, then records the binding.

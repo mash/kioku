@@ -64,6 +64,9 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		_, err = fmt.Fprint(out, help)
 		return err
 	}
+	if commands[0] == "session" {
+		return runSession(commands[1:], out, errOut)
+	}
 	if os.Getenv("KIOKU_AGENT_TOKEN") != "" {
 		return errors.New("KIOKU_AGENT_TOKEN is no longer supported; unset it and use kioku agent login")
 	}
@@ -152,6 +155,11 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			defer unlock()
 		}
 		if err := a.selectCredential(commands[0] == "logout"); err != nil {
+			if commands[0] == "pull" {
+				a.recordSession("pull", err)
+			} else if len(commands) >= 2 && commands[0] == "project" && (commands[1] == "create" || commands[1] == "join") {
+				a.recordSession("project "+commands[1], err)
+			}
 			return err
 		}
 	}
@@ -195,6 +203,8 @@ func (a *App) dispatch(args []string) error {
 		return err
 	}
 	switch args[0] {
+	case "session":
+		return a.session(args[1:])
 	case "version":
 		return a.versionCommand()
 	case "agent":

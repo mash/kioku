@@ -7,7 +7,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func (a *App) join(args []string) error {
+func (a *App) join(args []string) (resultErr error) {
 	if a.projectNamespace != "" {
 		return errors.New("-n cannot be used with project join; use cwd or -C")
 	}
@@ -21,6 +21,7 @@ func (a *App) join(args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: kioku project join [--description TEXT] <invite-url>")
 	}
+	defer func() { a.recordSession("project join", resultErr) }()
 	unlock, err := a.localLock()
 	if err != nil {
 		return err

@@ -11,6 +11,8 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   -n cannot be combined with project join.
 
   version                             Show client build information
+  session context --session SID       Restore Claude Code selection as one line
+  session hook [--event EVENT] --prompts DIR     Handle Claude Code hook JSON on stdin
   agent login CODE | list|revoke      Manage project-scoped agent credentials
   account status|sessions|revoke-session|revoke-all|unlink|delete
   login [--provider google|github]      Browser login
@@ -46,4 +48,6 @@ Default server: https://kioku.magicians.ee
 wiki/ and maps/ live in the selected directory; transfer metadata lives in .kioku/.
 Credentials are stored per server in ~/.config/kioku/auth.
 Connector agent credentials are stored per project in ~/.config/kioku/agents.
+With CLAUDE_CODE_SESSION_ID, pull/create/join remember selection for 30 days in
+${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/SID.json; no source acceptance ledger.
 `

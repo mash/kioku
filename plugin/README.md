@@ -94,7 +94,7 @@ startup・clear・fork では、フックが `bin/kioku version` を実行し、
 同じバージョンなら、フックは何もしない。フックはバージョンの新旧を比べない。
 compact・resume ではフックが CLI を取得せず、会話の状態ファイルから選択を復元する。
 CLI の `session context --session SID` と同じ1行を `hookSpecificOutput.additionalContext` に入れる。
-状態ファイルが無い・壊れている・30日を超えた場合は、今の hook-compact.txt を出す。
+状態ファイルが無い・壊れている・mtime から30日を超えた場合は、今の hook-compact.txt を出す。
 古いプラグインのセッションも compact でフックを再実行するので、この規則で古いバージョンへ戻る主な経路をなくす。
 ただし古いセッションでプラグインの更新後に `/clear` を実行すると、古いバージョンの CLI を一度取得することがある。
 次の新しいセッションが、現在のバージョンの CLI を再び取得する。
@@ -134,10 +134,17 @@ PostToolUse は全ツールを対象とし、UserPromptSubmit はユーザープ
 子は sonnet で各 URL の全文取得・検証・put を行い、URL・namespace・結果・理由を1行ずつ返す。
 同じ URL の子を並行に起動しない。Codex は今どおり直接 put する。
 
-CLI は `CLAUDE_CODE_SESSION_ID` がある場合だけ、pull・project join・project create の結果と選択を
-`${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/<sid>.json` に書く。
-CLI は書くたびに30日を超えたファイルを消す。状態ファイルを送信先や認証・共有権限の正本にしない。
-受付状態の台帳を作らない。通知済み URL は会話ごとに直近1000件を保持し、新しい URL だけをまとめて通知する。
+CLI は `CLAUDE_CODE_SESSION_ID` がある場合だけ、成功した pull・project join・project create の選択を保存する。
+保存先は `${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/<sid>.json` とする。
+状態には `server`・`namespace`・`mode`・`path` を残す。
+pull の後は `last_pull_at`・`last_pull_result` に日時と成否を残す。未実行なら両方のキーを省く。
+失敗した pull は、保存済みの server・namespace・path がすべて一致する場合だけ更新する。
+失敗した project create・project join は状態を書き換えない。
+CLI は読み取りと削除の期限をファイルの mtime から30日で判定する。
+通知済み URL の更新を含むすべての書き込みで mtime を更新し、期限切れのファイルを消す。
+状態ファイルを送信先や認証・共有権限の正本にしない。
+受付状態の台帳を作らない。`notified_urls` に通知済み URL を直近1000件まで保持し、空ならキーを省く。
+新しい URL だけをまとめて通知する。
 上限を超えた URL は古い順に外し、次に現れた時に再び通知する。
 PostToolUse と UserPromptSubmit は入力に `agent_id` がある場合や、状態ファイルが無い場合には何も出さない。
 
@@ -153,7 +160,8 @@ Claude Code のサンドボックスを使う場合は、`kioku.magicians.ee` �
 `~/.local/share/kioku/projects`・`~/.config/kioku`・`${XDG_STATE_HOME:-~/.local/state}/kioku/sessions` への書き込みも許す。
 既定以外のプロジェクトの path にも書き込みを許す。権限が足りないと pull が失敗する。
 
-選択を会話と要約に残し、Claude Code の CLI は状態ファイルにも30日まで置く。スキルは projects.json を読むだけにする。
+選択を会話と要約に残し、Claude Code の CLI は状態ファイルにも最後の書き込みから30日まで置く。
+スキルは projects.json を読むだけにする。
 CLI は create・join・pull・agent login の紐づけ成功時と、毎回の pull で項目を足す。project delete の成功時は項目を消す。
 既存の path は変えない。別の path へ紐づけた場合は既存 path を stderr（標準エラー出力）に示す。
 書き込みだけに失敗した場合は終了コード0と警告を返す。登録失敗には次の pull、削除失敗にはファイルの修復と該当項目の削除を案内する。壊れた JSON（データ交換形式）はファイル名を示して止まる。

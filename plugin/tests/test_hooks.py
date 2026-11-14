@@ -410,14 +410,9 @@ class SessionHooksTest(unittest.TestCase):
         self.state = {
             'server': 'https://kioku.magicians.ee', 'namespace': 'org/project',
             'mode': 'local', 'path': str(self.work / 'project'),
-            'operation': 'pull', 'result': 'success',
-            'updated_at': self.timestamp(),
             'last_pull_at': '2026-11-11T11:40:00Z', 'last_pull_result': 'success',
         }
         self.save_state()
-
-    def timestamp(self, seconds_ago=0):
-        return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - seconds_ago))
 
     def save_state(self):
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,7 +447,7 @@ class SessionHooksTest(unittest.TestCase):
 
     def test_compact_resume_and_failed_pull_context(self):
         for result in ('success', 'failure'):
-            self.state.update(result=result, last_pull_result=result)
+            self.state.update(last_pull_result=result)
             self.save_state()
             for source in ('compact', 'resume'):
                 with self.subTest(result=result, source=source):
@@ -462,6 +457,24 @@ class SessionHooksTest(unittest.TestCase):
                     self.assertNotIn('\n', context)
                     if result == 'failure':
                         self.assertNotIn('再 pull は不要', context)
+
+    def test_unpulled_selection_context_and_notification_refresh(self):
+        del self.state['last_pull_at']
+        del self.state['last_pull_result']
+        self.save_state()
+        old = time.time() - 29 * 86400
+        os.utime(self.state_path, (old, old))
+        for source in ('compact', 'resume'):
+            context = self.context(self.hook('SessionStart', source=source), 'SessionStart')
+            self.assertIn('pull 未実行', context)
+            self.assertIn('再選択は不要。最初の pull と Wiki の参照を行う。', context)
+        self.assertEqual(self.state_path.stat().st_mtime, old)
+        self.assertNotEqual(self.post(), '')
+        self.assertGreater(self.state_path.stat().st_mtime, old)
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(set(state), {'server', 'namespace', 'mode', 'path', 'notified_urls'})
+        self.assertEqual(state['notified_urls'], ['https://github.com/org/repo/pull/42'])
+        self.assertEqual(self.post(), '')
 
     def test_new_session_sources_never_read_or_write_state(self):
         original = self.state_path.read_bytes()
@@ -474,11 +487,14 @@ class SessionHooksTest(unittest.TestCase):
                 self.assertEqual(list(self.state_path.parent.glob('*.json')), [self.state_path])
 
     def test_missing_corrupt_and_expired_state_fall_back(self):
-        for content in (None, '{', '{}', json.dumps(dict(self.state, updated_at=self.timestamp(31 * 86400)))):
+        for content in (None, '{', '{}', json.dumps(self.state)):
             if content is None:
                 self.state_path.unlink()
             else:
                 self.state_path.write_text(content)
+                if content == json.dumps(self.state):
+                    expired = time.time() - 31 * 86400
+                    os.utime(self.state_path, (expired, expired))
             for source in ('compact', 'resume'):
                 self.assertEqual(self.hook('SessionStart', source=source),
                                  (self.root / 'prompts/hook-compact.txt').read_text())
@@ -583,7 +599,7 @@ class SessionHooksTest(unittest.TestCase):
         failure = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20)
         self.assertNotEqual(failure.returncode, 0)
         output = self.context(self.hook('SessionStart', source='compact'), 'SessionStart')
-        self.assertIn('pull 失敗', output)
+        self.assertIn('最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。', output)
         self.assertNotIn('再 pull は不要', output)
 
 

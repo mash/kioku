@@ -48,6 +48,10 @@ Default server: https://kioku.magicians.ee
 wiki/ and maps/ live in the selected directory; transfer metadata lives in .kioku/.
 Credentials are stored per server in ~/.config/kioku/auth.
 Connector agent credentials are stored per project in ~/.config/kioku/agents.
-With CLAUDE_CODE_SESSION_ID, pull/create/join remember selection for 30 days in
+With CLAUDE_CODE_SESSION_ID, successful pull/create/join remember selection in
 ${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/SID.json; no source acceptance ledger.
+State keeps server, namespace, mode, path, optional last_pull_at/last_pull_result,
+and optional notified_urls. Failed create/join do not write state. Failed pull
+updates the last pull only for the same server, namespace, and path.
+State expires 30 days after file mtime; every write refreshes mtime.
 `

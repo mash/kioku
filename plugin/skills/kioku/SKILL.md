@@ -111,7 +111,7 @@ Claude Code では、会話に現れるすべての HTTPS URL の原資料を送
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
   maps は `P/maps/` に置く。親ディレクトリの設定は探索しない。
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
-- local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
+- local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに最後の書き込みから30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
   source ページの `source_url` から原本を確認する。
 - 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。

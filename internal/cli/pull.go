@@ -20,7 +20,7 @@ func (a *App) pullCommand(args []string) (resultErr error) {
 	if f.NArg() != 0 {
 		return errors.New("usage: kioku [-n ORG/PROJECT] pull [--description TEXT]")
 	}
-	defer func() { a.recordSession("pull", resultErr) }()
+	defer func() { a.recordSessionPull(resultErr) }()
 	if a.Config.Namespace == "" && a.projectNamespace != "" {
 		if err := a.bindPullProject(a.projectNamespace); err != nil {
 			return err

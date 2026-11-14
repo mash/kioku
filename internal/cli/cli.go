@@ -156,9 +156,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 		if err := a.selectCredential(commands[0] == "logout"); err != nil {
 			if commands[0] == "pull" {
-				a.recordSession("pull", err)
-			} else if len(commands) >= 2 && commands[0] == "project" && (commands[1] == "create" || commands[1] == "join") {
-				a.recordSession("project "+commands[1], err)
+				a.recordSessionPull(err)
 			}
 			return err
 		}

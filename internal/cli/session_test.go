@@ -31,7 +31,7 @@ func sessionTestEnv(t *testing.T) string {
 }
 
 func sessionTestState(now time.Time) *sessionState {
-	return &sessionState{Server: defaultServer, Namespace: "org/p", Mode: "local", Path: "/tmp/project", Operation: "pull", Result: "success", UpdatedAt: now, LastPullAt: now, LastPullResult: "success"}
+	return &sessionState{Server: defaultServer, Namespace: "org/p", Mode: "local", Path: "/tmp/project", LastPullAt: now, LastPullResult: "success"}
 }
 
 func mustSession(t *testing.T) *sessionState {
@@ -54,13 +54,15 @@ func TestSessionContextFormat(t *testing.T) {
 	if got := sessionContext(s); got != want {
 		t.Fatalf("%q != %q", got, want)
 	}
-	s.Result, s.LastPullResult = "failure", "failure"
+	s.LastPullResult = "failure"
 	line := sessionContext(s)
-	if !strings.Contains(line, "pull 2026-11-11T11:40:00Z 失敗") || strings.Contains(line, "再 pull は不要") {
+	want = "Kioku: org/p（local, server=https://kioku.magicians.ee, P=\"/tmp/project\", pull 2026-11-11T11:40:00Z 失敗）。最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
+	if line != want {
 		t.Fatal(line)
 	}
-	s.Operation, s.Result, s.LastPullAt, s.LastPullResult = "project create", "success", time.Time{}, ""
-	if got := sessionContext(s); !strings.Contains(got, "pull 未実行") || !strings.Contains(got, "最初の pull") {
+	s.LastPullAt, s.LastPullResult = time.Time{}, ""
+	want = "Kioku: org/p（local, server=https://kioku.magicians.ee, P=\"/tmp/project\", pull 未実行）。再選択は不要。最初の pull と Wiki の参照を行う。"
+	if got := sessionContext(s); got != want {
 		t.Fatal(got)
 	}
 	s.Path = "/tmp/two  spaces\nquote\""
@@ -172,7 +174,7 @@ func TestSessionPullRecordsSuccessFailureAndNoID(t *testing.T) {
 		t.Fatal("expected failure")
 	}
 	s = mustSession(t)
-	if s.LastPullResult != "failure" || !strings.Contains(sessionContext(s), "pull 失敗") {
+	if s.LastPullResult != "failure" || !strings.Contains(sessionContext(s), "最後の pull は失敗") {
 		t.Fatal(s)
 	}
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
@@ -221,16 +223,33 @@ func TestSessionProjectCommands(t *testing.T) {
 				if (err != nil) != fail {
 					t.Fatal(err)
 				}
+				path, _ := sessionPath("session-1")
+				if fail {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatal("failed project command created state", err)
+					}
+					a := &App{Config: Config{Server: defaultServer, Namespace: "org/previous"}, Dir: "/tmp/previous"}
+					a.recordSessionPull(nil)
+					before, _ := os.ReadFile(path)
+					info, _ := os.Stat(path)
+					if _, _, err := runProjectCLI(args...); err == nil {
+						t.Fatal("expected failure")
+					}
+					after, _ := os.ReadFile(path)
+					updated, _ := os.Stat(path)
+					if !bytes.Equal(before, after) || !info.ModTime().Equal(updated.ModTime()) {
+						t.Fatal("failed project command changed state")
+					}
+					return
+				}
 				s := mustSession(t)
-				if s.Operation != "project "+op || (s.Result == "failure") != fail || s.LastPullResult != "" {
+				if s.Server != server.URL || s.Namespace != "org/p" || s.Mode != "local" || s.Path != args[3] || !s.LastPullAt.IsZero() || s.LastPullResult != "" {
 					t.Fatal(s)
 				}
-				if op == "join" && fail {
-					if s.Namespace != "" || sessionContext(s) != "" {
-						t.Fatal("invented invite namespace", s)
-					}
-				} else if s.Namespace != "org/p" {
-					t.Fatal(s)
+				data, _ := os.ReadFile(path)
+				var fields map[string]any
+				if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 4 {
+					t.Fatalf("unexpected selection fields: %s (%v)", data, err)
 				}
 			})
 		}
@@ -240,7 +259,7 @@ func TestSessionProjectCommands(t *testing.T) {
 func TestSessionPreservesNotificationAcrossSelections(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
-	a.recordSession("pull", nil)
+	a.recordSessionPull(nil)
 	when := time.Now().UTC()
 	if err := updateSession("session-1", when, func(s *sessionState) *sessionState {
 		s.NotifiedURLs = []string{"https://example.com"}
@@ -248,13 +267,13 @@ func TestSessionPreservesNotificationAcrossSelections(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	a.recordSession("project create", errors.New("already bound"))
+	a.recordSession("")
 	s := mustSession(t)
 	if s.LastPullResult != "success" || len(s.NotifiedURLs) == 0 {
 		t.Fatal(s)
 	}
 	a.Config.Namespace = "org/other"
-	a.recordSession("project create", nil)
+	a.recordSession("")
 	s = mustSession(t)
 	if s.LastPullResult != "" || len(s.NotifiedURLs) != 1 {
 		t.Fatal(s)
@@ -264,14 +283,14 @@ func TestSessionPreservesNotificationAcrossSelections(t *testing.T) {
 func TestSessionConcurrentUpdates(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
-	a.recordSession("pull", nil)
+	a.recordSessionPull(nil)
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			if i%2 == 0 {
-				a.recordSession("pull", nil)
+				a.recordSessionPull(nil)
 				return
 			}
 			err := updateSession("session-1", time.Now(), func(s *sessionState) *sessionState {
@@ -300,7 +319,7 @@ func TestSessionCredentialFailureUpdatesPull(t *testing.T) {
 	if err := a.saveProjectConfig(); err != nil {
 		t.Fatal(err)
 	}
-	a.recordSession("pull", nil)
+	a.recordSessionPull(nil)
 	if err := os.MkdirAll(filepath.Dir(a.credentialPath()), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -313,5 +332,125 @@ func TestSessionCredentialFailureUpdatesPull(t *testing.T) {
 	if s := mustSession(t); s.LastPullResult != "failure" {
 		b, _ := json.Marshal(s)
 		t.Fatal(string(b))
+	}
+}
+
+func TestSessionFailedPullPreservesSelection(t *testing.T) {
+	for _, changed := range []string{"missing", "server", "namespace", "path", "same"} {
+		t.Run(changed, func(t *testing.T) {
+			sessionTestEnv(t)
+			a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
+			path, _ := sessionPath("session-1")
+			if changed != "missing" {
+				a.recordSessionPull(nil)
+			}
+			before, _ := os.ReadFile(path)
+			switch changed {
+			case "server":
+				a.Config.Server = "https://example.com"
+			case "namespace":
+				a.Config.Namespace = "org/other"
+			case "path":
+				a.Dir = "/tmp/other"
+			}
+			a.recordSessionPull(errors.New("pull failed"))
+			if changed == "missing" {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("failed initial pull created state", err)
+				}
+			} else if changed == "same" {
+				s := mustSession(t)
+				if s.LastPullResult != "failure" || s.LastPullAt.IsZero() {
+					t.Fatal(s)
+				}
+			} else {
+				after, _ := os.ReadFile(path)
+				if !bytes.Equal(before, after) {
+					t.Fatal("failed pull replaced selection")
+				}
+			}
+		})
+	}
+}
+
+func TestSessionMtimeControlsExpiryAndRefresh(t *testing.T) {
+	sessionTestEnv(t)
+	now := time.Now().UTC()
+	oldPull := now.Add(-2 * sessionRetention)
+	if err := updateSession("session-1", now, func(*sessionState) *sessionState { return sessionTestState(oldPull) }); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := sessionPath("session-1")
+	// An old pull remains valid while the session file is recent.
+	if _, err := readSession(path, now); err != nil {
+		t.Fatal(err)
+	}
+	oldMtime := now.Add(-sessionRetention + time.Hour)
+	if err := os.Chtimes(path, oldMtime, oldMtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateSession("session-1", now, func(s *sessionState) *sessionState {
+		s.NotifiedURLs = []string{"https://example.com"}
+		return s
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.ModTime().After(oldMtime) {
+		t.Fatal("notification did not refresh mtime", info, err)
+	}
+	if s, err := readSession(path, now.Add(2*time.Hour)); err != nil || !s.LastPullAt.Equal(oldPull) {
+		t.Fatal("notification changed pull time or failed to renew retention", s, err)
+	}
+	data, _ := os.ReadFile(path)
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 7 {
+		t.Fatalf("unexpected state fields: %s (%v)", data, err)
+	}
+	for _, key := range []string{"server", "namespace", "mode", "path", "last_pull_at", "last_pull_result", "notified_urls"} {
+		if _, ok := fields[key]; !ok {
+			t.Fatal("missing field", key)
+		}
+	}
+	expired := now.Add(-sessionRetention - time.Second)
+	if err := os.Chtimes(path, expired, expired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSession(path, now); err == nil {
+		t.Fatal("expired mtime accepted")
+	}
+	var out bytes.Buffer
+	if err := runSession([]string{"context", "--session", "session-1"}, &out, &bytes.Buffer{}); err != nil || out.Len() != 0 {
+		t.Fatal("expired context was not ignored", out.String(), err)
+	}
+}
+
+func TestSessionLastPullValidation(t *testing.T) {
+	sessionTestEnv(t)
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name   string
+		at     time.Time
+		result string
+		valid  bool
+	}{
+		{"no pull", time.Time{}, "", true},
+		{"success", now, "success", true},
+		{"failure", now, "failure", true},
+		{"missing result", now, "", false},
+		{"missing time", time.Time{}, "success", false},
+		{"invalid result", now, "unknown", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := sessionTestState(now)
+			s.LastPullAt, s.LastPullResult = tc.at, tc.result
+			if err := updateSession("session-1", now, func(*sessionState) *sessionState { return s }); err != nil {
+				t.Fatal(err)
+			}
+			path, _ := sessionPath("session-1")
+			if _, err := readSession(path, now); (err == nil) != tc.valid {
+				t.Fatal("unexpected validation result", err)
+			}
+		})
 	}
 }

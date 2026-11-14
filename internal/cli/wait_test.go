@@ -117,3 +117,22 @@ func TestWaitingForUnchangedEmptyProjectDoesNotPull(t *testing.T) {
 		t.Fatal("missing unchanged result", out.String())
 	}
 }
+
+func TestSessionJobWaitRecordsPull(t *testing.T) {
+	sessionTestEnv(t)
+	a, _, _, status := syncFixture(t)
+	job := model.Job{ID: "job", Kind: "generate", Status: "completed", Revision: "revision"}
+	if err := a.wait(job); err != nil {
+		t.Fatal(err)
+	}
+	if s := mustSession(t); s.LastPullResult != "success" || s.Path != a.Dir || s.Namespace != a.Config.Namespace {
+		t.Fatal(s)
+	}
+	*status = 403
+	if err := a.wait(job); err == nil {
+		t.Fatal("expected pull failure")
+	}
+	if s := mustSession(t); s.LastPullResult != "failure" {
+		t.Fatal(s)
+	}
+}

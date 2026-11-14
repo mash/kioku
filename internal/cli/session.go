@@ -22,11 +22,8 @@ type sessionState struct {
 	Namespace      string    `json:"namespace"`
 	Mode           string    `json:"mode"`
 	Path           string    `json:"path"`
-	Operation      string    `json:"operation"`
-	Result         string    `json:"result"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	LastPullAt     time.Time `json:"last_pull_at"`
-	LastPullResult string    `json:"last_pull_result"`
+	LastPullAt     time.Time `json:"last_pull_at,omitzero"`
+	LastPullResult string    `json:"last_pull_result,omitempty"`
 	NotifiedURLs   []string  `json:"notified_urls,omitempty"`
 }
 
@@ -49,6 +46,13 @@ func sessionPath(sid string) (string, error) {
 }
 
 func readSession(path string, now time.Time) (*sessionState, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if now.Sub(info.ModTime()) > sessionRetention {
+		return nil, errors.New("expired session state")
+	}
 	b, err := readRegular(path)
 	if err != nil {
 		return nil, err
@@ -57,12 +61,8 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, err
 	}
-	if s.UpdatedAt.IsZero() || now.Sub(s.UpdatedAt) > sessionRetention ||
-		s.Mode != "local" || !filepath.IsAbs(s.Path) ||
-		(s.Namespace != "" && !validNamespace(s.Namespace)) ||
-		(s.Result != "success" && s.Result != "failure") ||
-		(s.Operation != "pull" && s.Operation != "project join" && s.Operation != "project create") {
-		return nil, errors.New("invalid or expired session state")
+	if s.Mode != "local" || !filepath.IsAbs(s.Path) || !validNamespace(s.Namespace) {
+		return nil, errors.New("invalid session state")
 	}
 	if _, err := normalizeOrigin(s.Server); err != nil {
 		return nil, err
@@ -95,7 +95,6 @@ func updateSession(sid string, now time.Time, change func(*sessionState) *sessio
 	if s == nil {
 		return nil
 	}
-	s.UpdatedAt = now
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
@@ -121,9 +120,21 @@ func updateSession(sid string, now time.Time, change func(*sessionState) *sessio
 	return nil
 }
 
-func (a *App) recordSession(operation string, result error) {
+func (a *App) recordSessionPull(result error) {
+	if errors.Is(result, flag.ErrHelp) {
+		return
+	}
+	pullResult := "success"
+	if result != nil {
+		pullResult = "failure"
+	}
+	a.recordSession(pullResult)
+}
+
+// An empty lastPullResult records a successful project selection without a pull.
+func (a *App) recordSession(lastPullResult string) {
 	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
-	if sid == "" || errors.Is(result, flag.ErrHelp) {
+	if sid == "" {
 		return
 	}
 	namespace := a.Config.Namespace
@@ -133,18 +144,18 @@ func (a *App) recordSession(operation string, result error) {
 	now := time.Now().UTC()
 	err := updateSession(sid, now, func(old *sessionState) *sessionState {
 		s := &sessionState{Server: a.Config.Server, Namespace: namespace, Mode: "local", Path: a.Dir}
-		if old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path {
+		sameProject := old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path
+		if lastPullResult == "failure" && !sameProject {
+			return nil
+		}
+		if sameProject {
 			*s = *old
 		}
 		if old != nil {
 			s.NotifiedURLs = old.NotifiedURLs
 		}
-		s.Operation, s.Result = operation, "success"
-		if result != nil {
-			s.Result = "failure"
-		}
-		if operation == "pull" {
-			s.LastPullAt, s.LastPullResult = now, s.Result
+		if lastPullResult != "" {
+			s.LastPullAt, s.LastPullResult = now, lastPullResult
 		}
 		return s
 	})
@@ -166,9 +177,7 @@ func sessionContext(s *sessionState) string {
 		pull = "pull " + s.LastPullAt.Format(time.RFC3339) + " " + result
 	}
 	tail := "再選択と再 pull は不要。"
-	if s.Result == "failure" {
-		tail = s.Operation + " 失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
-	} else if s.LastPullResult == "" {
+	if s.LastPullResult == "" {
 		tail = "再選択は不要。最初の pull と Wiki の参照を行う。"
 	} else if s.LastPullResult == "failure" {
 		tail = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"

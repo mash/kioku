@@ -27,7 +27,7 @@ func TestCollectCaptureURLs(t *testing.T) {
 func TestSessionHookGatesAndDeduplication(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
-	a.recordSession("pull", nil)
+	a.recordSessionPull(nil)
 	prompts := t.TempDir()
 	if err := os.WriteFile(filepath.Join(prompts, "hook-capture.txt"), []byte("Kioku: {{namespace}} {{urls}}"), 0600); err != nil {
 		t.Fatal(err)

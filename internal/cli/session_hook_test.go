@@ -20,6 +20,36 @@ func TestCollectCaptureURLs(t *testing.T) {
 	}
 }
 
+func TestSessionHookOversizedInputIsSilent(t *testing.T) {
+	sessionTestEnv(t)
+	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
+	a.recordSessionPull(nil)
+	path, _ := sessionPath("session-1")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := `{"session_id":"session-1","hook_event_name":"UserPromptSubmit","prompt":"https://example.com/doc"}`
+	// The prefix alone is valid JSON. Truncating the invalid tail must not turn
+	// an oversized malformed input into a notification and a state mutation.
+	input := prefix + strings.Repeat(" ", (8<<20)-len(prefix)) + "{"
+	var out, stderr bytes.Buffer
+	a.Out, a.Err = &out, &stderr
+	if err := a.sessionHook([]string{"--prompts", "../../prompts"}, strings.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 || stderr.Len() != 0 {
+		t.Error("oversized input emitted output")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("oversized input changed state")
+	}
+}
+
 func TestSessionHookGatesAndDeduplication(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}

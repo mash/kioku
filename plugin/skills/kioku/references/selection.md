@@ -26,7 +26,8 @@ CLI が別の既存 path を警告した場合は、その path をユーザー�
 
 Claude Code では、フックが示す候補を手がかりにする。
 フックはプロンプトの namespace、cwd から Git のルートまでの設定、プロンプトかブランチ名の project 部分の順で照合する。
-最初に一致した段の候補を示す。ASCII は語の境界で照合し、description は照合しない。
+最初に一致した段の候補を示す。namespace 全体は部分文字列として照合する。
+project 部分だけは ASCII の語の境界で照合する。description は照合しない。
 同じ namespace が複数の server にある場合は、server も確かめる。
 作業と候補が合えば以下の手順で pull する。候補が違う時や決められない時はユーザーへ確認する。
 フックは対象を保存しない。CLI の pull・create・join の成功が対象を状態ファイルへ保存する。
@@ -109,10 +110,12 @@ JSON が壊れている場合は、CLI がファイル名を示して止まる�
 ## 人のログイン後の全プロジェクト取得
 
 人が login に成功した後、スキルが次を実行する。
+Claude Code では、状態ファイルの対象を保つため、下記の順序で取得する。
+その他の環境では、従来どおり各 namespace を直列に取得し、会話の選択を保つ。
 
 1. `kioku project list` を実行する。
-2. 選んだ対象以外を先に pull し、選んだ対象を最後に pull する。各 namespace で `kioku -n "$NAMESPACE" pull` を直列に実行し、完了を待つ。保存先の選択と作成、紐づけの照合、projects.json への登録は CLI に任せる。
-3. 各対象の取得時に、description がなければ読める情報から説明案を作ってユーザーの確認を受ける。確認済みなら、その対象の pull に `--description "$DESCRIPTION"` を付ける。取得後に確認した説明は、その対象で `kioku -n "$NAMESPACE" pull --description "$DESCRIPTION"` を実行して保存する。選んだ対象以外の説明保存を済ませてから、選んだ対象を取得する。説明を保存するための pull も含め、選んだ対象を最後にする。
+2. Claude Code では、選んだ対象以外を先に pull し、選んだ対象を最後に pull する。各 namespace で `kioku -n "$NAMESPACE" pull` を直列に実行し、完了を待つ。保存先の選択と作成、紐づけの照合、projects.json への登録は CLI に任せる。
+3. 各対象の取得時に、description がなければ読める情報から説明案を作ってユーザーの確認を受ける。確認済みなら、その対象の pull に `--description "$DESCRIPTION"` を付ける。取得後に確認した説明は、その対象で `kioku -n "$NAMESPACE" pull --description "$DESCRIPTION"` を実行して保存する。Claude Code では、選んだ対象以外の説明保存を済ませてから、選んだ対象を取得する。説明を保存するための pull も含め、選んだ対象を最後にする。
 4. Wiki を読むのは選んだ対象だけにする。取得後に `P/wiki/index.md` と必要なページを読む。会話の選択対象は変更しない。
 5. 1件失敗しても残りを続行し、出力と終了コードから結果をまとめて伝える。選んだ対象の最後の pull が失敗したら、その取得失敗をユーザーへ伝える。別の対象を状態ファイルに保存中なら、CLI はその対象を保つ。失敗を成功と扱わない。
 

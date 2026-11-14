@@ -294,7 +294,7 @@ func TestSessionConcurrentUpdates(t *testing.T) {
 				return
 			}
 			err := updateSession("session-1", time.Now(), func(s *sessionState) *sessionState {
-				s.NotifiedURLs = []string{"https://example.com"}
+				s.NotifiedURLs = append(s.NotifiedURLs, fmt.Sprintf("https://example.com/%d", i))
 				return s
 			})
 			if err != nil {
@@ -304,8 +304,57 @@ func TestSessionConcurrentUpdates(t *testing.T) {
 	}
 	wg.Wait()
 	s := mustSession(t)
-	if len(s.NotifiedURLs) == 0 || s.LastPullResult != "success" {
+	if len(s.NotifiedURLs) != 10 || s.LastPullResult != "success" {
 		t.Fatal(s)
+	}
+}
+
+func TestSessionUnreadableStatePreservesSelectionAndHistory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses filesystem permissions")
+	}
+	sessionTestEnv(t)
+	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
+	a.recordSessionPull(nil)
+	if err := updateSession("session-1", time.Now(), func(s *sessionState) *sessionState {
+		s.NotifiedURLs = []string{"https://example.com/doc"}
+		return s
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := sessionPath("session-1")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0600) })
+	var stderr bytes.Buffer
+	a.Err = &stderr
+	a.Config.Namespace = "org/other"
+	a.recordSessionPull(nil)
+	if !strings.Contains(stderr.String(), "warning: could not update session state:") {
+		t.Error("unreadable state did not produce a warning", stderr.String())
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || !info.ModTime().Equal(updated.ModTime()) {
+		t.Fatal("unreadable state lost selection or notification history")
 	}
 }
 

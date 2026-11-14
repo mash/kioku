@@ -377,8 +377,9 @@ class SessionHooksTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if os.environ.get('KIOKU_TEST_BINARY'):
-            cls.cli = Path(os.environ['KIOKU_TEST_BINARY']).resolve()
+        binary = os.environ.get('KIOKU_BIN') or os.environ.get('KIOKU_TEST_BINARY')
+        if binary:
+            cls.cli = Path(binary).resolve()
         else:
             tmp = tempfile.TemporaryDirectory(prefix='kioku-session-cli-')
             cls.addClassCleanup(tmp.cleanup)
@@ -567,6 +568,29 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(self.hook('UserPromptSubmit', agent_id=agent_id, prompt='https://example.com'), '')
             self.assertEqual(self.state_path.read_bytes(), original)
         self.assertNotEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
+
+    def test_capture_cli_failures_never_block_a_turn(self):
+        before = self.state_path.read_bytes()
+        binary = self.data / 'bin/kioku'
+        binary.unlink()
+        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
+        binary.write_text('#!/bin/sh\nprintf "failure\\n" >&2\nexit 2\n')
+        binary.chmod(0o755)
+        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
+        self.assertEqual(self.state_path.read_bytes(), before)
+
+    def test_invalid_session_and_event_mismatch_preserve_state(self):
+        before = self.state_path.read_bytes()
+        for sid, event in [('session-1', 'SessionStart'), ('../session-1', 'UserPromptSubmit')]:
+            with self.subTest(sid=sid, event=event):
+                payload = dict(session_id=sid, hook_event_name=event, source='resume',
+                               prompt='https://example.com/doc')
+                result = subprocess.run([str(self.cli), 'session', 'hook', '--event', 'UserPromptSubmit',
+                                         '--prompts', str(self.root / 'prompts')],
+                                        input=json.dumps(payload), text=True, capture_output=True,
+                                        env=self.env, timeout=15)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(self.state_path.read_bytes(), before)
 
     def test_no_url_keeps_prompt_rule_but_no_namespace_is_silent(self):
         self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt='http://example.com'), 'UserPromptSubmit'), self.turn_rule())

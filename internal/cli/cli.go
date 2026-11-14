@@ -201,8 +201,6 @@ func (a *App) dispatch(args []string) error {
 		return err
 	}
 	switch args[0] {
-	case "session":
-		return a.session(args[1:])
 	case "version":
 		return a.versionCommand()
 	case "agent":

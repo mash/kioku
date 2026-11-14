@@ -248,6 +248,7 @@ cp -R skills/kioku ~/.agents/skills/
 sh -n hooks/kioku.sh
 python3 -m unittest discover -s tests
 KIOKU_TEST_BINARY=/absolute/path/to/kioku python3 -m unittest discover -s tests
+KIOKU_BIN=/absolute/path/to/kioku python3 -m pytest -q tests/test_hooks.py
 ```
 
 旧コマンド・互換エイリアスは用意しない。

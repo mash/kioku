@@ -34,8 +34,9 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	if f.NArg() != 0 || *prompts == "" || (*event != "" && *event != "SessionStart" && *event != "PostToolUse" && *event != "UserPromptSubmit") {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
-	b, err := io.ReadAll(io.LimitReader(input, 8<<20))
-	if err != nil {
+	const maxHookInput = 8 << 20
+	b, err := io.ReadAll(io.LimitReader(input, maxHookInput+1))
+	if err != nil || len(b) > maxHookInput {
 		return nil
 	}
 	var in sessionHookInput

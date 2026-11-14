@@ -75,12 +75,19 @@ class PackageTests(unittest.TestCase):
             dest = plugin / 'skills/kioku' / src.relative_to(ROOT / 'plugin/skills/kioku')
             self.assertTrue(dest.is_file())
             text = dest.read_text()
-            for forbidden in ('CLAUDE_', '/reload-plugins', '! kioku', '! /abs', 'Claude'):
+            for forbidden in ('CLAUDE_', '/reload-plugins', '! kioku', '! /abs', 'Codex Code', 'Codex Chat'):
                 self.assertNotIn(forbidden, text)
+            self.assertNotIn('Claude', text.replace('Claude Code', '').replace('Claude Chat', ''))
         text = (plugin / 'skills/kioku/SKILL.md').read_text()
         self.assertIn('原本の HTTPS', text)
         self.assertIn('426', text)
         self.assertIn('checksum', text)
+        self.assertIn('Claude Code では、親が共有範囲・機密・保存禁止を確認し', text)
+        self.assertIn('Codex では今どおり直接 put する。', text)
+        selection = (plugin / 'skills/kioku/references/selection.md').read_text()
+        self.assertIn('Claude Code では、選んだ対象以外を先に pull', selection)
+        remote = (plugin / 'skills/kioku/references/remote.md').read_text()
+        self.assertNotIn('1000', remote)
 
     def test_binary_changed_after_verification_is_rejected(self):
         original = pkg.check_binary

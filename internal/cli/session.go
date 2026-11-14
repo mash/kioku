@@ -90,7 +90,13 @@ func updateSession(sid string, now time.Time, change func(*sessionState) *sessio
 		return err
 	}
 	defer lock.Close()
-	old, _ := readSession(path, now)
+	old, readErr := readSession(path, now)
+	// Missing, expired, or malformed state can be replaced. A filesystem error
+	// must not silently discard a selection or notification history we cannot read.
+	var pathErr *os.PathError
+	if errors.As(readErr, &pathErr) && !os.IsNotExist(readErr) {
+		return readErr
+	}
 	s := change(old)
 	if s == nil {
 		return nil

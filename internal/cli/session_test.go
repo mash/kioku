@@ -31,7 +31,7 @@ func sessionTestEnv(t *testing.T) string {
 }
 
 func sessionTestState(now time.Time) *sessionState {
-	return &sessionState{Server: defaultServer, Namespace: "org/p", Mode: "local", Path: "/tmp/project", LastPullAt: now, LastPullResult: "success"}
+	return &sessionState{Server: defaultServer, Namespace: "org/p", Mode: "local", Path: "/tmp/project", LastPullAt: now, LastPullResult: sessionPullSuccess}
 }
 
 func mustSession(t *testing.T) *sessionState {
@@ -54,13 +54,13 @@ func TestSessionContextFormat(t *testing.T) {
 	if got := sessionContext(s); got != want {
 		t.Fatalf("%q != %q", got, want)
 	}
-	s.LastPullResult = "failure"
+	s.LastPullResult = sessionPullFailure
 	line := sessionContext(s)
 	want = "Kioku: org/p（local, server=https://kioku.magicians.ee, P=\"/tmp/project\", pull 2026-11-11T11:40:00Z 失敗）。最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
 	if line != want {
 		t.Fatal(line)
 	}
-	s.LastPullAt, s.LastPullResult = time.Time{}, ""
+	s.LastPullAt, s.LastPullResult = time.Time{}, sessionPullNone
 	want = "Kioku: org/p（local, server=https://kioku.magicians.ee, P=\"/tmp/project\", pull 未実行）。再選択は不要。最初の pull と Wiki の参照を行う。"
 	if got := sessionContext(s); got != want {
 		t.Fatal(got)
@@ -166,7 +166,7 @@ func TestSessionPullRecordsSuccessFailureAndNoID(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := mustSession(t)
-	if s.LastPullResult != "success" || s.Namespace != a.Config.Namespace || s.Path != a.Dir {
+	if s.LastPullResult != sessionPullSuccess || s.Namespace != a.Config.Namespace || s.Path != a.Dir {
 		t.Fatal(s)
 	}
 	*status = 403
@@ -174,7 +174,7 @@ func TestSessionPullRecordsSuccessFailureAndNoID(t *testing.T) {
 		t.Fatal("expected failure")
 	}
 	s = mustSession(t)
-	if s.LastPullResult != "failure" || !strings.Contains(sessionContext(s), "最後の pull は失敗") {
+	if s.LastPullResult != sessionPullFailure || !strings.Contains(sessionContext(s), "最後の pull は失敗") {
 		t.Fatal(s)
 	}
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
@@ -243,7 +243,7 @@ func TestSessionProjectCommands(t *testing.T) {
 					return
 				}
 				s := mustSession(t)
-				if s.Server != server.URL || s.Namespace != "org/p" || s.Mode != "local" || s.Path != args[3] || !s.LastPullAt.IsZero() || s.LastPullResult != "" {
+				if s.Server != server.URL || s.Namespace != "org/p" || s.Mode != "local" || s.Path != args[3] || !s.LastPullAt.IsZero() || s.LastPullResult != sessionPullNone {
 					t.Fatal(s)
 				}
 				data, _ := os.ReadFile(path)
@@ -267,15 +267,15 @@ func TestSessionPreservesNotificationAcrossSelections(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	a.recordSession("")
+	a.recordSession(sessionPullNone)
 	s := mustSession(t)
-	if s.LastPullResult != "success" || len(s.NotifiedURLs) == 0 {
+	if s.LastPullResult != sessionPullSuccess || len(s.NotifiedURLs) == 0 {
 		t.Fatal(s)
 	}
 	a.Config.Namespace = "org/other"
-	a.recordSession("")
+	a.recordSession(sessionPullNone)
 	s = mustSession(t)
-	if s.LastPullResult != "" || len(s.NotifiedURLs) != 1 {
+	if s.LastPullResult != sessionPullNone || len(s.NotifiedURLs) != 1 {
 		t.Fatal(s)
 	}
 }
@@ -304,7 +304,7 @@ func TestSessionConcurrentUpdates(t *testing.T) {
 	}
 	wg.Wait()
 	s := mustSession(t)
-	if len(s.NotifiedURLs) != 10 || s.LastPullResult != "success" {
+	if len(s.NotifiedURLs) != 10 || s.LastPullResult != sessionPullSuccess {
 		t.Fatal(s)
 	}
 }
@@ -378,7 +378,7 @@ func TestSessionCredentialFailureUpdatesPull(t *testing.T) {
 	if err := Run(context.Background(), []string{"-C", dir, "pull"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("expected credential failure")
 	}
-	if s := mustSession(t); s.LastPullResult != "failure" {
+	if s := mustSession(t); s.LastPullResult != sessionPullFailure {
 		b, _ := json.Marshal(s)
 		t.Fatal(string(b))
 	}
@@ -409,7 +409,7 @@ func TestSessionFailedPullPreservesSelection(t *testing.T) {
 				}
 			} else if changed == "same" {
 				s := mustSession(t)
-				if s.LastPullResult != "failure" || s.LastPullAt.IsZero() {
+				if s.LastPullResult != sessionPullFailure || s.LastPullAt.IsZero() {
 					t.Fatal(s)
 				}
 			} else {
@@ -480,7 +480,7 @@ func TestSessionLastPullValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		at     time.Time
-		result string
+		result sessionPullResult
 		valid  bool
 	}{
 		{"no pull", time.Time{}, "", true},
@@ -499,6 +499,80 @@ func TestSessionLastPullValidation(t *testing.T) {
 			path, _ := sessionPath("session-1")
 			if _, err := readSession(path, now); (err == nil) != tc.valid {
 				t.Fatal("unexpected validation result", err)
+			}
+		})
+	}
+}
+
+func TestPullFlagErrorsPreserveStateAndCredentialFailurePrecedesFlags(t *testing.T) {
+	for _, brokenCredential := range []bool{false, true} {
+		for _, flags := range [][]string{{"--help"}, {"--unknown"}, {"unexpected"}} {
+			t.Run(fmt.Sprintf("broken=%v/flags=%v", brokenCredential, flags), func(t *testing.T) {
+				home := sessionTestEnv(t)
+				a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(home, ".config/kioku/auth"), Config: Config{Server: defaultServer, Namespace: "org/p"}}
+				if err := os.MkdirAll(a.metadataDir(), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.saveProjectConfig(); err != nil {
+					t.Fatal(err)
+				}
+				a.recordSessionPull(nil)
+				path, _ := sessionPath("session-1")
+				before, _ := os.ReadFile(path)
+				info, _ := os.Stat(path)
+				if brokenCredential {
+					if err := os.MkdirAll(filepath.Dir(a.credentialPath()), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(a.credentialPath(), []byte("broken"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				out, stderr, err := runProjectCLI(append([]string{"-C", a.Dir, "pull"}, flags...)...)
+				if brokenCredential {
+					if err == nil || out != "" || stderr != "" || mustSession(t).LastPullResult != sessionPullFailure {
+						t.Fatal("credential failure must precede flag handling", out, stderr, err)
+					}
+				} else {
+					if (err == nil) != (flags[0] == "--help") {
+						t.Fatal(err)
+					}
+					after, _ := os.ReadFile(path)
+					updated, _ := os.Stat(path)
+					if !bytes.Equal(before, after) || !info.ModTime().Equal(updated.ModTime()) {
+						t.Fatal("flag-only invocation changed session state")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestProjectSelectionStateFailureWarnsOnceWithoutFailingOperation(t *testing.T) {
+	for _, op := range []string{"create", "join"} {
+		t.Run(op, func(t *testing.T) {
+			sessionTestEnv(t)
+			blocker := filepath.Join(t.TempDir(), "file")
+			if err := os.WriteFile(blocker, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_STATE_HOME", blocker)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, `{"namespace":"org/p"}`)
+			}))
+			defer server.Close()
+			dir := t.TempDir()
+			args := []string{"--server", server.URL, "-C", dir}
+			if op == "create" {
+				args = append(args, "-n", "org/p")
+			}
+			args = append(args, "project", op)
+			if op == "join" {
+				args = append(args, "invite")
+			}
+			out, stderr, err := runProjectCLI(args...)
+			if err != nil || out != "org/p\n"+dir+"\n" || strings.Count(stderr, "warning: could not update session state:") != 1 {
+				t.Fatal(out, stderr, err)
 			}
 		})
 	}

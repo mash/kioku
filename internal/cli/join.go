@@ -40,9 +40,5 @@ func (a *App) join(args []string) error {
 	if _, err := a.request("POST", "/api/join", map[string]string{"token": args[0]}, &p); err != nil {
 		return err
 	}
-	if err := a.selectProject(p); err != nil {
-		return err
-	}
-	a.recordSession("")
-	return nil
+	return a.selectProject(p)
 }

@@ -8,19 +8,34 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func (a *App) pull() error { return a.pullCommand(nil) }
+// Internal pulls already have the credential selected by their outer command.
+func (a *App) pull() error { return a.runPull(nil, false) }
 
-func (a *App) pullCommand(args []string) (resultErr error) {
+func (a *App) pullCommand(args []string) error { return a.runPull(args, true) }
+
+func (a *App) runPull(args []string, selectCredential bool) (resultErr error) {
+	record := true
+	defer func() {
+		if record {
+			a.recordSessionPull(resultErr)
+		}
+	}()
+	if selectCredential {
+		if err := a.selectCredential(false); err != nil {
+			return err
+		}
+	}
 	f := flag.NewFlagSet("pull", flag.ContinueOnError)
 	f.SetOutput(a.Err)
 	a.descriptionFlag(f)
 	if err := f.Parse(args); err != nil {
+		record = false
 		return err
 	}
 	if f.NArg() != 0 {
+		record = false
 		return errors.New("usage: kioku [-n ORG/PROJECT] pull [--description TEXT]")
 	}
-	defer func() { a.recordSessionPull(resultErr) }()
 	if a.Config.Namespace == "" && a.projectNamespace != "" {
 		if err := a.bindPullProject(a.projectNamespace); err != nil {
 			return err

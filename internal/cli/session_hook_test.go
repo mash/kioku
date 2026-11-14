@@ -195,7 +195,12 @@ func TestSessionHookE23ToE25URLSources(t *testing.T) {
 				var out, stderr bytes.Buffer
 				a := &App{Out: &out, Err: &stderr}
 				args := append([]string{"--prompts", "../../prompts"}, eventArgs...)
-				if err := a.sessionHook(args, bytes.NewReader(payload)); err != nil {
+				err := a.sessionHook(args, bytes.NewReader(payload))
+				if tt.event == "PostToolUse" && len(eventArgs) != 0 {
+					if err == nil || err.Error() != "usage: kioku session hook [--event EVENT] --prompts DIR" {
+						t.Fatal("unsupported --event must return usage", err)
+					}
+				} else if err != nil {
 					t.Fatal(err)
 				}
 				if stderr.Len() != 0 {
@@ -227,5 +232,48 @@ func TestSessionHookE23ToE25URLSources(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReadHookPromptPreservesEmptyMissingAndSymlinkBehavior(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "empty.txt"), []byte(" \n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readHookPrompt(dir, "empty.txt"); got != "" || err != nil {
+		t.Fatal("empty template must remain readable", got, err)
+	}
+	if _, err := readHookPrompt(dir, "missing.txt"); !os.IsNotExist(err) {
+		t.Fatal("missing template must remain distinguishable", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "target.txt"), []byte("  context\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(dir, "linked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readHookPrompt(dir, "linked.txt"); got != "context" || err != nil {
+		t.Fatal("readable symlink must still work", got, err)
+	}
+}
+
+func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses filesystem permissions")
+	}
+	home := sessionTestEnv(t)
+	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
+	a.recordSessionPull(nil)
+	writeHookFixture(t, filepath.Join(home, ".config/kioku/projects.json"), projectsFile{Projects: []projectEntry{
+		{Server: defaultServer, Namespace: "org/p", Path: "/work/p"},
+	}})
+	path, _ := sessionPath("session-1")
+	if err := os.Chmod(path, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0600) })
+	got := runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "org/p https://example.com/doc"})
+	if got != fmt.Sprintf(singleCandidateText, "org/p") {
+		t.Fatal(got)
 	}
 }

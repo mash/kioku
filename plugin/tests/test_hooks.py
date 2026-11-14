@@ -531,9 +531,11 @@ class SessionHooksTest(unittest.TestCase):
                 with self.subTest(example=example, command=command):
                     result = subprocess.run(command, input=json.dumps(payload), text=True,
                                             capture_output=True, env=self.env, timeout=15)
-                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.returncode, 1 if '--event' in command else 0, result.stderr)
                     self.assertEqual(result.stdout, '')
-                    self.assertEqual(result.stderr, '')
+                    self.assertEqual(result.stderr,
+                                     'kioku: usage: kioku session hook [--event EVENT] --prompts DIR\n'
+                                     if '--event' in command else '')
                     self.assertEqual(self.state_path.read_bytes(), original)
                     self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 

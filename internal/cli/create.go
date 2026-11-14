@@ -36,9 +36,5 @@ func (a *App) createProject(args []string) error {
 	if _, err := a.request("POST", "/api/projects", map[string]string{"name": a.projectNamespace}, &p); err != nil {
 		return err
 	}
-	if err := a.selectProject(p); err != nil {
-		return err
-	}
-	a.recordSession("")
-	return nil
+	return a.selectProject(p)
 }

@@ -16,15 +16,25 @@ import (
 
 const sessionRetention = 30 * 24 * time.Hour
 
+const sessionPullFailedContext = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
+
+type sessionPullResult string
+
+const (
+	sessionPullNone    sessionPullResult = ""
+	sessionPullSuccess sessionPullResult = "success"
+	sessionPullFailure sessionPullResult = "failure"
+)
+
 // Session state remembers selection and notification, never source acceptance.
 type sessionState struct {
-	Server         string    `json:"server"`
-	Namespace      string    `json:"namespace"`
-	Mode           string    `json:"mode"`
-	Path           string    `json:"path"`
-	LastPullAt     time.Time `json:"last_pull_at,omitzero"`
-	LastPullResult string    `json:"last_pull_result,omitempty"`
-	NotifiedURLs   []string  `json:"notified_urls,omitempty"`
+	Server         string            `json:"server"`
+	Namespace      string            `json:"namespace"`
+	Mode           string            `json:"mode"`
+	Path           string            `json:"path"`
+	LastPullAt     time.Time         `json:"last_pull_at,omitzero"`
+	LastPullResult sessionPullResult `json:"last_pull_result,omitempty"`
+	NotifiedURLs   []string          `json:"notified_urls,omitempty"`
 }
 
 func sessionPath(sid string) (string, error) {
@@ -67,8 +77,8 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	if _, err := normalizeOrigin(s.Server); err != nil {
 		return nil, err
 	}
-	if (s.LastPullResult == "" && !s.LastPullAt.IsZero()) ||
-		(s.LastPullResult != "" && (s.LastPullAt.IsZero() || (s.LastPullResult != "success" && s.LastPullResult != "failure"))) {
+	if (s.LastPullResult == sessionPullNone && !s.LastPullAt.IsZero()) ||
+		(s.LastPullResult != sessionPullNone && (s.LastPullAt.IsZero() || (s.LastPullResult != sessionPullSuccess && s.LastPullResult != sessionPullFailure))) {
 		return nil, errors.New("invalid last pull")
 	}
 	return &s, nil
@@ -130,15 +140,15 @@ func (a *App) recordSessionPull(result error) {
 	if errors.Is(result, flag.ErrHelp) {
 		return
 	}
-	pullResult := "success"
+	pullResult := sessionPullSuccess
 	if result != nil {
-		pullResult = "failure"
+		pullResult = sessionPullFailure
 	}
 	a.recordSession(pullResult)
 }
 
 // An empty lastPullResult records a successful project selection without a pull.
-func (a *App) recordSession(lastPullResult string) {
+func (a *App) recordSession(lastPullResult sessionPullResult) {
 	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
 	if sid == "" {
 		return
@@ -151,7 +161,7 @@ func (a *App) recordSession(lastPullResult string) {
 	err := updateSession(sid, now, func(old *sessionState) *sessionState {
 		s := &sessionState{Server: a.Config.Server, Namespace: namespace, Mode: "local", Path: a.Dir}
 		sameProject := old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path
-		if lastPullResult == "failure" && !sameProject {
+		if lastPullResult == sessionPullFailure && !sameProject {
 			return nil
 		}
 		if sameProject {
@@ -160,7 +170,7 @@ func (a *App) recordSession(lastPullResult string) {
 		if old != nil {
 			s.NotifiedURLs = old.NotifiedURLs
 		}
-		if lastPullResult != "" {
+		if lastPullResult != sessionPullNone {
 			s.LastPullAt, s.LastPullResult = now, lastPullResult
 		}
 		return s
@@ -175,18 +185,18 @@ func sessionContext(s *sessionState) string {
 		return ""
 	}
 	pull := "pull 未実行"
-	if s.LastPullResult != "" {
+	if s.LastPullResult != sessionPullNone {
 		result := "成功"
-		if s.LastPullResult == "failure" {
+		if s.LastPullResult == sessionPullFailure {
 			result = "失敗"
 		}
 		pull = "pull " + s.LastPullAt.Format(time.RFC3339) + " " + result
 	}
 	tail := "再選択と再 pull は不要。"
-	if s.LastPullResult == "" {
+	if s.LastPullResult == sessionPullNone {
 		tail = "再選択は不要。最初の pull と Wiki の参照を行う。"
-	} else if s.LastPullResult == "failure" {
-		tail = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
+	} else if s.LastPullResult == sessionPullFailure {
+		tail = sessionPullFailedContext
 	}
 	return fmt.Sprintf("Kioku: %s（%s, server=%s, P=%q, %s）。%s", s.Namespace, s.Mode, s.Server, s.Path, pull, tail)
 }

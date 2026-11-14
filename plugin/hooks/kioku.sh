@@ -1,7 +1,6 @@
 #!/bin/sh
 exec 2>/dev/null
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-INPUT=$(cat)
 DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
 TARGET="$DATA/bin/kioku"
 T=
@@ -92,6 +91,7 @@ download() {
 }
 
 if [ "${1:-}" = compact ]; then
+    INPUT=$(cat)
     # Compact and resume never install or replace the CLI.
     CONTEXT=$(printf '%s' "$INPUT" | "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
     if [ -n "$CONTEXT" ]; then
@@ -107,7 +107,7 @@ if [ "${1:-}" = precompact ]; then
     exit 0
 fi
 if [ "${1:-}" = capture ]; then
-    printf '%s' "$INPUT" | "$TARGET" session hook --prompts "$ROOT/prompts"
+    (exec "$TARGET" session hook --prompts "$ROOT/prompts")
     exit 0
 fi
 if [ -n "${KIOKU_CLI:-}" ]; then

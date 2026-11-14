@@ -138,7 +138,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				s := sessionTestState(time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC))
 				s.Path = root
 				if tt.failed {
-					s.LastPullResult = "failure"
+					s.LastPullResult = sessionPullFailure
 				}
 				if tt.notified {
 					s.NotifiedURLs = []string{"https://example.com/doc"}
@@ -229,7 +229,7 @@ func TestPromptHookSelectionTransitions(t *testing.T) {
 				before := mustSession(t).LastPullAt
 				a.recordSessionPull(errors.New("network"))
 				s := mustSession(t)
-				if !s.LastPullAt.After(before) || s.LastPullResult != "failure" {
+				if !s.LastPullAt.After(before) || s.LastPullResult != sessionPullFailure {
 					t.Fatal(s)
 				}
 				want += "\n" + failedPullText
@@ -420,5 +420,47 @@ func TestPromptHookConcurrentURLsEmitEveryRuleButNotifyOnce(t *testing.T) {
 	}
 	if notices != 1 || !reflect.DeepEqual(mustSession(t).NotifiedURLs, []string{"https://example.com/doc"}) {
 		t.Fatal(notices)
+	}
+}
+
+func TestEmptyCatalogSkipsBranchLookupButStillFindsParentConfig(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured=%v", configured), func(t *testing.T) {
+			sessionTestEnv(t)
+			root := t.TempDir()
+			gitHookFixture(t, root, "feat/tesla")
+			cwd := filepath.Join(root, "src")
+			if err := os.Mkdir(cwd, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if configured {
+				writeHookFixture(t, filepath.Join(root, ".kioku/config"), Config{Server: defaultServer, Namespace: "org/p"})
+			}
+			realGit, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			log := filepath.Join(bin, "calls")
+			wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$KIOKU_TEST_GIT_LOG\"\nexec \"$KIOKU_TEST_REAL_GIT\" \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("KIOKU_TEST_GIT_LOG", log)
+			t.Setenv("KIOKU_TEST_REAL_GIT", realGit)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			got := sessionCandidates("続けて", cwd)
+			if configured {
+				if len(got) != 1 || got[0].Namespace != "org/p" {
+					t.Fatal(got)
+				}
+			} else if len(got) != 0 {
+				t.Fatal(got)
+			}
+			calls, err := os.ReadFile(log)
+			if err != nil || string(calls) != "rev-parse --show-toplevel\n" {
+				t.Fatal("only the root lookup is needed", string(calls), err)
+			}
+		})
 	}
 }

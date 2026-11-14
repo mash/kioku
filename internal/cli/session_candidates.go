@@ -34,6 +34,9 @@ func sessionCandidates(prompt, cwd string) []projectEntry {
 		if candidates := sessionConfigCandidates(cwd, root); len(candidates) != 0 {
 			return candidates
 		}
+		if len(projects) == 0 {
+			return nil
+		}
 		branch := hookGit(ctx, cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
 		return projectWordCandidates(projects, prompt, branch)
 	}
@@ -65,7 +68,7 @@ func sessionConfigCandidates(cwd, root string) []projectEntry {
 			candidates = append(candidates, projectEntry{Server: c.Server, Namespace: c.Namespace, Path: dir})
 		}
 		if dir == limit || filepath.Dir(dir) == dir {
-			return matchingProjects(candidates, func(projectEntry) bool { return true })
+			return validUniqueProjects(candidates)
 		}
 	}
 }
@@ -78,6 +81,16 @@ func projectWordCandidates(projects []projectEntry, prompt, branch string) []pro
 }
 
 func matchingProjects(projects []projectEntry, match func(projectEntry) bool) []projectEntry {
+	var matches []projectEntry
+	for _, p := range projects {
+		if match(p) {
+			matches = append(matches, p)
+		}
+	}
+	return validUniqueProjects(matches)
+}
+
+func validUniqueProjects(projects []projectEntry) []projectEntry {
 	var candidates []projectEntry
 	seen := make(map[[2]string]bool)
 	for _, p := range projects {
@@ -88,7 +101,7 @@ func matchingProjects(projects []projectEntry, match func(projectEntry) bool) []
 			continue
 		}
 		key := [2]string{p.Server, p.Namespace}
-		if !seen[key] && match(p) {
+		if !seen[key] {
 			candidates = append(candidates, p)
 			seen[key] = true
 		}
@@ -126,9 +139,10 @@ func candidateContext(prompts string, candidates []projectEntry) string {
 		return ""
 	}
 	if len(candidates) == 1 {
-		return strings.ReplaceAll(readHookPrompt(prompts, "hook-candidate.txt"), "{{namespace}}", candidates[0].Namespace)
+		prompt, _ := readHookPrompt(prompts, "hook-candidate.txt")
+		return strings.ReplaceAll(prompt, "{{namespace}}", candidates[0].Namespace)
 	}
-	prompt := readHookPrompt(prompts, "hook-candidates.txt")
+	prompt, _ := readHookPrompt(prompts, "hook-candidates.txt")
 	if prompt == "" {
 		return ""
 	}
@@ -147,18 +161,11 @@ func candidateContext(prompts string, candidates []projectEntry) string {
 	return strings.Join(lines, "\n")
 }
 
-func readHookPrompt(prompts, name string) string {
-	b, err := os.ReadFile(filepath.Join(prompts, name))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
 func promptTurnContext(prompts string, s *sessionState) string {
-	line := strings.NewReplacer("{{namespace}}", s.Namespace, "{{wiki}}", filepath.Join(s.Path, "wiki")+string(filepath.Separator)).Replace(readHookPrompt(prompts, "hook-turn.txt"))
-	if s.LastPullResult == "failure" {
-		line = joinHookContext(line, readHookPrompt(prompts, "hook-pull-failed.txt"))
+	prompt, _ := readHookPrompt(prompts, "hook-turn.txt")
+	line := strings.NewReplacer("{{namespace}}", s.Namespace, "{{wiki}}", filepath.Join(s.Path, "wiki")+string(filepath.Separator)).Replace(prompt)
+	if s.LastPullResult == sessionPullFailure {
+		line = joinHookContext(line, sessionPullFailedContext)
 	}
 	return line
 }

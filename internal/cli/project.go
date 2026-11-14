@@ -38,6 +38,7 @@ func (a *App) selectProject(p model.Project) error {
 		return fmt.Errorf("remote operation succeeded for %s and configuration was saved, but local setup failed: %w; fix the local path and run kioku pull", p.Namespace, err)
 	}
 	fmt.Fprintf(a.Out, "%s\n%s\n", p.Namespace, a.localDir())
+	a.recordSession(sessionPullNone)
 	return nil
 }
 

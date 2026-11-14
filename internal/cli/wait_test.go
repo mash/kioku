@@ -125,14 +125,14 @@ func TestSessionJobWaitRecordsPull(t *testing.T) {
 	if err := a.wait(job); err != nil {
 		t.Fatal(err)
 	}
-	if s := mustSession(t); s.LastPullResult != "success" || s.Path != a.Dir || s.Namespace != a.Config.Namespace {
+	if s := mustSession(t); s.LastPullResult != sessionPullSuccess || s.Path != a.Dir || s.Namespace != a.Config.Namespace {
 		t.Fatal(s)
 	}
 	*status = 403
 	if err := a.wait(job); err == nil {
 		t.Fatal("expected pull failure")
 	}
-	if s := mustSession(t); s.LastPullResult != "failure" {
+	if s := mustSession(t); s.LastPullResult != sessionPullFailure {
 		t.Fatal(s)
 	}
 }

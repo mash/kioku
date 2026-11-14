@@ -2,7 +2,7 @@
 name: kioku-capture
 description: 確定した Kioku の送信先へ、1 つ以上の URL の原本を全文で put する。
 model: sonnet
-tools: Bash, Read, Write, mcp__kioku__source_put
+disallowedTools: Agent
 skills: kioku
 ---
 

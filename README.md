@@ -193,7 +193,7 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 kioku -n "$NAMESPACE" put ./payment-api-design.md
 ```
 
-ファイルの put は削除フラグのない項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `remove: true` があっても削除フラグは変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。定期生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
+ファイルの put は削除フラグのない項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `remove: true` があっても削除フラグは変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。最後の put から 10 秒後（既定）の自動生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
 
 `kioku -n "$NAMESPACE" put FILE...` にはファイルかディレクトリのパスを1つ以上指定します。複数ファイルは1件ずつ別の要求で送ります。put は送信元のファイルを削除しません。途中で失敗した場合は `accepted <path>` を確認し、未受付のファイルだけを指定して再送します。
 
@@ -368,7 +368,7 @@ The web path is `/acme/platform`. `-n ORG/PROJECT` selects the projects.json pat
 - [Generation worker architecture](docs/WORKERS.md): durable queue, one generation worker, and independent cleanup maintenance.
 
 
-`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. The scheduler runs projects with waiting items daily by default (`--generate-every`); frequent puts do not postpone the deadline. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
+`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. kiokud generates a project when no put arrives for the debounce period (`--generate-debounce`, default 10s); each put restarts the debounce period. kiokud does not retry a failed automatic generation; the next put or `generate --wait` runs it. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
 
 CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together. Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 
@@ -461,7 +461,7 @@ BYOK 対応版から更新する場合は、先に旧版で新規投入を止め
 停止・session/vault cleanup・保存キー削除を完了させてください。未完了のまま更新しません。
 旧 BYOK ジョブは更新後に実行・再試行できません。生成が必要なら新規ジョブを作成します。
 既存バックアップからのキー消去やプロバイダー側のキー失効は自動では行いません。
-従来 BYOK 接続によって停止していた定期生成も通常の対象になるため、再開前に対象と予算を確認します。
+従来 BYOK 接続によって停止していた project も、次の put か保存済みの期限で対象になるため、再開前に対象と予算を確認します。
 
 ### 生成プロンプトと MCP の説明の差し替え
 

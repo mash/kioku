@@ -59,7 +59,7 @@ There is one current wiki/maps tree, updated in place. File hashes avoid unchang
 
 ## Scheduling and freshness
 
-`--generate-every 24h` is the default. Persisted deadlines are checked every two seconds; waiting inbox items or incomplete publication trigger work, and an existing queued/running generation is not duplicated. Frequent puts do not postpone the deadline. `--generate-every 0` disables scheduled generation.
+The debounce period (`--generate-debounce`, default 10s) restarts at each saved put. When it ends and no job is queued or running, kiokud queues an automatic generation for waiting inbox items. kiokud does not retry a failed automatic generation. With a debounce period of 0, kiokud generates at the next check.
 
 `kioku generate` requests a run; `generate --wait` waits and pulls. An empty inbox completes unchanged without starting a model. Missing runner configuration fails a generation job, including an empty one. `job wait ID` pulls a completed generation; `job retry ID` waits for prior cleanup and pins the items waiting at retry time. There is no full/incremental mode, fingerprint, source version or intake dependency list. Status reports inbox items, wiki_updated_at and wiki_incomplete.
 

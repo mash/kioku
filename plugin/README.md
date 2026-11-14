@@ -61,7 +61,7 @@ remote mode の接続先は `https://kioku.magicians.ee` に限る。
 両モードとも操作の成功は Kioku がファイルを受け付けたことを示す。ユーザーに受付を伝え、Wiki の生成を待たない。
 CLI はファイルごとに `accepted <path>`、削除の依頼ごとに `removed <SOURCE_URL>` を表示する。
 local mode の削除は `kioku -n "$NAMESPACE" delete URL`、即時生成は `kioku -n "$NAMESPACE" generate --wait` を使う。
-remote mode の削除は `source_put` の `remove` を使い、Wiki は定期生成を待つ。
+remote mode の削除は `source_put` の `remove` を使い、Wiki は最後の put の約 10 秒後の自動生成を待つ。
 原本が変わった時は Claude が本文を読み直して送信する。
 同じ `source_url` では、サーバーは後から受け付けた本文を使う。
 サーバーは版を比較しないため、古い版でも新しい版を上書きする。

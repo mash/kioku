@@ -35,7 +35,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   project delete --yes                         Delete project and cloud objects
   job status|wait JOB_ID | job retry [--wait] JOB_ID
 
-put accepts one inbox item per request. Projects generate periodically.
+put accepts one inbox item per request. The server generates a project 10 seconds after its last put by default.
 Use generate --wait to generate immediately and pull the completed wiki.
 All project members can read submitted sources and generated content.
 The selected directory's .kioku/config selects server and namespace; no parent search.

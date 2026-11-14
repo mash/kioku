@@ -181,5 +181,5 @@ Claude Code の local mode では、CLI が状態ファイルに会話の選択�
 サーバーは版を比較せず、後から受け付けた本文を使う。古い版でも新しい版を上書きする。
 
 put はファイルを受け付け、Wiki の生成を待たない。
-Wiki は定期生成か、即時生成の依頼時の `kioku -n "$NAMESPACE" generate --wait` で更新する。
+Wiki は最後の put の約 10 秒後の自動生成か、即時生成の依頼時の `kioku -n "$NAMESPACE" generate --wait` で更新する。
 `generate --wait` は生成完了後に pull する。受付だけで Wiki を生成したとは伝えない。

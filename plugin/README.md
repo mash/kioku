@@ -146,7 +146,21 @@ CLI は読み取りと削除の期限をファイルの mtime から30日で判�
 受付状態の台帳を作らない。`notified_urls` に通知済み URL を直近1000件まで保持し、空ならキーを省く。
 新しい URL だけをまとめて通知する。
 上限を超えた URL は古い順に外し、次に現れた時に再び通知する。
-PostToolUse と UserPromptSubmit は入力に `agent_id` がある場合や、状態ファイルが無い場合には何も出さない。
+PostToolUse と UserPromptSubmit は入力に `agent_id` がある場合には何も出さない。
+PostToolUse は有効な状態ファイルが無い場合も何も出さない。
+UserPromptSubmit は未選択なら毎ターン、次の順で最初に一致する段の候補を示す。
+
+1. プロンプトに含まれる projects.json の namespace 全体。
+2. stdin の cwd から Git のルートまでにある `.kioku/config`。両端も含む。
+3. プロンプトかブランチ名に含まれる namespace の project 部分。ASCII は語の境界で照合する。
+
+フックは description を照合しない。候補が0件なら何も出さない。
+同じ namespace が複数の server にある場合だけ、一覧に server を添える。
+候補を出しても選択状態を書かず、CLI が成功を記録するまで同じ入力には同じ候補を示す。
+親は候補が作業と合えば skill で pull し、Wiki を読む。違う時や決められない時はユーザーへ確認する。
+選択済みなら毎ターン `P/wiki/` の参照と原資料を渡す規則を出す。
+最後の pull が失敗なら失敗の文を続け、新しい URL があれば通知する。
+通知済み URL しかないターンも規則を出す。フックは新しい URL の通知履歴だけを状態へ書く。
 
 sh は stdin を読み、`session hook [--event EVENT] --prompts DIR` に JSON の解析と状態更新を任せる。
 この CLI コマンドは通信・対象選択・認証を行わない。jq と Python は不要。
@@ -172,7 +186,9 @@ CLI は create・join・pull・agent login の紐づけ成功時と、毎回の 
 プロジェクトはプラグインのデータ領域の外に置き、アンインストール後も inbox を残す。
 
 人の `kioku login` が成功したら、スキルが `project list` を確認し、各 namespace で `kioku -n "$NAMESPACE" pull` を直列に実行する。
-1件失敗しても残りを続行し、結果をまとめて伝える。CLI の login 自体は取得しない。
+選んだ対象以外を先に pull し、選んだ対象を最後に pull する。説明保存の pull も同じ順序にする。
+1件失敗しても残りを続行し、結果をまとめて伝える。選んだ対象が失敗しても、別の保存済み対象を変えない。
+CLI の login 自体は取得しない。
 選択中のプロジェクトの pull は会話の初回取得を兼ねる。重ねて pull しない。
 
 ## Connector login（ローカル・クラウド共通）

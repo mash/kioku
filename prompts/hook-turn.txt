@@ -1,0 +1,1 @@
+Kioku: {{namespace}}（wiki: {{wiki}}）。調べる時はここを grep する。参照・作成した HTTPS URL の原本は kioku-capture に渡す。

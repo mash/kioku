@@ -17,6 +17,8 @@ type sessionHookInput struct {
 	SessionID string          `json:"session_id"`
 	Event     string          `json:"hook_event_name"`
 	Source    string          `json:"source"`
+	Cwd       string          `json:"cwd"`
+	Prompt    string          `json:"prompt"`
 	AgentID   json.RawMessage `json:"agent_id"`
 }
 
@@ -50,6 +52,11 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	now := time.Now().UTC()
 	s, err := readSession(path, now)
 	if err != nil || s.Namespace == "" {
+		if in.Event == "UserPromptSubmit" {
+			if line := candidateContext(*prompts, sessionCandidates(in.Prompt, in.Cwd)); line != "" {
+				return writeHookContext(a.Out, in.Event, line)
+			}
+		}
 		return nil
 	}
 	if in.Event == "SessionStart" {
@@ -70,13 +77,25 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	if json.Unmarshal(b, &payload) != nil {
 		return nil
 	}
+	turnContext := func(current *sessionState) string {
+		if in.Event == "UserPromptSubmit" {
+			return promptTurnContext(*prompts, current)
+		}
+		return ""
+	}
+	writeContext := func(line string) error {
+		if line == "" {
+			return nil
+		}
+		return writeHookContext(a.Out, in.Event, line)
+	}
 	urls := collectCaptureURLs(payload)
 	if len(urls) == 0 {
-		return nil
+		return writeContext(turnContext(s))
 	}
 	prompt, err := os.ReadFile(filepath.Join(*prompts, "hook-capture.txt"))
 	if err != nil {
-		return nil
+		return writeContext(turnContext(s))
 	}
 	return updateSession(in.SessionID, now, func(current *sessionState) *sessionState {
 		if current == nil || current.Namespace == "" {
@@ -94,9 +113,10 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 			}
 		}
 		if len(fresh) == 0 {
+			_ = writeContext(turnContext(current))
 			return nil
 		}
-		if err := writeHookContext(a.Out, in.Event, renderCapturePrompt(string(prompt), current, strings.Join(fresh, "\n"))); err != nil {
+		if err := writeContext(joinHookContext(turnContext(current), renderCapturePrompt(string(prompt), current, strings.Join(fresh, "\n")))); err != nil {
 			return nil
 		}
 		current.NotifiedURLs = append(current.NotifiedURLs, fresh...)

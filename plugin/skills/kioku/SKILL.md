@@ -89,6 +89,13 @@ remote mode の接続先は `https://kioku.magicians.ee` だけ。
 `~/.config/kioku/projects.json` や `.kioku/config` が別の接続先を示す場合、remote mode へ切り替えない。
 `kioku version` が失敗し、接続先も不明なら、接続先を `https://kioku.magicians.ee` とする。
 
+Claude Code の UserPromptSubmit フックは、未選択なら毎ターン候補を示す。
+親は作業と候補が合えば、[selection.md](references/selection.md) に従って pull し、Wiki を読む。
+候補が違う時や、対象を決められない時はユーザーへ確認する。
+候補の提示だけでは対象は確定しない。候補がなければ、同じ手順で対象を選ぶ。
+選択済みなら、フックが毎ターン `P/wiki/` の参照と原資料を渡す規則を示す。
+最後の pull が失敗した場合は、同じ文書の失敗時の手順に従う。
+
 local mode では、作業開始時に [selection.md](references/selection.md) で対象と認証方法を確定する。
 既存の人の認証を優先し、必要な場合だけ [connector.md](references/connector.md) へ進む。
 対象を選んだ直後に pull し、完了を待つ。
@@ -109,7 +116,8 @@ Claude Code では、会話に現れるすべての HTTPS URL の原資料を送
   connector 認証では `kioku -n "$NAMESPACE" agent login CODE` が設定を作る。
 - local mode: `P` は CLI が選んだプロジェクトの保存先の絶対パス。CLI が projects.json の `path` に記録する。
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
-  maps は `P/maps/` に置く。親ディレクトリの設定は探索しない。
+  maps は `P/maps/` に置く。CLI は操作対象のディレクトリの設定を使う。
+  Claude Code のフックだけが、候補を探すために cwd から Git のルートまでの設定を読む。
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに最後の書き込みから30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。

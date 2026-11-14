@@ -1,2 +1,2 @@
-Kioku: {{namespace}}（{{mode}}, server={{server}}, P={{path}}）。親は次の URL を kioku-capture に渡し、原本の全文を put する。namespace・server・mode・P・CLI の絶対パス・共有範囲・除外条件も渡す。
+Kioku: {{namespace}}（{{mode}}, server={{server}}, P={{path}}）。親は次の URL を kioku-capture に渡す。kioku-capture が原本の全文を put する。namespace・server・mode・P・CLI の絶対パス・共有範囲・除外条件も渡す。
 {{urls}}

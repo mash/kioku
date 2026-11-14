@@ -1,1 +1,1 @@
-Kioku: if this conversation already chose a Kioku project, keep it. Otherwise, after the user's first message, use the kioku skill to choose the Kioku project. Then pull it and read its wiki/ with grep and file tools before project work. Ask the user when the project is unclear. For feedback-only requests, use the skill’s feedback route without project setup.
+Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。対象が曖昧ならユーザーに聞く。フィードバックだけの依頼では、プロジェクトを設定せず、skill のフィードバック手順に従う。

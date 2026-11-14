@@ -520,7 +520,7 @@ class SessionHooksTest(unittest.TestCase):
         self.assertIn('https://example.com/response', context)
         self.assertIn('org/project', context)
         self.assertIn('kioku-capture', context)
-        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/input'), '')
+        self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt='https://example.com/input'), 'UserPromptSubmit'), self.turn_rule())
         state = json.loads(self.state_path.read_text())
         self.assertEqual(len(state['notified_urls']), 3)
         self.assertEqual(state['last_pull_result'], 'success')
@@ -533,7 +533,7 @@ class SessionHooksTest(unittest.TestCase):
             self.assertIn(url, context)
         state = json.loads(self.state_path.read_text())
         self.assertEqual(state['notified_urls'], urls[1:])
-        self.assertEqual(self.hook('UserPromptSubmit', prompt=urls[-1]), '')
+        self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt=urls[-1]), 'UserPromptSubmit'), self.turn_rule())
         self.assertNotEqual(self.hook('UserPromptSubmit', prompt=urls[0]), '')
         self.assertEqual(len(json.loads(self.state_path.read_text())['notified_urls']), 1000)
 
@@ -545,9 +545,9 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(self.state_path.read_bytes(), original)
         self.assertNotEqual(self.post(), '')
 
-    def test_no_url_or_no_namespace_is_silent(self):
+    def test_no_url_keeps_prompt_rule_but_post_or_no_namespace_is_silent(self):
         self.assertEqual(self.post(url='no URL'), '')
-        self.assertEqual(self.hook('UserPromptSubmit', prompt='http://example.com'), '')
+        self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt='http://example.com'), 'UserPromptSubmit'), self.turn_rule())
         self.state['namespace'] = ''
         self.save_state()
         self.assertEqual(self.post(), '')
@@ -601,6 +601,230 @@ class SessionHooksTest(unittest.TestCase):
         output = self.context(self.hook('SessionStart', source='compact'), 'SessionStart')
         self.assertIn('最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。', output)
         self.assertNotIn('再 pull は不要', output)
+
+    @staticmethod
+    def candidate(namespace):
+        return (f'Kioku: このセッションではプロジェクトを未選択。候補は {namespace}。'
+                '作業がこのプロジェクトなら、kioku skill で pull して wiki を読む。違えばユーザーに聞く。')
+
+    def turn_rule(self, state=None):
+        state = self.state if state is None else state
+        return (f'Kioku: {state["namespace"]}（wiki: {state["path"]}/wiki/）。'
+                '調べる時はここを grep する。参照・作成した HTTPS URL の原本は kioku-capture に渡す。')
+
+    def prompt_context(self, **fields):
+        output = self.hook('UserPromptSubmit', **fields)
+        return self.context(output, 'UserPromptSubmit') if output else ''
+
+    def test_E1_to_E6_E11_to_E13_E20_candidates(self):
+        self.state_path.unlink()
+        multiple = ('Kioku: このセッションではプロジェクトを未選択。候補は次のとおり。'
+                    'kioku skill で 1 つ選んで pull する。決められなければユーザーに聞く。')
+        # id, prompt, config, subdir, branch, catalog namespaces, expected
+        cases = [
+            ('E1', '続けて', 'org/p', False, 'main', [], self.candidate('org/p')),
+            ('E2', '続けて', 'org/p', True, 'main', [], self.candidate('org/p')),
+            ('E3', 'tesla', None, False, 'main', ['natureglobal/tesla'], self.candidate('natureglobal/tesla')),
+            ('E4', 'uses', None, False, 'main', ['org/ses'], ''),
+            ('E5', 'a/tesla', None, False, 'main', ['a/tesla', 'b/tesla'], self.candidate('a/tesla')),
+            ('E6', 'org/b', 'org/a', False, 'main', ['org/b'], self.candidate('org/b')),
+            ('E11', 'tesla', None, False, 'main', ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
+            ('E12', '続けて', None, False, 'feat/tesla', ['natureglobal/tesla'], self.candidate('natureglobal/tesla')),
+            ('E13', 'org/p', None, False, 'main', ['org/p', 'org/p'], multiple + '\norg/p（server=https://kioku.magicians.ee）\norg/p（server=https://other.example）'),
+            ('E20', '電気自動車', None, False, 'main', ['org/tesla'], ''),
+        ]
+        catalog_path = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog_path.parent.mkdir(parents=True)
+        for example, prompt, config, subdir, branch, namespaces, expected in cases:
+            with self.subTest(example=example):
+                root = self.work / example
+                subprocess.run(['git', 'init', '-q', '-b', branch, str(root)], check=True, capture_output=True)
+                cwd = root
+                if subdir:
+                    cwd = root / 'src'
+                    cwd.mkdir()
+                config_path = root / '.kioku/config'
+                if config:
+                    config_path.parent.mkdir()
+                    config_path.write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': config}))
+                projects = [{'server': 'https://other.example' if example == 'E13' and i else 'https://kioku.magicians.ee',
+                             'namespace': ns, 'path': str(self.work / f'p{i}'), 'description': '電気自動車'}
+                            for i, ns in enumerate(namespaces)]
+                catalog_path.write_text(json.dumps({'projects': projects}))
+                catalog_before = catalog_path.read_bytes()
+                config_before = config_path.read_bytes() if config else None
+                for _ in range(2):
+                    actual = self.prompt_context(cwd=str(cwd), prompt=prompt)
+                    self.assertEqual(actual.splitlines()[:1], expected.splitlines()[:1])
+                    self.assertCountEqual(actual.splitlines()[1:], expected.splitlines()[1:])
+                    self.assertFalse(self.state_path.exists())
+                    self.assertEqual(catalog_path.read_bytes(), catalog_before)
+                    if config:
+                        self.assertEqual(config_path.read_bytes(), config_before)
+
+    def test_E7_E8_E9_E10_E22_selected_output_and_state(self):
+        base = dict(self.state, namespace='org/p', path='/work/p', last_pull_at='2026-11-14T00:00:00Z')
+        failure = '最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。'
+        url = 'https://example.com/doc'
+        capture = ('Kioku: org/p（local, server=https://kioku.magicians.ee, P=/work/p）。'
+                   '親は次の URL を kioku-capture に渡す。kioku-capture が原本の全文を put する。'
+                   'namespace・server・mode・P・CLI の絶対パス・共有範囲・除外条件も渡す。\n' + url)
+        for example in ('E7', 'E8', 'E9', 'E10', 'E22'):
+            with self.subTest(example=example):
+                self.state = dict(base)
+                if example == 'E8':
+                    self.state['last_pull_result'] = 'failure'
+                if example == 'E22':
+                    self.state['notified_urls'] = [url]
+                self.save_state()
+                before, mtime = self.state_path.read_bytes(), self.state_path.stat().st_mtime_ns
+                fields = {'prompt': url if example in ('E9', 'E10', 'E22') else '続けて', 'cwd': '/work/p'}
+                expected = self.turn_rule()
+                if example == 'E8':
+                    expected += '\n' + failure
+                if example == 'E9':
+                    expected += '\n' + capture
+                if example == 'E10':
+                    fields['agent_id'] = 'child-1'
+                    expected = ''
+                self.assertEqual(self.prompt_context(**fields), expected)
+                if example == 'E9':
+                    self.assertEqual(json.loads(self.state_path.read_text()), dict(self.state, notified_urls=[url]))
+                else:
+                    self.assertEqual(self.state_path.read_bytes(), before)
+                    self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
+
+    def test_E14_to_E18_real_pull_transitions(self):
+        failing = set()
+        calls = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                calls.append(self.path)
+                if any('/' + ns + '/' in self.path for ns in failing):
+                    self.send_error(503)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                data = ([{'namespace': ns} for ns in ('org/p', 'org/a', 'org/b')]
+                        if self.path == '/api/projects' else {'revision': 'r', 'files': {}})
+                self.wfile.write(json.dumps(data).encode())
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        origin = f'http://127.0.0.1:{server.server_port}'
+        env = dict(self.env, CLAUDE_CODE_SESSION_ID='session-1')
+        root = self.work / 'p'
+        (root / '.kioku').mkdir(parents=True)
+        (root / '.kioku/config').write_text(json.dumps({'server': origin, 'namespace': 'org/p'}))
+
+        def pull(ns):
+            directory = root if ns == 'org/p' else self.work / ns.split('/')[1]
+            directory.mkdir(exist_ok=True)
+            command = [str(self.cli), '-C', str(directory), '--server', origin, '-n', ns, 'pull']
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode == 0, ns not in failing, result.stderr)
+            return result
+
+        for example in ('E14', 'E15', 'E16', 'E17', 'E18'):
+            with self.subTest(example=example):
+                self.state_path.unlink(missing_ok=True)
+                failing.clear()
+                calls.clear()
+                fields = dict(cwd=str(root), prompt='続けて')
+                for _ in range(2):
+                    self.assertEqual(self.prompt_context(**fields), self.candidate('org/p'))
+                    self.assertFalse(self.state_path.exists())
+                self.assertEqual(calls, [])  # Discovery never contacts the server.
+                if example == 'E15':
+                    failing.add('org/p')
+                    pull('org/p')
+                    self.assertFalse(self.state_path.exists())
+                    self.assertEqual(self.prompt_context(**fields), self.candidate('org/p'))
+                    continue
+                if example in ('E14', 'E16'):
+                    pull('org/p')
+                    first = json.loads(self.state_path.read_text())
+                    if example == 'E16':
+                        failing.add('org/p')
+                        pull('org/p')
+                        state = json.loads(self.state_path.read_text())
+                        self.assertEqual(state['last_pull_result'], 'failure')
+                        self.assertGreater(state['last_pull_at'], first['last_pull_at'])
+                    else:
+                        state = first
+                        self.assertEqual(state['last_pull_result'], 'success')
+                    expected = self.turn_rule(state)
+                    if example == 'E16':
+                        expected += '\n最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。'
+                else:
+                    # Execute the skill's selected-last order, then check its state.
+                    pull('org/b')
+                    before = self.state_path.read_bytes()
+                    if example == 'E18':
+                        failing.add('org/a')
+                    pull('org/a')
+                    state = json.loads(self.state_path.read_text())
+                    self.assertEqual(state['namespace'], 'org/b' if example == 'E18' else 'org/a')
+                    if example == 'E18':
+                        self.assertEqual(self.state_path.read_bytes(), before)
+                    expected = self.turn_rule(state)
+                    self.assertLess(next(i for i, path in enumerate(calls) if '/org/b/' in path),
+                                    next(i for i, path in enumerate(calls) if '/org/a/' in path))
+                self.assertEqual(self.prompt_context(**fields), expected)
+                self.assertEqual(self.state_path.stat().st_mode & 0o777, 0o600)
+
+        selection = (ROOT / 'skills/kioku/references/selection.md').read_text()
+        flow = selection.split('## 人のログイン後の全プロジェクト取得')[1]
+        self.assertIn('選んだ対象以外を先に pull し、選んだ対象を最後に pull する。', flow)
+        self.assertIn('説明を保存するための pull も含め、選んだ対象を最後にする。', flow)
+        self.assertIn('巡回後に重ねて pull しない。', flow)
+        self.assertIn('その取得失敗をユーザーへ伝える。', flow)
+
+    def test_E19_malformed_input_preserves_state(self):
+        before = self.state_path.read_bytes()
+        mtime = self.state_path.stat().st_mtime_ns
+        for command in ([str(self.cli), 'session', 'hook', '--event', 'UserPromptSubmit', '--prompts', str(self.root / 'prompts')],
+                        ['sh', str(self.root / 'hooks/kioku.sh'), 'capture']):
+            result = subprocess.run(command, input='{', capture_output=True, text=True, env=self.env, timeout=15)
+            self.assertEqual((result.stdout, result.stderr, result.returncode), ('', '', 0))
+            self.assertEqual(self.state_path.read_bytes(), before)
+            self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
+
+    def test_E21_startup_exact_text(self):
+        expected = ('Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。'
+                    '無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。'
+                    '対象が曖昧ならユーザーに聞く。フィードバックだけの依頼では、プロジェクトを設定せず、skill のフィードバック手順に従う。\n')
+        self.assertEqual(self.hook('SessionStart', source='startup'), expected)
+
+    def test_notification_save_failure_can_notify_again(self):
+        if os.geteuid() == 0:
+            self.skipTest('root bypasses filesystem permissions')
+        before = self.state_path.read_bytes()
+        payload = json.dumps({'session_id': 'session-1', 'hook_event_name': 'UserPromptSubmit',
+                              'prompt': 'https://example.com/unsaved'})
+        commands = [([str(self.cli), 'session', 'hook', '--prompts', str(self.root / 'prompts')], 1),
+                    (['sh', str(self.root / 'hooks/kioku.sh'), 'capture'], 0)]
+        try:
+            self.state_path.parent.chmod(0o500)
+            for command, code in commands:
+                result = subprocess.run(command, input=payload, capture_output=True, text=True, env=self.env, timeout=15)
+                self.assertEqual(result.returncode, code)
+                self.assertIn('https://example.com/unsaved', self.context(result.stdout, 'UserPromptSubmit'))
+                if code:
+                    self.assertTrue(result.stderr.startswith('kioku: '), result.stderr)
+                else:
+                    self.assertEqual(result.stderr, '')
+                self.assertEqual(self.state_path.read_bytes(), before)
+        finally:
+            self.state_path.parent.chmod(0o700)
+        self.assertIn('https://example.com/unsaved', self.prompt_context(prompt='https://example.com/unsaved'))
+        self.assertEqual(json.loads(self.state_path.read_text())['notified_urls'], ['https://example.com/unsaved'])
 
 
 if __name__ == '__main__':

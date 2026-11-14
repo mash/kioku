@@ -20,7 +20,7 @@ func jobTokenFixture(t *testing.T) (*fixture, string, model.Job, model.AgentToke
 	var job model.Job
 	var token model.AgentToken
 	var raw string
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		job = model.Job{ID: "job", ProjectID: p.ID, UserID: st.Sessions[auth.Hash(human)].UserID, Kind: "generate", Status: "running", Created: time.Now().UTC()}
 		st.Jobs[job.ID] = job
 		raw, token = issueJobToken(st, job, time.Now().Add(time.Hour))
@@ -71,7 +71,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 		}
 	}
 	for _, expired := range []bool{true, false} {
-		_ = f.db.Update(func(st *model.State) error {
+		_ = f.stateStore.Update(func(st *model.State) error {
 			x := st.AgentTokens[token.ID]
 			if expired {
 				x.Expires = time.Now().Add(-time.Second)

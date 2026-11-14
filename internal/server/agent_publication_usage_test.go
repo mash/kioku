@@ -38,7 +38,7 @@ func TestManagedPublicationFailurePreservesFinalUsage(t *testing.T) {
 	if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Jobs[j.ID].Status != "failed" {
 			t.Error("publication failure not recorded")
 		}

@@ -41,7 +41,7 @@ func TestManagedInputWriteCrashRetainsCleanupIdentity(t *testing.T) {
 	if code := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); code != 503 {
 		t.Fatal(code)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		j := st.Jobs[j.ID]
 		j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = j

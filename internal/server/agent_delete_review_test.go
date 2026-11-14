@@ -12,7 +12,7 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 123)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Ref.ID = ""
 		x.Run.Phase = model.PhasePreparing

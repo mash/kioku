@@ -14,7 +14,7 @@ import (
 	"github.com/ory/fosite/handler/oauth2"
 )
 
-// Each provider is scoped to one DB.View or DB.Update snapshot. All Fosite
+// Each provider is scoped to one Store.View or Store.Update snapshot. All Fosite
 // operations for a token exchange run under one Update, including replay
 // revocation. No in-memory session store or nested database transaction is used.
 func (s *Server) connectorOAuth(st *model.State) (fosite.OAuth2Provider, *oauthStorage) {

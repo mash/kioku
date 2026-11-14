@@ -22,7 +22,7 @@ func TestManagedStoredOutputHashRejectsReplacement(t *testing.T) {
 	if j.Status != "failed" || j.Error != "agent output hash mismatch" {
 		t.Fatal("tampered output accepted", j.Status, j.Error)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Projects[p.ID].Revision != "" {
 			t.Error("tampered output published")
 		}
@@ -63,7 +63,7 @@ func TestManagedPreparingGracePreservesUnknownCreation(t *testing.T) {
 	if c, _ := agentRequest(t, f, j, ma.Credential("vault_1"), "GET", "input", nil); c != 200 {
 		t.Fatal("credential expired during grace", c)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = x

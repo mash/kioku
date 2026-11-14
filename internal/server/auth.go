@@ -46,7 +46,7 @@ func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string)
 		return fail(400, "invalid state")
 	}
 	id := auth.Token()
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		prune(st)
 		if len(st.Devices) >= 10000 {
 			return fail(429, "too many login attempts")
@@ -74,7 +74,7 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 	var problem error
 	var account model.User
 	var provider string
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		d, ok := st.Devices[req.Device]
 		// Persist consumption even on failure; returning an error here rolls it back.
 		if ok {
@@ -114,7 +114,7 @@ func loopbackExpired(w http.ResponseWriter) error {
 
 func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, reason string) error {
 	var target string
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		d := st.Devices[id]
 		if pendingLoopback(d) {
 			target = d.LoopbackRedirectURI + "?" + url.Values{"error": {reason}, "state": {d.LoopbackState}}.Encode()
@@ -143,7 +143,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) er
 	}
 	state, verifier := auth.Token(), auth.Token()
 	pending := model.OAuthState{ReturnPath: returnPath, Provider: provider, Verifier: verifier, Expires: time.Now().Add(10 * time.Minute), Device: r.URL.Query().Get("device")}
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		prune(st)
 		if len(st.OAuth) > 10000 {
 			return fail(429, "too many login attempts")
@@ -172,7 +172,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		return fail(403, "OAuth state mismatch; restart login")
 	}
 	var pending model.OAuthState
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		v, ok := st.OAuth[auth.Hash(state)]
 		if !ok || v.Expires.Before(time.Now()) || v.Provider != r.PathValue("provider") {
 			return fail(403, "OAuth request expired")
@@ -199,7 +199,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	token := auth.Token()
 	code := "kioku_loopback." + auth.Token()
 	var expired bool
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		if pending.Device != "" && !pendingLoopback(st.Devices[pending.Device]) {
 			expired = true
 			return nil
@@ -334,7 +334,7 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 		return "", fail(401, "identity no longer matches this session; sign in again")
 	}
 	data, _ := json.Marshal(fresh)
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		current, ok := st.Sessions[key]
 		if !ok || current.UserID != uid || current.Expires.Before(time.Now()) || current.IdentityCredential != session.IdentityCredential {
 			return fail(401, "session changed; sign in again")

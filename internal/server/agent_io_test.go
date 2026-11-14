@@ -63,7 +63,7 @@ func agentRequest(t *testing.T, f *fixture, job model.Job, raw, method, suffix s
 }
 func setManagedPhase(t *testing.T, f *fixture, job model.Job, phase model.ManagedPhase, status string) {
 	t.Helper()
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
 		if j.Run == nil {
 			j.Run = &model.AgentRun{}
@@ -91,7 +91,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 		if code, b := agentRequest(t, f, job, raw, "PUT", "output", body); code != 200 {
 			t.Fatal(code, string(b))
 		}
-		_ = f.db.View(func(st model.State) error {
+		_ = f.stateStore.View(func(st model.State) error {
 			j := st.Jobs[job.ID]
 			if j.Run.Phase != model.PhaseOutputReceived || j.Run.OutputHash != auth.Hash(string(body)) {
 				t.Error(j.Run)
@@ -121,7 +121,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 			t.Fatal(c)
 		}
 	}
-	if err := f.db.Update(func(st *model.State) error { revokeJobToken(st, job.ID); return nil }); err != nil {
+	if err := f.stateStore.Update(func(st *model.State) error { revokeJobToken(st, job.ID); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if c, _ := agentRequest(t, f, job, raw, "GET", "input", nil); c != 403 {
@@ -144,7 +144,7 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 	if err != nil || len(keys) != 0 {
 		t.Fatal(keys, err)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Jobs[job.ID].Run.Phase != model.PhasePreparing {
 			t.Error("invalid output advanced phase")
 		}

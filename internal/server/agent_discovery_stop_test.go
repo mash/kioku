@@ -15,7 +15,7 @@ func TestManagedDiscoveryDefersStopUntilInspectionRecovers(t *testing.T) {
 	id := j.Run.Ref.ID
 	ma.SetStatus(id, "running", "", 123)
 	ma.SetError("GET", "/v1/sessions/"+id, 503)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Ref.ID = ""
 		x.Run.Phase = model.PhasePreparing

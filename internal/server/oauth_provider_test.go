@@ -85,7 +85,7 @@ func connectorAuthCode(t *testing.T, f *fixture, client, human string, projectID
 	}
 	action, fields, options := consentControls(t, page)
 	projectIDs = append([]string(nil), projectIDs...)
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		for i, id := range projectIDs {
 			if p, ok := st.Projects[id]; ok {
 				projectIDs[i] = p.Namespace
@@ -250,7 +250,7 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &tokens) != nil || tokens.Refresh == "" {
 		t.Fatal("initial exchange failed")
 	}
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		grant := st.OAuthTokens[auth.Hash(tokens.Refresh)]
 		grant.Kind, grant.Expires = "access", time.Now().Add(time.Hour)
 		// These unrelated grants only occupy capacity; their Fosite request bodies
@@ -270,7 +270,7 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 	if response.Code != 503 || !strings.Contains(response.Body.String(), "temporarily_unavailable") {
 		t.Fatal("expected capacity failure", response.Code)
 	}
-	if err := f.db.Update(func(st *model.State) error { delete(st.OAuthTokens, auth.Hash("capacity-test-0")); return nil }); err != nil {
+	if err := f.stateStore.Update(func(st *model.State) error { delete(st.OAuthTokens, auth.Hash("capacity-test-0")); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if response = connectorForm(f, "POST", "/oauth/token", "", form); response.Code != 200 {

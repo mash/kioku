@@ -18,7 +18,7 @@ func testAgent(t *testing.T, f *fixture, user, pid, role string) (string, string
 	t.Helper()
 	var raw string
 	var token model.AgentToken
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		var err error
 		raw, token, err = mintAgent(st, st.Sessions[auth.Hash(user)].UserID, pid, "Cloud test", role, time.Hour)
 		return err
@@ -35,7 +35,7 @@ func TestCreateAgentRouteRemoved(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.ID+"/agents", human, map[string]any{"name": "Cloud test", "role": "read"}, nil); c != 405 {
 		t.Fatal("create agent route still answers", c)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if len(st.AgentTokens) != 0 {
 			t.Error("agent credential minted", len(st.AgentTokens))
 		}
@@ -85,7 +85,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 	if strings.Contains(string(encoded), token) || strings.Contains(string(encoded), "token_hash") {
 		t.Fatal("agent list exposed credential")
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.AgentTokens[id].TokenHash == token || st.AgentTokens[id].TokenHash == "" {
 			t.Error("plaintext token persistence")
 		}
@@ -120,7 +120,7 @@ func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
 		t.Fatal(c)
 	}
 	configureAutoRunner(t, f)
-	f.db.Update(func(st *model.State) error {
+	f.stateStore.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
 		j.Status = "running"
 		st.Jobs[j.ID] = j
@@ -146,7 +146,7 @@ func TestMembershipRemovalPermanentlyRevokesDelegatedTokens(t *testing.T) {
 		ID string `json:"id"`
 	}
 	f.request("GET", "/api/me", memberToken, nil, &user)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		v := st.Projects[p.ID]
 		v.Members[user.ID] = "member"
 		st.Projects[p.ID] = v
@@ -156,7 +156,7 @@ func TestMembershipRemovalPermanentlyRevokesDelegatedTokens(t *testing.T) {
 	if c := f.request("DELETE", "/api/projects/"+p.ID+"/members/"+user.ID, human, nil, nil); c != 200 {
 		t.Fatal(c)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		v := st.Projects[p.ID]
 		v.Members[user.ID] = "member"
 		st.Projects[p.ID] = v
@@ -165,7 +165,7 @@ func TestMembershipRemovalPermanentlyRevokesDelegatedTokens(t *testing.T) {
 	if c := f.request("GET", "/api/projects", token, nil, nil); c != 401 {
 		t.Fatal("rejoining resurrected delegated token", c)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		v := st.AgentTokens[id]
 		v.RevokedAt = time.Time{}
 		v.Expires = time.Now().Add(-time.Minute)
@@ -190,7 +190,7 @@ func TestRevokingAgentDuringRequestCannotBroadenItsIdentity(t *testing.T) {
 	req.Header.Set("Kioku-Client-Version", "dev")
 	recorder := httptest.NewRecorder()
 	wrapped := f.s.wrap(func(w http.ResponseWriter, r *http.Request, uid string) error {
-		if err := f.db.Update(func(st *model.State) error {
+		if err := f.stateStore.Update(func(st *model.State) error {
 			token := st.AgentTokens[id]
 			token.RevokedAt = time.Now().UTC()
 			st.AgentTokens[id] = token

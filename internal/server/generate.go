@@ -42,7 +42,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	_, principal := s.session(r)
 	var job model.Job
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		p, err := member(*st, r.PathValue("project"), uid)
 		if err != nil {
 			return err
@@ -88,7 +88,7 @@ func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID 
 // project's next run. Waiting items survive restarts and failed generations.
 func (s *Server) scheduleGenerations(now time.Time) error {
 	if s.Config.GenerateEvery <= 0 {
-		return s.DB.Update(func(st *model.State) error {
+		return s.Store.Update(func(st *model.State) error {
 			for id, p := range st.Projects {
 				if !p.NextGenerateAt.IsZero() || p.GenerateIntervalSeconds != 0 {
 					p.NextGenerateAt = time.Time{}
@@ -100,7 +100,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 		})
 	}
 	interval := s.Config.GenerateEvery
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		for id, p := range st.Projects {
 			if p.Deleting {
 				continue

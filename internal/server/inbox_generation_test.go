@@ -34,7 +34,7 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal(j)
 	}
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		if len(st.Inbox) != 1 || st.Inbox[second.ID].RunID != "" {
 			t.Fatal(st.Inbox)
 		}
@@ -65,7 +65,7 @@ func TestInboxFailureReleasesAndRetryUsesCurrentWaitingItems(t *testing.T) {
 	if j.Status != "failed" {
 		t.Fatal(j)
 	}
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		if _, ok := st.Inbox[first.ID]; ok {
 			t.Fatal("superseded item returned")
 		}
@@ -78,7 +78,7 @@ func TestInboxFailureReleasesAndRetryUsesCurrentWaitingItems(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, &retry); c != 202 {
 		t.Fatal(c)
 	}
-	f.db.Update(func(st *model.State) error {
+	f.stateStore.Update(func(st *model.State) error {
 		retry = st.Jobs[j.ID]
 		retry.Status = "running"
 		st.Jobs[j.ID] = retry
@@ -106,7 +106,7 @@ func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
 	}
 	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/waiting", "Source body")}}, nil)
 	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/removed"}, nil)
-	f.db.Update(func(st *model.State) error {
+	f.stateStore.Update(func(st *model.State) error {
 		q := st.Projects[p.ID]
 		q.Revision = "r"
 		st.Projects[p.ID] = q
@@ -114,7 +114,7 @@ func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
 		return nil
 	})
 	j = startManaged(t, f, token, p.ID, false)
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		for _, id := range j.Run.InboxIDs {
 			if !st.Inbox[id].Remove {
 				t.Fatal(st.Inbox[id])
@@ -156,7 +156,7 @@ func TestInterruptedPublicationKeepsInbox(t *testing.T) {
 	if j.Status != "failed" {
 		t.Fatal(j)
 	}
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		if !st.Projects[p.ID].WikiIncomplete || st.Inbox[item.ID].ID == "" || st.Inbox[item.ID].RunID != "" {
 			t.Fatal(st.Projects[p.ID], st.Inbox)
 		}
@@ -170,7 +170,7 @@ func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
 	now := time.Now().UTC()
 	f.s.scheduleGenerations(now)
 	f.s.scheduleGenerations(now.Add(time.Hour))
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		if len(st.Jobs) != 0 {
 			t.Fatal(st.Jobs)
 		}
@@ -179,7 +179,7 @@ func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
 	putFile(t, f, token, p.ID, "a.md", "Body")
 	f.s.scheduleGenerations(now.Add(2 * time.Hour))
 	f.s.scheduleGenerations(now.Add(3 * time.Hour))
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		if len(st.Jobs) != 1 {
 			t.Fatal(st.Jobs)
 		}
@@ -197,7 +197,7 @@ func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
 				t.Fatal(c)
 			}
 			replacement := waitingInboxItem(t, f, p.ID, testSourceURL("a.md", "Body"))
-			if err := f.db.Update(func(st *model.State) error {
+			if err := f.stateStore.Update(func(st *model.State) error {
 				item := st.Inbox[replacement.ID]
 				item.Created = st.Inbox[first.ID].Created.Add(offset)
 				st.Inbox[item.ID] = item
@@ -209,7 +209,7 @@ func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
 			if got := reconcileManaged(t, f, j); got.Status != "failed" {
 				t.Fatal(got)
 			}
-			if err := f.db.View(func(st model.State) error {
+			if err := f.stateStore.View(func(st model.State) error {
 				if len(st.Inbox) != 1 || !st.Inbox[replacement.ID].Remove {
 					t.Fatalf("failed item conflicts with accepted replacement: %+v", st.Inbox)
 				}
@@ -325,7 +325,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 			}
 			f.s.Blobs = objects
 			restartManagedFixture(t, f)
-			if err := f.db.View(func(st model.State) error {
+			if err := f.stateStore.View(func(st model.State) error {
 				p := st.Projects[p.ID]
 				if !p.WikiIncomplete || st.Revisions[p.Revision].StoredBytes <= f.s.Config.MaxWikiBytes {
 					t.Fatal("publication did not stop over quota", p)
@@ -343,7 +343,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 					}
 				}
 				j = model.Job{}
-				if err := f.db.Update(func(st *model.State) error {
+				if err := f.stateStore.Update(func(st *model.State) error {
 					for _, candidate := range st.Jobs {
 						if candidate.ProjectID == p.ID && candidate.Status == "queued" {
 							j = candidate
@@ -373,7 +373,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 			if got := reconcileManaged(t, f, j); got.Status != "completed" {
 				t.Fatal(got)
 			}
-			if err := f.db.View(func(st model.State) error {
+			if err := f.stateStore.View(func(st model.State) error {
 				rev := st.Revisions[st.Projects[p.ID].Revision]
 				if rev.CompleteBytes != nil || len(st.Inbox) != 0 {
 					t.Fatal("recovery did not finish", rev.CompleteBytes, st.Inbox)
@@ -420,7 +420,7 @@ func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
 	f.s.Blobs = objects
 	restartManagedFixture(t, f)
 	j = startManaged(t, f, token, p.ID, false)
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		if len(j.Run.InboxIDs) != 1 || !st.Inbox[j.Run.InboxIDs[0]].Remove {
 			t.Fatal("partial removal bypassed the published quota", j.Run.InboxIDs)
 		}

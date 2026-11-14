@@ -35,7 +35,7 @@ func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) mo
 	t.Helper()
 	if ensureItem {
 		waiting := false
-		f.db.View(func(st model.State) error {
+		f.stateStore.View(func(st model.State) error {
 			for _, item := range st.Inbox {
 				if item.ProjectID == pid && item.RunID == "" {
 					waiting = true
@@ -53,7 +53,7 @@ func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) mo
 	if c := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &job); c != 202 {
 		t.Fatal(c)
 	}
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		job = st.Jobs[job.ID]
 		job.Status = "running"
 		st.Jobs[job.ID] = job
@@ -66,7 +66,7 @@ func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) mo
 func storedJob(t *testing.T, f *fixture, id string) model.Job {
 	t.Helper()
 	var j model.Job
-	if err := f.db.View(func(st model.State) error { j = st.Jobs[id]; return nil }); err != nil {
+	if err := f.stateStore.View(func(st model.State) error { j = st.Jobs[id]; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return j
@@ -195,7 +195,7 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 			}
 			ma.SetStatus(j.Run.Ref.ID, tc.status, tc.reason, 123)
 			if tc.timeout {
-				_ = f.db.Update(func(st *model.State) error {
+				_ = f.stateStore.Update(func(st *model.State) error {
 					x := st.Jobs[j.ID]
 					x.Run.Deadline = time.Now().Add(-time.Second)
 					st.Jobs[j.ID] = x
@@ -223,7 +223,7 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 				t.Error("not interrupted")
 			}
 			assertAgentCleanup(t, f, ma, got)
-			_ = f.db.View(func(st model.State) error {
+			_ = f.stateStore.View(func(st model.State) error {
 				if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
 					t.Error("usage not recorded")
 				}
@@ -252,7 +252,7 @@ func TestManagedRetryAndUnknownUsage(t *testing.T) {
 	if retried.Run != nil {
 		t.Fatal("retry retained run")
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		retried = st.Jobs[j.ID]
 		retried.Status = "running"
 		st.Jobs[j.ID] = retried
@@ -273,7 +273,7 @@ func TestManagedRetryAndUnknownUsage(t *testing.T) {
 	if got := reconcileManaged(t, f, j); got.Status != "running" {
 		t.Fatal(got)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
 		st.Jobs[j.ID] = x
@@ -283,7 +283,7 @@ func TestManagedRetryAndUnknownUsage(t *testing.T) {
 	if j.Status != "failed" {
 		t.Fatal(j)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
 			t.Error("unknown usage recorded a cost")
 		}

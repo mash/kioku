@@ -112,7 +112,7 @@ func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 		t.Fatal(storedJob(t, f, j.ID))
 	}
 	assertAgentCleanup(t, f, ma, j)
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if cost := costOf(st.Jobs[j.ID].Run.CostCents); cost != 123 {
 			t.Error("cost", cost)
 		}

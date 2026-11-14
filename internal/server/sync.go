@@ -17,7 +17,7 @@ func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision
 		return model.Revision{}, nil, err
 	}
 	var rev model.Revision
-	err = s.DB.View(func(st model.State) error {
+	err = s.Store.View(func(st model.State) error {
 		p, err := member(st, pid, uid)
 		if err != nil {
 			return err

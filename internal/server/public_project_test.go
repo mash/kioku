@@ -15,7 +15,7 @@ import (
 func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 	f, token, p := orgProject(t)
 	const jobID = "public-job"
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		st.Jobs[jobID] = model.Job{ID: jobID, ProjectID: p.ID, UserID: "owner", Status: "failed", Kind: "generate", Created: time.Now(), Error: "storage projects/" + p.ID + "/failed"}
 		return nil
 	}); err != nil {
@@ -55,7 +55,7 @@ func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 		t.Fatal(options)
 	}
 	// Persistence retains the ID; only the public representation changes.
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Projects[p.ID].ID != p.ID {
 			t.Fatal("internal ID lost")
 		}

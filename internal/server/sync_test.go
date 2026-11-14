@@ -22,7 +22,7 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 	if err := f.s.Blobs.Put(context.Background(), key, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		current := st.Projects[p.ID]
 		current.Revision = "revision"
 		current.WikiIncomplete = true

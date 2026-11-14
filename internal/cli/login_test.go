@@ -351,11 +351,11 @@ func (f *loginFixture) exchangeCount() int {
 func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 	google := authtest.NewGoogle(t)
 	dir := t.TempDir()
-	db, err := store.Open(dir)
+	stateStore, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { stateStore.Close() })
 	cipher, err := auth.NewCipher(base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
 		t.Fatal(err)
@@ -385,7 +385,7 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := server.New(server.Config{Prompts: rendered, Providers: map[string]auth.Provider{"google": provider}}, db, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
+	s := server.New(server.Config{Prompts: rendered, Providers: map[string]auth.Provider{"google": provider}}, stateStore, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
 	set, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -450,7 +450,7 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 	if loaded.Config.Token == "" {
 		t.Fatal("missing saved session")
 	}
-	if err := db.View(func(st model.State) error {
+	if err := stateStore.View(func(st model.State) error {
 		session := st.Sessions[auth.Hash(loaded.Config.Token)]
 		if session.IdentityID != "attacker-id" || st.Users[session.UserID].Email != "attacker@example.com" {
 			t.Error("scenario did not save the attacker's session")

@@ -24,7 +24,7 @@ import (
 
 func TestCLIFullWorkflow(t *testing.T) {
 	data := t.TempDir()
-	db, err := store.Open(data)
+	stateStore, err := store.Open(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := server.New(server.Config{Prompts: rendered, BaseURL: "http://127.0.0.1"}, db, local.Store{Dir: filepath.Join(data, "objects")}, key)
+	s := server.New(server.Config{Prompts: rendered, BaseURL: "http://127.0.0.1"}, stateStore, local.Store{Dir: filepath.Join(data, "objects")}, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		if err := g.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
-		db.Close()
+		stateStore.Close()
 	}()
 	config := t.TempDir()
 	run := func(args ...string) (string, error) {
@@ -76,7 +76,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 	}
 	// Authentication is seeded only in this test, never through a server route.
 	token := auth.Token()
-	if err = db.Update(func(st *model.State) error {
+	if err = stateStore.Update(func(st *model.State) error {
 		st.Users["test-user"] = model.User{ID: "test-user", Name: "Alice", Email: "alice@example.com", Identities: map[string]string{"test": "alice"}}
 		st.Sessions[auth.Hash(token)] = model.Session{UserID: "test-user", Expires: time.Now().Add(time.Hour)}
 		return nil

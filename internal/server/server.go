@@ -53,7 +53,7 @@ type Server struct {
 	mcpTools     map[string]any
 	runners      Runners
 	Config       Config
-	DB           *store.Store
+	Store        *store.Store
 	Blobs        blob.Store
 	Cipher       *auth.Cipher
 	wake         chan struct{}
@@ -73,7 +73,7 @@ type apiError struct {
 
 func (e apiError) Error() string            { return e.message }
 func fail(status int, message string) error { return apiError{status, message} }
-func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
+func New(c Config, stateStore *store.Store, b blob.Store, key *auth.Cipher) *Server {
 	if c.AgentMaxSessions == 0 {
 		c.AgentMaxSessions = 4
 	}
@@ -92,7 +92,7 @@ func New(c Config, db *store.Store, b blob.Store, key *auth.Cipher) *Server {
 	if c.RatePerMinute <= 0 {
 		c.RatePerMinute = 600
 	}
-	s := &Server{Config: c, DB: db, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
+	s := &Server{Config: c, Store: stateStore, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
 	if c.Prompts != nil {
 		s.mcpTools = mcpTools(c.Prompts)
 	}
@@ -186,7 +186,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}", s.wrap(s.deleteProject, true))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := s.DB.View(func(model.State) error { return nil }); err != nil {
+		if err := s.Store.View(func(model.State) error { return nil }); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -239,7 +239,7 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 				writeError(w, fail(401, "login required"))
 				return
 			}
-			err := s.DB.View(func(st model.State) error {
+			err := s.Store.View(func(st model.State) error {
 				p, err := namespaceProject(st, r.PathValue("org"), r.PathValue("slug"), uid)
 				if err == nil {
 					r.SetPathValue("project", p.ID)
@@ -271,7 +271,7 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 	}
 }
 func (s *Server) recordAudit(pid, uid, action, detail string) {
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		if _, ok := st.Projects[pid]; ok {
 			if st.Audit == nil {
 				st.Audit = map[string]model.Audit{}
@@ -323,7 +323,7 @@ func (s *Server) session(r *http.Request) (string, model.Session) {
 	}
 	key := auth.Hash(token)
 	var session model.Session
-	_ = s.DB.View(func(st model.State) error {
+	_ = s.Store.View(func(st model.State) error {
 		v, ok := st.Sessions[key]
 		if _, exists := st.Users[v.UserID]; ok && exists && v.Expires.After(time.Now()) {
 			session = v
@@ -356,16 +356,16 @@ func owner(st model.State, pid, uid string) (model.Project, error) {
 	return p, err
 }
 func (s *Server) check(pid, uid string) error {
-	return s.DB.View(func(st model.State) error { _, err := member(st, pid, uid); return err })
+	return s.Store.View(func(st model.State) error { _, err := member(st, pid, uid); return err })
 }
 func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
 	if _, principal := s.session(r); principal.AgentID != "" {
-		return s.DB.View(func(st model.State) error {
+		return s.Store.View(func(st model.State) error {
 			jsonOut(w, 200, map[string]any{"agent_id": principal.AgentID, "namespace": st.Projects[principal.ProjectID].Namespace, "role": principal.Role, "expires": principal.Expires})
 			return nil
 		})
 	}
-	return s.DB.View(func(st model.State) error {
+	return s.Store.View(func(st model.State) error {
 		u := st.Users[uid]
 		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email})
 		return nil
@@ -373,7 +373,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
 }
 func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) error {
 	_, principal := s.session(r)
-	return s.DB.View(func(st model.State) error {
+	return s.Store.View(func(st model.State) error {
 		out := []model.ProjectEntry{}
 		for _, p := range st.Projects {
 			if p.Members[uid] != "" && (principal.AgentID == "" || p.ID == principal.ProjectID) {
@@ -427,7 +427,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 	if !validSlug(req.Slug) {
 		return fail(400, "invalid project slug")
 	}
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		initializeOrganizations(st)
 		var org model.Organization
 		if req.Organization == "" {
@@ -463,7 +463,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 			return err
 		}
 	}
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		for _, existing := range st.Projects {
 			if existing.Namespace == p.Namespace {
 				return fail(409, "project namespace is already in use")
@@ -482,7 +482,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 	return nil
 }
 func (s *Server) members(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.DB.View(func(st model.State) error {
+	return s.Store.View(func(st model.State) error {
 		p, err := member(st, r.PathValue("project"), uid)
 		if err != nil {
 			return err
@@ -517,7 +517,7 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request, uid string) erro
 	}
 	token := auth.Token()
 	inv := model.Invite{ID: auth.Token()[:20], ProjectID: r.PathValue("project"), Email: req.Email, CreatedBy: uid, Expires: time.Now().Add(7 * 24 * time.Hour), TokenHash: auth.Hash(token)}
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		if _, err := owner(*st, inv.ProjectID, uid); err != nil {
 			return err
 		}
@@ -542,7 +542,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request, uid string) error 
 	// Resolve the invite before contacting a provider; email-bound invitations
 	// require current provider proof, never a cached profile email.
 	var boundEmail string
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		for _, inv := range st.Invites {
 			if inv.TokenHash == auth.Hash(req.Token) {
 				if inv.UsedBy != "" || !inv.Expires.After(time.Now()) {
@@ -565,7 +565,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request, uid string) error 
 		}
 	}
 	var result model.Project
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		for id, inv := range st.Invites {
 			if inv.TokenHash != auth.Hash(req.Token) {
 				continue
@@ -601,7 +601,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request, uid string) error 
 	return nil
 }
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, uid string) error {
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		p, err := owner(*st, r.PathValue("project"), uid)
 		if err != nil {
 			return err
@@ -631,7 +631,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, uid string
 }
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, uid string) error {
 	if _, principal := s.session(r); principal.AgentID != "" {
-		if err := s.DB.Update(func(st *model.State) error {
+		if err := s.Store.Update(func(st *model.State) error {
 			t := st.AgentTokens[principal.AgentID]
 			t.RevokedAt = time.Now().UTC()
 			st.AgentTokens[t.ID] = t
@@ -648,7 +648,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, uid string) erro
 			token = c.Value
 		}
 	}
-	if err := s.DB.Update(func(st *model.State) error { delete(st.Sessions, auth.Hash(token)); return nil }); err != nil {
+	if err := s.Store.Update(func(st *model.State) error { delete(st.Sessions, auth.Hash(token)); return nil }); err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode})

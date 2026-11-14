@@ -35,7 +35,7 @@ func TestWikiBrowserAccess(t *testing.T) {
 	if err := f.s.Blobs.Put(t.Context(), key, []byte("# Private wiki body\n[Topic](secret-topic.md)")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		session := st.Sessions[auth.Hash(expired)]
 		session.Expires = time.Now().Add(-time.Hour)
 		st.Sessions[auth.Hash(expired)] = session
@@ -179,7 +179,7 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 	}
 	// The callback must revalidate persisted state too.
 	req = startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + start})
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		for key, pending := range st.OAuth {
 			pending.ReturnPath = "//evil.test/path"
 			st.OAuth[key] = pending

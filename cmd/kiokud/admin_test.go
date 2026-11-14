@@ -17,12 +17,12 @@ import (
 
 func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T) {
 	dir := t.TempDir()
-	db, err := store.Open(dir)
+	stateStore, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if err = db.Update(func(st *model.State) error {
+	defer stateStore.Close()
+	if err = stateStore.Update(func(st *model.State) error {
 		st.Users["u"] = model.User{ID: "u"}
 		st.Projects["p"] = model.Project{ID: "p"}
 		st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p"}
@@ -37,7 +37,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	}
 	t.Cleanup(func() { os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "admin.sock")
-	stop, err := serveAdmin(context.Background(), socket, db)
+	stop, err := serveAdmin(context.Background(), socket, stateStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	if resp.StatusCode != 200 {
 		t.Fatal(resp.StatusCode, string(raw))
 	}
-	if err = db.Update(func(st *model.State) error {
+	if err = stateStore.Update(func(st *model.State) error {
 		u := st.Users["u"]
 		u.Name = "Still serving"
 		st.Users[u.ID] = u
@@ -79,7 +79,7 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 		}
 		return nil
 	})
-	if second, err := serveAdmin(context.Background(), socket, db); err == nil {
+	if second, err := serveAdmin(context.Background(), socket, stateStore); err == nil {
 		second()
 		t.Fatal("active admin socket replaced")
 	}

@@ -48,7 +48,7 @@ func (s *Server) RunWorker(ctx context.Context) error {
 		}
 		for ctx.Err() == nil {
 			var job model.Job
-			err := s.DB.Update(func(st *model.State) error {
+			err := s.Store.Update(func(st *model.State) error {
 				pending := []model.Job{}
 				running := map[string]bool{}
 				sessions := 0
@@ -135,7 +135,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request, uid string) error {
 	var j model.Job
 	var found bool
 	var validAfter time.Time
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		p, err := member(st, pid, uid)
 		if err != nil {
 			return err
@@ -148,7 +148,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request, uid string) error {
 	}
 	if !found {
 		var err error
-		j, err = s.DB.ArchivedJob(r.Context(), pid, id)
+		j, err = s.Store.ArchivedJob(r.Context(), pid, id)
 		if err != nil {
 			return fail(404, "job not found")
 		}
@@ -167,7 +167,7 @@ func (s *Server) retry(w http.ResponseWriter, r *http.Request, uid string) error
 	var archived model.Job
 	var found bool
 	var cutoff time.Time
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		_, found = st.Jobs[id]
 		cutoff = st.Projects[pid].JobsValidAfter
 		return nil
@@ -176,14 +176,14 @@ func (s *Server) retry(w http.ResponseWriter, r *http.Request, uid string) error
 	}
 	if !found {
 		var err error
-		archived, err = s.DB.ArchivedJob(r.Context(), pid, id)
+		archived, err = s.Store.ArchivedJob(r.Context(), pid, id)
 		if err != nil || archived.Created.Before(cutoff) {
 			return fail(404, "job not found")
 		}
 	}
 	_, principal := s.session(r)
 	var job model.Job
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		pid := r.PathValue("project")
 		if _, err := member(*st, pid, uid); err != nil {
 			return err
@@ -237,7 +237,7 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request, uid string) er
 		return s.syncSnapshot(w, r, uid)
 	}
 	var rev model.Revision
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		pid := r.PathValue("project")
 		p, err := member(st, pid, uid)
 		if err != nil {

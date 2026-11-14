@@ -77,7 +77,7 @@ func personalOrg(st *model.State, uid string) model.Organization {
 	return org
 }
 func (s *Server) migrateOrganizations() error {
-	return s.DB.Update(func(st *model.State) error {
+	return s.Store.Update(func(st *model.State) error {
 		initializeOrganizations(st)
 		for id, p := range st.Projects {
 			if p.OrgID != "" {
@@ -132,7 +132,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 		return fail(400, "organization name exceeds 100 bytes")
 	}
 	org := model.Organization{ID: auth.Token()[:20], Slug: req.Slug, Name: req.Name, Members: map[string]string{uid: "owner"}, Created: time.Now().UTC()}
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		initializeOrganizations(st)
 		owned := 0
 		for _, v := range st.Organizations {
@@ -156,7 +156,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 }
 func (s *Server) organizations(w http.ResponseWriter, r *http.Request, uid string) error {
 	out := []map[string]string{}
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		for _, org := range st.Organizations {
 			role := org.Members[uid]
 			if role == "" {
@@ -193,7 +193,7 @@ func namespaceProject(st model.State, orgSlug, projectSlug, uid string) (model.P
 
 func (s *Server) namespacePage(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := ""
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		p, err := namespaceProject(st, r.PathValue("org"), r.PathValue("slug"), uid)
 		pid = p.ID
 		return err
@@ -217,7 +217,7 @@ func (s *Server) Prepare() error {
 		if s.prepareErr = s.migrateOrganizations(); s.prepareErr != nil {
 			return
 		}
-		s.prepareErr = s.DB.Update(func(st *model.State) error {
+		s.prepareErr = s.Store.Update(func(st *model.State) error {
 			for id, job := range st.Jobs {
 				if job.Status == "running" && job.Run == nil {
 					job.Status = "queued"

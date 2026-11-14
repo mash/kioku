@@ -20,7 +20,7 @@ func TestUnknownCostFailureStillStopsSessionAfterRecovery(t *testing.T) {
 	ma.SetError("POST", path+"/events", 503)
 	ma.SetError("GET", path, 503)
 	ma.SetError("POST", path+"/archive", 503)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
 		x.Created = time.Now().Add(-31 * 24 * time.Hour)

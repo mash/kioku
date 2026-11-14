@@ -17,7 +17,7 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 100)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/events", 503)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 503)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Deadline = time.Now().Add(-time.Second)
 		st.Jobs[x.ID] = x
@@ -27,7 +27,7 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	if err != nil && !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal(err)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Jobs[j.ID].Status != "running" {
 			t.Error("stopped tracking running session")
 		}
@@ -44,7 +44,7 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	if j.Status != "failed" {
 		t.Fatal(j)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if costOf(st.Jobs[j.ID].Run.CostCents) != 200 {
 			t.Error("final usage lost")
 		}

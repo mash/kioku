@@ -39,7 +39,7 @@ func (s *Server) authorizeAgent(r *http.Request, principal model.Session) error 
 		if !jobRoute {
 			return fail(403, "job credential permits only job input and output")
 		}
-		return s.DB.View(func(st model.State) error {
+		return s.Store.View(func(st model.State) error {
 			return checkJobToken(st, principal, r.PathValue("project"), r.PathValue("job"))
 		})
 	}
@@ -94,7 +94,7 @@ func mintAgent(st *model.State, uid, pid, name, role string, lifetime time.Durat
 
 func (s *Server) agents(w http.ResponseWriter, r *http.Request, uid string) error {
 	out := []map[string]any{}
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		p, err := member(st, r.PathValue("project"), uid)
 		if err != nil {
 			return err

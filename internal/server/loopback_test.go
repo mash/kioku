@@ -108,7 +108,7 @@ func finishLoopbackOAuth(t *testing.T, f *fixture, req *http.Request) *http.Resp
 func loopbackSnapshot(t *testing.T, f *fixture) model.State {
 	t.Helper()
 	var state model.State
-	if err := f.db.View(func(st model.State) error { state = st; return nil }); err != nil {
+	if err := f.stateStore.View(func(st model.State) error { state = st; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return state
@@ -187,7 +187,7 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 			case "invalid verifier":
 				req["code_verifier"] = strings.Repeat("+", 43)
 			case "expired", "non-loopback":
-				if err := f.db.Update(func(st *model.State) error {
+				if err := f.stateStore.Update(func(st *model.State) error {
 					d := st.Devices[a.device]
 					if failure == "expired" {
 						d.Expires = time.Now().Add(-time.Second)
@@ -234,7 +234,7 @@ func TestLoopbackCallbackFailure(t *testing.T) {
 					q.Set("code", reason)
 				}
 				req.URL.RawQuery = q.Encode()
-				if err := f.db.Update(func(st *model.State) error {
+				if err := f.stateStore.Update(func(st *model.State) error {
 					d := st.Devices[a.device]
 					switch unusable {
 					case "expired":
@@ -323,7 +323,7 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 func TestLoopbackExpiredRequest(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		d := st.Devices[a.device]
 		d.Expires = time.Now().Add(-time.Second)
 		st.Devices[a.device] = d
@@ -344,7 +344,7 @@ func TestLoopbackExpiredRequest(t *testing.T) {
 func TestLoopbackLimitsAndPruning(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		d := st.Devices[a.device]
 		for i := range 10000 {
 			st.Devices[strconv.Itoa(i)] = d
@@ -358,7 +358,7 @@ func TestLoopbackLimitsAndPruning(t *testing.T) {
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
 		t.Fatal(status)
 	}
-	if err := f.db.Update(func(st *model.State) error { d := st.Devices["0"]; d.Used = true; st.Devices["0"] = d; return nil }); err != nil {
+	if err := f.stateStore.Update(func(st *model.State) error { d := st.Devices["0"]; d.Used = true; st.Devices["0"] = d; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 201 {

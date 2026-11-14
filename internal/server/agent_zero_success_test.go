@@ -17,7 +17,7 @@ func TestManagedSuccessfulZeroCostCompletes(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal(j)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
 			t.Error("zero usage changed")
 		}

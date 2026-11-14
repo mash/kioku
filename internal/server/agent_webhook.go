@@ -26,7 +26,7 @@ func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if typ == "session.status_idled" || typ == "session.status_terminated" {
 		var job model.Job
-		err = s.DB.View(func(st model.State) error {
+		err = s.Store.View(func(st model.State) error {
 			for _, j := range st.Jobs {
 				if j.Status == "running" && j.Run != nil && j.Run.Ref.ID == id && id != "" {
 					job = j

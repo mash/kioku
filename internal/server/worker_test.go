@@ -20,7 +20,7 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Summary")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		v := st.AgentTokens[id]
 		v.RevokedAt = time.Now().UTC()
 		st.AgentTokens[id] = v
@@ -29,7 +29,7 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 	if got := reconcileManaged(t, f, j); got.Status != "failed" {
 		t.Fatal(got)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Projects[p.ID].Revision != "" || len(st.Revisions) != 0 {
 			t.Error("revoked job published")
 		}
@@ -112,7 +112,7 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 			if got := storedJob(t, f, second.ID); got.Status != "running" {
 				t.Fatalf("second job: %+v", got)
 			}
-			if err := f.db.Update(func(st *model.State) error {
+			if err := f.stateStore.Update(func(st *model.State) error {
 				j := st.Jobs[first.ID]
 				j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 				st.Jobs[j.ID] = j

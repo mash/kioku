@@ -44,7 +44,7 @@ func TestManagedVaultCreationCrashRecoversCleanup(t *testing.T) {
 	if crash.vault == "" || ma.Credential(crash.vault) == "" {
 		t.Fatal("remote credential was not created")
 	}
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		current := st.Jobs[j.ID]
 		current.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = current

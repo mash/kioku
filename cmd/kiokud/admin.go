@@ -17,7 +17,7 @@ import (
 )
 
 // Online backups are operator-only. No public HTTP route exposes account data.
-func serveAdmin(ctx context.Context, path string, db *store.Store) (func(), error) {
+func serveAdmin(ctx context.Context, path string, stateStore *store.Store) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func serveAdmin(ctx context.Context, path string, db *store.Store) (func(), erro
 		}
 		// The new backup directory must be operator-owned and must not exist. The
 		// service never opens another live catalog or pauses generation for uploads.
-		if err := db.Backup(req.Destination); err != nil {
+		if err := stateStore.Backup(req.Destination); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}

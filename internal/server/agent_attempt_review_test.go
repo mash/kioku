@@ -14,7 +14,7 @@ func retryManagedJob(t *testing.T, f *fixture, token string, j model.Job) model.
 	if c := f.request("POST", "/api/projects/"+j.ProjectID+"/jobs/"+j.ID+"/retry", token, nil, &next); c != 202 {
 		t.Fatal(c)
 	}
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		next = st.Jobs[j.ID]
 		next.Status = "running"
 		st.Jobs[j.ID] = next
@@ -48,14 +48,14 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	if second.Run.Ref.ID != "" {
 		t.Fatal(second.Run)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		j := st.Jobs[second.ID]
 		j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = j
 		return nil
 	})
 	reconcileManaged(t, f, second)
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		j := st.Jobs[second.ID]
 		if j.Run.Attempt.ID != second.Run.Attempt.ID || j.Run.Ref.ID == first.Run.Ref.ID || costOf(j.Run.CostCents) != 0 {
 			t.Error("previous attempt's session or cost reached the retry", j.Run)

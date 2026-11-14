@@ -210,7 +210,7 @@ func TestConnectorWikiArgumentsAndMembership(t *testing.T) {
 			t.Fatal("argument error", tc.name, tc.args, msg)
 		}
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		p := st.Projects[project.ID]
 		p.Deleting = true
 		st.Projects[p.ID] = p
@@ -258,7 +258,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			}
 			var before model.Project
 			var jobsBefore int
-			if err := f.db.View(func(st model.State) error {
+			if err := f.stateStore.View(func(st model.State) error {
 				before = st.Projects[project.ID]
 				jobsBefore = len(st.Jobs)
 				return nil
@@ -276,7 +276,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 				t.Fatal("stored status", item)
 			}
 			var submitter string
-			if err := f.db.View(func(st model.State) error {
+			if err := f.stateStore.View(func(st model.State) error {
 				submitter = st.Inbox[item.ID].Submitter
 				if st.Projects[project.ID].Revision != before.Revision || len(st.Jobs) != jobsBefore || submitter != st.Sessions[auth.Hash(caller)].UserID {
 					t.Error("inbox acceptance changed generation or submitter")
@@ -325,7 +325,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 			t.Fatal("source validation", msg)
 		}
 	}
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		if len(st.Jobs) != 0 || len(st.Inbox) != 0 || len(st.Audit) != 0 {
 			t.Error("rejected source changed state")
 		}

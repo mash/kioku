@@ -18,7 +18,7 @@ func refreshForm(client, token string) url.Values {
 }
 func assertConnectorAccess(t *testing.T, f *fixture, token string, want bool) {
 	t.Helper()
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		_, ok := connectorGrant(st, auth.Hash(token))
 		if ok != want {
 			t.Errorf("access valid = %v, want %v", ok, want)
@@ -138,32 +138,34 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 	// Persist a snapshot to a separate real store, then reopen it and construct
 	// a new server and cipher. Neither provider nor key derivation may rely on RAM.
 	dir := t.TempDir()
-	db, err := store.Open(dir)
+	stateStore, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = f.db.View(func(st model.State) error { return db.Update(func(dst *model.State) error { *dst = st; return nil }) }); err != nil {
+	if err = f.stateStore.View(func(st model.State) error {
+		return stateStore.Update(func(dst *model.State) error { *dst = st; return nil })
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Close(); err != nil {
+	if err = stateStore.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db, err = store.Open(dir)
+	stateStore, err = store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { stateStore.Close() })
 	cipher, err := auth.NewCipher(base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	runners := f.s.runners
-	f.s = New(f.s.Config, db, f.s.Blobs, cipher)
+	f.s = New(f.s.Config, stateStore, f.s.Blobs, cipher)
 	f.s.SetRunners(runners)
-	f.db = db
+	f.stateStore = stateStore
 	access, refresh := connectorTokenPair(t, f, form)
 	assertConnectorAccess(t, f, access, true)
-	if err = db.View(func(st model.State) error {
+	if err = stateStore.View(func(st model.State) error {
 		data, err := json.Marshal(struct {
 			Codes  map[string]model.OAuthCode
 			Tokens map[string]model.OAuthGrant

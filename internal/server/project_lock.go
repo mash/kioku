@@ -23,10 +23,10 @@ func (s *Server) lockProject(ctx context.Context, pid string) (func(), error) {
 	}
 }
 func (s *Server) checkOwner(pid, uid string) error {
-	return s.DB.View(func(st model.State) error { _, err := owner(st, pid, uid); return err })
+	return s.Store.View(func(st model.State) error { _, err := owner(st, pid, uid); return err })
 }
 func (s *Server) checkDeleteOwner(pid, uid string) error {
-	return s.DB.View(func(st model.State) error {
+	return s.Store.View(func(st model.State) error {
 		p, ok := st.Projects[pid]
 		if !ok || p.Members[uid] != "owner" {
 			return fail(http.StatusNotFound, "project not found")

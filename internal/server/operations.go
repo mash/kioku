@@ -78,7 +78,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var projects, queued, running, failed int
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		projects = len(st.Projects)
 		for _, j := range st.Jobs {
 			switch j.Status {
@@ -100,7 +100,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "kioku_http_requests_total %d\nkioku_http_errors_total %d\nkioku_projects %d\nkioku_jobs_queued %d\nkioku_jobs_running %d\nkioku_jobs_failed %d\n", s.requests.Load(), s.failures.Load(), projects, queued, running, failed)
 }
 func (s *Server) usage(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.DB.View(func(st model.State) error {
+	return s.Store.View(func(st model.State) error {
 		pid := r.PathValue("project")
 		if _, err := member(st, pid, uid); err != nil {
 			return err
@@ -122,7 +122,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request, uid string) error
 	})
 }
 func (s *Server) audit(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.DB.View(func(st model.State) error {
+	return s.Store.View(func(st model.State) error {
 		pid := r.PathValue("project")
 		if _, err := owner(st, pid, uid); err != nil {
 			return err
@@ -157,7 +157,7 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) err
 		return err
 	}
 	defer unlock()
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		p, err := owner(*st, pid, uid)
 		if err != nil {
 			return err
@@ -196,7 +196,7 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) err
 }
 func (s *Server) gc(r *http.Request, pid string) (int, error) {
 	live := map[blob.Key]bool{}
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		for _, item := range st.Inbox {
 			if item.ProjectID == pid && !item.Remove {
 				live[item.BodyKey()] = true
@@ -249,7 +249,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 		return err
 	}
 	defer unlock()
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		p, ok := st.Projects[pid]
 		if !ok || p.Members[uid] != "owner" {
 			return fail(404, "project not found")
@@ -277,7 +277,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 			return err
 		}
 	}
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		delete(st.Projects, pid)
 		for id, item := range st.Inbox {
 			if item.ProjectID == pid {

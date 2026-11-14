@@ -15,7 +15,7 @@ func TestManagedStoppedWithoutCostCompletesCleanup(t *testing.T) {
 	session.Status = "terminated"
 	session.CostAmount = ""
 	ma.SetSession(session)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		current := st.Jobs[j.ID]
 		current.Run.Deadline = time.Now().Add(-time.Minute)
 		st.Jobs[j.ID] = current
@@ -30,7 +30,7 @@ func TestManagedStoppedWithoutCostCompletesCleanup(t *testing.T) {
 		t.Fatalf("stopped session retained: status=%s cleanup=%v", j.Status, j.Run.CleanupComplete)
 	}
 	assertAgentCleanup(t, f, ma, j)
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
 			t.Error("unknown usage recorded a cost")
 		}

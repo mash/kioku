@@ -16,7 +16,7 @@ func (s *Server) confirmAccount(r *http.Request, uid string) error {
 }
 func (s *Server) updateAccount(r *http.Request, uid string, fn func(*model.State) error) error {
 	key, principal := s.session(r)
-	return s.DB.Update(func(st *model.State) error {
+	return s.Store.Update(func(st *model.State) error {
 		session, ok := st.Sessions[key]
 		if _, exists := st.Users[uid]; !exists || !ok || session.UserID != uid || !time.Now().Before(session.Expires) || principal.AgentID != "" {
 			return fail(401, "session changed; sign in again")
@@ -27,7 +27,7 @@ func (s *Server) updateAccount(r *http.Request, uid string, fn func(*model.State
 
 func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) error {
 	current, _ := s.session(r)
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		u := st.Users[uid]
 		identities := []string{}
 		sessions := []map[string]any{}

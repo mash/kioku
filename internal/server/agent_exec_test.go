@@ -149,7 +149,7 @@ func TestExecGenerationLifecycle(t *testing.T) {
 func TestExecTimeoutAndStaleExit(t *testing.T) {
 	f, token, p := execFixture(t, "wait")
 	j := startManaged(t, f, token, p.ID, true)
-	if err := f.db.Update(func(st *model.State) error { st.Jobs[j.ID].Run.Deadline = time.Now().Add(-time.Second); return nil }); err != nil {
+	if err := f.stateStore.Update(func(st *model.State) error { st.Jobs[j.ID].Run.Deadline = time.Now().Add(-time.Second); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	f.s.ReconcileJob(t.Context(), j.ID, "older-attempt")
@@ -174,7 +174,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
 					sendOutput(t, f, ma, j, "Restart output")
 				}
-				if err := f.db.Update(func(st *model.State) error {
+				if err := f.stateStore.Update(func(st *model.State) error {
 					run := st.Jobs[j.ID].Run
 					run.Phase = phase
 					if phase == model.PhasePreparing {
@@ -190,7 +190,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				f.runnerConfig.Type = "exec"
 				f.runnerConfig.Command = []string{os.Args[0]}
 				f.runnerConfig.DataDir = t.TempDir()
-				restored := New(f.s.Config, f.db, f.s.Blobs, f.s.Cipher)
+				restored := New(f.s.Config, f.stateStore, f.s.Blobs, f.s.Cipher)
 				g, err := runners.Load(f.runnerConfig, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -200,14 +200,14 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				defer cancel()
 				// A second project can be dequeued even while the lost run occupies a slot.
 				queued := model.Job{ID: "queued-after-restart", ProjectID: "other-project", Status: "queued"}
-				if err := f.db.Update(func(st *model.State) error { st.Jobs[queued.ID] = queued; return nil }); err != nil {
+				if err := f.stateStore.Update(func(st *model.State) error { st.Jobs[queued.ID] = queued; return nil }); err != nil {
 					t.Fatal(err)
 				}
 				observed := make(chan model.Job, 1)
 				restored.SetRunners(observingRunners{Runners: g, newRun: func(next model.Job) (runner.Runner, error) {
 					if next.ID == queued.ID {
 						var previous model.Job
-						if err := f.db.View(func(st model.State) error { previous = st.Jobs[j.ID]; return nil }); err != nil {
+						if err := f.stateStore.View(func(st model.State) error { previous = st.Jobs[j.ID]; return nil }); err != nil {
 							return nil, err
 						}
 						observed <- previous

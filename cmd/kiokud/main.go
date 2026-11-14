@@ -72,12 +72,12 @@ func run() error {
 		return requestOnlineBackup(*adminSocket, *onlineBackup)
 	}
 	if *backup != "" {
-		db, err := store.OpenControl(*dir)
+		stateStore, err := store.OpenControl(*dir)
 		if err != nil {
 			return err
 		}
-		defer db.Close()
-		return db.Backup(*backup)
+		defer stateStore.Close()
+		return stateStore.Backup(*backup)
 	}
 	if *maxBytes < 1 || *maxJobs < 1 || *rate < 1 || *generateEvery < 0 || *generateEvery > 0 && *generateEvery < time.Second {
 		return errors.New("limits must be positive; generation interval must be zero or at least one second")
@@ -106,11 +106,11 @@ func run() error {
 		return err
 	}
 
-	db, err := store.OpenWithObjects(*dir, objects)
+	stateStore, err := store.OpenWithObjects(*dir, objects)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer stateStore.Close()
 	// The catalog lock prevents concurrent startups from generating different keys.
 	cipher, err := loadCipher(*dir, config.Env("KIOKU_ENCRYPTION_KEY", ""))
 	if err != nil {
@@ -137,7 +137,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, db, objects, cipher)
+	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, stateStore, objects, cipher)
 	set, err := runners.Load(runners.Config{Prompts: rendered, Type: selection, OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), OpenAIModel: os.Getenv("KIOKU_OPENAI_MODEL"), Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, func(jobID, attemptID string) { app.ReconcileJob(ctx, jobID, attemptID) })
 	if err != nil {
 		return err
@@ -155,7 +155,7 @@ func run() error {
 	if err = app.Prepare(); err != nil {
 		return err
 	}
-	stopAdmin, err := serveAdmin(ctx, *adminSocket, db)
+	stopAdmin, err := serveAdmin(ctx, *adminSocket, stateStore)
 	if err != nil {
 		return err
 	}

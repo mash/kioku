@@ -42,7 +42,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 		t.Fatal("orphan retained")
 	}
 	var revisions int
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		for _, r := range st.Revisions {
 			if r.ProjectID == p.ID {
 				revisions++

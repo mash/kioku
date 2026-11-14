@@ -25,7 +25,7 @@ func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
 				pages["wiki/source-a.md"] = page
 			}
 			if rule == "c" || rule == "e" {
-				f.db.Update(func(st *model.State) error {
+				f.stateStore.Update(func(st *model.State) error {
 					job := st.Jobs[j.ID]
 					job.Run.Attempt.ID = "attempt"
 					job.Run.InboxIDs = []string{"item"}
@@ -39,7 +39,7 @@ func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
 				if err := f.s.Blobs.Put(t.Context(), key, []byte(page)); err != nil {
 					t.Fatal(err)
 				}
-				f.db.Update(func(st *model.State) error {
+				f.stateStore.Update(func(st *model.State) error {
 					p := st.Projects[j.ProjectID]
 					p.Revision = "previous"
 					st.Projects[p.ID] = p

@@ -56,7 +56,7 @@ func (s *Server) startAgentJob(ctx context.Context, job model.Job) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	// The generation lock prevents a new attempt from appearing during setup.
-	if viewErr := s.DB.View(func(st model.State) error { job = st.Jobs[job.ID]; return nil }); viewErr != nil {
+	if viewErr := s.Store.View(func(st model.State) error { job = st.Jobs[job.ID]; return nil }); viewErr != nil {
 		return viewErr
 	}
 	var status *runner.Status
@@ -81,7 +81,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	var incomplete bool
 	var namespace string
 	var raw string
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		if err := validateGeneration(*st, job); err != nil {
 			return err
 		}
@@ -174,7 +174,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		runSpec.InputArchive = archive.Bytes()
 		runSpec.FirstMessage = s.Config.Prompts.FileUser(vars)
 		runSpec.SaveRef = func(ref runner.RunRef) error {
-			return s.DB.Update(func(st *model.State) error {
+			return s.Store.Update(func(st *model.State) error {
 				if err := validateGeneration(*st, job); err != nil {
 					return err
 				}
@@ -194,7 +194,7 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if err != nil {
 		return err
 	}
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
 		if !sameManagedRun(j, job) || j.Status != "running" {
 			return nil

@@ -105,7 +105,7 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request, _ string)
 		}
 	}
 	client := model.OAuthClient{ID: auth.Token(), Name: req.Name, RedirectURIs: req.RedirectURIs, Created: time.Now().UTC()}
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		prune(st)
 		if len(st.OAuthClients) >= 10000 {
 			return fail(429, "too many OAuth clients")
@@ -126,7 +126,7 @@ func (s *Server) browserSession(r *http.Request) (string, model.Session) {
 	}
 	key := auth.Hash(cookie.Value)
 	var session model.Session
-	_ = s.DB.View(func(st model.State) error {
+	_ = s.Store.View(func(st model.State) error {
 		value, ok := st.Sessions[key]
 		if _, exists := st.Users[value.UserID]; ok && exists && value.AgentID == "" && value.Expires.After(time.Now()) {
 			session = value
@@ -162,7 +162,7 @@ func (s *Server) authorizationRequest(r *http.Request) (model.OAuthClient, error
 	if !validChallenge(r.Form.Get("code_challenge")) || r.Form.Get("code_challenge_method") != "S256" {
 		return client, fosite.ErrInvalidRequest
 	}
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		provider, _ := s.connectorOAuth(&st)
 		request, err := provider.NewAuthorizeRequest(r.Context(), r)
 		if err != nil {
@@ -216,7 +216,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	// A client controls the authorization URL. Only checked boxes from the
 	// user's POST body can authorize a project, never query parameters.
 	namespaces := append([]string(nil), r.PostForm["namespace"]...)
-	// maxConsentProjects bounds the work done under the DB write lock.
+	// maxConsentProjects bounds the work done under the Store write lock.
 	const maxConsentProjects = 200
 	if len(namespaces) > maxConsentProjects {
 		return fail(400, "too many projects selected")
@@ -229,7 +229,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 			UserID, Email, Name, Action, CallbackOrigin, Problem string
 			Projects                                             []model.Project
 		}{UserID: session.UserID, Name: client.Name, Action: "/oauth/authorize?" + r.Form.Encode(), CallbackOrigin: callbackOrigin}
-		if err := s.DB.View(func(st model.State) error {
+		if err := s.Store.View(func(st model.State) error {
 			data.Email = st.Users[session.UserID].Email
 			for _, p := range st.Projects {
 				if p.Members[session.UserID] != "" && !p.Deleting {
@@ -260,7 +260,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	var provider fosite.OAuth2Provider
 	var request fosite.AuthorizeRequester
 	var response fosite.AuthorizeResponder
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		prune(st)
 		current, ok := st.Sessions[key]
 		if !ok || current.UserID != session.UserID || !current.Expires.After(time.Now()) {
@@ -312,7 +312,7 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 	var request fosite.AccessRequester
 	var response fosite.AccessResponder
 	var problem error
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		prune(st)
 		var storage *oauthStorage
 		provider, storage = s.connectorOAuth(st)

@@ -20,7 +20,7 @@ import (
 
 func (s *Server) reconcileAgentJobs(ctx context.Context) error {
 	var jobs []model.Job
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		for _, j := range st.Jobs {
 			if j.Run != nil && (j.Status == "running" || ((j.Status == "completed" || j.Status == "failed") && !j.Run.CleanupComplete)) {
 				jobs = append(jobs, j)
@@ -48,7 +48,7 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 	}
 	defer unlock()
 	var current model.Job
-	if err = s.DB.View(func(st model.State) error { current = st.Jobs[job.ID]; return nil }); err != nil {
+	if err = s.Store.View(func(st model.State) error { current = st.Jobs[job.ID]; return nil }); err != nil {
 		return err
 	}
 	if current.Run == nil || !sameManagedRun(current, job) {
@@ -61,7 +61,7 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 	r, err := s.runners.New(job)
 	if err != nil {
 		if job.Status == "running" && time.Now().After(job.Run.Deadline) {
-			return s.DB.Update(func(st *model.State) error {
+			return s.Store.Update(func(st *model.State) error {
 				j := st.Jobs[job.ID]
 				if j.Status == "running" && sameManagedRun(j, job) {
 					revokeJobToken(st, j.ID)
@@ -82,7 +82,7 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 			slog.Warn("agent inspect failed", "job", job.ID, "error", inspectErr)
 		}
 	} else if status.Run.ID != "" && (status.Run.ID != job.Run.Ref.ID || job.Run.Phase == model.PhasePreparing) {
-		if err := s.DB.Update(func(st *model.State) error {
+		if err := s.Store.Update(func(st *model.State) error {
 			j := st.Jobs[job.ID]
 			if !sameManagedRun(j, job) {
 				return nil
@@ -151,7 +151,7 @@ func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job mo
 	}
 	now := time.Now().UTC()
 	if job.Run.OutputWaitSince == nil {
-		if err := s.DB.Update(func(st *model.State) error {
+		if err := s.Store.Update(func(st *model.State) error {
 			current, err := check(*st)
 			if err == nil {
 				current.Run.OutputWaitSince = &now
@@ -184,7 +184,7 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 		return nil
 	}
 	proceed := false
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
 		if j.Status != "running" || j.Run == nil || !sameManagedRun(j, job) {
 			return nil
@@ -225,7 +225,7 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 		return failJob(err.Error())
 	}
 	var project model.Project
-	if err = s.DB.View(func(st model.State) error { project = st.Projects[job.ProjectID]; return nil }); err != nil {
+	if err = s.Store.View(func(st model.State) error { project = st.Projects[job.ProjectID]; return nil }); err != nil {
 		return err
 	}
 	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Files: files, Validate: func(st model.State) error { return validateGeneration(st, job) }, Finish: func(st *model.State, now time.Time) error {
@@ -263,7 +263,7 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job model.Job, 
 		return ctx.Err()
 	}
 	outputArrived, waiting, changed := false, false, false
-	if err := s.DB.Update(func(st *model.State) error {
+	if err := s.Store.Update(func(st *model.State) error {
 		j := st.Jobs[job.ID]
 		if j.Status != "running" || !sameManagedRun(j, job) {
 			return nil
@@ -334,7 +334,7 @@ func (s *Server) abortAgentJob(ctx context.Context, job model.Job) error {
 
 func (s *Server) abortProjectAgentJobs(ctx context.Context, pid string) error {
 	var jobs []model.Job
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		for _, j := range st.Jobs {
 			if j.ProjectID == pid && j.Run != nil && (j.Status == "running" || !j.Run.CleanupComplete) {
 				jobs = append(jobs, j)
@@ -355,7 +355,7 @@ func (s *Server) abortProjectAgentJobs(ctx context.Context, pid string) error {
 			return fail(503, "agent cleanup pending; retry deletion")
 		}
 		complete := false
-		if err := s.DB.View(func(st model.State) error {
+		if err := s.Store.View(func(st model.State) error {
 			complete = st.Jobs[j.ID].Run != nil && st.Jobs[j.ID].Run.CleanupComplete
 			return nil
 		}); err != nil {
@@ -373,7 +373,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 	cleanupCtx, cancel := context.WithTimeout(cleanupParent, 30*time.Second)
 	defer cancel()
 	var current model.Job
-	if err := s.DB.View(func(st model.State) error { current = st.Jobs[job.ID]; return nil }); err != nil {
+	if err := s.Store.View(func(st model.State) error { current = st.Jobs[job.ID]; return nil }); err != nil {
 		return err
 	}
 	if !sameManagedRun(current, job) || current.Run == nil || current.Run.CleanupComplete || current.Status != "completed" && current.Status != "failed" {
@@ -410,7 +410,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 		}
 	}
 	if complete {
-		return s.DB.Update(func(st *model.State) error {
+		return s.Store.Update(func(st *model.State) error {
 			j := st.Jobs[job.ID]
 			if sameManagedRun(j, job) && (j.Status == "completed" || j.Status == "failed") {
 				j.Run.CleanupComplete = true

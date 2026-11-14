@@ -90,7 +90,7 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		}
 		return nil
 	}
-	if err = s.DB.View(check); err != nil {
+	if err = s.Store.View(check); err != nil {
 		return err
 	}
 	if !item.Remove {
@@ -98,7 +98,7 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 			return err
 		}
 	}
-	return s.DB.Update(func(st *model.State) error {
+	return s.Store.Update(func(st *model.State) error {
 		if err := check(*st); err != nil {
 			return err
 		}

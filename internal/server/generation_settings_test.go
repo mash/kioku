@@ -19,7 +19,7 @@ func TestServerGenerationBudget(t *testing.T) {
 			if code := f.request("POST", "/api/projects/"+p.Namespace+"/generate", token, map[string]any{"budget_cents": budget}, &j); code != 202 {
 				t.Fatal(code)
 			}
-			if err := f.db.Update(func(st *model.State) error {
+			if err := f.stateStore.Update(func(st *model.State) error {
 				j = st.Jobs[j.ID]
 				j.Status = "running"
 				st.Jobs[j.ID] = j
@@ -51,7 +51,7 @@ func TestServerGenerationBudget(t *testing.T) {
 func TestRetiredBYOKJobCannotRetry(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	j := managedJob(t, f, token, p.ID, true)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		j.Status = "failed"
 		j.AnthropicConnectionID = "retired"
 		st.Jobs[j.ID] = j
@@ -103,7 +103,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	if resp.StatusCode != 200 || strings.Contains(string(body), "Console") {
 		t.Fatal(resp.StatusCode, string(body))
 	}
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		found := false
 		for _, j := range st.Jobs {
 			if j.ProjectID == p.ID && j.Kind == "generate" {

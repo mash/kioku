@@ -49,7 +49,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	raw, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	key := auth.Hash(raw)
 	valid := false
-	if err := s.DB.View(func(st model.State) error { _, valid = connectorGrant(st, key); return nil }); err != nil {
+	if err := s.Store.View(func(st model.State) error { _, valid = connectorGrant(st, key); return nil }); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -127,7 +127,7 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 	}
 	raw := "kioku_code." + auth.Token()
 	expires := time.Now().UTC().Add(time.Minute)
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		prune(st)
 		project, uid, err := connectorProject(*st, grantKey, namespace)
 		if err != nil {
@@ -156,7 +156,7 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	var problem error
 	// Returning an error from Update rolls back the deletion. Persist consumption
 	// even when validation or minting fails, and report that failure afterwards.
-	err := s.DB.Update(func(st *model.State) error {
+	err := s.Store.Update(func(st *model.State) error {
 		prune(st)
 		key := auth.Hash(req.Code)
 		code, ok := st.LoginCodes[key]

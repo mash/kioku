@@ -21,7 +21,7 @@ import (
 
 func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 	t.Helper()
-	db, err := store.OpenWithObjects(dir, objects)
+	stateStore, err := store.OpenWithObjects(dir, objects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{Prompts: defaultPrompts(t)}, db, objects, key)
+	s := New(Config{Prompts: defaultPrompts(t)}, stateStore, objects, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +37,8 @@ func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 	s.SetRunners(g)
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
-	t.Cleanup(func() { ts.Close(); db.Close() })
-	return &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), db: db}
+	t.Cleanup(func() { ts.Close(); stateStore.Close() })
+	return &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), stateStore: stateStore}
 }
 func runGeneration(t *testing.T, f *fixture, token, pid string) model.Job {
 	t.Helper()
@@ -68,7 +68,7 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	}
 	runGeneration(t, f, token, p.ID)
 	backup := filepath.Join(t.TempDir(), "backup")
-	if err := f.db.Backup(backup); err != nil {
+	if err := f.stateStore.Backup(backup); err != nil {
 		t.Fatal(err)
 	}
 	putFile(t, f, token, p.ID, "second.md", "Newer than SQLite backup")
@@ -86,7 +86,7 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	if !strings.Contains(all, "Newer than SQLite backup") {
 		t.Fatal("old SQLite backup rolled back wiki")
 	}
-	_ = restored.db.View(func(st model.State) error {
+	_ = restored.stateStore.View(func(st model.State) error {
 		if len(st.Revisions) != 1 || len(st.Inbox) != 1 || st.Inbox[waiting.ID].Remove {
 			t.Error("project content lost during restore", st.Inbox)
 		}
@@ -128,7 +128,7 @@ func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
 	if failed.Status != "failed" {
 		t.Fatal(failed)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		p := st.Projects[p.ID]
 		if !p.WikiIncomplete || len(st.Inbox) != 1 {
 			t.Error("partial wiki marked complete", p)
@@ -144,7 +144,7 @@ func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
 	if done.Unchanged {
 		t.Fatal("partial job incorrectly skipped regeneration")
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		p := st.Projects[p.ID]
 		if p.WikiIncomplete || len(st.Inbox) != 0 || len(st.Revisions) != 1 {
 			t.Error("retry did not complete current wiki", p)

@@ -32,14 +32,14 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Remove != tc.remove {
 			t.Fatal("stored remove flag", item)
 		}
-		f.db.View(func(st model.State) error {
+		f.stateStore.View(func(st model.State) error {
 			if len(st.Inbox) != 1 || len(st.Jobs) != 0 {
 				t.Fatal("not replaced", st.Inbox)
 			}
 			return nil
 		})
 	}
-	f.db.Update(func(st *model.State) error {
+	f.stateStore.Update(func(st *model.State) error {
 		for id, v := range st.Inbox {
 			v.RunID = "running"
 			st.Inbox[id] = v
@@ -53,7 +53,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 2 || len(projects[0].Inbox) != 2 {
 		t.Fatal(c, projects)
 	}
-	f.db.Update(func(st *model.State) error {
+	f.stateStore.Update(func(st *model.State) error {
 		for i := len(st.Inbox); i < 200; i++ {
 			id := fmt.Sprint(i)
 			st.Inbox[id] = model.InboxItem{ID: id, ProjectID: p.ID, SourceURL: "https://example.com/" + id}
@@ -66,7 +66,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	if c := f.request("POST", base+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, nil); c != 202 {
 		t.Fatal(c)
 	}
-	f.db.Update(func(st *model.State) error {
+	f.stateStore.Update(func(st *model.State) error {
 		q := st.Projects[p.ID]
 		q.Revision = "r"
 		st.Projects[p.ID] = q
@@ -100,7 +100,7 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.Namespace+"/put", token, model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", strings.Repeat("a", 1<<20))}}, nil); c != 413 {
 		t.Fatal(c)
 	}
-	f.db.View(func(st model.State) error {
+	f.stateStore.View(func(st model.State) error {
 		if len(st.Inbox) != 0 {
 			t.Fatal(st.Inbox)
 		}

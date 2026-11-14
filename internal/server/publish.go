@@ -29,7 +29,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		validate = func(model.State) error { return nil }
 	}
 	var published model.Revision
-	err := s.DB.View(func(st model.State) error { published = st.Revisions[project.Revision]; return nil })
+	err := s.Store.View(func(st model.State) error { published = st.Revisions[project.Revision]; return nil })
 	if err != nil {
 		return "", err
 	}
@@ -40,7 +40,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 	}
 	// This token is for synchronization only. It does not create a build directory
 	// or retain old pages. Mark incomplete before the first mutable object write.
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		if err := validate(*st); err != nil {
 			return err
 		}
@@ -71,7 +71,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		}
 		err = func() error {
 			defer publishUnlock()
-			if err := s.DB.View(validate); err != nil {
+			if err := s.Store.View(validate); err != nil {
 				return err
 			}
 			key := blob.Key("projects/" + job.ProjectID + "/" + name)
@@ -96,7 +96,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 			rev.Files[name] = key
 			rev.FileBytes[name] = int64(len(body))
 			rev.FileHashes[name] = auth.Hash(body)
-			return s.DB.Update(func(st *model.State) error {
+			return s.Store.Update(func(st *model.State) error {
 				if err := validate(*st); err != nil {
 					return err
 				}
@@ -146,7 +146,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		return "", err
 	}
 	defer publishUnlock()
-	if err = s.DB.View(validate); err != nil {
+	if err = s.Store.View(validate); err != nil {
 		return "", err
 	}
 	// Delete obsolete pages after writing replacements.
@@ -164,7 +164,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 			}
 		}
 	}
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		if err := validate(*st); err != nil {
 			return err
 		}

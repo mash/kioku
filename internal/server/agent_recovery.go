@@ -13,7 +13,7 @@ func (s *Server) ReconcileJob(ctx context.Context, jobID, attemptID string) {
 		return
 	}
 	var job model.Job
-	if err := s.DB.View(func(st model.State) error { job = st.Jobs[jobID]; return nil }); err != nil {
+	if err := s.Store.View(func(st model.State) error { job = st.Jobs[jobID]; return nil }); err != nil {
 		return
 	}
 	if job.Status != "running" || job.Run == nil || job.Run.Attempt.ID != attemptID {

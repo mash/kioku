@@ -30,14 +30,14 @@ type fixture struct {
 	s            *Server
 	url          string
 	client       *http.Client
-	db           *store.Store
+	stateStore   *store.Store
 }
 
 func setup(t *testing.T) *fixture { return setupWithWorker(t, true) }
 func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := store.Open(dir)
+	stateStore, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{Prompts: defaultPrompts(t), BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, db, local.Store{Dir: dir + "/objects"}, key)
+	s := New(Config{Prompts: defaultPrompts(t), BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, stateStore, local.Store{Dir: dir + "/objects"}, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -54,13 +54,13 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	s.Config.Providers["google"] = auth.Provider{Name: "google", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		uid := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var u model.User
-		_ = db.View(func(st model.State) error { u = st.Users[uid]; return nil })
+		_ = stateStore.View(func(st model.State) error { u = st.Users[uid]; return nil })
 		body, _ := json.Marshal(map[string]any{"sub": uid, "name": u.Name, "email": u.Email, "email_verified": true})
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
-	f := &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), db: db}
+	f := &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), stateStore: stateStore}
 	if startWorker {
 		configureAutoRunner(t, f)
 	}
@@ -77,7 +77,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 			t.Error(err)
 		}
 		ts.Close()
-		db.Close()
+		stateStore.Close()
 	})
 	return f
 }
@@ -110,7 +110,7 @@ func (f *fixture) request(method, path, token string, in, out any) int {
 		}
 	}
 	if resp.StatusCode < 300 {
-		_ = f.db.View(func(st model.State) error {
+		_ = f.stateStore.View(func(st model.State) error {
 			switch v := out.(type) {
 			case *model.Project:
 				for _, p := range st.Projects {
@@ -132,7 +132,7 @@ func (f *fixture) request(method, path, token string, in, out any) int {
 func (f *fixture) login(email string) string {
 	f.t.Helper()
 	token := auth.Token()
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		uid := ""
 		for id, u := range st.Users {
 			if u.Email == email {
@@ -328,7 +328,7 @@ func TestCSRFAndOAuthState(t *testing.T) {
 		t.Fatalf("OAuth state check: %d", code)
 	}
 	var secrets string
-	_ = f.db.View(func(st model.State) error { b, _ := json.Marshal(st); secrets = string(b); return nil })
+	_ = f.stateStore.View(func(st model.State) error { b, _ := json.Marshal(st); secrets = string(b); return nil })
 	if strings.Contains(secrets, token) {
 		t.Fatal("session token stored in plaintext")
 	}
@@ -376,7 +376,7 @@ func sourcePage(id string) string {
 
 // publicPath resolves internal fixture references before sending a real request.
 func (f *fixture) publicPath(path string) string {
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		for id, p := range st.Projects {
 			path = strings.ReplaceAll(path, "/api/projects/"+id+"/", "/api/projects/"+p.Namespace+"/")
 			if path == "/api/projects/"+id {

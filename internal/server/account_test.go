@@ -66,7 +66,7 @@ func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
 	p := securityProject(t, f, human)
 	_, agent := testAgent(t, f, human, p.ID, "read")
 	extra := auth.Token()
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		u := st.Users[uid]
 		u.Identities["github"] = "github-user"
 		st.Users[uid] = u
@@ -104,7 +104,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.ID+"/owner", human, map[string]string{"target": target}, nil); c != 409 {
 		t.Fatal("nonmember made owner", c)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		v := st.Projects[p.ID]
 		v.Members[target] = "member"
 		st.Projects[v.ID] = v
@@ -118,7 +118,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 		t.Fatal(c)
 	}
 	var slug string
-	_ = f.db.View(func(st model.State) error { slug = st.Organizations[p.OrgID].Slug; return nil })
+	_ = f.stateStore.View(func(st model.State) error { slug = st.Organizations[p.OrgID].Slug; return nil })
 	if c := f.request("POST", "/api/orgs/"+slug+"/owner", human, map[string]string{"target": target}, nil); c != 200 {
 		t.Fatal(c)
 	}
@@ -135,7 +135,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("GET", "/api/projects", other, nil, &projects); c != 200 || len(projects) != 1 || projects[0].Namespace != p.Namespace || projects[0].InboxCount != 1 {
 		t.Fatal("team evidence lost", c, projects)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if _, ok := st.Users[uid]; ok {
 			t.Error("profile retained")
 		}

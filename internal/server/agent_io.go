@@ -49,7 +49,7 @@ func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) 
 
 	_, principal := s.session(r)
 	var job model.Job
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		var e error
 		job, e = agentIOJob(st, principal, r.PathValue("project"), r.PathValue("job"))
 		return e
@@ -68,7 +68,7 @@ func (s *Server) outputContext(ctx context.Context, job model.Job) (map[string]s
 	var rev model.Revision
 	var incomplete bool
 	var items []model.InboxItem
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		if err := validateGeneration(st, job); err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 
 	_, principal := s.session(r)
 	var job model.Job
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		var e error
 		job, e = agentIOJob(st, principal, r.PathValue("project"), r.PathValue("job"))
 		return e
@@ -184,7 +184,7 @@ func (s *Server) saveAgentOutput(ctx context.Context, job model.Job, body []byte
 	}
 	defer unlock()
 	var selectedKey blob.Key
-	if err = s.DB.View(func(st model.State) error {
+	if err = s.Store.View(func(st model.State) error {
 		current, e := currentJob(st)
 		if e == nil {
 			selectedKey = current.Run.OutputKey
@@ -213,7 +213,7 @@ func (s *Server) saveAgentOutput(ctx context.Context, job model.Job, body []byte
 	}
 	selected := false
 	var previousKey blob.Key
-	err = s.DB.Update(func(st *model.State) error {
+	err = s.Store.Update(func(st *model.State) error {
 		current := st.Jobs[job.ID]
 		selected = current.Run != nil && current.Run.OutputKey == key
 		current, e := currentJob(*st)

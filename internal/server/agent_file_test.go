@@ -116,7 +116,7 @@ func TestClaudeFileGenerationRecoversAndValidatesSessionOutput(t *testing.T) {
 			}
 			// Recover the saved session ID as if kiokud stopped before recording
 			// the transition to agent_running.
-			if err := f.db.Update(func(st *model.State) error {
+			if err := f.stateStore.Update(func(st *model.State) error {
 				current := st.Jobs[j.ID]
 				current.Run.Phase = model.PhasePreparing
 				st.Jobs[j.ID] = current

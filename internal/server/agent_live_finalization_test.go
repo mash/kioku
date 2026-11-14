@@ -19,7 +19,7 @@ func TestManagedLiveSessionCannotPublish(t *testing.T) {
 			if j.Status != "running" {
 				t.Fatal("live session finalized", j.Status)
 			}
-			_ = f.db.View(func(st model.State) error {
+			_ = f.stateStore.View(func(st model.State) error {
 				if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
 					t.Error("interim cost recorded")
 				}
@@ -33,7 +33,7 @@ func TestManagedLiveSessionCannotPublish(t *testing.T) {
 			if j.Status != "completed" {
 				t.Fatal(j)
 			}
-			_ = f.db.View(func(st model.State) error {
+			_ = f.stateStore.View(func(st model.State) error {
 				if costOf(st.Jobs[j.ID].Run.CostCents) != 200 {
 					t.Error("final cost not recorded")
 				}

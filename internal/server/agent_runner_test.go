@@ -66,7 +66,7 @@ func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 			if tc.output {
 				sendOutput(t, f, ma, j, "Output")
 			}
-			_ = f.db.Update(func(st *model.State) error {
+			_ = f.stateStore.Update(func(st *model.State) error {
 				x := st.Jobs[j.ID]
 				if tc.phase != "" {
 					x.Run.Phase = tc.phase
@@ -133,7 +133,7 @@ func TestReconcileUnavailableRunner(t *testing.T) {
 	if j.Status != "running" {
 		t.Fatal(j)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Deadline = time.Now().Add(-time.Minute)
 		st.Jobs[j.ID] = x
@@ -154,7 +154,7 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 		c := int64(999)
 		return runner.Status{State: runner.StateStopped, Cost: &c}, errors.New("permanent failure")
 	}, stop: func(context.Context, runner.Attempt) error { stops++; return nil }, cleanup: func(context.Context, runner.Attempt) error { t.Fatal("unknown run must not be cleaned"); return nil }}})
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Deadline = time.Now().Add(-time.Minute)
 		st.Jobs[j.ID] = x
@@ -171,7 +171,7 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 	if c, _ := agentRequest(t, f, j, raw, "PUT", "output", nil); c != 403 {
 		t.Fatal(c)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
 		st.Jobs[j.ID] = x
@@ -197,15 +197,15 @@ func (b *rejectRunRefStore) Put(ctx context.Context, key blob.Key, body []byte) 
 func TestRunRefSaveFailureRecoversByKey(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	objects := &rejectRunRefStore{Store: f.s.Blobs}
-	if err := f.db.Close(); err != nil {
+	if err := f.stateStore.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.OpenWithObjects(filepath.Dir(f.s.Blobs.(local.Store).Dir), objects)
+	stateStore, err := store.OpenWithObjects(filepath.Dir(f.s.Blobs.(local.Store).Dir), objects)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.db, f.s.DB = db, db
-	t.Cleanup(func() { _ = db.Close() })
+	f.stateStore, f.s.Store = stateStore, stateStore
+	t.Cleanup(func() { _ = stateStore.Close() })
 	j := managedJob(t, f, token, p.ID, true)
 	real, err := f.s.runners.New(j)
 	if err != nil {
@@ -240,7 +240,7 @@ func TestStoppedFailurePreservesCostAfterTokenExpiry(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	ma.SetStatus(j.Run.Ref.ID, "terminated", "", 137)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		v := st.Jobs[j.ID]
 		v.Run.Deadline = time.Now().Add(-11 * time.Minute)
 		v.Run.AbortReason = "generation deadline exceeded"

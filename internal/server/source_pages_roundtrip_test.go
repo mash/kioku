@@ -54,7 +54,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	pages["wiki/source-title.md"] += "\nUpdated from same URL"
 	pages["wiki/log.md"] = "# Log\nUpdated one source"
 	publish(j)
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		r := st.Revisions[st.Projects[p.ID].Revision]
 		count := 0
 		for name, key := range r.Files {

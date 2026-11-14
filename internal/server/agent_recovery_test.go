@@ -25,7 +25,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
 				sendOutput(t, f, ma, j, "Recovered")
 			}
-			_ = f.db.Update(func(st *model.State) error {
+			_ = f.stateStore.Update(func(st *model.State) error {
 				x := st.Jobs[j.ID]
 				x.Run.Phase = phase
 				if phase == model.PhasePreparing {
@@ -38,15 +38,15 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 			old := f.s
 			dir := filepath.Dir(old.Blobs.(local.Store).Dir)
-			if err := f.db.Close(); err != nil {
+			if err := f.stateStore.Close(); err != nil {
 				t.Fatal(err)
 			}
-			db, err := store.Open(dir)
+			stateStore, err := store.Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { db.Close() })
-			restored := New(old.Config, db, old.Blobs, old.Cipher)
+			t.Cleanup(func() { stateStore.Close() })
+			restored := New(old.Config, stateStore, old.Blobs, old.Cipher)
 			g, err := runners.Load(f.runnerConfig, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -55,13 +55,13 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			if err := restored.Prepare(); err != nil {
 				t.Fatal(err)
 			}
-			f.db = db
+			f.stateStore = stateStore
 			f.s = restored
 			ts := httptest.NewServer(restored.Handler())
 			t.Cleanup(ts.Close)
 			f.url = ts.URL
 			f.client = ts.Client()
-			_ = db.View(func(st model.State) error {
+			_ = stateStore.View(func(st model.State) error {
 				got := st.Jobs[j.ID]
 				if got.Status != "running" || got.Run.Phase != phase {
 					t.Error("restart changed run", got)
@@ -77,7 +77,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 				t.Fatal(got)
 			}
 			assertAgentCleanup(t, f, ma, got)
-			_ = db.View(func(st model.State) error {
+			_ = stateStore.View(func(st model.State) error {
 				if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
 					t.Error("restart lost cost")
 				}
@@ -134,7 +134,7 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	if j.Run.Phase != model.PhasePreparing {
 		t.Fatal(j)
 	}
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		st.Jobs[j.ID] = x
@@ -174,7 +174,7 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 	var first model.Job
 	f.request("POST", "/api/projects/"+p.ID+"/generate", token, nil, &first)
 	// Persist an independent queued request to exercise the worker's serialization.
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		second := first
 		second.ID = "queued-same-project"
 		second.Created = first.Created.Add(time.Millisecond)
@@ -205,7 +205,7 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 	// A full worker wake/tick must still leave the third project and second request queued.
 	f.s.notify()
 	time.Sleep(100 * time.Millisecond)
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		running := 0
 		seen := map[string]bool{}
 		for _, j := range st.Jobs {

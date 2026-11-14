@@ -38,15 +38,15 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 	t.Helper()
 	old := f.s
 	dir := filepath.Dir(old.Blobs.(local.Store).Dir)
-	if err := f.db.Close(); err != nil {
+	if err := f.stateStore.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.Open(dir)
+	stateStore, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
-	restored := New(old.Config, db, old.Blobs, old.Cipher)
+	t.Cleanup(func() { stateStore.Close() })
+	restored := New(old.Config, stateStore, old.Blobs, old.Cipher)
 	g, err := runners.Load(f.runnerConfig, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 		t.Fatal(err)
 	}
 	f.s = restored
-	f.db = db
+	f.stateStore = stateStore
 	ts := httptest.NewServer(restored.Handler())
 	t.Cleanup(ts.Close)
 	f.url = ts.URL
@@ -93,7 +93,7 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertAgentCleanup(t, f, ma, j)
-			_ = f.db.View(func(st model.State) error {
+			_ = f.stateStore.View(func(st model.State) error {
 				if st.Jobs[j.ID].Status != want || costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
 					t.Error("cleanup changed outcome")
 				}
@@ -119,7 +119,7 @@ func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 	if c := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); c != 503 {
 		t.Fatal("deletion lost cleanup", c)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Jobs[j.ID].Run == nil || len(st.Inbox) == 0 {
 			t.Error("cleanup state discarded")
 		}

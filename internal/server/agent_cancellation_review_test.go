@@ -51,7 +51,7 @@ func TestManagedCancellationPreservesFinalizingForRestart(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal("restart did not finish output", j.Status, j.Error)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
 			t.Error("shutdown lost cost")
 		}
@@ -65,7 +65,7 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Finish publication")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-	_ = f.db.Update(func(st *model.State) error {
+	_ = f.stateStore.Update(func(st *model.State) error {
 		x := st.Jobs[j.ID]
 		x.Run.Phase = model.PhaseFinalizing
 		x.Run.Deadline = time.Now().Add(-time.Minute)
@@ -80,7 +80,7 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal("expired execution deadline prevented publication recovery", j.Status, j.Error)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Projects[p.ID].WikiIncomplete {
 			t.Error("publication left incomplete")
 		}

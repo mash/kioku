@@ -131,7 +131,7 @@ func TestConnectorCodeExpiryMembershipAndRevocation(t *testing.T) {
 		t.Fatal("non-member received login code", err)
 	}
 	code := connectorCode(t, f, access, project.Namespace)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		value := st.LoginCodes[auth.Hash(code)]
 		value.Expires = time.Now().Add(-time.Second)
 		st.LoginCodes[auth.Hash(code)] = value

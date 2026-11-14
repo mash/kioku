@@ -16,7 +16,7 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 	}
 	other := f.login("other@example.com")
 	private := securityProject(t, f, other)
-	if err := f.db.Update(func(st *model.State) error {
+	if err := f.stateStore.Update(func(st *model.State) error {
 		st.Inbox["one"] = model.InboxItem{ID: "one", ProjectID: p.ID, SourceURL: "https://example.com/a", RunID: "pinned", Submitter: "owner"}
 		st.Inbox["two"] = model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Remove: true}
 		st.Inbox["private"] = model.InboxItem{ID: "private", ProjectID: private.ID, SourceURL: "https://example.com/private", Remove: true}

@@ -46,7 +46,7 @@ func TestEmailInviteUsesCurrentProviderProof(t *testing.T) {
 	if c := f.request("POST", "/api/join", token, map[string]string{"token": invite.URL}, nil); c != 403 {
 		t.Fatalf("stale email invitation accepted: %d", c)
 	}
-	_ = f.db.View(func(st model.State) error {
+	_ = f.stateStore.View(func(st model.State) error {
 		if st.Projects[p.ID].Members[user.ID] != "" {
 			t.Error("unauthorized membership")
 		}
@@ -73,7 +73,7 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 			f.request("POST", "/api/projects/"+p.Namespace+"/invites", owner, map[string]string{"email": "member@example.com"}, &invite)
 			expected := 502
 			if mode == "legacy session" {
-				if err := f.db.Update(func(st *model.State) error {
+				if err := f.stateStore.Update(func(st *model.State) error {
 					for k, v := range st.Sessions {
 						if st.Users[v.UserID].Email == "member@example.com" {
 							v.IdentityCredential = ""
@@ -105,7 +105,7 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 			if c := f.request("POST", "/api/join", token, map[string]string{"token": invite.URL}, nil); c != expected {
 				t.Fatal(mode, c)
 			}
-			_ = f.db.View(func(st model.State) error {
+			_ = f.stateStore.View(func(st model.State) error {
 				for _, inv := range st.Invites {
 					if inv.ProjectID == p.ID && inv.UsedBy != "" {
 						t.Error("failed verification consumed invite")
@@ -235,7 +235,7 @@ func TestSlowHTTPResponseDoesNotHoldDatabaseMutex(t *testing.T) {
 	<-w.started
 	database := make(chan error, 1)
 	go func() {
-		database <- f.db.Update(func(st *model.State) error {
+		database <- f.stateStore.Update(func(st *model.State) error {
 			u := st.Users
 			for id, user := range u {
 				user.Name = "Updated while response is blocked"
@@ -250,7 +250,7 @@ func TestSlowHTTPResponseDoesNotHoldDatabaseMutex(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("slow client blocked global DB")
+		t.Fatal("slow client blocked global Store")
 	}
 	release()
 	<-done

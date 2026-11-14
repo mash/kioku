@@ -107,7 +107,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error 
 		}
 	}
 	sort.Strings(data.Providers)
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		for _, p := range st.Projects {
 			if p.Members[uid] != "" {
 				data.Projects = append(data.Projects, p)
@@ -134,7 +134,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		RecentJobs      []model.Job
 	}{}
 	var key blob.Key
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		p, err := member(st, r.PathValue("project"), uid)
 		if err != nil {
 			return err
@@ -180,7 +180,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	data.Query = r.URL.Query().Get("q")
 	data.Markdown = markdownView(data.Body, data.File, data.Files)
 	var graphKey blob.Key
-	if err = s.DB.View(func(st model.State) error {
+	if err = s.Store.View(func(st model.State) error {
 		graphKey = st.Revisions[data.Project.Revision].Files["maps/graph.json"]
 		return nil
 	}); err != nil {

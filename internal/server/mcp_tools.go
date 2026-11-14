@@ -129,7 +129,7 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 
 func (s *Server) mcpProjects(key string) (any, error) {
 	projects := []map[string]string{}
-	err := s.DB.View(func(st model.State) error {
+	err := s.Store.View(func(st model.State) error {
 		grant, ok := connectorGrant(st, key)
 		if !ok {
 			return fail(401, "connector login required")
@@ -148,7 +148,7 @@ func (s *Server) mcpProjects(key string) (any, error) {
 func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) (model.Revision, func(), error) {
 	var project model.Project
 	var uid string
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		var err error
 		project, uid, err = connectorProject(st, key, namespace)
 		return err
@@ -265,7 +265,7 @@ func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string
 func (s *Server) mcpSourcePut(ctx context.Context, key, namespace string, req model.PutRequest) (any, error) {
 	var project model.Project
 	var uid string
-	if err := s.DB.View(func(st model.State) error {
+	if err := s.Store.View(func(st model.State) error {
 		var err error
 		project, uid, err = connectorProject(st, key, namespace)
 		return err

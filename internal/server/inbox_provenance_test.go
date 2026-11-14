@@ -45,7 +45,7 @@ func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
 			}
 		})
 	}
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		if len(st.Inbox) != 0 || len(st.Jobs) != 0 {
 			t.Fatal("invalid sources changed state", st.Inbox)
 		}

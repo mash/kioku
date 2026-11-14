@@ -23,7 +23,7 @@ func putFile(t *testing.T, f *fixture, token, pid, name, body string) model.Inbo
 func waitingInboxItem(t *testing.T, f *fixture, pid, url string) model.InboxItem {
 	t.Helper()
 	var result model.InboxItem
-	if err := f.db.View(func(st model.State) error {
+	if err := f.stateStore.View(func(st model.State) error {
 		for _, item := range st.Inbox {
 			if item.ProjectID == pid && item.SourceURL == url && item.RunID == "" {
 				if result.ID != "" {

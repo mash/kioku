@@ -42,7 +42,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	if json.Unmarshal(b, &in) != nil || (*event != "" && in.Event != *event) || len(in.AgentID) != 0 {
 		return nil
 	}
-	if in.Event != "SessionStart" && in.Event != "PostToolUse" && in.Event != "UserPromptSubmit" {
+	if in.Event != "SessionStart" && in.Event != "UserPromptSubmit" {
 		return nil
 	}
 	path, err := sessionPath(in.SessionID)
@@ -73,29 +73,19 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		}
 		return writeHookContext(a.Out, in.Event, strings.TrimSuffix(context.String(), "\n"))
 	}
-	var payload any
-	if json.Unmarshal(b, &payload) != nil {
-		return nil
-	}
-	turnContext := func(current *sessionState) string {
-		if in.Event == "UserPromptSubmit" {
-			return promptTurnContext(*prompts, current)
-		}
-		return ""
-	}
 	writeContext := func(line string) error {
 		if line == "" {
 			return nil
 		}
 		return writeHookContext(a.Out, in.Event, line)
 	}
-	urls := collectCaptureURLs(payload)
+	urls := collectCaptureURLs(in.Prompt)
 	if len(urls) == 0 {
-		return writeContext(turnContext(s))
+		return writeContext(promptTurnContext(*prompts, s))
 	}
 	prompt, err := os.ReadFile(filepath.Join(*prompts, "hook-capture.txt"))
 	if err != nil {
-		return writeContext(turnContext(s))
+		return writeContext(promptTurnContext(*prompts, s))
 	}
 	return updateSession(in.SessionID, now, func(current *sessionState) *sessionState {
 		if current == nil || current.Namespace == "" {
@@ -113,10 +103,10 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 			}
 		}
 		if len(fresh) == 0 {
-			_ = writeContext(turnContext(current))
+			_ = writeContext(promptTurnContext(*prompts, current))
 			return nil
 		}
-		if err := writeContext(joinHookContext(turnContext(current), renderCapturePrompt(string(prompt), current, strings.Join(fresh, "\n")))); err != nil {
+		if err := writeContext(joinHookContext(promptTurnContext(*prompts, current), renderCapturePrompt(string(prompt), current, strings.Join(fresh, "\n")))); err != nil {
 			return nil
 		}
 		current.NotifiedURLs = append(current.NotifiedURLs, fresh...)
@@ -137,34 +127,11 @@ func renderCapturePrompt(prompt string, s *sessionState, target string) string {
 
 var httpsURL = regexp.MustCompile(`https://[^\s<>"'\x60\\]+`)
 
-// Visit all string values, with stable key order for JSON objects.
-func collectCaptureURLs(value any) []string {
+// Extract URLs only from the user prompt, in their original order.
+func collectCaptureURLs(prompt string) []string {
 	var urls []string
-	var walk func(any)
-	walk = func(value any) {
-		switch v := value.(type) {
-		case string:
-			var nested any
-			if json.Unmarshal([]byte(v), &nested) == nil {
-				switch nested.(type) {
-				case map[string]any, []any:
-					walk(nested)
-					return
-				}
-			}
-			for _, match := range httpsURL.FindAllString(v, -1) {
-				urls = append(urls, strings.TrimRight(match, ".,;:!?)〕]}"))
-			}
-		case []any:
-			for _, item := range v {
-				walk(item)
-			}
-		case map[string]any:
-			for _, key := range sortedKeys(v) {
-				walk(v[key])
-			}
-		}
+	for _, match := range httpsURL.FindAllString(prompt, -1) {
+		urls = append(urls, strings.TrimRight(match, ".,;:!?)〕]}"))
 	}
-	walk(value)
 	return urls
 }

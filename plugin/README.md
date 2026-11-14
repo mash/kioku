@@ -125,10 +125,11 @@ startup・clear・fork では、フックが取得とバージョン確認を省
 通常のプラグインは PATH の `kioku` を使わない。
 `/reload-plugins` は CLI を取得しない。新しいバージョンの CLI は次の startup などが取得する。
 
-フックは SessionStart・PreCompact・PostToolUse・UserPromptSubmit で動く。
+フックは SessionStart・PreCompact・UserPromptSubmit で動く。
 PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。
-PostToolUse は全ツールを対象とし、UserPromptSubmit はユーザープロンプトを対象とする。
-両方の hook は入力の JSON 内の文字列を再帰的に調べ、すべての HTTPS URL を拾う。
+UserPromptSubmit は `prompt` の HTTPS URL だけを通知する。
+フックは `cwd`・`transcript_path` など、ほかの stdin の値から URL を拾わない。
+Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
 親は通知を読み、共有範囲・機密・保存禁止を確認して送信の要否を決める。
 送る場合は `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
 子は sonnet で各 URL の全文取得・検証・put を行い、URL・namespace・結果・理由を1行ずつ返す。
@@ -146,8 +147,8 @@ CLI は読み取りと削除の期限をファイルの mtime から30日で判�
 受付状態の台帳を作らない。`notified_urls` に通知済み URL を直近1000件まで保持し、空ならキーを省く。
 新しい URL だけをまとめて通知する。
 上限を超えた URL は古い順に外し、次に現れた時に再び通知する。
-PostToolUse と UserPromptSubmit は入力に `agent_id` がある場合には何も出さない。
-PostToolUse は有効な状態ファイルが無い場合も何も出さない。
+UserPromptSubmit は入力に `agent_id` がある場合には何も出さない。
+PostToolUse は登録しない。`session hook` に渡しても stdout は空で、終了0とし、状態を保つ。
 UserPromptSubmit は未選択なら毎ターン、次の順で最初に一致する段の候補を示す。
 
 1. プロンプトに含まれる projects.json の namespace 全体。
@@ -164,7 +165,7 @@ UserPromptSubmit は未選択なら毎ターン、次の順で最初に一致す
 
 sh は stdin を読み、`session hook [--event EVENT] --prompts DIR` に JSON の解析と状態更新を任せる。
 この CLI コマンドは通信・対象選択・認証を行わない。jq と Python は不要。
-URL の抽出はツール名・操作・応答の成否で分けない。
+フックはツール名やドメインの一覧を持たない。
 Stop hook・`session skip` は実装しない。
 スキルは最初のユーザーメッセージから対象を選び、会話ごとに一度 pull の完了を待つ。
 pull の後に `wiki/index.md` と関連ページを grep やファイルツールで読む。

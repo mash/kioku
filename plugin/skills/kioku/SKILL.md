@@ -17,7 +17,11 @@ Kioku への送信には、local mode で CLI、remote mode で MCP（Model Cont
 ## 原資料の取り込みを任せる
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-会話に現れるすべての HTTPS URL を対象に、Agent で `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
+フックは UserPromptSubmit の `prompt` の HTTPS URL だけを通知する。
+Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
+PostToolUse や `prompt` 以外の stdin の値からは通知しない。
+親は送信する URL を決め、Agent で `kioku-capture` を背景で起動する。
+親は URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
 同じ URL の子が動いている間は、次の子を起動しない。
 子は URL ごとに全文取得・検証・put を行い、URL・namespace・結果・理由を1行で返す。
 `kioku-capture` として親から対象を受け取ったときは、対象選択と pull を繰り返さず、[capture.md](references/capture.md) の手順で取り込む。
@@ -102,7 +106,8 @@ local mode では、作業開始時に [selection.md](references/selection.md) �
 新規作成時と projects.json に description（プロジェクトの説明）がない時は、[selection.md](references/selection.md) に従って説明案を作り、ユーザーの確認後に `--description` で渡す。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
-Claude Code では、会話に現れるすべての HTTPS URL の原資料を送信対象にする。
+Claude Code では、親がプロンプトの URL と自分で開いた URL・作った URL から送信する URL を決める。
+親は毎ターンの規則に従い、`kioku-capture` に渡す。
 その他の環境では、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送信する。
 操作や要約の「記録」を別途 put しない。
 複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。

@@ -15,11 +15,6 @@
         "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" precompact", "timeout": 10}]
       }
     ],
-    "PostToolUse": [
-      {
-        "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" capture", "timeout": 10}]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" capture", "timeout": 10}]

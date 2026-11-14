@@ -3,7 +3,11 @@
 ## Claude Code の取り込み担当
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-会話に現れるすべての HTTPS URL を対象に、Agent で `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
+フックは UserPromptSubmit の `prompt` の HTTPS URL だけを通知する。
+Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
+PostToolUse や `prompt` 以外の stdin の値からは通知しない。
+親は送信する URL を決め、Agent で `kioku-capture` を背景で起動する。
+親は URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
 同じ URL の子が動いている間は次の子を起動しない。
 子は put の直前に原本を全文で取得し、この文書の取得規則と送信前の確認を守る。
 子は URL ごとに URL・namespace・結果（受付済み / 未保存 / 受付不明）・理由を1行で返す。
@@ -138,7 +142,8 @@ updated_at: "2026-11-07T18:00:00+09:00"
 
 ## 共有範囲と送信
 
-Claude Code では会話に現れるすべての HTTPS URL を対象に、選択したプロジェクトへ原資料を送信する。
+Claude Code では、親がプロンプトの URL と自分で開いた URL・作った URL から送信する URL を決める。
+親は毎ターンの規則に従い、`kioku-capture` に渡して選択したプロジェクトへ原資料を送信する。
 その他の環境では、重要文書を参照・作成した時、結論を変えた文書を確定した時に送信する。
 ユーザーが共有を許可した範囲で行い、機密・別チームの資料・保存禁止を除く。
 共有先が曖昧なら送信せず確認する。`auto_put:false` などの自動送信禁止を守る。

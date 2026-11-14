@@ -56,9 +56,6 @@ class ManifestTest(unittest.TestCase):
             'PreCompact': [{'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" precompact', 'timeout': 10,
             }]}],
-            'PostToolUse': [{'hooks': [{
-                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" capture', 'timeout': 10,
-            }]}],
             'UserPromptSubmit': [{'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" capture', 'timeout': 10,
             }]}],
@@ -441,10 +438,6 @@ class SessionHooksTest(unittest.TestCase):
         self.assertEqual(obj['hookSpecificOutput']['hookEventName'], event)
         return obj['hookSpecificOutput']['additionalContext']
 
-    def post(self, url='https://github.com/org/repo/pull/42', command='gh pr create', **extra):
-        return self.hook('PostToolUse', tool_name='Bash', tool_input={'command': command},
-                         tool_response={'stdout': url, 'stderr': '', 'interrupted': False}, **extra)
-
     def test_compact_resume_and_failed_pull_context(self):
         for result in ('success', 'failure'):
             self.state.update(last_pull_result=result)
@@ -469,12 +462,12 @@ class SessionHooksTest(unittest.TestCase):
             self.assertIn('pull 未実行', context)
             self.assertIn('再選択は不要。最初の pull と Wiki の参照を行う。', context)
         self.assertEqual(self.state_path.stat().st_mtime, old)
-        self.assertNotEqual(self.post(), '')
+        self.assertNotEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
         self.assertGreater(self.state_path.stat().st_mtime, old)
         state = json.loads(self.state_path.read_text())
         self.assertEqual(set(state), {'server', 'namespace', 'mode', 'path', 'notified_urls'})
-        self.assertEqual(state['notified_urls'], ['https://github.com/org/repo/pull/42'])
-        self.assertEqual(self.post(), '')
+        self.assertEqual(state['notified_urls'], ['https://example.com/doc'])
+        self.assertEqual(self.prompt_context(prompt='https://example.com/doc'), self.turn_rule())
 
     def test_new_session_sources_never_read_or_write_state(self):
         original = self.state_path.read_bytes()
@@ -498,7 +491,7 @@ class SessionHooksTest(unittest.TestCase):
             for source in ('compact', 'resume'):
                 self.assertEqual(self.hook('SessionStart', source=source),
                                  (self.root / 'prompts/hook-compact.txt').read_text())
-            self.assertEqual(self.post(), '')
+            self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
             self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com'), '')
 
     def test_precompact_works_without_cli_or_state(self):
@@ -507,23 +500,54 @@ class SessionHooksTest(unittest.TestCase):
         self.assertEqual(self.hook('PreCompact'),
                          (self.root / 'prompts/hook-precompact.txt').read_text())
 
-    def test_urls_from_all_inputs_and_deduplication(self):
+    def test_prompt_urls_and_deduplication(self):
         prompt_url = 'https://example.com/prompt'
-        context = self.context(self.hook('UserPromptSubmit', prompt=prompt_url + ' ' + prompt_url), 'UserPromptSubmit')
+        context = self.prompt_context(prompt=prompt_url + ' ' + prompt_url)
         self.assertEqual(context.count(prompt_url), 1)
-        output = self.hook('PostToolUse', tool_name='AnyTool',
-                           tool_input={'url': 'https://example.com/input'},
-                           tool_response={'success': False, 'nested': [{'text': prompt_url + ' https://example.com/response'}]})
-        context = self.context(output, 'PostToolUse')
-        self.assertNotIn(prompt_url, context)
-        self.assertIn('https://example.com/input', context)
-        self.assertIn('https://example.com/response', context)
         self.assertIn('org/project', context)
         self.assertIn('kioku-capture', context)
-        self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt='https://example.com/input'), 'UserPromptSubmit'), self.turn_rule())
+        self.assertEqual(self.prompt_context(prompt=prompt_url), self.turn_rule())
         state = json.loads(self.state_path.read_text())
-        self.assertEqual(len(state['notified_urls']), 3)
+        self.assertEqual(state['notified_urls'], [prompt_url])
         self.assertEqual(state['last_pull_result'], 'success')
+
+    def test_E23_E24_post_tool_use_is_silent_and_preserves_state(self):
+        original = self.state_path.read_bytes()
+        mtime = self.state_path.stat().st_mtime_ns
+        cases = [
+            ('E23', dict(tool_name='Grep', tool_response='https://a.example/1')),
+            ('E24', dict(tool_name='WebFetch', tool_input={'url': 'https://a.example/1'})),
+        ]
+        for example, fields in cases:
+            payload = dict(session_id='session-1', hook_event_name='PostToolUse', **fields)
+            commands = [
+                [str(self.cli), 'session', 'hook', '--prompts', str(self.root / 'prompts')],
+                [str(self.cli), 'session', 'hook', '--event', 'PostToolUse',
+                 '--prompts', str(self.root / 'prompts')],
+                ['sh', str(self.root / 'hooks/kioku.sh'), 'capture'],
+            ]
+            for command in commands:
+                with self.subTest(example=example, command=command):
+                    result = subprocess.run(command, input=json.dumps(payload), text=True,
+                                            capture_output=True, env=self.env, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(result.stderr, '')
+                    self.assertEqual(self.state_path.read_bytes(), original)
+                    self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
+
+    def test_E25_only_prompt_supplies_urls(self):
+        original = self.state_path.read_bytes()
+        mtime = self.state_path.stat().st_mtime_ns
+        for fields in [
+            {'cwd': '/work/https://a.example/1'},
+            {'transcript_path': 'https://a.example/transcript',
+             'extra': [{'url': 'https://a.example/nested'}]},
+        ]:
+            with self.subTest(fields=fields):
+                self.assertEqual(self.prompt_context(prompt='続けて', **fields), self.turn_rule())
+                self.assertEqual(self.state_path.read_bytes(), original)
+                self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 
     def test_notification_history_cap(self):
         urls = [f'https://example.com/{n}' for n in range(1001)]
@@ -540,27 +564,16 @@ class SessionHooksTest(unittest.TestCase):
     def test_child_operations_do_not_notify_or_update(self):
         original = self.state_path.read_bytes()
         for agent_id in ('child', '', None):
-            self.assertEqual(self.post(agent_id=agent_id), '')
             self.assertEqual(self.hook('UserPromptSubmit', agent_id=agent_id, prompt='https://example.com'), '')
             self.assertEqual(self.state_path.read_bytes(), original)
-        self.assertNotEqual(self.post(), '')
+        self.assertNotEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
 
-    def test_no_url_keeps_prompt_rule_but_post_or_no_namespace_is_silent(self):
-        self.assertEqual(self.post(url='no URL'), '')
+    def test_no_url_keeps_prompt_rule_but_no_namespace_is_silent(self):
         self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt='http://example.com'), 'UserPromptSubmit'), self.turn_rule())
         self.state['namespace'] = ''
         self.save_state()
-        self.assertEqual(self.post(), '')
+        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
         self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com'), '')
-
-    def test_nested_tool_response_collects_every_url(self):
-        urls = ['https://claude.ai/artifact/abc', 'https://example.com/second']
-        output = self.hook('PostToolUse', tool_name='Read',
-                           tool_input={'command': 'read'},
-                           tool_response={'content': [{'text': json.dumps({'links': urls})}]})
-        context = self.context(output, 'PostToolUse')
-        for url in urls:
-            self.assertIn(url, context)
 
     def test_no_jq_or_python_in_hook_runtime(self):
         path = self.work / 'path'
@@ -569,7 +582,7 @@ class SessionHooksTest(unittest.TestCase):
             (path / command).symlink_to(shutil.which(command))
         self.env['PATH'] = str(path)
         self.assertIn('org/project', self.context(self.hook('SessionStart', source='compact'), 'SessionStart'))
-        self.assertNotEqual(self.post(), '')
+        self.assertNotEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
 
     def test_real_pull_failure_then_compact(self):
         status = [200]

@@ -11,7 +11,6 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   -n cannot be combined with project join.
 
   version                             Show client build information
-  session context --session SID       Restore Claude Code selection as one line
   session hook [--event EVENT] --prompts DIR     Handle Claude Code hook JSON on stdin
   agent login CODE | list|revoke      Manage project-scoped agent credentials
   account status|sessions|revoke-session|revoke-all|unlink|delete

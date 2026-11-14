@@ -209,33 +209,11 @@ func sessionContext(s *sessionState) string {
 
 func (a *App) session(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: kioku session context --session SID")
+		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	switch args[0] {
 	case "hook":
 		return a.sessionHook(args[1:], os.Stdin)
-	case "context":
-		f := flag.NewFlagSet("session context", flag.ContinueOnError)
-		f.SetOutput(a.Err)
-		sid := f.String("session", "", "Claude Code session ID")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if *sid == "" || f.NArg() != 0 {
-			return errors.New("usage: kioku session context --session SID")
-		}
-		path, err := sessionPath(*sid)
-		if err != nil {
-			return nil
-		}
-		s, err := readSession(path, time.Now())
-		if err == nil {
-			if line := sessionContext(s); line != "" {
-				_, err = fmt.Fprintln(a.Out, line)
-				return err
-			}
-		}
-		return nil
 	default:
 		return fmt.Errorf("unknown session command %q", args[0])
 	}

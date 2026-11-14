@@ -93,7 +93,7 @@ startup・clear・fork では、フックが `bin/kioku version` を実行し、
 
 同じバージョンなら、フックは何もしない。フックはバージョンの新旧を比べない。
 compact・resume ではフックが CLI を取得せず、会話の状態ファイルから選択を復元する。
-CLI の `session context --session SID` と同じ1行を `hookSpecificOutput.additionalContext` に入れる。
+保存済みの対象と最後の pull の時刻・結果を1行で `hookSpecificOutput.additionalContext` に入れる。
 状態ファイルが無い・壊れている・mtime から30日を超えた場合は、今の hook-compact.txt を出す。
 古いプラグインのセッションも compact でフックを再実行するので、この規則で古いバージョンへ戻る主な経路をなくす。
 ただし古いセッションでプラグインの更新後に `/clear` を実行すると、古いバージョンの CLI を一度取得することがある。

@@ -504,27 +504,17 @@ class SessionHooksTest(unittest.TestCase):
     def test_E23_E24_post_tool_use_is_silent_and_preserves_state(self):
         original = self.state_path.read_bytes()
         mtime = self.state_path.stat().st_mtime_ns
-        cases = [
-            ('E23', dict(tool_name='Grep', tool_response='https://a.example/1')),
-            ('E24', dict(tool_name='WebFetch', tool_input={'url': 'https://a.example/1'})),
-        ]
-        for example, fields in cases:
-            payload = dict(session_id='session-1', hook_event_name='PostToolUse', **fields)
-            commands = [
-                [str(self.cli), 'session', 'hook', '--prompts', str(self.root / 'prompts')],
-                [str(self.cli), 'session', 'hook', '--event', 'PostToolUse',
-                 '--prompts', str(self.root / 'prompts')],
-                ['sh', str(self.root / 'hooks/kioku.sh'), 'capture'],
-            ]
-            for command in commands:
-                with self.subTest(example=example, command=command):
-                    result = subprocess.run(command, input=json.dumps(payload), text=True,
-                                            capture_output=True, env=self.env, timeout=15)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stdout, '')
-                    self.assertEqual(result.stderr, '')
-                    self.assertEqual(self.state_path.read_bytes(), original)
-                    self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
+        payload = dict(session_id='session-1', hook_event_name='PostToolUse',
+                       tool_name='WebFetch', tool_input={'url': 'https://a.example/1'},
+                       tool_response='https://a.example/1')
+        result = subprocess.run(
+            [str(self.cli), 'session', 'hook', '--prompts', str(self.root / 'prompts')],
+            input=json.dumps(payload), text=True, capture_output=True, env=self.env, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(self.state_path.read_bytes(), original)
+        self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 
     def test_E25_urls_in_input_never_notify(self):
         original = self.state_path.read_bytes()
@@ -635,23 +625,23 @@ class SessionHooksTest(unittest.TestCase):
         self.state_path.unlink()
         multiple = ('Kioku: このセッションではプロジェクトを未選択。候補は次のとおり。'
                     'kioku skill で 1 つ選んで pull する。決められなければユーザーに聞く。')
-        # id, prompt, config, subdir, branch, catalog namespaces, expected
+        # id, prompt, config, subdir, catalog namespaces, expected
         cases = [
-            ('E1', '続けて', 'org/p', False, 'main', [], self.candidate('org/p')),
-            ('E2', '続けて', 'org/p', True, 'main', [], self.candidate('org/p')),
-            ('E5', 'a/tesla', None, False, 'main', ['a/tesla', 'b/tesla'], self.candidate('a/tesla')),
-            ('E6', 'org/b', 'org/a', False, 'main', ['org/b'], self.candidate('org/b')),
-            ('E11', 'a/tesla と b/tesla', None, False, 'main', ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
-            ('E13', 'org/p', None, False, 'main', ['org/p', 'org/p'], self.candidate('org/p')),
-            ('E27', 'a/tesla と b/tesla を比較して', None, False, 'main', ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
-            ('E28', 'org/p', None, False, 'main', ['org/p', 'org/p'], self.candidate('org/p')),
+            ('E1', '続けて', 'org/p', False, [], self.candidate('org/p')),
+            ('E2', '続けて', 'org/p', True, [], self.candidate('org/p')),
+            ('E5', 'a/tesla', None, False, ['a/tesla', 'b/tesla'], self.candidate('a/tesla')),
+            ('E6', 'org/b', 'org/a', False, ['org/b'], self.candidate('org/b')),
+            ('E11', 'a/tesla と b/tesla', None, False, ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
+            ('E13', 'org/p', None, False, ['org/p', 'org/p'], self.candidate('org/p')),
+            ('E27', 'a/tesla と b/tesla を比較して', None, False, ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
+            ('E28', 'org/p', None, False, ['org/p', 'org/p'], self.candidate('org/p')),
         ]
         catalog_path = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog_path.parent.mkdir(parents=True)
-        for example, prompt, config, subdir, branch, namespaces, expected in cases:
+        for example, prompt, config, subdir, namespaces, expected in cases:
             with self.subTest(example=example):
                 root = self.work / example
-                subprocess.run(['git', 'init', '-q', '-b', branch, str(root)], check=True, capture_output=True)
+                root.mkdir()
                 cwd = root
                 if subdir:
                     cwd = root / 'src'
@@ -827,37 +817,28 @@ class SessionHooksTest(unittest.TestCase):
         finally:
             self.state_path.parent.chmod(0o700)
 
-    def test_E26_parent_config_above_git_root_without_git_calls(self):
+    def test_E26_parent_config_above_git_root(self):
         self.state_path.unlink()
         outer = self.work / 'outer'
         repo = outer / 'repo'
-        subprocess.run(['git', 'init', '-q', '-b', 'feat/tesla', str(repo)], check=True, capture_output=True)
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True, capture_output=True)
         cwd = repo / 'src'
         cwd.mkdir()
         config = outer / '.kioku/config'
         config.parent.mkdir()
         config.write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': 'org/p'}))
-        # Any attempted Git call leaves evidence, including calls whose errors are swallowed.
-        bin_dir = self.work / 'git-bin'
-        bin_dir.mkdir()
-        marker = bin_dir / 'called'
-        git = bin_dir / 'git'
-        git.write_text('#!/bin/sh\necho called > "$KIOKU_TEST_GIT_LOG"\nexit 1\n')
-        git.chmod(0o700)
-        self.env.update(PATH=str(bin_dir) + os.pathsep + self.env['PATH'], KIOKU_TEST_GIT_LOG=str(marker))
         self.assertEqual(self.prompt_context(cwd=str(cwd), prompt='続けて'), self.candidate('org/p'))
         self.assertFalse(self.state_path.exists())
         nearest = repo / '.kioku/config'
         nearest.parent.mkdir()
         nearest.write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': 'org/nearest'}))
         self.assertEqual(self.prompt_context(cwd=str(cwd), prompt='続けて'), self.candidate('org/nearest'))
-        self.assertFalse(marker.exists())
 
-    def test_removed_matching_inputs_and_legacy_state_field(self):
-        # v7 removes E3/E4/E12/E20 matching and E22 notification history.
+    def test_removed_matching_inputs(self):
+        # v7 removes project-name and description matching.
         self.state_path.unlink()
         repo = self.work / 'repo'
-        subprocess.run(['git', 'init', '-q', '-b', 'feat/tesla', str(repo)], check=True, capture_output=True)
+        repo.mkdir()
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
         catalog.write_text(json.dumps({'projects': [

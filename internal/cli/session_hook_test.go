@@ -40,13 +40,11 @@ func TestSessionHookOversizedInputIsSilent(t *testing.T) {
 	}
 }
 
-func TestSessionHookE23ToE25URLSources(t *testing.T) {
+func TestSessionHookE25URLSources(t *testing.T) {
 	for _, tt := range []struct {
 		name, event, want string
 		fields            map[string]any
 	}{
-		{"E23_grep_response", "PostToolUse", "", map[string]any{"tool_name": "Grep", "tool_response": "https://a.example/1"}},
-		{"E24_fetch_input", "PostToolUse", "", map[string]any{"tool_name": "WebFetch", "tool_input": map[string]any{"url": "https://a.example/1"}}},
 		{"E25_cwd", "UserPromptSubmit", fmt.Sprintf(turnRuleText, "org/p", "/work/p"), map[string]any{"prompt": "続けて", "cwd": "/work/https://a.example/1"}},
 		{"other_stdin_fields", "UserPromptSubmit", fmt.Sprintf(turnRuleText, "org/p", "/work/p"), map[string]any{"prompt": "続けて", "transcript_path": "https://a.example/transcript", "extra": []any{map[string]any{"url": "https://a.example/nested"}}}},
 	} {

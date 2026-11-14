@@ -39,11 +39,19 @@ const (
 	credentialAgent
 )
 
+func defaultAuthDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "kioku", "auth"), nil
+}
+
 func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 1 && args[0] == "version" {
 		return json.NewEncoder(out).Encode(buildinfo.Info())
 	}
-	home, err := os.UserHomeDir()
+	authDir, err := defaultAuthDir()
 	if err != nil {
 		return err
 	}
@@ -71,7 +79,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return errors.New("KIOKU_AGENT_TOKEN is no longer supported; unset it and use kioku agent login")
 	}
 	a := &App{
-		AuthDir: filepath.Join(home, ".config", "kioku", "auth"),
+		AuthDir: authDir,
 		Client:  &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		Out:     out, Err: errOut, ctx: ctx,
 	}

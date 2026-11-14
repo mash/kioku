@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -9,16 +8,22 @@ import (
 // Candidate discovery reads local hints only; the CLI still owns selection.
 func sessionCandidates(prompt, cwd string) []projectEntry {
 	var projects []projectEntry
-	if home, err := os.UserHomeDir(); err == nil {
-		a := &App{AuthDir: filepath.Join(home, ".config", "kioku", "auth")}
+	if authDir, err := defaultAuthDir(); err == nil {
+		a := &App{AuthDir: authDir}
 		if catalog, err := readProjects(a.projectsPath()); err == nil {
 			projects = catalog.Projects
 		}
 	}
-	if matches := matchingProjects(projects, func(p projectEntry) bool {
-		return strings.Contains(prompt, p.Namespace)
-	}); len(matches) != 0 {
-		return matches
+	var candidates []projectEntry
+	seen := make(map[string]bool)
+	for _, p := range projects {
+		if strings.Contains(prompt, p.Namespace) && validNamespace(p.Namespace) && !seen[p.Namespace] {
+			candidates = append(candidates, projectEntry{Namespace: p.Namespace})
+			seen[p.Namespace] = true
+		}
+	}
+	if len(candidates) != 0 {
+		return candidates
 	}
 
 	if !filepath.IsAbs(cwd) {
@@ -40,32 +45,6 @@ func sessionConfigCandidates(cwd string) []projectEntry {
 			return nil
 		}
 	}
-}
-
-func matchingProjects(projects []projectEntry, match func(projectEntry) bool) []projectEntry {
-	var matches []projectEntry
-	for _, p := range projects {
-		if match(p) {
-			matches = append(matches, p)
-		}
-	}
-	return validUniqueProjects(matches)
-}
-
-func validUniqueProjects(projects []projectEntry) []projectEntry {
-	var candidates []projectEntry
-	seen := make(map[string]bool)
-	for _, p := range projects {
-		if !validNamespace(p.Namespace) {
-			continue
-		}
-		key := p.Namespace
-		if !seen[key] {
-			candidates = append(candidates, projectEntry{Namespace: p.Namespace})
-			seen[key] = true
-		}
-	}
-	return candidates
 }
 
 func candidateContext(prompts string, candidates []projectEntry) string {
@@ -91,17 +70,10 @@ func promptTurnContext(prompts string, s *sessionState) string {
 	prompt, _ := readHookPrompt(prompts, "hook-turn.txt")
 	line := strings.NewReplacer("{{namespace}}", s.Namespace, "{{wiki}}", filepath.Join(s.Path, "wiki")+string(filepath.Separator)).Replace(prompt)
 	if s.LastPullResult == sessionPullFailure {
-		line = joinHookContext(line, sessionPullFailedContext)
+		if line == "" {
+			return sessionPullFailedContext
+		}
+		line += "\n" + sessionPullFailedContext
 	}
 	return line
-}
-
-func joinHookContext(first, second string) string {
-	if first == "" {
-		return second
-	}
-	if second == "" {
-		return first
-	}
-	return first + "\n" + second
 }

@@ -128,37 +128,6 @@ func TestSessionStoragePathsRetentionAndPermissions(t *testing.T) {
 	}
 }
 
-func TestSessionContextIgnoresMissingBrokenAndUnrelatedConfiguration(t *testing.T) {
-	sessionTestEnv(t)
-	dir := t.TempDir()
-	t.Chdir(dir)
-	os.Mkdir(filepath.Join(dir, ".kioku"), 0700)
-	os.WriteFile(filepath.Join(dir, ".kioku/config"), []byte("broken"), 0600)
-	t.Setenv("KIOKU_AGENT_TOKEN", "obsolete")
-	t.Setenv("KIOKU_SERVER", "invalid")
-	path, _ := sessionPath("session-1")
-	os.MkdirAll(filepath.Dir(path), 0700)
-	for _, data := range []string{"", "broken", "{}", "null", `{"namespace":"org/p"}`} {
-		if data != "" {
-			os.WriteFile(path, []byte(data), 0600)
-		}
-		out, stderr, err := runProjectCLI("session", "context", "--session", "session-1")
-		if err != nil || out != "" || stderr != "" {
-			t.Fatal(out, stderr, err)
-		}
-	}
-	if err := saveSession("session-1", time.Now(), sessionTestState(time.Now())); err != nil {
-		t.Fatal(err)
-	}
-	out, stderr, err := runProjectCLI("-C", "/does/not/exist", "session", "context", "--session", "session-1")
-	if err != nil || stderr != "" || !strings.HasPrefix(out, "Kioku: org/p") {
-		t.Fatal(out, stderr, err)
-	}
-	if _, _, err := runProjectCLI("session", "skip", "https://example.com"); err == nil {
-		t.Fatal("stage two command exists")
-	}
-}
-
 func TestSessionPullRecordsSuccessFailureAndNoID(t *testing.T) {
 	sessionTestEnv(t)
 	a, _, _, status := syncFixture(t)
@@ -441,10 +410,6 @@ func TestSessionMtimeControlsExpiryAndRefresh(t *testing.T) {
 	}
 	if _, err := readSession(path, now); err == nil {
 		t.Fatal("expired mtime accepted")
-	}
-	var out bytes.Buffer
-	if err := runSession([]string{"context", "--session", "session-1"}, &out, &bytes.Buffer{}); err != nil || out.Len() != 0 {
-		t.Fatal("expired context was not ignored", out.String(), err)
 	}
 }
 

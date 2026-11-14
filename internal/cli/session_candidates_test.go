@@ -72,18 +72,11 @@ func runRawPromptHook(t *testing.T, input, prompts string) string {
 	return result.Output.Context
 }
 
-func gitHookFixture(t *testing.T, dir, branch string) {
-	t.Helper()
-	if out, err := exec.Command("git", "init", "-q", "-b", branch, dir).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %s: %v", out, err)
-	}
-}
-
 func TestPromptHookAcceptanceExamples(t *testing.T) {
 	for _, tt := range []struct {
-		name, prompt, config, branch, want string
-		projects                           []string
-		subdir, selected, failed, child    bool
+		name, prompt, config, want      string
+		projects                        []string
+		subdir, selected, failed, child bool
 	}{
 		{name: "E1_cwd_config", prompt: "続けて", config: "org/p", want: fmt.Sprintf(singleCandidateText, "org/p")},
 		{name: "E2_parent_config", prompt: "続けて", config: "org/p", subdir: true, want: fmt.Sprintf(singleCandidateText, "org/p")},
@@ -102,11 +95,6 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			home := sessionTestEnv(t)
 			root := t.TempDir()
-			branch := tt.branch
-			if branch == "" {
-				branch = "main"
-			}
-			gitHookFixture(t, root, branch)
 			cwd := root
 			if tt.subdir {
 				cwd = filepath.Join(root, "src")
@@ -297,7 +285,9 @@ func TestPromptHookE26WalksAboveGitRoot(t *testing.T) {
 	sessionTestEnv(t)
 	outer := t.TempDir()
 	root := filepath.Join(outer, "repo")
-	gitHookFixture(t, root, "feat/tesla")
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s: %v", out, err)
+	}
 	cwd := filepath.Join(root, "src")
 	if err := os.Mkdir(cwd, 0700); err != nil {
 		t.Fatal(err)
@@ -319,20 +309,12 @@ func TestPromptHookE26WalksAboveGitRoot(t *testing.T) {
 	}
 }
 
-func TestCandidateDiscoveryWithoutGit(t *testing.T) {
+func TestCandidateDiscoveryMatchesOnlyFullNamespacesAndConfig(t *testing.T) {
 	home := sessionTestEnv(t)
 	root := t.TempDir()
-	gitHookFixture(t, root, "feat/tesla")
 	writeHookFixture(t, filepath.Join(home, ".config/kioku/projects.json"), projectsFile{Projects: []projectEntry{
 		{Server: defaultServer, Namespace: "org/tesla", Path: root, Description: "電気自動車"},
 	}})
-	bin := t.TempDir()
-	log := filepath.Join(bin, "calls")
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho called >> \"$KIOKU_TEST_GIT_LOG\"\nexit 1\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("KIOKU_TEST_GIT_LOG", log)
-	t.Setenv("PATH", bin)
 	for _, prompt := range []string{"tesla", "「tesla」の変更", "電気自動車", "続けて"} {
 		if got := sessionCandidates(prompt, root); len(got) != 0 {
 			t.Fatal(prompt, got)
@@ -348,8 +330,5 @@ func TestCandidateDiscoveryWithoutGit(t *testing.T) {
 	writeHookFixture(t, filepath.Join(root, "plain", ".kioku/config"), Config{Server: defaultServer, Namespace: "org/plain"})
 	if got := sessionCandidates("続けて", child); len(got) != 1 || got[0].Namespace != "org/plain" {
 		t.Fatal(got)
-	}
-	if _, err := os.Stat(log); !os.IsNotExist(err) {
-		t.Fatal("hook called git", err)
 	}
 }

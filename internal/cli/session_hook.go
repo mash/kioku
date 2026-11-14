@@ -39,7 +39,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if f.NArg() != 0 || *prompts == "" || (*event != "" && *event != "PostToolUse" && !allowedHookEvent(*event)) {
+	if f.NArg() != 0 || *prompts == "" || (*event != "" && !allowedHookEvent(*event)) {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	const maxHookInput = 8 << 20
@@ -73,7 +73,6 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		if in.Source != "compact" && in.Source != "resume" {
 			return nil
 		}
-		// Share the context formatter with `session context --session SID`.
 		return writeHookContext(a.Out, in.Event, sessionContext(s))
 	}
 	return writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, s))

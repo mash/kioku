@@ -145,8 +145,6 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	switch {
 	case commands[0] == "login", len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login":
 		// Login commands select no credential, so a damaged file cannot block them.
-	case commands[0] == "pull":
-		// Pull selects its credential within the operation that records its result.
 	default:
 		if commands[0] == "logout" && a.Config.Namespace != "" {
 			// logout must not call localLock again: a second flock in one process blocks.
@@ -157,6 +155,9 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			defer unlock()
 		}
 		if err := a.selectCredential(commands[0] == "logout"); err != nil {
+			if commands[0] == "pull" {
+				a.recordSessionPull(err)
+			}
 			return err
 		}
 	}

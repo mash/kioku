@@ -13,7 +13,8 @@ import (
 func sessionCandidates(prompt, cwd string) []projectEntry {
 	var projects []projectEntry
 	if home, err := os.UserHomeDir(); err == nil {
-		if catalog, err := readProjects(filepath.Join(home, ".config", "kioku", "projects.json")); err == nil {
+		a := &App{AuthDir: filepath.Join(home, ".config", "kioku", "auth")}
+		if catalog, err := readProjects(a.projectsPath()); err == nil {
 			projects = catalog.Projects
 		}
 	}

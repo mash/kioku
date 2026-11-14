@@ -107,7 +107,7 @@ if [ "${1:-}" = precompact ]; then
     exit 0
 fi
 if [ "${1:-}" = capture ]; then
-    (exec "$TARGET" session hook --prompts "$ROOT/prompts")
+    "$TARGET" session hook --prompts "$ROOT/prompts"
     exit 0
 fi
 if [ -n "${KIOKU_CLI:-}" ]; then

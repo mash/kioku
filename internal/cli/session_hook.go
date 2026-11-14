@@ -62,7 +62,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	}
 	now := time.Now().UTC()
 	s, err := readSession(path, now)
-	if err != nil || s.Namespace == "" {
+	if err != nil {
 		if in.Event == "UserPromptSubmit" {
 			if line := candidateContext(*prompts, sessionCandidates(in.Prompt, in.Cwd)); line != "" {
 				return writeHookContext(a.Out, in.Event, line)
@@ -78,15 +78,15 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		return writeHookContext(a.Out, in.Event, sessionContext(s))
 	}
 	urls := collectCaptureURLs(in.Prompt)
-	if len(urls) == 0 {
-		return writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, s))
+	var prompt string
+	if len(urls) != 0 {
+		prompt, err = readHookPrompt(*prompts, "hook-capture.txt")
 	}
-	prompt, err := readHookPrompt(*prompts, "hook-capture.txt")
-	if err != nil {
+	if len(urls) == 0 || err != nil {
 		return writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, s))
 	}
 	return updateSession(in.SessionID, now, func(current *sessionState) *sessionState {
-		if current == nil || current.Namespace == "" {
+		if current == nil {
 			return nil
 		}
 		seen := make(map[string]bool, len(current.NotifiedURLs))
@@ -100,11 +100,13 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 				seen[url] = true
 			}
 		}
-		if len(fresh) == 0 {
-			_ = writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, current))
-			return nil
+		line := promptTurnContext(*prompts, current)
+		if len(fresh) != 0 {
+			line = joinHookContext(line, renderCapturePrompt(prompt, current, strings.Join(fresh, "\n")))
 		}
-		if err := writeHookContext(a.Out, in.Event, joinHookContext(promptTurnContext(*prompts, current), renderCapturePrompt(prompt, current, strings.Join(fresh, "\n")))); err != nil {
+		// Emit under the lock and before saving: failed output must not mark URLs
+		// as notified, and a failed save may leave an already emitted notice.
+		if err := writeHookContext(a.Out, in.Event, line); err != nil || len(fresh) == 0 {
 			return nil
 		}
 		current.NotifiedURLs = append(current.NotifiedURLs, fresh...)

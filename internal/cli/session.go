@@ -77,8 +77,16 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	if _, err := normalizeOrigin(s.Server); err != nil {
 		return nil, err
 	}
-	if (s.LastPullResult == sessionPullNone && !s.LastPullAt.IsZero()) ||
-		(s.LastPullResult != sessionPullNone && (s.LastPullAt.IsZero() || (s.LastPullResult != sessionPullSuccess && s.LastPullResult != sessionPullFailure))) {
+	switch s.LastPullResult {
+	case sessionPullNone:
+		if !s.LastPullAt.IsZero() {
+			return nil, errors.New("invalid last pull")
+		}
+	case sessionPullSuccess, sessionPullFailure:
+		if s.LastPullAt.IsZero() {
+			return nil, errors.New("invalid last pull")
+		}
+	default:
 		return nil, errors.New("invalid last pull")
 	}
 	return &s, nil
@@ -137,9 +145,6 @@ func updateSession(sid string, now time.Time, change func(*sessionState) *sessio
 }
 
 func (a *App) recordSessionPull(result error) {
-	if errors.Is(result, flag.ErrHelp) {
-		return
-	}
 	pullResult := sessionPullSuccess
 	if result != nil {
 		pullResult = sessionPullFailure
@@ -166,8 +171,7 @@ func (a *App) recordSession(lastPullResult sessionPullResult) {
 		}
 		if sameProject {
 			*s = *old
-		}
-		if old != nil {
+		} else if old != nil {
 			s.NotifiedURLs = old.NotifiedURLs
 		}
 		if lastPullResult != sessionPullNone {
@@ -181,7 +185,7 @@ func (a *App) recordSession(lastPullResult sessionPullResult) {
 }
 
 func sessionContext(s *sessionState) string {
-	if s == nil || s.Namespace == "" {
+	if s == nil {
 		return ""
 	}
 	pull := "pull 未実行"

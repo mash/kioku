@@ -127,10 +127,9 @@ startup・clear・fork では、フックが取得とバージョン確認を省
 
 フックは SessionStart・PreCompact・UserPromptSubmit で動く。
 PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。
-UserPromptSubmit は `prompt` の HTTPS URL だけを通知する。
-フックは `cwd`・`transcript_path` など、ほかの stdin の値から URL を拾わない。
+フックは URL を抽出・通知しない。
 Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
-親は通知を読み、共有範囲・機密・保存禁止を確認して送信の要否を決める。
+親は共有範囲・機密・保存禁止を確認して送信の要否を決める。
 送る場合は `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
 子は sonnet で各 URL の全文取得・検証・put を行い、URL・namespace・結果・理由を1行ずつ返す。
 同じ URL の子を並行に起動しない。Codex は今どおり直接 put する。
@@ -142,28 +141,24 @@ pull の後は `last_pull_at`・`last_pull_result` に日時と成否を残す�
 失敗した pull は、保存済みの server・namespace・path がすべて一致する場合だけ更新する。
 失敗した project create・project join は状態を書き換えない。
 CLI は読み取りと削除の期限をファイルの mtime から30日で判定する。
-通知済み URL の更新を含むすべての書き込みで mtime を更新し、期限切れのファイルを消す。
+CLI だけが状態ファイルを書き、期限切れのファイルを消す。フックは読むだけにする。
 状態ファイルを送信先や認証・共有権限の正本にしない。
-受付状態の台帳を作らない。`notified_urls` に通知済み URL を直近1000件まで保持し、空ならキーを省く。
-新しい URL だけをまとめて通知する。
-上限を超えた URL は古い順に外し、次に現れた時に再び通知する。
+受付状態の台帳を作らない。
 UserPromptSubmit は入力に `agent_id` がある場合には何も出さない。
-PostToolUse は登録しない。`session hook` に渡しても stdout は空で、終了0とし、状態を保つ。
 UserPromptSubmit は未選択なら毎ターン、次の順で最初に一致する段の候補を示す。
 
 1. プロンプトに含まれる projects.json の namespace 全体。
-2. stdin の cwd から Git のルートまでにある `.kioku/config`。両端も含む。
-3. プロンプトかブランチ名に含まれる namespace の project 部分。ASCII は語の境界で照合する。
+2. stdin の cwd から親をたどり、最初の `.kioku/config` を使う。ルートも調べる。
 
-フックは description を照合しない。候補が0件なら何も出さない。
-同じ namespace が複数の server にある場合だけ、一覧に server を添える。
+フックは Git を呼ばず、project 部分・ブランチ名・description を照合しない。
+候補が0件なら何も出さない。候補は namespace で区別する。
+フックは同じ namespace を1件にまとめ、候補に server を表示しない。
 候補を出しても選択状態を書かず、CLI が成功を記録するまで同じ入力には同じ候補を示す。
 親は候補が作業と合えば skill で pull し、Wiki を読む。違う時や決められない時はユーザーへ確認する。
 選択済みなら毎ターン `P/wiki/` の参照と原資料を渡す規則を出す。
-最後の pull が失敗なら失敗の文を続け、新しい URL があれば通知する。
-通知済み URL しかないターンも規則を出す。フックは新しい URL の通知履歴だけを状態へ書く。
+最後の pull が失敗なら失敗の文を続ける。URL を含むターンも規則だけを出す。
 
-sh は stdin を読み、`session hook [--event EVENT] --prompts DIR` に JSON の解析と状態更新を任せる。
+sh は stdin を読み、`session hook [--event EVENT] --prompts DIR` に JSON の解析と状態の読み取りを任せる。
 この CLI コマンドは通信・対象選択・認証を行わない。jq と Python は不要。
 フックはツール名やドメインの一覧を持たない。
 Stop hook・`session skip` は実装しない。

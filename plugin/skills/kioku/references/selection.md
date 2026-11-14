@@ -25,10 +25,12 @@ CLI が別の既存 path を警告した場合は、その path をユーザー�
 ## プロジェクトを確定する
 
 Claude Code では、フックが示す候補を手がかりにする。
-フックはプロンプトの namespace、cwd から Git のルートまでの設定、プロンプトかブランチ名の project 部分の順で照合する。
+フックはプロンプトの namespace、cwd からファイルシステムのルートまでの設定の順で照合する。
 最初に一致した段の候補を示す。namespace 全体は部分文字列として照合する。
-project 部分だけは ASCII の語の境界で照合する。description は照合しない。
-同じ namespace が複数の server にある場合は、server も確かめる。
+設定の探索は最初の `.kioku/config` で止め、その namespace だけを示す。
+フックは project 部分・ブランチ名・description を照合しない。
+フックは候補を namespace で区別し、同じ namespace を1件にまとめる。
+フックは候補に server を表示しない。接続先は CLI の通常手順で確かめる。
 作業と候補が合えば以下の手順で pull する。候補が違う時や決められない時はユーザーへ確認する。
 フックは対象を保存しない。CLI の pull・create・join の成功が対象を状態ファイルへ保存する。
 

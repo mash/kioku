@@ -3,9 +3,8 @@
 ## Claude Code の取り込み担当
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-フックは UserPromptSubmit の `prompt` の HTTPS URL だけを通知する。
+フックは URL を通知しない。
 Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
-PostToolUse や `prompt` 以外の stdin の値からは通知しない。
 親は送信する URL を決め、Agent で `kioku-capture` を背景で起動する。
 親は URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
 同じ URL の子が動いている間は次の子を起動しない。
@@ -159,7 +158,7 @@ local mode は、`mktemp -d` を単独の Bash 呼び出しで実行して一時
 `FILE` には実際の絶対パスをそのまま書く。受付状態の台帳を作らない。
 Claude Code の local mode では、CLI が状態ファイルに会話の選択を残す。
 状態ファイルの期限は最後の書き込みから30日とする。
-フックは通知済み URL を会話ごとに直近1000件まで残し、通知の重複だけを抑える。
+フックは状態ファイルを読むだけにする。
 受付状態はサーバーで確認する。
 コマンドの成功を確認し、Kioku がファイルを受け付けたとユーザーに伝える。
 複数ファイルは CLI が1件ずつ送信する。途中で失敗した場合は、受付済みと未保存を分ける。

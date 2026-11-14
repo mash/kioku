@@ -6,19 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
-	"sync"
 	"testing"
 )
-
-func TestCollectCaptureURLs(t *testing.T) {
-	input := "http://ignored.test https://example.com/prompt. [one](https://claude.ai/artifact/abc) https://example.com/two"
-	want := []string{"https://example.com/prompt", "https://claude.ai/artifact/abc", "https://example.com/two"}
-	if got := collectCaptureURLs(input); !reflect.DeepEqual(got, want) {
-		t.Fatal(got)
-	}
-}
 
 func TestSessionHookOversizedInputIsSilent(t *testing.T) {
 	sessionTestEnv(t)
@@ -31,7 +21,7 @@ func TestSessionHookOversizedInputIsSilent(t *testing.T) {
 	}
 	prefix := `{"session_id":"session-1","hook_event_name":"UserPromptSubmit","prompt":"https://example.com/doc"}`
 	// The prefix alone is valid JSON. Truncating the invalid tail must not turn
-	// an oversized malformed input into a notification and a state mutation.
+	// an oversized malformed input into hook output.
 	input := prefix + strings.Repeat(" ", (8<<20)-len(prefix)) + "{"
 	var out, stderr bytes.Buffer
 	a.Out, a.Err = &out, &stderr
@@ -48,118 +38,6 @@ func TestSessionHookOversizedInputIsSilent(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("oversized input changed state")
 	}
-}
-
-func TestSessionHookGatesAndDeduplication(t *testing.T) {
-	sessionTestEnv(t)
-	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
-	a.recordSessionPull(nil)
-	prompts := t.TempDir()
-	if err := os.WriteFile(filepath.Join(prompts, "hook-capture.txt"), []byte("Kioku: {{namespace}} {{urls}}"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	base := map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "https://example.com/doc/42"}
-	run := func(in any) string {
-		t.Helper()
-		var out bytes.Buffer
-		b, _ := json.Marshal(in)
-		app := &App{Out: &out, Err: &bytes.Buffer{}}
-		if err := app.sessionHook([]string{"--prompts", prompts}, bytes.NewReader(b)); err != nil {
-			t.Fatal(err)
-		}
-		return out.String()
-	}
-	for _, id := range []any{"child", "", nil} {
-		base["agent_id"] = id
-		if out := run(base); out != "" {
-			t.Fatal(out)
-		}
-	}
-	delete(base, "agent_id")
-	base["session_id"] = "unknown"
-	if out := run(base); out != "" {
-		t.Fatal(out)
-	}
-	path, _ := sessionPath("unknown")
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	base["session_id"] = "session-1"
-	out := run(base)
-	var decoded map[string]map[string]string
-	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
-		t.Fatal(err, out)
-	}
-	context := decoded["hookSpecificOutput"]["additionalContext"]
-	if !strings.Contains(context, "org/p") || !strings.Contains(context, "https://example.com/doc/42") {
-		t.Fatal(context)
-	}
-	if out := run(base); out != "" {
-		t.Fatal("duplicate", out)
-	}
-	base["prompt"] = "https://example.com/doc/43"
-	if out := run(base); out == "" {
-		t.Fatal("different URL suppressed")
-	}
-	base["prompt"] = "https://example.com/prompt https://example.com/prompt"
-	if out := run(base); strings.Count(out, "https://example.com/prompt") != 1 {
-		t.Fatal(out)
-	}
-	// Concurrent notifications for a single URL must emit exactly once.
-	base["prompt"] = "https://example.com/doc/44"
-	var wg sync.WaitGroup
-	results := make(chan string, 10)
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); results <- run(base) }()
-	}
-	wg.Wait()
-	close(results)
-	count := 0
-	for out := range results {
-		if out != "" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatal("notification count", count)
-	}
-	// Keep only the most recent 1000 distinct notifications across calls.
-	var many []string
-	for i := 0; i < 1001; i++ {
-		many = append(many, fmt.Sprintf("https://example.com/%d", i))
-	}
-	base["prompt"] = strings.Join(many, " ")
-	if out := run(base); !strings.Contains(out, many[0]) || !strings.Contains(out, many[1000]) {
-		t.Fatal("missing new URLs")
-	}
-	state := mustSession(t)
-	if len(state.NotifiedURLs) != 1000 || state.NotifiedURLs[0] != many[1] || state.NotifiedURLs[999] != many[1000] {
-		t.Fatal(state.NotifiedURLs)
-	}
-	base["prompt"] = many[1000]
-	if out := run(base); out != "" {
-		t.Fatal(out)
-	}
-	base["prompt"] = many[0]
-	if out := run(base); out == "" {
-		t.Fatal("evicted URL must notify again")
-	}
-	if len(mustSession(t).NotifiedURLs) != 1000 {
-		t.Fatal("cap exceeded")
-	}
-	path, _ = sessionPath("session-1")
-	state = mustSession(t)
-	state.Namespace = ""
-	data, _ := json.Marshal(state)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	base["prompt"] = "https://example.com/no-namespace"
-	if out := run(base); out != "" {
-		t.Fatal(out)
-	}
-
 }
 
 func TestSessionHookE23ToE25URLSources(t *testing.T) {
@@ -196,11 +74,7 @@ func TestSessionHookE23ToE25URLSources(t *testing.T) {
 				a := &App{Out: &out, Err: &stderr}
 				args := append([]string{"--prompts", "../../prompts"}, eventArgs...)
 				err := a.sessionHook(args, bytes.NewReader(payload))
-				if tt.event == "PostToolUse" && len(eventArgs) != 0 {
-					if err == nil || err.Error() != "usage: kioku session hook [--event EVENT] --prompts DIR" {
-						t.Fatal("unsupported --event must return usage", err)
-					}
-				} else if err != nil {
+				if err != nil {
 					t.Fatal(err)
 				}
 				if stderr.Len() != 0 {

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -40,7 +39,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if f.NArg() != 0 || *prompts == "" || (*event != "" && !allowedHookEvent(*event)) {
+	if f.NArg() != 0 || *prompts == "" || (*event != "" && *event != "PostToolUse" && !allowedHookEvent(*event)) {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	const maxHookInput = 8 << 20
@@ -77,44 +76,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		// Share the context formatter with `session context --session SID`.
 		return writeHookContext(a.Out, in.Event, sessionContext(s))
 	}
-	urls := collectCaptureURLs(in.Prompt)
-	var prompt string
-	if len(urls) != 0 {
-		prompt, err = readHookPrompt(*prompts, "hook-capture.txt")
-	}
-	if len(urls) == 0 || err != nil {
-		return writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, s))
-	}
-	return updateSession(in.SessionID, now, func(current *sessionState) *sessionState {
-		if current == nil {
-			return nil
-		}
-		seen := make(map[string]bool, len(current.NotifiedURLs))
-		for _, url := range current.NotifiedURLs {
-			seen[url] = true
-		}
-		var fresh []string
-		for _, url := range urls {
-			if !seen[url] {
-				fresh = append(fresh, url)
-				seen[url] = true
-			}
-		}
-		line := promptTurnContext(*prompts, current)
-		if len(fresh) != 0 {
-			line = joinHookContext(line, renderCapturePrompt(prompt, current, strings.Join(fresh, "\n")))
-		}
-		// Emit under the lock and before saving: failed output must not mark URLs
-		// as notified, and a failed save may leave an already emitted notice.
-		if err := writeHookContext(a.Out, in.Event, line); err != nil || len(fresh) == 0 {
-			return nil
-		}
-		current.NotifiedURLs = append(current.NotifiedURLs, fresh...)
-		if len(current.NotifiedURLs) > 1000 {
-			current.NotifiedURLs = current.NotifiedURLs[len(current.NotifiedURLs)-1000:]
-		}
-		return current
-	})
+	return writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, s))
 }
 
 func readHookPrompt(prompts, name string) (string, error) {
@@ -130,19 +92,4 @@ func writeHookContext(out io.Writer, event, context string) error {
 		return nil
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": event, "additionalContext": context}})
-}
-
-func renderCapturePrompt(prompt string, s *sessionState, target string) string {
-	return strings.NewReplacer("{{namespace}}", s.Namespace, "{{server}}", s.Server, "{{mode}}", s.Mode, "{{path}}", s.Path, "{{urls}}", target).Replace(strings.TrimSpace(prompt))
-}
-
-var httpsURL = regexp.MustCompile(`https://[^\s<>"'\x60\\]+`)
-
-// Extract URLs only from the user prompt, in their original order.
-func collectCaptureURLs(prompt string) []string {
-	var urls []string
-	for _, match := range httpsURL.FindAllString(prompt, -1) {
-		urls = append(urls, strings.TrimRight(match, ".,;:!?)〕]}"))
-	}
-	return urls
 }

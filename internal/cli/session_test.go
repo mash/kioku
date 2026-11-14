@@ -84,7 +84,7 @@ func TestSessionStoragePathsRetentionAndPermissions(t *testing.T) {
 		t.Fatal(path)
 	}
 	now := time.Now().UTC()
-	if err := updateSession("session-1", now, func(*sessionState) *sessionState { return sessionTestState(now) }); err != nil {
+	if err := saveSession("session-1", now, sessionTestState(now)); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(path)
@@ -101,7 +101,7 @@ func TestSessionStoragePathsRetentionAndPermissions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := updateSession("session-1", now, func(s *sessionState) *sessionState { return s }); err != nil {
+	if err := saveSession("session-1", now, mustSession(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "old.json")); !os.IsNotExist(err) {
@@ -147,7 +147,7 @@ func TestSessionContextIgnoresMissingBrokenAndUnrelatedConfiguration(t *testing.
 			t.Fatal(out, stderr, err)
 		}
 	}
-	if err := updateSession("session-1", time.Now(), func(*sessionState) *sessionState { return sessionTestState(time.Now()) }); err != nil {
+	if err := saveSession("session-1", time.Now(), sessionTestState(time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	out, stderr, err := runProjectCLI("-C", "/does/not/exist", "session", "context", "--session", "session-1")
@@ -256,26 +256,20 @@ func TestSessionProjectCommands(t *testing.T) {
 	}
 }
 
-func TestSessionPreservesNotificationAcrossSelections(t *testing.T) {
+func TestSessionSelectionPreservesOnlySameProjectPull(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
 	a.recordSessionPull(nil)
-	when := time.Now().UTC()
-	if err := updateSession("session-1", when, func(s *sessionState) *sessionState {
-		s.NotifiedURLs = []string{"https://example.com"}
-		return s
-	}); err != nil {
-		t.Fatal(err)
-	}
+	before := mustSession(t).LastPullAt
 	a.recordSession(sessionPullNone)
 	s := mustSession(t)
-	if s.LastPullResult != sessionPullSuccess || len(s.NotifiedURLs) == 0 {
+	if s.LastPullResult != sessionPullSuccess || !s.LastPullAt.Equal(before) {
 		t.Fatal(s)
 	}
 	a.Config.Namespace = "org/other"
 	a.recordSession(sessionPullNone)
 	s = mustSession(t)
-	if s.LastPullResult != sessionPullNone || len(s.NotifiedURLs) != 1 {
+	if s.LastPullResult != sessionPullNone || !s.LastPullAt.IsZero() {
 		t.Fatal(s)
 	}
 }
@@ -289,39 +283,23 @@ func TestSessionConcurrentUpdates(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if i%2 == 0 {
-				a.recordSessionPull(nil)
-				return
-			}
-			err := updateSession("session-1", time.Now(), func(s *sessionState) *sessionState {
-				s.NotifiedURLs = append(s.NotifiedURLs, fmt.Sprintf("https://example.com/%d", i))
-				return s
-			})
-			if err != nil {
-				t.Error(err)
-			}
+			a.recordSessionPull(nil)
 		}(i)
 	}
 	wg.Wait()
 	s := mustSession(t)
-	if len(s.NotifiedURLs) != 10 || s.LastPullResult != sessionPullSuccess {
+	if s.LastPullResult != sessionPullSuccess || s.Namespace != "org/p" {
 		t.Fatal(s)
 	}
 }
 
-func TestSessionUnreadableStatePreservesSelectionAndHistory(t *testing.T) {
+func TestSessionUnreadableStatePreservesSelection(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses filesystem permissions")
 	}
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
 	a.recordSessionPull(nil)
-	if err := updateSession("session-1", time.Now(), func(s *sessionState) *sessionState {
-		s.NotifiedURLs = []string{"https://example.com/doc"}
-		return s
-	}); err != nil {
-		t.Fatal(err)
-	}
 	path, _ := sessionPath("session-1")
 	before, err := os.ReadFile(path)
 	if err != nil {
@@ -354,7 +332,7 @@ func TestSessionUnreadableStatePreservesSelectionAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(before, after) || !info.ModTime().Equal(updated.ModTime()) {
-		t.Fatal("unreadable state lost selection or notification history")
+		t.Fatal("unreadable state lost selection")
 	}
 }
 
@@ -426,7 +404,7 @@ func TestSessionMtimeControlsExpiryAndRefresh(t *testing.T) {
 	sessionTestEnv(t)
 	now := time.Now().UTC()
 	oldPull := now.Add(-2 * sessionRetention)
-	if err := updateSession("session-1", now, func(*sessionState) *sessionState { return sessionTestState(oldPull) }); err != nil {
+	if err := saveSession("session-1", now, sessionTestState(oldPull)); err != nil {
 		t.Fatal(err)
 	}
 	path, _ := sessionPath("session-1")
@@ -438,25 +416,21 @@ func TestSessionMtimeControlsExpiryAndRefresh(t *testing.T) {
 	if err := os.Chtimes(path, oldMtime, oldMtime); err != nil {
 		t.Fatal(err)
 	}
-	if err := updateSession("session-1", now, func(s *sessionState) *sessionState {
-		s.NotifiedURLs = []string{"https://example.com"}
-		return s
-	}); err != nil {
-		t.Fatal(err)
-	}
+	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
+	a.recordSession(sessionPullNone)
 	info, err := os.Stat(path)
 	if err != nil || !info.ModTime().After(oldMtime) {
-		t.Fatal("notification did not refresh mtime", info, err)
+		t.Fatal("CLI selection did not refresh mtime", info, err)
 	}
 	if s, err := readSession(path, now.Add(2*time.Hour)); err != nil || !s.LastPullAt.Equal(oldPull) {
-		t.Fatal("notification changed pull time or failed to renew retention", s, err)
+		t.Fatal("CLI selection changed pull time or failed to renew retention", s, err)
 	}
 	data, _ := os.ReadFile(path)
 	var fields map[string]any
-	if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 7 {
+	if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 6 {
 		t.Fatalf("unexpected state fields: %s (%v)", data, err)
 	}
-	for _, key := range []string{"server", "namespace", "mode", "path", "last_pull_at", "last_pull_result", "notified_urls"} {
+	for _, key := range []string{"server", "namespace", "mode", "path", "last_pull_at", "last_pull_result"} {
 		if _, ok := fields[key]; !ok {
 			t.Fatal("missing field", key)
 		}
@@ -493,7 +467,7 @@ func TestSessionLastPullValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := sessionTestState(now)
 			s.LastPullAt, s.LastPullResult = tc.at, tc.result
-			if err := updateSession("session-1", now, func(*sessionState) *sessionState { return s }); err != nil {
+			if err := saveSession("session-1", now, s); err != nil {
 				t.Fatal(err)
 			}
 			path, _ := sessionPath("session-1")

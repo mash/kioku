@@ -26,7 +26,7 @@ const (
 	sessionPullFailure sessionPullResult = "failure"
 )
 
-// Session state remembers selection and notification, never source acceptance.
+// Only CLI project operations write selection and pull results.
 type sessionState struct {
 	Server         string            `json:"server"`
 	Namespace      string            `json:"namespace"`
@@ -34,7 +34,6 @@ type sessionState struct {
 	Path           string            `json:"path"`
 	LastPullAt     time.Time         `json:"last_pull_at,omitzero"`
 	LastPullResult sessionPullResult `json:"last_pull_result,omitempty"`
-	NotifiedURLs   []string          `json:"notified_urls,omitempty"`
 }
 
 func sessionPath(sid string) (string, error) {
@@ -92,9 +91,8 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	return &s, nil
 }
 
-// Lock the directory, as projects.json does, so atomic replacement and pruning
-// cannot lose a concurrent hook notification or another CLI selection.
-func updateSession(sid string, now time.Time, change func(*sessionState) *sessionState) error {
+// Save a complete CLI selection, then prune expired session files.
+func saveSession(sid string, now time.Time, s *sessionState) error {
 	path, err := sessionPath(sid)
 	if err != nil {
 		return err
@@ -102,22 +100,6 @@ func updateSession(sid string, now time.Time, change func(*sessionState) *sessio
 	dir := filepath.Dir(path)
 	if err := ensureDirectory(dir); err != nil {
 		return err
-	}
-	lock, err := openLockedFile(dir, os.O_RDONLY)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	old, readErr := readSession(path, now)
-	// Missing, expired, or malformed state can be replaced. A filesystem error
-	// must not silently discard a selection or notification history we cannot read.
-	var pathErr *os.PathError
-	if errors.As(readErr, &pathErr) && !os.IsNotExist(readErr) {
-		return readErr
-	}
-	s := change(old)
-	if s == nil {
-		return nil
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -163,25 +145,45 @@ func (a *App) recordSession(lastPullResult sessionPullResult) {
 		namespace = a.projectNamespace
 	}
 	now := time.Now().UTC()
-	err := updateSession(sid, now, func(old *sessionState) *sessionState {
-		s := &sessionState{Server: a.Config.Server, Namespace: namespace, Mode: "local", Path: a.Dir}
-		sameProject := old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path
-		if lastPullResult == sessionPullFailure && !sameProject {
-			return nil
-		}
-		if sameProject {
-			*s = *old
-		} else if old != nil {
-			s.NotifiedURLs = old.NotifiedURLs
-		}
-		if lastPullResult != sessionPullNone {
-			s.LastPullAt, s.LastPullResult = now, lastPullResult
-		}
-		return s
-	})
+	err := a.saveSessionSelection(sid, namespace, now, lastPullResult)
 	if err != nil && a.Err != nil {
 		fmt.Fprintf(a.Err, "warning: could not update session state: %v\n", err)
 	}
+}
+
+func (a *App) saveSessionSelection(sid, namespace string, now time.Time, result sessionPullResult) error {
+	path, err := sessionPath(sid)
+	if err != nil {
+		return err
+	}
+	// Serialize CLI selections so a failed pull cannot restore an older target.
+	dir := filepath.Dir(path)
+	if err := ensureDirectory(dir); err != nil {
+		return err
+	}
+	lock, err := openLockedFile(dir, os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	old, readErr := readSession(path, now)
+	// Replace missing, expired, or malformed state, but preserve unreadable state.
+	var pathErr *os.PathError
+	if errors.As(readErr, &pathErr) && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	s := &sessionState{Server: a.Config.Server, Namespace: namespace, Mode: "local", Path: a.Dir}
+	sameProject := old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path
+	if result == sessionPullFailure && !sameProject {
+		return nil
+	}
+	if sameProject {
+		*s = *old
+	}
+	if result != sessionPullNone {
+		s.LastPullAt, s.LastPullResult = now, result
+	}
+	return saveSession(sid, now, s)
 }
 
 func sessionContext(s *sessionState) string {

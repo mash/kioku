@@ -17,9 +17,8 @@ Kioku への送信には、local mode で CLI、remote mode で MCP（Model Cont
 ## 原資料の取り込みを任せる
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-フックは UserPromptSubmit の `prompt` の HTTPS URL だけを通知する。
+フックは URL を通知しない。
 Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
-PostToolUse や `prompt` 以外の stdin の値からは通知しない。
 親は送信する URL を決め、Agent で `kioku-capture` を背景で起動する。
 親は URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
 同じ URL の子が動いている間は、次の子を起動しない。
@@ -122,7 +121,7 @@ Claude Code では、親がプロンプトの URL と自分で開いた URL・�
 - local mode: `P` は CLI が選んだプロジェクトの保存先の絶対パス。CLI が projects.json の `path` に記録する。
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
   maps は `P/maps/` に置く。CLI は操作対象のディレクトリの設定を使う。
-  Claude Code のフックだけが、候補を探すために cwd から Git のルートまでの設定を読む。
+  Claude Code のフックだけが、候補を探すために cwd からファイルシステムのルートまでの設定を読む。
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに最後の書き込みから30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。

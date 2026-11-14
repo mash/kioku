@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -83,25 +81,23 @@ func gitHookFixture(t *testing.T, dir, branch string) {
 
 func TestPromptHookAcceptanceExamples(t *testing.T) {
 	for _, tt := range []struct {
-		name, prompt, config, branch, want        string
-		projects                                  []string
-		subdir, selected, failed, notified, child bool
+		name, prompt, config, branch, want string
+		projects                           []string
+		subdir, selected, failed, child    bool
 	}{
 		{name: "E1_cwd_config", prompt: "続けて", config: "org/p", want: fmt.Sprintf(singleCandidateText, "org/p")},
 		{name: "E2_parent_config", prompt: "続けて", config: "org/p", subdir: true, want: fmt.Sprintf(singleCandidateText, "org/p")},
-		{name: "E3_project_word", prompt: "tesla", projects: []string{"natureglobal/tesla"}, want: fmt.Sprintf(singleCandidateText, "natureglobal/tesla")},
-		{name: "E4_partial_word", prompt: "uses", projects: []string{"org/ses"}},
 		{name: "E5_namespace_priority", prompt: "a/tesla", projects: []string{"a/tesla", "b/tesla"}, want: fmt.Sprintf(singleCandidateText, "a/tesla")},
 		{name: "E6_namespace_over_config", prompt: "org/b", config: "org/a", projects: []string{"org/b"}, want: fmt.Sprintf(singleCandidateText, "org/b")},
 		{name: "E7_rule", prompt: "続けて", selected: true},
 		{name: "E8_failed_rule", prompt: "続けて", selected: true, failed: true},
 		{name: "E9_new_url", prompt: "https://example.com/doc", selected: true},
 		{name: "E10_child", prompt: "https://example.com/doc", selected: true, child: true},
-		{name: "E11_multiple", prompt: "tesla", projects: []string{"a/tesla", "b/tesla"}, want: multipleCandidatesText + "\na/tesla\nb/tesla"},
-		{name: "E12_branch", prompt: "続けて", branch: "feat/tesla", projects: []string{"natureglobal/tesla"}, want: fmt.Sprintf(singleCandidateText, "natureglobal/tesla")},
-		{name: "E13_servers", prompt: "org/p", projects: []string{"org/p", "org/p"}, want: multipleCandidatesText + "\norg/p（server=https://kioku.magicians.ee）\norg/p（server=https://other.example）"},
-		{name: "E20_description_ignored", prompt: "電気自動車", projects: []string{"org/tesla"}},
-		{name: "E22_notified_url", prompt: "https://example.com/doc", selected: true, notified: true},
+		{name: "E11_multiple", prompt: "a/tesla と b/tesla", projects: []string{"a/tesla", "b/tesla"}, want: multipleCandidatesText + "\na/tesla\nb/tesla"},
+		{name: "E13_servers", prompt: "org/p", projects: []string{"org/p", "org/p"}, want: fmt.Sprintf(singleCandidateText, "org/p")},
+		{name: "E27_multiple_namespaces", prompt: "a/tesla と b/tesla を比較して", projects: []string{"a/tesla", "b/tesla"}, want: multipleCandidatesText + "\na/tesla\nb/tesla"},
+		{name: "E28_duplicate_namespace", prompt: "org/p", projects: []string{"org/p", "org/p"}, want: fmt.Sprintf(singleCandidateText, "org/p")},
+		{name: "E29_url_rule_only", prompt: "https://example.com/doc を調べて", selected: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			home := sessionTestEnv(t)
@@ -124,7 +120,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			projects := projectsFile{}
 			for i, ns := range tt.projects {
 				server := defaultServer
-				if tt.name == "E13_servers" && i == 1 {
+				if (tt.name == "E13_servers" || tt.name == "E28_duplicate_namespace") && i == 1 {
 					server = "https://other.example"
 				}
 				projects.Projects = append(projects.Projects, projectEntry{Server: server, Namespace: ns, Path: root, Description: "電気自動車"})
@@ -140,17 +136,12 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				if tt.failed {
 					s.LastPullResult = sessionPullFailure
 				}
-				if tt.notified {
-					s.NotifiedURLs = []string{"https://example.com/doc"}
-				}
 				writeHookFixture(t, statePath, s)
 				want = fmt.Sprintf(turnRuleText, "org/p", root)
 				if tt.failed {
 					want += "\n" + failedPullText
 				}
-				if tt.name == "E9_new_url" {
-					want += "\nKioku: org/p（local, server=https://kioku.magicians.ee, P=" + root + "）。親は次の URL を kioku-capture に渡す。kioku-capture が原本の全文を put する。namespace・server・mode・P・CLI の絶対パス・共有範囲・除外条件も渡す。\nhttps://example.com/doc"
-				}
+
 			}
 			input := map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "cwd": cwd, "prompt": tt.prompt}
 			if tt.child {
@@ -174,16 +165,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				t.Fatalf("got %q\nwant %q", got, want)
 			}
 			after, _ := os.ReadFile(statePath)
-			if tt.name == "E9_new_url" {
-				var expected sessionState
-				if err := json.Unmarshal(before, &expected); err != nil {
-					t.Fatal(err)
-				}
-				expected.NotifiedURLs = []string{"https://example.com/doc"}
-				if !reflect.DeepEqual(mustSession(t), &expected) {
-					t.Fatal("hook changed fields other than notified_urls")
-				}
-			} else if !bytes.Equal(before, after) {
+			if !bytes.Equal(before, after) {
 				t.Fatal("hook changed state")
 			} else if info != nil {
 				afterInfo, _ := os.Stat(statePath)
@@ -289,64 +271,7 @@ func TestSessionStartE21ExactText(t *testing.T) {
 	}
 }
 
-func TestCandidateWordBoundariesAndDeduplication(t *testing.T) {
-	for _, tt := range []struct {
-		text string
-		want bool
-	}{
-		{"ses", true}, {"uses", false}, {"sesame", false}, {"a_ses", false}, {"ses_1", false}, {"1ses", false}, {"ses2", false},
-		{"uses ses", true}, {"feat/ses", true}, {"fix-ses", true}, {"「ses」の変更", true}, {"SES", false},
-	} {
-		t.Run(tt.text, func(t *testing.T) {
-			if got := containsProjectWord(tt.text, "ses"); got != tt.want {
-				t.Fatal(got)
-			}
-		})
-	}
-	p := projectEntry{Server: defaultServer, Namespace: "org/ses", Path: "/work/p"}
-	other := p
-	other.Server = "https://other.example"
-	got := projectWordCandidates([]projectEntry{p, p, other}, "ses", "feat/ses")
-	if !reflect.DeepEqual(got, []projectEntry{p, other}) {
-		t.Fatal(got)
-	}
-}
-
-func TestCandidateConfigStopsAtGitRootAndKeepsSameStageMatches(t *testing.T) {
-	sessionTestEnv(t)
-	outer := t.TempDir()
-	writeHookFixture(t, filepath.Join(outer, ".kioku", "config"), Config{Server: defaultServer, Namespace: "org/outside"})
-	root := filepath.Join(outer, "repo")
-	gitHookFixture(t, root, "feat/none")
-	cwd := filepath.Join(root, "src")
-	if err := os.Mkdir(cwd, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if got := sessionCandidates("続けて", cwd); len(got) != 0 {
-		t.Fatal("escaped Git root", got)
-	}
-	writeHookFixture(t, filepath.Join(root, ".kioku", "config"), Config{Server: defaultServer, Namespace: "org/root"})
-	if got := sessionCandidates("続けて", cwd); len(got) != 1 || got[0].Namespace != "org/root" {
-		t.Fatal(got)
-	}
-	writeHookFixture(t, filepath.Join(cwd, ".kioku", "config"), Config{Server: defaultServer, Namespace: "org/nearest"})
-	if got := sessionCandidates("続けて", cwd); len(got) != 2 || got[0].Namespace != "org/nearest" || got[1].Namespace != "org/root" {
-		t.Fatal(got)
-	}
-	nonGit := filepath.Join(outer, "plain")
-	if err := os.Mkdir(nonGit, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if got := sessionCandidates("続けて", nonGit); len(got) != 0 {
-		t.Fatal("non-Git searched ancestors", got)
-	}
-	writeHookFixture(t, filepath.Join(nonGit, ".kioku", "config"), Config{Server: defaultServer, Namespace: "org/plain"})
-	if got := sessionCandidates("続けて", nonGit); len(got) != 1 || got[0].Namespace != "org/plain" {
-		t.Fatal(got)
-	}
-}
-
-func TestCandidateDiscoveryHandlesBrokenFilesAndGitTimeout(t *testing.T) {
+func TestCandidateDiscoveryHandlesBrokenFiles(t *testing.T) {
 	home := sessionTestEnv(t)
 	catalog := filepath.Join(home, ".config", "kioku", "projects.json")
 	writeHookFixture(t, catalog, projectsFile{})
@@ -365,102 +290,66 @@ func TestCandidateDiscoveryHandlesBrokenFilesAndGitTimeout(t *testing.T) {
 	if got := sessionCandidates("続けて", root); len(got) != 0 {
 		t.Fatal(got)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if got := hookGit(ctx, root, "rev-parse", "--show-toplevel"); got != "" {
-		t.Fatal(got)
-	}
+
 }
 
-func TestPromptHookMissingCaptureTemplateKeepsRuleWithoutSaving(t *testing.T) {
+func TestPromptHookE26WalksAboveGitRoot(t *testing.T) {
 	sessionTestEnv(t)
-	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
-	a.recordSessionPull(nil)
+	outer := t.TempDir()
+	root := filepath.Join(outer, "repo")
+	gitHookFixture(t, root, "feat/tesla")
+	cwd := filepath.Join(root, "src")
+	if err := os.Mkdir(cwd, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeHookFixture(t, filepath.Join(outer, ".kioku/config"), Config{Server: defaultServer, Namespace: "org/p"})
+	got := runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "続けて", "cwd": cwd})
+	if got != fmt.Sprintf(singleCandidateText, "org/p") {
+		t.Fatal(got)
+	}
 	path, _ := sessionPath("session-1")
-	before, _ := os.ReadFile(path)
-	prompts := t.TempDir()
-	b, err := os.ReadFile("../../prompts/hook-turn.txt")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("hook created state", err)
 	}
-	if err := os.WriteFile(filepath.Join(prompts, "hook-turn.txt"), b, 0600); err != nil {
-		t.Fatal(err)
-	}
-	got := runRawPromptHook(t, `{"session_id":"session-1","hook_event_name":"UserPromptSubmit","prompt":"https://example.com/doc"}`, prompts)
-	if got != fmt.Sprintf(turnRuleText, "org/p", "/work/p") {
+	// Stop at the nearest config even when ancestors contain other namespaces.
+	writeHookFixture(t, filepath.Join(root, ".kioku/config"), Config{Server: defaultServer, Namespace: "org/nearest"})
+	got = runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "続けて", "cwd": cwd})
+	if got != fmt.Sprintf(singleCandidateText, "org/nearest") {
 		t.Fatal(got)
 	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(before, after) {
-		t.Fatal("missing template changed state")
-	}
 }
 
-func TestPromptHookConcurrentURLsEmitEveryRuleButNotifyOnce(t *testing.T) {
-	sessionTestEnv(t)
-	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
-	a.recordSessionPull(nil)
-	input := map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "https://example.com/doc"}
-	var wg sync.WaitGroup
-	outputs := make(chan string, 10)
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); outputs <- runPromptHook(t, input) }()
+func TestCandidateDiscoveryWithoutGit(t *testing.T) {
+	home := sessionTestEnv(t)
+	root := t.TempDir()
+	gitHookFixture(t, root, "feat/tesla")
+	writeHookFixture(t, filepath.Join(home, ".config/kioku/projects.json"), projectsFile{Projects: []projectEntry{
+		{Server: defaultServer, Namespace: "org/tesla", Path: root, Description: "電気自動車"},
+	}})
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho called >> \"$KIOKU_TEST_GIT_LOG\"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
 	}
-	wg.Wait()
-	close(outputs)
-	notices := 0
-	for out := range outputs {
-		if !strings.HasPrefix(out, fmt.Sprintf(turnRuleText, "org/p", "/work/p")) {
-			t.Fatal(out)
-		}
-		if strings.Contains(out, "https://example.com/doc") {
-			notices++
+	t.Setenv("KIOKU_TEST_GIT_LOG", log)
+	t.Setenv("PATH", bin)
+	for _, prompt := range []string{"tesla", "「tesla」の変更", "電気自動車", "続けて"} {
+		if got := sessionCandidates(prompt, root); len(got) != 0 {
+			t.Fatal(prompt, got)
 		}
 	}
-	if notices != 1 || !reflect.DeepEqual(mustSession(t).NotifiedURLs, []string{"https://example.com/doc"}) {
-		t.Fatal(notices)
+	if got := sessionCandidates("org/tesla", root); len(got) != 1 || got[0].Namespace != "org/tesla" {
+		t.Fatal(got)
 	}
-}
-
-func TestEmptyCatalogSkipsBranchLookupButStillFindsParentConfig(t *testing.T) {
-	for _, configured := range []bool{false, true} {
-		t.Run(fmt.Sprintf("configured=%v", configured), func(t *testing.T) {
-			sessionTestEnv(t)
-			root := t.TempDir()
-			gitHookFixture(t, root, "feat/tesla")
-			cwd := filepath.Join(root, "src")
-			if err := os.Mkdir(cwd, 0700); err != nil {
-				t.Fatal(err)
-			}
-			if configured {
-				writeHookFixture(t, filepath.Join(root, ".kioku/config"), Config{Server: defaultServer, Namespace: "org/p"})
-			}
-			realGit, err := exec.LookPath("git")
-			if err != nil {
-				t.Fatal(err)
-			}
-			bin := t.TempDir()
-			log := filepath.Join(bin, "calls")
-			wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$KIOKU_TEST_GIT_LOG\"\nexec \"$KIOKU_TEST_REAL_GIT\" \"$@\"\n"
-			if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0700); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("KIOKU_TEST_GIT_LOG", log)
-			t.Setenv("KIOKU_TEST_REAL_GIT", realGit)
-			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			got := sessionCandidates("続けて", cwd)
-			if configured {
-				if len(got) != 1 || got[0].Namespace != "org/p" {
-					t.Fatal(got)
-				}
-			} else if len(got) != 0 {
-				t.Fatal(got)
-			}
-			calls, err := os.ReadFile(log)
-			if err != nil || string(calls) != "rev-parse --show-toplevel\n" {
-				t.Fatal("only the root lookup is needed", string(calls), err)
-			}
-		})
+	child := filepath.Join(root, "plain", "src")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeHookFixture(t, filepath.Join(root, "plain", ".kioku/config"), Config{Server: defaultServer, Namespace: "org/plain"})
+	if got := sessionCandidates("続けて", child); len(got) != 1 || got[0].Namespace != "org/plain" {
+		t.Fatal(got)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatal("hook called git", err)
 	}
 }

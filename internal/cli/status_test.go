@@ -48,7 +48,7 @@ func TestStatusReadsInboxFromProjectListing(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &fields); err != nil {
 				t.Fatal(err)
 			}
-			for _, key := range []string{"local_revision", "local_sync_incomplete"} {
+			for _, key := range []string{"local_revision", "local_sync_incomplete", "next_generate_at", "generate_interval_seconds"} {
 				if _, ok := fields[key]; ok {
 					t.Fatalf("obsolete status field %s", key)
 				}

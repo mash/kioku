@@ -23,7 +23,6 @@ func (a *App) status() error {
 			result["remote_revision"] = p.Revision
 			result["wiki_updated_at"] = p.WikiUpdatedAt
 			result["wiki_incomplete"] = p.WikiIncomplete
-			result["next_generate_at"] = p.NextGenerateAt
 			found = true
 		}
 	}

@@ -316,3 +316,102 @@ func TestBusyProjectIndexesStayBoundedAndArchivesRemainAvailable(t *testing.T) {
 		t.Fatal("archived job unavailable", job, err)
 	}
 }
+
+func TestLoadContentIgnoresGenerateIntervalSeconds(t *testing.T) {
+	for _, redo := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redo=%v", redo), func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { s.Close() })
+			deadline := time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
+			st := model.NewState()
+			st.Projects["p"] = model.Project{ID: "p", NextGenerateAt: deadline}
+			st.Inbox["item"] = model.InboxItem{ID: "item", ProjectID: "p", Remove: true}
+			content, err := json.Marshal(contentFor(st, "p"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var old map[string]any
+			if err := json.Unmarshal(content, &old); err != nil {
+				t.Fatal(err)
+			}
+			old["generate_interval_seconds"] = 86400
+			content, err = json.Marshal(old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if redo {
+				control, err := controlJSON(st)
+				if err != nil {
+					t.Fatal(err)
+				}
+				intent := controlIntent{Control: control, Transaction: "deadline", Projects: []string{"p"}}
+				if err := s.objects.Put(t.Context(), transactionKey("p", intent.Transaction), content); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := json.Marshal(intent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.catalog.Exec("INSERT INTO pending(id,payload)VALUES(1,?)", raw); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := s.Update(func(current *model.State) error { *current = st; return nil }); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.objects.Put(t.Context(), contentKey("p"), content); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err = Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.View(func(st model.State) error {
+				p := st.Projects["p"]
+				if !p.NextGenerateAt.Equal(deadline) || !st.Inbox["item"].Remove {
+					t.Fatal("deadline or inbox was lost", p, st.Inbox)
+				}
+				raw, err := json.Marshal(p)
+				if err != nil {
+					return err
+				}
+				if bytes.Contains(raw, []byte(`"generate_interval_seconds"`)) {
+					t.Fatal("obsolete interval restored", string(raw))
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Update(func(st *model.State) error {
+				p := st.Projects["p"]
+				p.NextGenerateAt = deadline.Add(time.Second)
+				st.Projects["p"] = p
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := s.objects.Get(t.Context(), contentKey("p"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(raw, []byte(`"generate_interval_seconds"`)) {
+				t.Fatal("obsolete interval persisted", string(raw))
+			}
+			var saved map[string]any
+			if err := json.Unmarshal(raw, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if saved["next_generate_at"] != deadline.Add(time.Second).Format(time.RFC3339Nano) {
+				t.Fatal("internal deadline not persisted", saved)
+			}
+		})
+	}
+}

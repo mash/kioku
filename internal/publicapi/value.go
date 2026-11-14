@@ -30,7 +30,7 @@ func Value(v any) any {
 		}
 		return Value(*x)
 	case model.Project:
-		return map[string]any{"namespace": x.Namespace, "slug": x.Slug, "name": x.Name, "members": x.Members, "revision": x.Revision, "created": x.Created, "wiki_incomplete": x.WikiIncomplete, "wiki_updated_at": x.WikiUpdatedAt, "next_generate_at": x.NextGenerateAt, "generate_interval_seconds": x.GenerateIntervalSeconds}
+		return map[string]any{"namespace": x.Namespace, "slug": x.Slug, "name": x.Name, "members": x.Members, "revision": x.Revision, "created": x.Created, "wiki_incomplete": x.WikiIncomplete, "wiki_updated_at": x.WikiUpdatedAt}
 	case model.ProjectEntry:
 		out := Value(x.Project).(map[string]any)
 		out["inbox"] = x.Inbox

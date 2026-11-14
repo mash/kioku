@@ -68,22 +68,21 @@ type User struct {
 	Identities map[string]string `json:"identities,omitempty"`
 }
 type Project struct {
-	StorageBucket           string            `json:"storage_bucket,omitempty"`
-	StorageRoot             string            `json:"storage_root,omitempty"`
-	JobsValidAfter          time.Time         `json:"jobs_valid_after,omitempty"`
-	WikiIncomplete          bool              `json:"wiki_incomplete,omitempty"`
-	WikiUpdatedAt           time.Time         `json:"wiki_updated_at,omitempty"`
-	NextGenerateAt          time.Time         `json:"next_generate_at,omitempty"`
-	GenerateIntervalSeconds int64             `json:"generate_interval_seconds,omitempty"`
-	OrgID                   string            `json:"org_id"`
-	Slug                    string            `json:"slug"`
-	Namespace               string            `json:"namespace"`
-	ID                      string            `json:"id"`
-	Name                    string            `json:"name"`
-	Members                 map[string]string `json:"members"`
-	Revision                string            `json:"revision"`
-	Created                 time.Time         `json:"created"`
-	Deleting                bool              `json:"deleting,omitempty"`
+	StorageBucket  string            `json:"storage_bucket,omitempty"`
+	StorageRoot    string            `json:"storage_root,omitempty"`
+	JobsValidAfter time.Time         `json:"jobs_valid_after,omitempty"`
+	WikiIncomplete bool              `json:"wiki_incomplete,omitempty"`
+	WikiUpdatedAt  time.Time         `json:"wiki_updated_at,omitempty"`
+	NextGenerateAt time.Time         `json:"next_generate_at,omitempty"`
+	OrgID          string            `json:"org_id"`
+	Slug           string            `json:"slug"`
+	Namespace      string            `json:"namespace"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Members        map[string]string `json:"members"`
+	Revision       string            `json:"revision"`
+	Created        time.Time         `json:"created"`
+	Deleting       bool              `json:"deleting,omitempty"`
 }
 
 // ProjectEntry adds current inbox state to a project listing without persisting it.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mash/kioku/internal/model"
 )
@@ -25,5 +26,24 @@ func TestPublicValuesExcludeProjectStorageAndExecutionState(t *testing.T) {
 	b, _ := json.Marshal(job)
 	if !strings.Contains(string(b), p.ID) {
 		t.Fatal("internal persistence changed")
+	}
+}
+
+func TestProjectValueOmitsDeadlineKeys(t *testing.T) {
+	p := model.Project{Namespace: "org/project", NextGenerateAt: time.Now().UTC()}
+	entry := model.ProjectEntry{Project: p}
+	for _, value := range []any{p, &p, entry, &entry, []model.Project{p}, []model.ProjectEntry{entry}} {
+		raw, err := json.Marshal(Value(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{`"next_generate_at"`, `"generate_interval_seconds"`} {
+			if strings.Contains(string(raw), key) {
+				t.Errorf("%T exposed %s: %s", value, key, raw)
+			}
+		}
+		if !strings.Contains(string(raw), `"namespace":"org/project"`) {
+			t.Fatal("namespace missing", string(raw))
+		}
 	}
 }

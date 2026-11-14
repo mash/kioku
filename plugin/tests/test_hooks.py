@@ -792,7 +792,7 @@ class SessionHooksTest(unittest.TestCase):
     def test_E21_startup_exact_text(self):
         expected = ('Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。'
                     '無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。'
-                    '対象が曖昧ならユーザーに聞く。フィードバックだけの依頼では、プロジェクトを設定せず、skill のフィードバック手順に従う。\n')
+                    '対象が曖昧ならユーザーに聞く。\n')
         self.assertEqual(self.hook('SessionStart', source='startup'), expected)
 
 

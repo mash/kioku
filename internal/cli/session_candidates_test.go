@@ -19,7 +19,7 @@ const singleCandidateText = "Kioku: このセッションではプロジェク�
 const multipleCandidatesText = "Kioku: このセッションではプロジェクトを未選択。候補は次のとおり。kioku skill で 1 つ選んで pull する。決められなければユーザーに聞く。"
 const turnRuleText = "Kioku: %s（wiki: %s/wiki/）。調べる時はここを grep する。参照・作成した HTTPS URL の原本は kioku-capture に渡す。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
-const startHookText = "Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。対象が曖昧ならユーザーに聞く。フィードバックだけの依頼では、プロジェクトを設定せず、skill のフィードバック手順に従う。\n"
+const startHookText = "Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。対象が曖昧ならユーザーに聞く。\n"
 
 func writeHookFixture(t *testing.T, path string, value any) {
 	t.Helper()

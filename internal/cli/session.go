@@ -186,25 +186,46 @@ func (a *App) saveSessionSelection(sid, namespace string, now time.Time, result 
 	return saveSession(sid, now, s)
 }
 
+type sessionAction int
+
+const (
+	sessionContinue sessionAction = iota
+	sessionInitialPull
+	sessionHandlePullFailure
+)
+
+func nextSessionAction(result sessionPullResult) sessionAction {
+	switch result {
+	case sessionPullNone:
+		return sessionInitialPull
+	case sessionPullFailure:
+		return sessionHandlePullFailure
+	default:
+		return sessionContinue
+	}
+}
+
+func renderSessionContext(s *sessionState, action sessionAction) string {
+	var pull, tail string
+	switch action {
+	case sessionInitialPull:
+		pull = "pull 未実行"
+		tail = "再選択は不要。最初の pull と Wiki の参照を行う。"
+	case sessionHandlePullFailure:
+		pull = "pull " + s.LastPullAt.Format(time.RFC3339) + " 失敗"
+		tail = sessionPullFailedContext
+	case sessionContinue:
+		pull = "pull " + s.LastPullAt.Format(time.RFC3339) + " 成功"
+		tail = "再選択と再 pull は不要。"
+	}
+	return fmt.Sprintf("Kioku: %s（%s, server=%s, P=%q, %s）。%s", s.Namespace, s.Mode, s.Server, s.Path, pull, tail)
+}
+
 func sessionContext(s *sessionState) string {
 	if s == nil {
 		return ""
 	}
-	pull := "pull 未実行"
-	if s.LastPullResult != sessionPullNone {
-		result := "成功"
-		if s.LastPullResult == sessionPullFailure {
-			result = "失敗"
-		}
-		pull = "pull " + s.LastPullAt.Format(time.RFC3339) + " " + result
-	}
-	tail := "再選択と再 pull は不要。"
-	if s.LastPullResult == sessionPullNone {
-		tail = "再選択は不要。最初の pull と Wiki の参照を行う。"
-	} else if s.LastPullResult == sessionPullFailure {
-		tail = sessionPullFailedContext
-	}
-	return fmt.Sprintf("Kioku: %s（%s, server=%s, P=%q, %s）。%s", s.Namespace, s.Mode, s.Server, s.Path, pull, tail)
+	return renderSessionContext(s, nextSessionAction(s.LastPullResult))
 }
 
 func (a *App) session(args []string) error {

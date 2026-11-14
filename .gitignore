@@ -5,3 +5,5 @@
 .env
 *.test
 /.claude/worktrees/
+/.kioku/lock
+/.worktrees/

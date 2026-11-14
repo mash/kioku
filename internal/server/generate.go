@@ -84,6 +84,33 @@ func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID 
 	return job, nil
 }
 
+type deadlineResult uint8
+
+const (
+	deadlineSkip deadlineResult = iota
+	deadlineDue
+	deadlineWait
+	deadlineClear
+	deadlineClearAndQueue
+)
+
+func deadlineStage(p model.Project, now time.Time) deadlineResult {
+	if p.Deleting || p.NextGenerateAt.IsZero() || now.Before(p.NextGenerateAt) {
+		return deadlineSkip
+	}
+	return deadlineDue
+}
+
+func deadlineAction(hasJob, hasEligible bool, ownerUID string) deadlineResult {
+	if hasJob {
+		return deadlineWait
+	}
+	if !hasEligible || ownerUID == "" {
+		return deadlineClear
+	}
+	return deadlineClearAndQueue
+}
+
 // Deadlines are fixed intervals, not a debounce: frequent puts never postpone a
 // project's next run. Waiting items survive restarts and failed generations.
 func (s *Server) scheduleGenerations(now time.Time) error {

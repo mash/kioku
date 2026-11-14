@@ -2,8 +2,9 @@ package store
 
 import (
 	"errors"
-	"github.com/mash/kioku/internal/model"
 	"testing"
+
+	"github.com/mash/kioku/internal/model"
 )
 
 func TestTransactionRollbackPersistenceAndLock(t *testing.T) {
@@ -39,4 +40,33 @@ func TestTransactionRollbackPersistenceAndLock(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestCountProjects(t *testing.T) {
+	s := &Store{state: model.State{Projects: map[string]model.Project{
+		"active":   {ID: "active"},
+		"deleting": {ID: "deleting", Deleting: true},
+	}}}
+	count, err := s.CountProjects(func(p model.Project) bool { return !p.Deleting })
+	if err != nil || count != 1 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+	count, err = s.CountProjects(func(p model.Project) bool { return false })
+	if err != nil || count != 0 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		_, err := s.CountProjects(func(p model.Project) bool { return true })
+		if err != nil {
+			t.Fatal(err)
+		}
+	}); allocs != 0 {
+		t.Fatalf("allocated %v times", allocs)
+	}
+	s.poisoned = errors.New("poisoned")
+	called := false
+	count, err = s.CountProjects(func(p model.Project) bool { called = true; return true })
+	if !errors.Is(err, s.poisoned) || count != 0 || called {
+		t.Fatalf("count=%d err=%v called=%v", count, err, called)
+	}
 }

@@ -242,6 +242,23 @@ func (s *Store) View(fn func(model.State) error) error {
 	return fn(st)
 }
 
+// CountProjects reads projects without cloning state. The predicate runs under
+// the store lock and must not mutate the project or call back into the store.
+func (s *Store) CountProjects(predicate func(model.Project) bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.poisoned != nil {
+		return 0, s.poisoned
+	}
+	count := 0
+	for _, p := range s.state.Projects {
+		if predicate(p) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (s *Store) Update(fn func(*model.State) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

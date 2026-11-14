@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/auth"
@@ -332,5 +333,26 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSourcePutSetsDeadline(t *testing.T) {
+	f, human, p, _ := managedFixture(t)
+	f.s.Config.GenerateDebounce = 10 * time.Second
+	access := connectorAccessToken(t, f, human, p.ID)
+	for _, args := range []map[string]any{
+		{"project": p.Namespace, "name": "record.md", "content": testSourceContent("https://example.com/record", "Body")},
+		{"project": p.Namespace, "source_url": "https://example.com/record", "remove": true},
+	} {
+		before := time.Now().UTC()
+		var result map[string]any
+		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
+			t.Fatal(msg, result)
+		}
+		st := generationState(t, f)
+		deadline := st.Projects[p.ID].NextGenerateAt
+		if deadline.Before(before.Add(10*time.Second)) || deadline.After(time.Now().UTC().Add(10*time.Second)) || len(st.Jobs) != 0 {
+			t.Fatal(deadline, st.Jobs)
+		}
 	}
 }

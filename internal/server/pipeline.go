@@ -106,6 +106,12 @@ func (s *Server) RunWorker(ctx context.Context) error {
 
 // Maintenance must keep running while the generation queue is busy.
 func (s *Server) runMaintenance(ctx context.Context) {
+	count, err := s.Store.CountProjects(func(p model.Project) bool { return !p.NextGenerateAt.IsZero() })
+	if err != nil {
+		slog.Error("generation scheduling deferred", "error", err)
+	} else {
+		slog.Info("automatic generation deadlines loaded", "projects", count)
+	}
 	var lastReconcile time.Time
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

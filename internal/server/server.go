@@ -32,7 +32,7 @@ type Config struct {
 	AgentMaxSessions           int
 	AgentJobTimeout            time.Duration
 	AgentMaxSessionCents       int64
-	GenerateEvery              time.Duration
+	GenerateDebounce           time.Duration
 	BaseURL                    string
 	Providers                  map[string]auth.Provider
 	MaxWikiBytes               int64

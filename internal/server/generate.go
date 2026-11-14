@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -111,74 +112,76 @@ func deadlineAction(hasJob, hasEligible bool, ownerUID string) deadlineResult {
 	return deadlineClearAndQueue
 }
 
-// Deadlines are fixed intervals, not a debounce: frequent puts never postpone a
-// project's next run. Waiting items survive restarts and failed generations.
+// Only saved puts create deadlines; a due deadline is consumed once no job remains.
 func (s *Server) scheduleGenerations(now time.Time) error {
-	if s.Config.GenerateEvery <= 0 {
-		return s.Store.Update(func(st *model.State) error {
-			for id, p := range st.Projects {
-				if !p.NextGenerateAt.IsZero() || p.GenerateIntervalSeconds != 0 {
-					p.NextGenerateAt = time.Time{}
-					p.GenerateIntervalSeconds = 0
-					st.Projects[id] = p
-				}
-			}
-			return nil
-		})
+	count, err := s.Store.CountProjects(func(p model.Project) bool {
+		return deadlineStage(p, now) == deadlineDue
+	})
+	if err != nil || count == 0 {
+		return err
 	}
-	interval := s.Config.GenerateEvery
-	err := s.Store.Update(func(st *model.State) error {
+	type queuedGeneration struct {
+		namespace string
+		deadline  time.Time
+	}
+	var queued []queuedGeneration
+	var cleared []string
+	err = s.Store.Update(func(st *model.State) error {
 		for id, p := range st.Projects {
-			if p.Deleting {
+			if deadlineStage(p, now) != deadlineDue {
 				continue
 			}
-			if p.NextGenerateAt.IsZero() || p.GenerateIntervalSeconds != int64(interval/time.Second) {
-				p.NextGenerateAt = now.Add(interval)
-				p.GenerateIntervalSeconds = int64(interval / time.Second)
-				st.Projects[id] = p
-				continue
-			}
-			if now.Before(p.NextGenerateAt) {
-				continue
-			}
-			p.NextGenerateAt = now.Add(interval)
-			st.Projects[id] = p
-			dirty := false
+			hasEligible := false
 			over := completedWikiBytes(st.Revisions[p.Revision]) > s.Config.MaxWikiBytes
 			for _, item := range st.Inbox {
 				if item.ProjectID == id && item.RunID == "" && (!over || item.Remove) {
-					dirty = true
+					hasEligible = true
 				}
 			}
-			pendingGeneration := false
+			hasJob := false
 			for _, j := range st.Jobs {
 				if j.ProjectID == id && j.Kind == "generate" && (j.Status == "queued" || j.Status == "running") {
-					pendingGeneration = true
+					hasJob = true
 				}
 			}
-			if !dirty || pendingGeneration {
-				continue
-			}
-			uid := ""
+			ownerUID := ""
 			for member, role := range p.Members {
 				if role == "owner" {
-					uid = member
+					ownerUID = member
 					break
 				}
 			}
-			if uid == "" {
+			action := deadlineAction(hasJob, hasEligible, ownerUID)
+			if action == deadlineWait {
 				continue
 			}
-			if _, err := s.queueGeneration(st, p, uid, "", true, now); err != nil {
+			deadline := p.NextGenerateAt
+			p.NextGenerateAt = time.Time{}
+			st.Projects[id] = p
+			if action == deadlineClear {
+				cleared = append(cleared, p.Namespace)
+				continue
+			}
+			if _, err := s.queueGeneration(st, p, ownerUID, "", true, now); err != nil {
 				return err
 			}
+			queued = append(queued, queuedGeneration{p.Namespace, deadline})
 		}
 		return nil
 	})
-	if err == nil {
+	if err != nil {
+		return err
+	}
+	for _, namespace := range cleared {
+		slog.Info("automatic generation deadline cleared", "project", namespace)
+	}
+	for _, q := range queued {
+		slog.Info("automatic generation queued", "project", q.namespace, "deadline", q.deadline)
+	}
+	if len(queued) > 0 {
 		s.notify()
 	}
-	return err
+	return nil
 }
 
 // Partial writes must not change which waiting items can rebuild the wiki.

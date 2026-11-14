@@ -108,6 +108,9 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 			}
 		}
 		st.Inbox[item.ID] = item
+		p := st.Projects[pid]
+		p.NextGenerateAt = time.Now().UTC().Add(s.Config.GenerateDebounce)
+		st.Projects[pid] = p
 		return nil
 	})
 }

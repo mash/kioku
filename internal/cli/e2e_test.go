@@ -36,7 +36,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := server.New(server.Config{Prompts: rendered, BaseURL: "http://127.0.0.1"}, stateStore, local.Store{Dir: filepath.Join(data, "objects")}, key)
+	s := server.New(server.Config{Prompts: rendered, GenerateDebounce: time.Hour, BaseURL: "http://127.0.0.1"}, stateStore, local.Store{Dir: filepath.Join(data, "objects")}, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)

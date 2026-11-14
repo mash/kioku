@@ -42,7 +42,7 @@ func run() error {
 	backup := flag.String("backup", "", "write a configuration-only SQLite backup, then exit (offline operator command)")
 	maxBytes := flag.Int64("max-wiki-bytes", 64<<20, "maximum published wiki bytes per project")
 	maxJobs := flag.Int("max-jobs", 20, "maximum queued/running generation jobs per project")
-	generateEvery := flag.Duration("generate-every", 24*time.Hour, "periodic generation interval for changed projects; 0 disables scheduling")
+	generateDebounce := flag.Duration("generate-debounce", 10*time.Second, "time from the last put to automatic generation")
 	rate := flag.Int("rate-per-minute", 600, "maximum requests per source IP per minute")
 	agentMaxSessions := flag.Int("agent-max-sessions", 4, "maximum concurrent managed agent sessions")
 	agentJobTimeout := flag.Duration("agent-job-timeout", time.Hour, "managed generation deadline")
@@ -79,8 +79,8 @@ func run() error {
 		defer stateStore.Close()
 		return stateStore.Backup(*backup)
 	}
-	if *maxBytes < 1 || *maxJobs < 1 || *rate < 1 || *generateEvery < 0 || *generateEvery > 0 && *generateEvery < time.Second {
-		return errors.New("limits must be positive; generation interval must be zero or at least one second")
+	if *maxBytes < 1 || *maxJobs < 1 || *rate < 1 || *generateDebounce < 0 {
+		return errors.New("limits must be positive; generate-debounce must not be negative")
 	}
 
 	base := strings.TrimRight(env("KIOKU_BASE_URL", "http://127.0.0.1:8080"), "/")
@@ -137,7 +137,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateEvery: *generateEvery, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, stateStore, objects, cipher)
+	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000, GenerateDebounce: *generateDebounce, BaseURL: base, Providers: providers, MaxWikiBytes: *maxBytes, MaxQueued: *maxJobs, RatePerMinute: *rate, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, stateStore, objects, cipher)
 	set, err := runners.Load(runners.Config{Prompts: rendered, Type: selection, OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), OpenAIModel: os.Getenv("KIOKU_OPENAI_MODEL"), Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base, AgentMaxSessions: *agentMaxSessions, AgentJobTimeout: *agentJobTimeout, AgentMaxSessionCents: agentMaxMicros / 10000}, func(jobID, attemptID string) { app.ReconcileJob(ctx, jobID, attemptID) })
 	if err != nil {
 		return err

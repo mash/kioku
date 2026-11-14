@@ -45,7 +45,8 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{Prompts: defaultPrompts(t), BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, stateStore, local.Store{Dir: dir + "/objects"}, key)
+	// Lifecycle tests queue jobs explicitly, including fixtures that start a worker later.
+	s := New(Config{Prompts: defaultPrompts(t), GenerateDebounce: time.Hour, BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, stateStore, local.Store{Dir: dir + "/objects"}, key)
 	g, err := runners.Load(runners.Config{}, nil)
 	if err != nil {
 		t.Fatal(err)

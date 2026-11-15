@@ -501,7 +501,7 @@ MA は指定された model を送信し、省略時は Agent 側の model を�
 
 ディレクトリ不備、未知のキー、解析できない YAML/frontmatter/template、空の description も起動エラーです。MA の system は展開後に WIKI.md を読む固定の段落を足してから `utf8.RuneCountInString` で100,000文字以内であることを検査します。他の文や runner に独自の長さ制限は設けません。エラーは種類と行番号だけを示し、ファイル本文を出しません。
 
-起動ログは4ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
+起動ログは4ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。`wiki-agent.default-prompt.md` だけは BOM を除いた本文のバイト列から計算します。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
 
 起動済みの MA・OpenAI セッションは作成時の文を使い続け、新しい生成ジョブは新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
 

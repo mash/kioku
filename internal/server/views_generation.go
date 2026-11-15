@@ -120,7 +120,6 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 		if child.ID == "" {
 			result.Status, result.Error = "failed", "View の生成ジョブが見つかりません"
 		}
-		failed := result.Status == "failed"
 		if result.Status != "completed" {
 			current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, result.Status, result.Error)
 			if err != nil {
@@ -135,7 +134,8 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 		}
 		generation.Next++
 		generation.ChildID = ""
-		if failed {
+		// A deleted View reports skipped, and a skipped View does not stop the rest.
+		if result.Status == "failed" {
 			for i := generation.Next; i < len(parent.Views); i++ {
 				result := &parent.Views[i]
 				if _, err := s.setViewStatusLocked(ctx, pid, result.ViewID, "skipped", viewPreviousFailed); err != nil {

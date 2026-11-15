@@ -166,10 +166,11 @@ func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, pr
 	if err != nil {
 		return viewDefinition{}, err
 	}
-	// A missing or corrupt record is replaced so the owner can repair it.
-	// Storage errors still fail, so a transient read cannot discard settings.
+	// A full replacement does not read the saved record. A partial update keeps
+	// the other saved field; a missing or corrupt record is replaced so the
+	// owner can repair it, and storage errors fail so settings are not lost.
 	record := newWikiViewRecord(pid)
-	if index.Wiki != nil {
+	if index.Wiki != nil && (title == nil || prompt == nil) {
 		body, err := s.Blobs.Get(ctx, viewKey(pid, index.Wiki.ID, "view.json"))
 		if err != nil && !viewObjectMissing(err) {
 			return viewDefinition{}, err

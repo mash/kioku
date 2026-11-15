@@ -502,8 +502,8 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			parent = storedJob(t, f, parent.ID)
-			if scenario == "skipped-deleted" {
-				if parent.Views[0].Error != viewDeleted || parent.Views[1].Status != "running" || parent.ViewGeneration == nil {
+			if scenario == "skipped-deleted" || scenario == "failed-deleted" {
+				if parent.Views[0].Status != "skipped" || parent.Views[0].Error != viewDeleted || parent.Views[1].Status != "running" || parent.ViewGeneration == nil {
 					t.Fatal(parent)
 				}
 				next := startTestGeneration(t, f, parent.ViewGeneration.ChildID)
@@ -512,9 +512,6 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 			}
 			if parent.Status != "completed" || parent.ViewGeneration != nil {
 				t.Fatal(parent)
-			}
-			if scenario == "failed-deleted" && (parent.Views[0].Status != "skipped" || parent.Views[0].Error != viewDeleted) {
-				t.Fatal(parent.Views)
 			}
 			if scenario == "missing" && parent.Views[0].Error != "View の生成ジョブが見つかりません" {
 				t.Fatal(parent.Views)

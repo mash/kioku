@@ -1,7 +1,6 @@
 package server
 
 import (
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -24,13 +23,7 @@ func TestWikiViewPage(t *testing.T) {
 	}
 	get := func(path, token string) *httptest.ResponseRecorder {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodGet, path, nil)
-		if token != "" {
-			r.AddCookie(&http.Cookie{Name: "kioku_session", Value: token})
-		}
-		w := httptest.NewRecorder()
-		f.s.Handler().ServeHTTP(w, r)
-		return w
+		return browserPage(t, f, path, token)
 	}
 	path := "/" + p.Namespace + "/views/wiki"
 	api := "/api/projects/" + p.Namespace + "/views/wiki"

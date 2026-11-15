@@ -252,3 +252,18 @@ func TestWikiViewPatchStorageReadFailurePreservesSettings(t *testing.T) {
 		t.Fatalf("saved settings changed: %q, %v", saved, err)
 	}
 }
+
+func TestWikiViewFullPatchDoesNotReadSavedSettings(t *testing.T) {
+	f, token, p := orgProject(t)
+	api := "/api/projects/" + p.ID + "/views/wiki"
+	var view viewDefinition
+	if code := f.request("PATCH", api, token, map[string]string{"title": "Saved", "prompt": "Saved prompt"}, &view); code != 200 {
+		t.Fatal(code)
+	}
+	key := viewKey(p.ID, view.ID, "view.json")
+	store := f.s.Blobs
+	f.s.Blobs = &viewFaultStore{Store: store, getKey: key, getOnce: true}
+	if code := f.request("PATCH", api, token, map[string]string{"title": "New", "prompt": "New prompt"}, &view); code != 200 || view.Title != "New" || view.Prompt != "New prompt" {
+		t.Fatalf("PATCH = %d: %+v", code, view)
+	}
+}

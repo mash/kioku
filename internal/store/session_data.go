@@ -1,0 +1,151 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"log/slog"
+)
+
+type IdentitySessionData struct {
+	IdentityProvider     *string `json:"identity_provider"`
+	IdentityID           *string `json:"identity_id"`
+	IdentityAccessToken  *string `json:"identity_access_token"`
+	IdentityRefreshToken *string `json:"identity_refresh_token"`
+	IdentityExpiresAt    *int64  `json:"identity_expires_at"`
+	AgentID              *string `json:"agent_id"`
+	Role                 *string `json:"role"`
+}
+type CLILoginData struct {
+	IdentitySessionData
+	LoopbackChallenge   *string `json:"loopback_challenge"`
+	LoopbackRedirectURI *string `json:"loopback_redirect_uri"`
+	LoopbackState       *string `json:"loopback_state"`
+	LoopbackCodeHash    *string `json:"loopback_code_hash"`
+}
+type AgentSessionData struct {
+	AgentID   *string `json:"agent_id"`
+	Role      *string `json:"role"`
+	Name      string  `json:"name"`
+	RevokedAt *int64  `json:"revoked_at"`
+}
+type MCPData struct {
+	TokenKind  string          `json:"token_kind"`
+	Active     bool            `json:"active"`
+	ClientID   string          `json:"client_id"`
+	RequestID  string          `json:"request_id"`
+	ProjectIDs []string        `json:"project_ids"`
+	Request    json.RawMessage `json:"request"`
+}
+type OAuthCodeData struct {
+	ProjectIDs []string        `json:"project_ids"`
+	Request    json.RawMessage `json:"request"`
+	PKCE       json.RawMessage `json:"pkce"`
+}
+type LoginCodeData struct {
+	GrantKey string  `json:"grant_key"`
+	Role     *string `json:"role"`
+}
+
+// Session payloads may contain encrypted credentials and PKCE material. Logs and
+// accidental JSON responses must never serialize the raw stored row.
+func (SessionRow) String() string               { return "[redacted session]" }
+func (SessionRow) GoString() string             { return "[redacted session]" }
+func (SessionRow) LogValue() slog.Value         { return slog.StringValue("[redacted session]") }
+func (SessionRow) MarshalJSON() ([]byte, error) { return []byte(`"[redacted session]"`), nil }
+
+func (q *Queries) InsertSession(v SessionRow) error {
+	var count int
+	if err := q.row("SELECT count(*) FROM sessions WHERE kind=?", v.Kind).Scan(&count); err != nil {
+		return err
+	}
+	if count >= 10000 {
+		return ErrSessionCapacity
+	}
+	_, err := q.exec("INSERT INTO sessions(id,kind,status,user_id,project_id,expires,created,data) VALUES(?,?,?,?,?,?,?,?)", v.ID, v.Kind, v.Status, v.UserID, v.ProjectID, v.Expires, v.Created, string(v.Data))
+	return err
+}
+
+var ErrSessionCapacity = errors.New("session storage capacity exceeded")
+
+func (q *Queries) TakeLoginCode(id string, now int64) (SessionRow, error) {
+	v, err := q.Session(id)
+	if err != nil {
+		return v, err
+	}
+	res, err := q.exec("DELETE FROM sessions WHERE id=? AND kind='login_code' AND status='pending' AND expires>?", id, now)
+	if err != nil {
+		return SessionRow{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return SessionRow{}, err
+	}
+	if n != 1 {
+		return SessionRow{}, sql.ErrNoRows
+	}
+	return v, nil
+}
+func (q *Queries) RevokeOAuthFamily(user, id string) error {
+	rows, err := q.UserSessions(user, "mcp")
+	if err != nil {
+		return err
+	}
+	for _, v := range rows {
+		var data MCPData
+		if err := json.Unmarshal(v.Data, &data); err != nil {
+			return err
+		}
+		if data.RequestID != id {
+			continue
+		}
+		if data.TokenKind == "access" {
+			if err := q.DeleteSession(v.ID); err != nil {
+				return err
+			}
+		} else {
+			data.Active = false
+			v.Data, err = json.Marshal(data)
+			if err != nil {
+				return err
+			}
+			if err := q.PutSession(v); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+func (q *Queries) PruneSessions(now int64) error {
+	codes, err := q.listSession("WHERE kind='login_code' AND status='pending' AND expires>?", now)
+	if err != nil {
+		return err
+	}
+	references := map[string]bool{}
+	for _, v := range codes {
+		var data LoginCodeData
+		if err := json.Unmarshal(v.Data, &data); err != nil {
+			return err
+		}
+		references[data.GrantKey] = true
+	}
+	rows, err := q.listSession("WHERE expires<=? OR (kind='cli_login' AND status='active') ORDER BY expires,id", now)
+	if err != nil {
+		return err
+	}
+	for _, v := range rows {
+		if references[v.ID] && v.Kind == "mcp" {
+			var data MCPData
+			if err := json.Unmarshal(v.Data, &data); err != nil {
+				return err
+			}
+			if data.TokenKind == "access" {
+				continue
+			}
+		}
+		if err := q.DeleteSession(v.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}

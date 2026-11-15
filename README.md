@@ -220,11 +220,13 @@ export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
 
-kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付の入力ファイルを読み、ローカルに出力ファイルを書きます。Runner が本文と削除の依頼を処理して Wiki を編集し、全ページを返します。inbox が空なら Wiki は前回の公開結果を使います。Runner 未設定の生成は失敗します。
+kiokud は待機中の inbox を実行に固定し、`JOB.md`、`WIKI.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`WIKI.md` には保存済みの Wiki の prompt、未保存なら既定の Wiki の prompt が入り、入力の容量上限にも数えます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付の入力ファイルを読み、ローカルに出力ファイルを書きます。Runner が本文と削除の依頼を処理して Wiki を編集し、全ページを返します。inbox が空なら Wiki は前回の公開結果を使います。Runner 未設定の生成は失敗します。
 
-完全な Wiki があれば、同じジョブで登録済みの View を順に生成します。各 View は独立した runner セッションで Wiki と保存済みプロンプトを読み、検査に通った結果で前回の表示を上書きします。プロジェクト画面の右サイドバーから View を開けます。オーナーは「＋」で View を作り、各 View の設定でタイトルとプロンプトを変更できます。[生成と予算](docs/WORKERS.md#generation-runner-type)
+Wiki は slug `wiki` の削除できない View です。プロジェクト画面の右サイドバーには Wiki を先頭に View が作成順で並びます。オーナーは「＋」でほかの View を作り、Wiki を含む各 View の設定でタイトルとプロンプトを変更できます。Wiki の設定を保存するだけでは再生成せず、次に Wiki の runner が動く生成から使います。
 
-Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。概念・エンティティ・分析・概要ページから source ページを引用します。`wiki/index.md` は種類ごとの目録で、source ページを載せません。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
+Wiki を先に生成し、完全な Wiki があれば、同じジョブでほかの View を作成順に生成します。各 View は独立した runner セッションで Wiki と保存済みプロンプトを読み、検査に通った結果で前回の表示を上書きします。生成中のタイトル・プロンプトの編集ではスキップせず、各 View の入力アーカイブを作った時点の設定で公開します。View が失敗すると後の View はスキップします。[生成と予算](docs/WORKERS.md#generation-runner-type)
+
+Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。`WIKI.md` に従ってページを整理し、事実の記述から source ページを引用します。既定の prompt は概念・エンティティ・分析・概要ページと種類ごとの目録を作ります。`wiki/index.md` には source ページを載せません。整理の指示が system の規則と矛盾するときは system を優先します。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
 出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開します。原資料ページをサーバーが後から付け足す処理はありません。
 
@@ -442,7 +444,7 @@ kiokud sends this agent's system prompt with every session. A session without th
 | --- | --- |
 | S1 | console または `ant` で Agent を作成する（`POST /v1/agents`）。model は任意、system は上記の文、tools は不要。 |
 | S2 | Environment を作成する（`POST /v1/environments`）。cloud 環境で [`limited` で許可ホストを空にする](docs/WORKERS.md#job-credential-and-network-policy)。 |
-| S3 | 差し替える場合だけ、動かす kiokud と同じ版の repo の `prompts/` から、下記3ファイルのうち必要なものを専用の DIR にコピーする。 |
+| S3 | 差し替える場合だけ、動かす kiokud と同じ版の repo の `prompts/` から、下記4ファイルのうち必要なものを専用の DIR にコピーする。 |
 | S4 | DIR 内のファイルを編集する。既定値を使う場合は S3・S4 は不要。 |
 | S5 | `KIOKU_MA_AGENT_ID` と `KIOKU_MA_ENVIRONMENT_ID` に作成した ID を設定する。差し替える場合は `KIOKU_PROMPTS_DIR=DIR` も設定する。 |
 | S6 | kiokud を再起動する。検証に失敗すると起動しない。起動ログの `source` と `sha256` を確認する。 |
@@ -465,13 +467,14 @@ CLI は `kioku --server https://kioku.example.com login` で接続し、
 | --- | --- |
 | [wiki-agent.system.md](prompts/wiki-agent.system.md) | system 本文全体と、任意の YAML frontmatter の `model`。他の frontmatter キーは不可。 |
 | [wiki-agent.user.md](prompts/wiki-agent.user.md) | 最初の user message 全体。frontmatter は不可。`{{.InputURL}}` と `{{.OutputURL}}` の参照が必須。 |
+| [wiki-agent.default-prompt.md](prompts/wiki-agent.default-prompt.md) | 既定の Wiki の prompt。Wiki の prompt を保存していないプロジェクトで、Wiki の View の prompt と WIKI.md に使う。frontmatter は不可。テンプレートは展開しない |
 | [mcp-server.yaml](prompts/mcp-server.yaml) | `instructions`、`tools.<名前>.description`、`tools.<名前>.properties.<プロパティ>.description`。書いたキーだけを上書きする。既存 schema 内で説明のないプロパティにも追加できる。 |
 
 `prompts/` 全体はコピーしないでください。DIR 直下の未知の名前（symlink を含む）は起動エラーです。`.` で始まる名前だけを無視します。MCP のツール名・順序・schema と wiki agent の tools は Go に固定されています。`output-rules.txt` と hook の文は差し替え対象ではありません。
 
-全ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` の項目は固定です。managed runner では `BaseURL` は空になり、`InputURL` と `OutputURL` はローカルパスになります。system ファイルには `{{.ReadJobInput}}` と `{{.SubmitJobOutput}}` でrunnerに合った入出力手順を差し込めます。
+`wiki-agent.default-prompt.md` 以外の 3 ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` の項目は固定です。managed runner では `BaseURL` は空になり、`InputURL` と `OutputURL` はローカルパスになります。system ファイルには `{{.ReadJobInput}}` と `{{.SubmitJobOutput}}` でrunnerに合った入出力手順を差し込めます。
 
-Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
+テンプレートを展開する 3 ファイルでは、Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
 
 ```yaml
 instructions: 社内の記述規則に従ってください。
@@ -494,9 +497,11 @@ model:
 
 MA は指定された model を送信し、省略時は Agent 側の model を使います。model の文字列指定や effort を省いた map は、MA 側の effort をモデル既定に戻し、省略した inference_geo を消します。維持したい値は map に明示してください。exec は model の id だけを使い、他のフィールドがあれば起動時に警告を1件出します。exec で model を省略すると起動しません。OpenAI は frontmatter の model を使わず、`KIOKU_OPENAI_MODEL` を使います。
 
-ディレクトリ不備、未知のキー、解析できない YAML/frontmatter/template、空の description も起動エラーです。MA の system は展開後に `utf8.RuneCountInString` で100,000文字以内であることを検査します。他の文や runner に独自の長さ制限は設けません。エラーは種類と行番号だけを示し、ファイル本文を出しません。
+`wiki-agent.default-prompt.md` は UTF-8 のテキストで、先頭の BOM を除きます。空白以外の文字がない本文は `prompts: wiki-agent.default-prompt.md: empty body (line 1)`、先頭が `---` の本文は `prompts: wiki-agent.default-prompt.md: syntax (line 1)` で起動エラーになります。保存済みの Wiki の prompt は既定値より優先します。
 
-起動ログは3ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
+ディレクトリ不備、未知のキー、解析できない YAML/frontmatter/template、空の description も起動エラーです。MA の system は展開後に WIKI.md を読む固定の段落を足してから `utf8.RuneCountInString` で100,000文字以内であることを検査します。他の文や runner に独自の長さ制限は設けません。エラーは種類と行番号だけを示し、ファイル本文を出しません。
+
+起動ログは4ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
 
 起動済みの MA・OpenAI セッションは作成時の文を使い続け、新しい生成ジョブは新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
 

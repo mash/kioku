@@ -21,8 +21,8 @@ The MCP endpoint exposes seven tools:
 - `wiki_read`: read a current Wiki page and follow `next_offset` to read long files.
 - `wiki_search`: find a case-insensitive substring in the current Wiki pages.
 - `source_put`: accept one UTF-8 text file or one removal and return `{}` after acceptance.
-- `view_list`: list a selected project's Views and their generation status.
-- `view_read`: read `index.html`, `summary.md`, or `data.json` from the last successful View result. Follow `next_offset` to read long files.
+- `view_list`: list a selected project's Views and their generation status in creation order, with the Wiki View (`slug: wiki`) first. Prompts are not returned.
+- `view_read`: read `index.html`, `summary.md`, or `data.json` from the last successful non-Wiki View result. Follow `next_offset` to read long files. For `view:"wiki"`, it returns the tool error `the wiki view has no bundle; read it with wiki_read or wiki_search`.
 
 `source_put` accepts exactly one of these shapes (with the selected `project`):
 

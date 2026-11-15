@@ -1,0 +1,224 @@
+package server
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/mash/kioku/internal/store"
+)
+
+func beginSQLViews(q *store.Queries, j *store.JobRow, p store.ProjectRow, budget int64) error {
+	if j.Data.WikiStatus == nil {
+		return nil
+	}
+	views, err := q.ProjectViews(p.ID)
+	if err != nil {
+		return err
+	}
+	j.Data.WikiStatus = nullableString("completed")
+	snapshot := valueString(p.WikiRevision)
+	if _, e := q.WikiFile(p.ID, "wiki/index.md"); errors.Is(e, sql.ErrNoRows) {
+		snapshot = ""
+	} else if e != nil {
+		return e
+	}
+	if p.WikiIncomplete {
+		snapshot = ""
+	}
+	if snapshot == "" {
+		j.Data.WikiStatus = nullableString("unavailable")
+	}
+	j.Data.Views = []store.ViewResultData{}
+	for _, v := range views {
+		if v.Slug != "wiki" {
+			j.Data.Views = append(j.Data.Views, store.ViewResultData{ViewID: v.ID, Slug: v.Slug, Status: "pending"})
+		}
+	}
+	if len(j.Data.Views) == 0 {
+		return nil
+	}
+	j.Status = "running"
+
+	j.GenerationSnapshot = &snapshot
+	j.Data.ViewGeneration = &store.GenerationData{Remaining: budget}
+	return nil
+}
+
+// advanceViews consumes a terminal child, charges its immutable usage and
+// creates the next child in one transaction. Repeating it cannot charge twice.
+func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
+	var initial store.JobRow
+	if err := o.db.Read(ctx, func(q *store.Queries) error { var e error; initial, e = q.Job(id); return e }); err != nil {
+		return err
+	}
+	generationUnlock, err := o.lock(ctx, "generate:"+initial.ProjectID)
+	if err != nil {
+		return err
+	}
+	defer generationUnlock()
+	unlock, err := o.lock(ctx, initial.ProjectID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return o.db.Write(ctx, func(q *store.Queries) error {
+		p, e := q.Job(id)
+		if e != nil {
+			return e
+		}
+		g := p.Data.ViewGeneration
+		project, e := q.Project(p.ProjectID)
+		if e != nil {
+			return e
+		}
+		if project.Deleting {
+			return nil
+		}
+		if p.Status != "running" || g == nil {
+			return nil
+		}
+		if p.Data.Run != nil {
+			if !valueBool(p.CleanupComplete) {
+				return nil
+			}
+			if _, e = q.Usage(p.ID); e != nil {
+				return e
+			}
+		}
+		if g.Next < 0 || g.Next > len(p.Data.Views) || p.ChildID != nil && g.Next == len(p.Data.Views) {
+			return errors.New("inconsistent View generation checkpoint")
+		}
+		setStatus := func(result *store.ViewResultData, status, reason string) error {
+			v, e := q.View(p.ProjectID, result.ViewID)
+			if errors.Is(e, sql.ErrNoRows) {
+				result.Status = "skipped"
+				result.Error = nullableString(viewDeleted)
+				return nil
+			}
+			if e != nil {
+				return e
+			}
+			result.Status = status
+			result.Error = nullableString(reason)
+			v.Data.Status = nullableString(status)
+			v.Data.Error = nullableString(reason)
+			return q.PutView(v)
+		}
+		if p.ChildID != nil {
+			child, e := q.Job(*p.ChildID)
+			if e != nil {
+				return e
+			}
+			if child.Status == "queued" || child.Status == "running" {
+				return nil
+			}
+			var cost *int64
+			if child.Data.Run != nil {
+				if !valueBool(child.CleanupComplete) {
+					return nil
+				}
+				usage, e := q.Usage(child.ID)
+				if e != nil {
+					return e
+				}
+				cost = usage.Data.CostCents
+			}
+			result := &p.Data.Views[g.Next]
+			result.Status = child.Status
+			result.Error = child.Data.Error
+			if child.Status != "completed" {
+				if e = setStatus(result, child.Status, valueString(child.Data.Error)); e != nil {
+					return e
+				}
+			}
+			g.Remaining = remainingViewBudget(g.Remaining, cost)
+			g.Next++
+			p.ChildID = nil
+			if result.Status == "failed" {
+				for i := g.Next; i < len(p.Data.Views); i++ {
+					if e = setStatus(&p.Data.Views[i], "skipped", viewPreviousFailed); e != nil {
+						return e
+					}
+				}
+				g.Next = len(p.Data.Views)
+			}
+		}
+		if g.Pending {
+			views, e := q.ProjectViews(p.ProjectID)
+			if e != nil {
+				return e
+			}
+			p.Data.Views = []store.ViewResultData{}
+			for _, v := range views {
+				if v.Slug != "wiki" {
+					p.Data.Views = append(p.Data.Views, store.ViewResultData{ViewID: v.ID, Slug: v.Slug, Status: "pending"})
+				}
+			}
+			g.Pending = false
+		}
+		for g.Next < len(p.Data.Views) {
+			result := &p.Data.Views[g.Next]
+			reason := ""
+			if valueString(p.GenerationSnapshot) == "" {
+				reason = "Wiki が未生成"
+				if p.Data.Revision != nil {
+					reason = "Wiki の公開が未完了"
+				}
+			} else if g.Remaining < 50 {
+				reason = "生成予算の残額が不足しています"
+			}
+			if reason != "" {
+				if e = setStatus(result, "skipped", reason); e != nil {
+					return e
+				}
+				g.Next++
+				continue
+			}
+			if e = setStatus(result, "running", ""); e != nil {
+				return e
+			}
+			if result.Status == "skipped" {
+				g.Next++
+				continue
+			}
+			childID := o.id()
+			child := store.JobRow{ID: childID, ProjectID: p.ProjectID, Status: "queued", Kind: "view", Created: o.now().UnixMilli(), ParentID: &p.ID, Data: store.JobData{UserID: p.Data.UserID, AgentID: p.Data.AgentID, AgentBudgetCents: g.Remaining, ViewTask: &store.ViewTaskData{ViewID: result.ViewID, Snapshot: *p.GenerationSnapshot}}}
+			if e = q.PutJob(child); e != nil {
+				return e
+			}
+			p.ChildID = &childID
+			break
+		}
+		if p.ChildID == nil {
+			p.Status = "completed"
+			p.GenerationSnapshot = nil
+			p.Data.ViewGeneration = nil
+		}
+		if e = q.PutJob(p); e != nil {
+			return e
+		}
+		return q.CompactHistory(p.ProjectID, nil)
+	})
+}
+
+func (o *storageOperations) finishView(ctx context.Context, id, status, reason string) error {
+	return o.db.Write(ctx, func(q *store.Queries) error {
+		j, e := q.Job(id)
+		if e != nil {
+			return e
+		}
+		if j.Status != "running" && j.Status != "queued" {
+			return nil
+		}
+		if j.Data.ViewTask == nil {
+			return fail(409, "not a View generation job")
+		}
+		j.Status = status
+		j.Data.Error = nullableString(reason)
+		if e = q.PutJob(j); e != nil {
+			return e
+		}
+		return q.CompactHistory(j.ProjectID, nil)
+	})
+}

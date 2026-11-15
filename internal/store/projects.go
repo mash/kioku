@@ -56,3 +56,40 @@ func (q *Queries) ReleaseInbox(project, run string) error {
 	_, err := q.exec("UPDATE inbox SET run_id=NULL WHERE project_id=? AND run_id=?", project, run)
 	return err
 }
+
+func (q *Queries) ProjectIDs() ([]string, error) {
+	rows, err := q.rows("SELECT id FROM projects ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+func (q *Queries) ClearProjectContent(project string) error {
+	for _, table := range []string{"wiki_files", "views", "inbox"} {
+		if _, err := q.exec("DELETE FROM "+table+" WHERE project_id=?", project); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (q *Queries) DeleteProjectRows(project string) error {
+	for _, table := range []string{"project_members", "inbox", "wiki_files", "views", "jobs", "audit", "invites"} {
+		if _, err := q.exec("DELETE FROM "+table+" WHERE project_id=?", project); err != nil {
+			return err
+		}
+	}
+	return q.DeleteProject(project)
+}
+func (q *Queries) PruneInvites(project string, now int64) error {
+	_, err := q.exec("DELETE FROM invites WHERE project_id=? AND expires<=?", project, now)
+	return err
+}

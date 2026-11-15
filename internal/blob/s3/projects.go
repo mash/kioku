@@ -74,6 +74,12 @@ func (p *Projects) Delete(ctx context.Context, key Key) error {
 	return s.Delete(ctx, key)
 }
 func (p *Projects) List(ctx context.Context, prefix string) ([]Key, error) {
+	if prefix == "projects/" {
+		if !sharedBucketName.MatchString(p.Template.Bucket) {
+			return nil, errors.New("invalid S3_BUCKET")
+		}
+		return p.Template.List(ctx, prefix)
+	}
 	s, err := p.route(Key(prefix + "placeholder"))
 	if err != nil {
 		return nil, err

@@ -1,0 +1,228 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"math"
+	"sync"
+	"time"
+
+	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
+)
+
+// storageOperations owns the boundaries between SQL and immutable content.
+// Each method uses short transactions and keeps the project gate across object
+// selection, IO, and the conditional reference commit.
+type storageOperations struct {
+	db      *store.Database
+	objects blob.Store
+	config  Config
+	now     func() time.Time
+	id      func() string
+	gates   sync.Map
+}
+
+func newStorageOperations(db *store.Database, objects blob.Store, c Config) *storageOperations {
+	if c.MaxWikiBytes == 0 {
+		c.MaxWikiBytes = 64 << 20
+	}
+	if c.GenerateDebounce == 0 {
+		c.GenerateDebounce = 10 * time.Second
+	}
+	if c.AgentJobTimeout == 0 {
+		c.AgentJobTimeout = time.Hour
+	}
+	if c.AgentMaxSessions == 0 {
+		c.AgentMaxSessions = 4
+	}
+	if c.AgentMaxSessionCents == 0 {
+		c.AgentMaxSessionCents = 1000
+	}
+	return &storageOperations{db: db, objects: objects, config: c, now: func() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }, id: func() string { return auth.Token()[:20] }}
+}
+func (o *storageOperations) lock(ctx context.Context, project string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	gate, _ := o.gates.LoadOrStore(project, make(chan struct{}, 1))
+	ch := gate.(chan struct{})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	}
+}
+func nullableString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+func valueString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+func valueBool(b *bool) bool { return b != nil && *b }
+func equalOptional(a, b *string) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+func sqlJobKey(j store.JobRow, name string) blob.Key {
+	return blob.Key("projects/" + j.ProjectID + "/.kioku/jobs/" + j.ID + "/" + name)
+}
+func sqlInboxKey(i store.InboxRow) blob.Key {
+	return blob.Key("projects/" + i.ProjectID + "/.kioku/inbox/" + i.ID + ".md")
+}
+func wikiBytes(files []store.WikiFileRow) (int64, error) {
+	var total int64
+	for _, f := range files {
+		if f.Data.Bytes < 0 || total > math.MaxInt64-f.Data.Bytes {
+			return 0, errors.New("invalid wiki capacity")
+		}
+		total += f.Data.Bytes
+	}
+	return total, nil
+}
+func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, body []byte) error {
+	unlock, err := o.lock(ctx, item.ProjectID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	check := func(q *store.Queries) error {
+		p, err := sqlMember(q, item.ProjectID, item.Data.Submitter)
+		if err != nil {
+			return err
+		}
+		files, err := q.ProjectWiki(item.ProjectID)
+		if err != nil {
+			return err
+		}
+		size, err := wikiBytes(files)
+		if err != nil {
+			return err
+		}
+		if p.Data.WikiCompleteBytes != nil {
+			size = *p.Data.WikiCompleteBytes
+		}
+		if !item.Remove && size > o.config.MaxWikiBytes {
+			return fail(413, "published wiki exceeds max-wiki-bytes; remove sources first")
+		}
+		items, err := q.ProjectInbox(item.ProjectID)
+		if err != nil {
+			return err
+		}
+		count := 0
+		for _, v := range items {
+			if v.RunID != nil || v.SourceURL != item.SourceURL {
+				count++
+			}
+		}
+		if count >= maxInboxItems {
+			return fail(429, "project inbox is full")
+		}
+		return nil
+	}
+	if err = o.db.Read(ctx, check); err != nil {
+		return err
+	}
+	if !item.Remove {
+		if err = o.objects.Put(ctx, sqlInboxKey(item), body); err != nil {
+			return err
+		}
+	}
+	return o.db.Write(ctx, func(q *store.Queries) error {
+		if err := check(q); err != nil {
+			return err
+		}
+		if err := q.ReplaceInbox(item); err != nil {
+			return err
+		}
+		p, err := q.Project(item.ProjectID)
+		if err != nil {
+			return err
+		}
+		due := o.now().Add(o.config.GenerateDebounce).UnixMilli()
+		p.NextGenerateAt = &due
+		return q.PutProject(p)
+	})
+}
+func (o *storageOperations) readWikiFile(ctx context.Context, project, path string) ([]byte, error) {
+	unlock, err := o.lock(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	var f store.WikiFileRow
+	if err = o.db.Read(ctx, func(q *store.Queries) error { var err error; f, err = q.WikiFile(project, path); return err }); err != nil {
+		return nil, err
+	}
+	body, err := o.objects.Get(ctx, model.WikiContentKey(project, model.ContentHash(f.Hash)))
+	if err != nil {
+		return nil, err
+	}
+	if string(model.HashContent(body)) != f.Hash || int64(len(body)) != f.Data.Bytes {
+		return nil, errors.New("wiki content integrity check failed")
+	}
+	return body, nil
+}
+func sqlJobAuthorization(q *store.Queries, j store.JobRow, now int64) error {
+	if _, err := sqlMember(q, j.ProjectID, j.Data.UserID); err != nil {
+		return err
+	}
+	if j.Data.AgentID == nil {
+		return nil
+	}
+	agents, err := q.ProjectSessions(j.ProjectID, "agent")
+	if err != nil {
+		return err
+	}
+	for _, v := range agents {
+		var a store.AgentSessionData
+		if err = json.Unmarshal(v.Data, &a); err != nil {
+			return err
+		}
+		if a.AgentID != nil && *a.AgentID == *j.Data.AgentID && v.UserID == j.Data.UserID && v.Status == "active" && v.Expires > now && a.RevokedAt == nil && valueString(a.Role) == "write" {
+			return nil
+		}
+	}
+	return fail(403, "generation authorization was revoked")
+}
+func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRow, error) {
+	j, err := q.Job(id)
+	if err != nil {
+		return j, err
+	}
+	if j.Status != "running" || j.Data.Run == nil {
+		return j, fail(409, "generation job was canceled")
+	}
+	if j.Data.Run.AbortReason != nil {
+		return j, fail(403, "generation authorization was revoked")
+	}
+	if err = sqlJobAuthorization(q, j, o.now().UnixMilli()); err != nil {
+		return j, err
+	}
+	if j.ParentID != nil {
+		p, err := q.Project(j.ProjectID)
+		if err != nil {
+			return j, err
+		}
+		parent, err := q.Job(*j.ParentID)
+		if err != nil {
+			return j, err
+		}
+		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != id || p.WikiIncomplete || valueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
+			return j, fail(409, "Wiki または生成ジョブが変更されました")
+		}
+		if _, err = q.View(j.ProjectID, j.Data.ViewTask.ViewID); err != nil {
+			return j, err
+		}
+	}
+	return j, nil
+}

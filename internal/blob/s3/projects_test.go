@@ -118,8 +118,8 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 		if err := projects.DeleteProject(ctx, "legacy"); err == nil {
 			t.Fatal("legacy deletion accepted")
 		}
-		if _, err := projects.List(ctx, "projects/"); err == nil {
-			t.Fatal("unscoped list allowed")
+		if keys, err := projects.List(ctx, "projects/"); err != nil || len(keys) != 1 || keys[0] != "projects/beta/original" {
+			t.Fatal("full project list", keys, err)
 		}
 	}
 	b, err := projects.Get(ctx, "projects/beta/original")

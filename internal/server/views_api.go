@@ -14,7 +14,8 @@ type viewDetail struct {
 }
 
 func viewHasNewWiki(view viewDefinition, project model.Project) *bool {
-	if view.GeneratedAt == nil {
+	// The Wiki View is the Wiki itself, so it has no Wiki to compare with.
+	if view.GeneratedAt == nil || view.Slug == wikiViewSlug {
 		return nil
 	}
 	updated := view.WikiSnapshotID != completeViewWikiRevision(project)
@@ -75,11 +76,7 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	if err != nil {
 		return err
 	}
-	detail := viewDetail{viewDefinition: view}
-	if view.Slug != wikiViewSlug {
-		detail.WikiUpdatedSinceRun = viewHasNewWiki(view, project)
-	}
-	jsonOut(w, 200, detail)
+	jsonOut(w, 200, viewDetail{view, viewHasNewWiki(view, project)})
 	return nil
 }
 

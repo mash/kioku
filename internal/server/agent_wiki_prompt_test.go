@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,13 +30,8 @@ func TestWikiPromptGeneration(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
 			want := prompts.DefaultWikiPrompt()
 			if strings.Contains(scenario, "override") {
-				dir := t.TempDir()
 				want = "決定と論点を分けて書く。"
-				if err := os.WriteFile(filepath.Join(dir, prompts.DefaultPromptFile), []byte(want), 0600); err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("KIOKU_PROMPTS_DIR", dir)
-				rendered, err := prompts.Load(os.Getenv("KIOKU_PROMPTS_DIR"), prompts.Variables{}, MCPToolNames())
+				rendered, err := loadPrompts(t, prompts.Variables{}, map[string]string{prompts.DefaultPromptFile: want})
 				if err != nil {
 					t.Fatal(err)
 				}

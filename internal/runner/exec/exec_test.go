@@ -154,6 +154,12 @@ func awaitExit(t *testing.T, r *Runner, ref runner.RunRef) runner.Status {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if (status.Cost == nil) != (status.Usage.CostCents == nil) || status.Cost != nil && *status.Cost != *status.Usage.CostCents {
+		t.Fatal("exec usage did not use the validated stdout result")
+	}
+	if status.Usage.Model != nil || status.Usage.InputTokens != nil || status.Usage.OutputTokens != nil || status.Usage.CacheReadInputTokens != nil || status.Usage.CacheCreationInputTokens != nil {
+		t.Fatal("exec inferred unsupported usage")
+	}
 	return status
 }
 func awaitFile(t *testing.T, path string) {

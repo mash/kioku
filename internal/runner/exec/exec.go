@@ -132,6 +132,7 @@ func (r *Runner) wait(c *child) {
 	}
 	if valid {
 		status.Cost = result.CostCents
+		status.Usage.CostCents = result.CostCents
 	} else if successful {
 		slog.Warn("invalid result line", "job", c.key.JobID)
 	} else {

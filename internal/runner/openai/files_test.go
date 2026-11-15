@@ -88,6 +88,9 @@ func TestFileSessionUsesOnlyCompletedTurnArtifacts(t *testing.T) {
 	if err != nil || status.State != runner.StateStopped || status.TurnID != "completed" {
 		t.Fatal(status, err)
 	}
+	if status.Usage.Model != nil || status.Usage.InputTokens != nil || status.Usage.OutputTokens != nil || status.Usage.CacheReadInputTokens != nil || status.Usage.CacheCreationInputTokens != nil || status.Usage.CostCents != nil {
+		t.Fatal("OpenAI usage must remain unknown")
+	}
 	duplicate.Store(true)
 	if _, err := r.CollectOutput(t.Context(), a, status, 32); err == nil || downloads.Load() != 0 {
 		t.Fatal("accepted ambiguous artifacts", err)

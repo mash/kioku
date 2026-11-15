@@ -204,7 +204,7 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && r.Method == "GET" {
 		ids := make([]string, 0, len(f.sessions))
 		for id, s := range f.sessions {
-			if !s.Archived {
+			if !s.Archived || r.URL.Query().Get("include_archived") == "true" {
 				ids = append(ids, id)
 			}
 		}

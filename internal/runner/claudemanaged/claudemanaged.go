@@ -66,38 +66,11 @@ func (r *Runner) Inspect(ctx context.Context, a runner.Attempt) (runner.Status, 
 	if err != nil {
 		return runner.Status{}, err
 	}
-	if a.Run.ID == "" {
-		a.Run.ID, err = client.FindSessionByJob(ctx, a.Key.JobID, a.Key.AttemptID)
-		if err != nil {
-			return runner.Status{}, err
-		}
-		if a.Run.ID == "" {
-			return runner.Status{State: runner.StateNone}, nil
-		}
-	}
-	session, err := client.GetSession(ctx, a.Run.ID)
+	ids, err := discoverSessions(ctx, client, a)
 	if err != nil {
 		return runner.Status{}, err
 	}
-	out := runner.Status{Run: a.Run}
-	if session.CostKnown {
-		out.Cost = &session.ListCostCents
-	}
-	switch session.Status {
-	case "running", "rescheduling":
-		out.State = runner.StateRunning
-	case "idle":
-		out.State = runner.StateStopped
-		switch session.LastStopReason {
-		case "retries_exhausted":
-			out.Reason = "agent gave up after errors"
-		case "requires_action":
-			out.Reason = "agent requires action"
-		}
-	case "terminated":
-		out.State, out.Reason = runner.StateStopped, "session terminated"
-	}
-	return out, nil
+	return inspectSessions(ctx, client, a, ids, false)
 }
 
 func (r *Runner) Stop(ctx context.Context, a runner.Attempt) error {
@@ -105,10 +78,17 @@ func (r *Runner) Stop(ctx context.Context, a runner.Attempt) error {
 	if err != nil {
 		return err
 	}
-	if a.Run.ID == "" {
-		return nil
+	ids, err := discoverSessions(ctx, client, a)
+	if err != nil {
+		return err
 	}
-	return client.Interrupt(ctx, a.Run.ID)
+	var errs []error
+	for _, id := range ids {
+		if err := client.Interrupt(ctx, id); err != nil && !isNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
@@ -123,12 +103,15 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 			errs = append(errs, err)
 		}
 	}
-	if a.Run.ID == "" {
-		a.Run.ID, err = client.FindSessionByJob(ctx, a.Key.JobID, a.Key.AttemptID)
-		record("agent session discovery failed", err)
+	ids, err := discoverSessions(ctx, client, a)
+	if err != nil {
+		return err
 	}
-	if a.Run.ID != "" {
-		record("agent session archive failed", client.ArchiveSession(ctx, a.Run.ID))
+	for _, id := range ids {
+		err := client.ArchiveSession(ctx, id)
+		if !isNotFound(err) {
+			record("agent session archive failed", err)
+		}
 	}
 	vaults := []string{a.Run.Resources["vault_id"]}
 	if vaults[0] == "" {

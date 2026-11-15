@@ -64,8 +64,8 @@ func TestLifecycle(t *testing.T) {
 		t.Fatal(found, err)
 	}
 	before := len(f.Requests())
-	if err := r.Stop(t.Context(), a); err != nil || len(f.Requests()) != before {
-		t.Fatal("empty Stop called API", err)
+	if err := r.Stop(t.Context(), a); err != nil || len(f.Requests()) == before {
+		t.Fatal("E12: Stop must discover unrecorded sessions", err)
 	}
 	a.Run = ref
 	if err := r.Stop(t.Context(), a); err != nil {

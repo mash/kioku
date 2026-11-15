@@ -58,15 +58,11 @@ func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.Run
 }
 
 func (r *FileRunner) sessions(ctx context.Context, a runner.Attempt) ([]string, error) {
-	if a.Run.ID != "" {
-		return []string{a.Run.ID}, nil
-	}
-	if a.Run.Resources["upload_started"] != "true" {
+	if a.Run.ID == "" && a.Run.Resources["upload_started"] != "true" {
 		return nil, nil
 	}
-	return r.files.FindAttemptSessions(ctx, a.Key)
+	return discoverSessions(ctx, r.files, a)
 }
-
 func (r *FileRunner) Inspect(ctx context.Context, a runner.Attempt) (runner.Status, error) {
 	if !a.Run.UsesProviderFiles {
 		return r.Runner.Inspect(ctx, a)
@@ -75,45 +71,7 @@ func (r *FileRunner) Inspect(ctx context.Context, a runner.Attempt) (runner.Stat
 	if err != nil {
 		return runner.Status{}, err
 	}
-	if len(ids) == 0 {
-		return runner.Status{State: runner.StateNone}, nil
-	}
-	if len(ids) != 1 {
-		return runner.Status{}, errors.New("multiple Claude sessions for one attempt")
-	}
-	a.Run.ID = ids[0]
-	session, err := r.files.GetSession(ctx, a.Run.ID)
-	if isNotFound(err) {
-		return runner.Status{Run: a.Run, State: runner.StateNone}, nil
-	}
-	if err != nil {
-		return runner.Status{}, err
-	}
-	meta := session.Metadata
-	if session.ID != a.Run.ID || meta["kioku_job_id"] != a.Key.JobID || meta["kioku_attempt_id"] != a.Key.AttemptID {
-		return runner.Status{}, errors.New("Claude session does not match the generation attempt")
-	}
-	out := runner.Status{Run: a.Run}
-	if session.CostKnown {
-		out.Cost = &session.ListCostCents
-	}
-	switch session.Status {
-	case "running", "rescheduling":
-		out.State = runner.StateRunning
-	case "idle":
-		switch session.LastStopReason {
-		case "end_turn":
-			out.State = runner.StateStopped
-		case "":
-			// The end-turn event can appear shortly after the session goes idle.
-			out.State = runner.StateRunning
-		default:
-			out.State, out.Reason = runner.StateStopped, "Claude session did not finish successfully"
-		}
-	case "terminated":
-		out.State, out.Reason = runner.StateStopped, "Claude session terminated"
-	}
-	return out, nil
+	return inspectSessions(ctx, r.files, a, ids, true)
 }
 
 func (r *FileRunner) CollectOutput(ctx context.Context, a runner.Attempt, status runner.Status, limit int64) ([]byte, error) {

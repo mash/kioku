@@ -63,6 +63,7 @@ type RunSpec struct {
 }
 
 type Status struct {
+	Usage  UsageSample
 	Run    RunRef
 	State  State
 	Reason string

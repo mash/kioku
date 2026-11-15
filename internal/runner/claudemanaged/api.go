@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,6 +22,7 @@ type Client interface {
 	CreateSession(context.Context, SessionInput) (string, error)
 	GetSession(context.Context, string) (Session, error)
 	FindSessionByJob(context.Context, string, ...string) (string, error)
+	FindAttemptSessions(context.Context, runner.AttemptKey) ([]string, error)
 	Interrupt(context.Context, string) error
 	ArchiveSession(context.Context, string) error
 }
@@ -44,8 +44,7 @@ type SessionInput struct {
 }
 type Session struct {
 	ID, Status, LastStopReason string
-	ListCostCents              int64
-	CostKnown                  bool
+	Usage                      runner.UsageSample
 	Metadata                   map[string]string
 }
 
@@ -200,12 +199,7 @@ func (a *API) GetSession(ctx context.Context, id string) (Session, error) {
 		return Session{}, apiError(err)
 	}
 	s := Session{ID: v.ID, Status: string(v.Status), Metadata: v.Metadata}
-	amount := v.Usage.ListCost.Amount
-	cost, err := strconv.ParseInt(amount, 10, 64)
-	if err == nil && cost >= 0 && v.Usage.ListCost.Currency == "USD" && cost <= math.MaxInt64/20000 {
-		s.ListCostCents = cost
-		s.CostKnown = true
-	}
+	s.Usage = parseUsage(v.RawJSON())
 	var latest time.Time
 	latestID := ""
 	cursor := ""

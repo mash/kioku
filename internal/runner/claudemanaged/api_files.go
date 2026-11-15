@@ -111,7 +111,7 @@ func (a *API) FindAttemptSessions(ctx context.Context, key runner.AttemptKey) ([
 		return nil, errors.New("missing Claude attempt identity")
 	}
 	var ids []string
-	params := anthropic.BetaSessionListParams{}
+	params := anthropic.BetaSessionListParams{IncludeArchived: anthropic.Bool(true)}
 	seen := map[string]bool{}
 	for {
 		page, err := a.sdk.Sessions.List(ctx, params)

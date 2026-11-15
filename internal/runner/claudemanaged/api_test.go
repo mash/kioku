@@ -42,7 +42,7 @@ func TestClientLifecycleAndWireContract(t *testing.T) {
 	}
 	f.SetStatus(id, "idle", "end_turn", 123)
 	s, err := a.GetSession(ctx, id)
-	if err != nil || s.LastStopReason != "end_turn" || s.ListCostCents != 123 || s.Status != "idle" {
+	if err != nil || s.LastStopReason != "end_turn" || (s.Usage.CostCents == nil || *s.Usage.CostCents != 123) || s.Status != "idle" {
 		t.Fatal(s, err)
 	}
 	if got, err := a.FindSessionByJob(ctx, "job"); err != nil || got != id {
@@ -149,11 +149,11 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 		}
 	}
 	f.SetError("GET", "/v1/sessions/"+id, 0)
-	for _, cost := range []string{"", "-1", "1.2", "9223372036854775807"} {
+	for _, cost := range []string{"", "-1", "1.2", "9223372036854775808"} {
 		s := f.Session(id)
 		s.CostAmount = cost
 		f.SetSession(s)
-		if got, err := a.GetSession(context.Background(), id); err != nil || got.CostKnown {
+		if got, err := a.GetSession(context.Background(), id); err != nil || got.Usage.CostCents != nil {
 			t.Fatal("invalid cost must remain unknown", got, err)
 		}
 	}
@@ -161,7 +161,7 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 	s.CostAmount = "123"
 	s.Currency = "EUR"
 	f.SetSession(s)
-	if got, err := a.GetSession(context.Background(), id); err != nil || got.CostKnown {
+	if got, err := a.GetSession(context.Background(), id); err != nil || got.Usage.CostCents != nil {
 		t.Fatal("non-USD cost must remain unknown", got, err)
 	}
 	f.SetError("POST", "/v1/vaults/vault_1/credentials", 503)

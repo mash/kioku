@@ -108,3 +108,26 @@ func TestEncryptionKeyFileFailureDoesNotGenerateReplacement(t *testing.T) {
 		t.Fatal("used a generated key that could not be persisted")
 	}
 }
+
+func TestExistingCatalogNeverCreatesEncryptionKey(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := loadCipherForStorage(dir, "", false); err == nil {
+		t.Fatal("created replacement encryption key")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "encryption.key")); !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	if _, err := loadCipherForStorage(dir, key, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "encryption.key")); !os.IsNotExist(err) {
+		t.Fatal("explicit key copied to disk", err)
+	}
+	if _, err := loadCipherForStorage(dir, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCipherForStorage(dir, "", false); err != nil {
+		t.Fatal(err)
+	}
+}

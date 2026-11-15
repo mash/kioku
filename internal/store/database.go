@@ -17,6 +17,7 @@ import (
 // Database owns one writer and one independent, read-only snapshot connection.
 // No transaction is retained across object-store or provider operations.
 type Database struct {
+	lock   *os.File
 	writer *sql.DB
 	reader *sql.DB
 	path   string
@@ -110,6 +111,10 @@ func (d *Database) Close() error {
 	}
 	if d.writer != nil {
 		errs = append(errs, d.writer.Close())
+	}
+	if d.lock != nil {
+		errs = append(errs, d.lock.Close())
+		d.lock = nil
 	}
 	return errors.Join(errs...)
 }

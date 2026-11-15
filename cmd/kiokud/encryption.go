@@ -15,6 +15,10 @@ import (
 // loadCipher runs while the server holds the catalog lock for dataDir.
 // An explicit key takes precedence and is never copied to disk.
 func loadCipher(dataDir, explicitKey string) (*auth.Cipher, error) {
+	return loadCipherForStorage(dataDir, explicitKey, true)
+}
+
+func loadCipherForStorage(dataDir, explicitKey string, create bool) (*auth.Cipher, error) {
 	if explicitKey != "" {
 		return auth.NewCipher(explicitKey)
 	}
@@ -31,6 +35,9 @@ func loadCipher(dataDir, explicitKey string) (*auth.Cipher, error) {
 		return nil, fmt.Errorf("read encryption key: %w", err)
 	}
 
+	if !create {
+		return nil, fmt.Errorf("existing catalog encryption key is missing: restore the matching key")
+	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("generate encryption key: %w", err)

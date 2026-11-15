@@ -2,8 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -194,11 +192,7 @@ func TestWikiViewCorruptionAndRepair(t *testing.T) {
 			if err == nil {
 				t.Fatal("corrupt wiki listed")
 			}
-			r := httptest.NewRequest(http.MethodGet, "/"+p.Namespace, nil)
-			r.AddCookie(&http.Cookie{Name: "kioku_session", Value: owner})
-			w := httptest.NewRecorder()
-			f.s.Handler().ServeHTTP(w, r)
-			if w.Code != 500 {
+			if w := browserPage(t, f, "/"+p.Namespace, owner); w.Code != 500 {
 				t.Fatalf("project page = %d", w.Code)
 			}
 			var got viewDetail

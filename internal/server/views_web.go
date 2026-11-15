@@ -157,18 +157,11 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	if current.ID != p.ID {
 		return fail(404, "project not found")
 	}
-	isWiki := r.PathValue("view") == wikiViewSlug
-	var v viewDefinition
-	if isWiki {
-		var record wikiViewRecord
-		record, err = s.readWikiViewLocked(ctx, p.ID)
-		v = s.wikiViewDefinition(record, current)
-	} else {
-		v, err = s.viewBySlugLocked(ctx, p.ID, r.PathValue("view"))
-	}
+	v, err := s.viewForDisplayLocked(ctx, current, r.PathValue("view"))
 	if err != nil {
 		return err
 	}
+	isWiki := v.Slug == wikiViewSlug
 	data := struct {
 		Namespace, API, Document              string
 		View                                  viewPageItem

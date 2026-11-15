@@ -158,6 +158,19 @@ func (s *Server) wikiViewDefinition(record wikiViewRecord, project model.Project
 	return view
 }
 
+// viewForDisplayLocked returns the View that the API and Web pages show,
+// including the Wiki View, which generation never reads through this path.
+func (s *Server) viewForDisplayLocked(ctx context.Context, project model.Project, slug string) (viewDefinition, error) {
+	if slug != wikiViewSlug {
+		return s.viewBySlugLocked(ctx, project.ID, slug)
+	}
+	record, err := s.readWikiViewLocked(ctx, project.ID)
+	if err != nil {
+		return viewDefinition{}, err
+	}
+	return s.wikiViewDefinition(record, project), nil
+}
+
 func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, prompt *string) (viewDefinition, error) {
 	if title == nil && prompt == nil {
 		return viewDefinition{}, fail(400, "provide title or prompt with text")

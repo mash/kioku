@@ -71,19 +71,15 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	if err != nil {
 		return err
 	}
-	if r.PathValue("view") == wikiViewSlug {
-		record, err := s.readWikiViewLocked(r.Context(), pid)
-		if err != nil {
-			return err
-		}
-		jsonOut(w, 200, viewDetail{viewDefinition: s.wikiViewDefinition(record, project)})
-		return nil
-	}
-	view, err := s.viewBySlugLocked(r.Context(), pid, r.PathValue("view"))
+	view, err := s.viewForDisplayLocked(r.Context(), project, r.PathValue("view"))
 	if err != nil {
 		return err
 	}
-	jsonOut(w, 200, viewDetail{view, viewHasNewWiki(view, project)})
+	detail := viewDetail{viewDefinition: view}
+	if view.Slug != wikiViewSlug {
+		detail.WikiUpdatedSinceRun = viewHasNewWiki(view, project)
+	}
+	jsonOut(w, 200, detail)
 	return nil
 }
 

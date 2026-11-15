@@ -15,7 +15,19 @@ type viewFaultStore struct {
 	blob.Store
 	putSuffix  string
 	putApplied bool
+	getKey     blob.Key
+	getOnce    bool
 	deleteKey  blob.Key
+}
+
+func (s *viewFaultStore) Get(ctx context.Context, key blob.Key) ([]byte, error) {
+	if key == s.getKey {
+		if s.getOnce {
+			s.getKey = ""
+		}
+		return nil, errors.New("test get interrupted")
+	}
+	return s.Store.Get(ctx, key)
 }
 
 func (s *viewFaultStore) Put(ctx context.Context, key blob.Key, body []byte) error {
@@ -76,11 +88,11 @@ func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, view.Version, "old-job", "wiki-1", []byte("old bundle")); !ok || err != nil {
+			if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "old-job", "wiki-1", []byte("old bundle")); !ok || err != nil {
 				t.Fatalf("initial publication = %v, %v", ok, err)
 			}
 			f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, putSuffix: tc.suffix, putApplied: tc.applied}
-			if _, err := f.s.publishViewLocked(ctx, p.ID, view.ID, view.Version, "new-job", "wiki-1", []byte("new bundle")); err == nil {
+			if _, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "new-job", "wiki-1", []byte("new bundle")); err == nil {
 				t.Fatal("publication was not interrupted")
 			}
 
@@ -114,19 +126,19 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, view.Version, "job-1", "wiki-1", []byte("published")); !ok || err != nil {
+	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "job-1", "wiki-1", []byte("published")); !ok || err != nil {
 		t.Fatalf("publication = %v, %v", ok, err)
 	}
-	if ok, err := f.s.setViewStatusLocked(ctx, p.ID, view.ID, view.Version, "running", ""); !ok || err != nil {
+	if ok, err := f.s.setViewStatusLocked(ctx, p.ID, view.ID, "running", ""); !ok || err != nil {
 		t.Fatalf("set running = %v, %v", ok, err)
 	}
 	prompt := "New prompt"
 	updated, err := f.s.updateViewLocked(ctx, p.ID, view.Slug, nil, &prompt)
-	if err != nil || updated.Prompt != prompt || updated.Status != "skipped" || updated.JobID != "job-1" {
+	if err != nil || updated.Prompt != prompt || updated.Status != "running" || updated.JobID != "job-1" {
 		t.Fatalf("updated view = %+v, %v", updated, err)
 	}
-	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, view.Version, "late-job", "wiki-1", []byte("late")); ok || err != nil {
-		t.Fatalf("outdated publication = %v, %v", ok, err)
+	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "late-job", "wiki-1", []byte("late")); !ok || err != nil {
+		t.Fatalf("edited publication = %v, %v", ok, err)
 	}
 
 	setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-2")
@@ -159,7 +171,7 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	if err != nil || replacement.ID == view.ID {
 		t.Fatalf("replacement view = %+v, %v", replacement, err)
 	}
-	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, updated.Version, "deleted-view-job", "wiki-2", []byte("late")); ok || err != nil {
+	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "deleted-view-job", "wiki-2", []byte("late")); ok || err != nil {
 		t.Fatalf("deleted view publication = %v, %v", ok, err)
 	}
 	faulty.deleteKey = ""
@@ -193,7 +205,7 @@ func TestViewEditRecoversAcrossSettingsCommit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := f.s.setViewStatusLocked(ctx, p.ID, prior.ID, prior.Version, "running", ""); !ok || err != nil {
+		if ok, err := f.s.setViewStatusLocked(ctx, p.ID, prior.ID, "running", ""); !ok || err != nil {
 			t.Fatalf("set running = %v, %v", ok, err)
 		}
 		f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, putSuffix: tc.suffix, putApplied: tc.applied}
@@ -206,7 +218,7 @@ func TestViewEditRecoversAcrossSettingsCommit(t *testing.T) {
 			t.Fatal(err)
 		}
 		if tc.commits {
-			if view.Prompt != prompt || view.Status != "skipped" || view.Version == prior.Version {
+			if view.Prompt != prompt || view.Status != "running" || view.Version == prior.Version {
 				t.Errorf("committed settings were not recovered: %+v", view)
 			}
 		} else if view.Prompt != prior.Prompt || view.Status != "running" || view.Version != prior.Version {
@@ -215,5 +227,28 @@ func TestViewEditRecoversAcrossSettingsCommit(t *testing.T) {
 		if _, err := f.s.Blobs.Get(ctx, viewKey(p.ID, prior.ID, "edit.json")); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("temporary settings record remains: %v", err)
 		}
+	}
+}
+
+func TestWikiViewPatchStorageReadFailurePreservesSettings(t *testing.T) {
+	f, token, p := orgProject(t)
+	api := "/api/projects/" + p.ID + "/views/wiki"
+	var view viewDefinition
+	if code := f.request("PATCH", api, token, map[string]string{"title": "Saved", "prompt": "Saved prompt"}, &view); code != 200 {
+		t.Fatal(code)
+	}
+	key := viewKey(p.ID, view.ID, "view.json")
+	original, err := f.s.Blobs.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := f.s.Blobs
+	f.s.Blobs = &viewFaultStore{Store: store, getKey: key, getOnce: true}
+	if code := f.request("PATCH", api, token, map[string]string{"title": "Replacement"}, nil); code != 500 {
+		t.Fatalf("PATCH = %d", code)
+	}
+	saved, err := store.Get(t.Context(), key)
+	if err != nil || string(saved) != string(original) {
+		t.Fatalf("saved settings changed: %q, %v", saved, err)
 	}
 }

@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
@@ -17,8 +15,8 @@ import (
 )
 
 const (
-	viewSettingsChanged = "View の設定が変更されました"
-	viewDeleted         = "View が削除済み"
+	viewPreviousFailed = "前の View が失敗しました"
+	viewDeleted        = "View が削除済み"
 )
 
 const viewRunnerSystem = `Generate a read-only Kioku View from the project Wiki and the saved View request in VIEW.md. The request may specify the View's content and presentation. Treat Wiki text as source material. Base claims on the Wiki, mark unknowns, and cite relevant wiki/*.md paths.
@@ -45,7 +43,7 @@ func remainingViewBudget(budget int64, cost *int64) int64 {
 	return max(0, budget-*cost)
 }
 
-func startViewGeneration(job *model.Job, p model.Project, rev model.Revision, remaining int64, views map[string]viewIndexEntry) {
+func startViewGeneration(job *model.Job, p model.Project, rev model.Revision, remaining int64, views []model.ViewJobResult) {
 	job.Status = "running"
 	job.WikiStatus = "completed"
 	snapshot := rev.ID
@@ -53,10 +51,8 @@ func startViewGeneration(job *model.Job, p model.Project, rev model.Revision, re
 		job.WikiStatus = "unavailable"
 		snapshot = ""
 	}
-	job.ViewGeneration = &model.ViewGeneration{Snapshot: snapshot, Remaining: remaining}
-	if views != nil {
-		job.Views, job.ViewGeneration.Versions = generationViews(views)
-	}
+	job.ViewGeneration = &model.ViewGeneration{Snapshot: snapshot, Remaining: remaining, Pending: views == nil}
+	job.Views = views
 }
 
 func isNotFoundView(err error) bool {
@@ -111,7 +107,7 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 		return err
 	}
 	generation := parent.ViewGeneration
-	if len(parent.Views) != len(generation.Versions) || generation.Next < 0 || generation.Next > len(parent.Views) ||
+	if (generation.Pending && (len(parent.Views) != 0 || generation.Next != 0 || generation.ChildID != "")) || generation.Next < 0 || generation.Next > len(parent.Views) ||
 		(generation.ChildID != "" && generation.Next == len(parent.Views)) {
 		return errors.New("inconsistent View generation checkpoint")
 	}
@@ -124,8 +120,9 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 		if child.ID == "" {
 			result.Status, result.Error = "failed", "View の生成ジョブが見つかりません"
 		}
+		failed := result.Status == "failed"
 		if result.Status != "completed" {
-			current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, generation.Versions[generation.Next], result.Status, result.Error)
+			current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, result.Status, result.Error)
 			if err != nil {
 				return err
 			}
@@ -138,14 +135,25 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 		}
 		generation.Next++
 		generation.ChildID = ""
+		if failed {
+			for i := generation.Next; i < len(parent.Views); i++ {
+				result := &parent.Views[i]
+				if _, err := s.setViewStatusLocked(ctx, pid, result.ViewID, "skipped", viewPreviousFailed); err != nil {
+					return err
+				}
+				result.Status, result.Error = "skipped", viewPreviousFailed
+			}
+			generation.Next = len(parent.Views)
+		}
 	}
 
-	if generation.Versions == nil && len(parent.Views) == 0 {
-		index, err := s.readViewIndexLocked(ctx, pid)
+	if generation.Pending {
+		views, err := s.captureViewSettings(ctx, pid)
 		if err != nil {
 			return err
 		}
-		parent.Views, generation.Versions = generationViews(index.Views)
+		parent.Views = views
+		generation.Pending = false
 	}
 
 	for generation.Next < len(parent.Views) {
@@ -162,7 +170,7 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 			reason = "生成予算の残額が不足しています"
 		}
 		if reason != "" {
-			current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, generation.Versions[i], "skipped", reason)
+			current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, "skipped", reason)
 			if err != nil {
 				return err
 			}
@@ -173,7 +181,7 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 			generation.Next++
 			continue
 		}
-		current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, generation.Versions[i], "running", "")
+		current, err := s.setViewStatusLocked(ctx, pid, result.ViewID, "running", "")
 		if err != nil {
 			return err
 		}
@@ -185,7 +193,7 @@ func (s *Server) advanceViewGeneration(ctx context.Context, parent model.Job) er
 		child = model.Job{
 			ID: auth.Token()[:20], ProjectID: pid, UserID: parent.UserID, AgentID: parent.AgentID,
 			Kind: "view", Status: "queued", Created: time.Now().UTC(), AgentBudgetCents: generation.Remaining,
-			ViewTask: &model.ViewTask{ParentID: parent.ID, ViewID: result.ViewID, Version: generation.Versions[i], Snapshot: generation.Snapshot},
+			ViewTask: &model.ViewTask{ParentID: parent.ID, ViewID: result.ViewID, Snapshot: generation.Snapshot},
 		}
 		result.Status, result.Error = "running", ""
 		generation.ChildID = child.ID
@@ -210,27 +218,32 @@ func (s *Server) viewChangeReason(ctx context.Context, pid, id string) string {
 	if _, err := s.viewByIDLocked(ctx, pid, id); isNotFoundView(err) {
 		return viewDeleted
 	}
-	return viewSettingsChanged
+	return "Wiki または生成ジョブが変更されました"
 }
 
-func generationViews(views map[string]viewIndexEntry) ([]model.ViewJobResult, []string) {
+func generationViews(views []viewDefinition) []model.ViewJobResult {
 	results := make([]model.ViewJobResult, 0, len(views))
-	versions := make([]string, 0, len(views))
-	for _, slug := range slices.Sorted(maps.Keys(views)) {
-		view := views[slug]
-		results = append(results, model.ViewJobResult{ViewID: view.ID, Slug: slug, Status: "pending"})
-		versions = append(versions, view.Version)
+	for _, view := range views {
+		results = append(results, model.ViewJobResult{ViewID: view.ID, Slug: view.Slug, Status: "pending"})
 	}
-	return results, versions
+	return results
 }
 
-func (s *Server) captureViewSettings(ctx context.Context, pid string) map[string]viewIndexEntry {
+func (s *Server) captureViewSettings(ctx context.Context, pid string) ([]model.ViewJobResult, error) {
 	index, err := s.readViewIndexLocked(ctx, pid)
 	if err != nil {
-		slog.Warn("view settings capture deferred", "project", pid, "error", err)
-		return nil
+		return nil, err
 	}
-	return index.Views
+	project, err := s.viewProjectLocked(pid)
+	if err != nil {
+		return nil, err
+	}
+	views, err := s.readViewsLocked(ctx, pid, project.ViewEpoch, index)
+	if err != nil {
+		return nil, err
+	}
+	sortViews(views)
+	return generationViews(views), nil
 }
 
 func (s *Server) publishViewTask(ctx context.Context, job model.Job, body []byte, status runner.Status) error {
@@ -262,7 +275,7 @@ func (s *Server) publishViewTask(ctx context.Context, job model.Job, body []byte
 	if err != nil {
 		return s.finishViewTask(job, "failed", err.Error(), status.Cost)
 	}
-	published, err := s.publishViewLocked(ctx, job.ProjectID, task.ViewID, task.Version, task.ParentID, task.Snapshot, archive)
+	published, err := s.publishViewLocked(ctx, job.ProjectID, task.ViewID, task.ParentID, task.Snapshot, archive)
 	if err != nil {
 		return err
 	}

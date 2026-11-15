@@ -248,7 +248,7 @@ func TestWikiViewSurvivesIndexWritesAndCollection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, view.Version, "job", "wiki-1", []byte("bundle")); !ok || err != nil {
+		if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "job", "wiki-1", []byte("bundle")); !ok || err != nil {
 			t.Fatal(ok, err)
 		}
 		setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-2")

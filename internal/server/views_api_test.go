@@ -100,7 +100,7 @@ func TestViewDetailComparesWithFullyPublishedWiki(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, view.Version, "view-job", "wiki-1", []byte("bundle")); !ok || err != nil {
+		if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "view-job", "wiki-1", []byte("bundle")); !ok || err != nil {
 			t.Fatalf("publication = %v, %v", ok, err)
 		}
 	}()

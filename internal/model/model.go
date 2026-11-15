@@ -183,18 +183,17 @@ type ViewJobResult struct {
 
 // ViewGeneration is the private checkpoint of the parent generation job.
 type ViewGeneration struct {
-	Snapshot  string   `json:"snapshot"`
-	Versions  []string `json:"versions,omitempty"`
-	Remaining int64    `json:"remaining"`
-	Next      int      `json:"next"`
-	ChildID   string   `json:"child_id,omitempty"`
+	Snapshot  string `json:"snapshot"`
+	Pending   bool   `json:"pending,omitempty"`
+	Remaining int64  `json:"remaining"`
+	Next      int    `json:"next"`
+	ChildID   string `json:"child_id,omitempty"`
 }
 
 // ViewTask distinguishes a runner attempt from a user-visible generation job.
 type ViewTask struct {
 	ParentID string `json:"parent_id"`
 	ViewID   string `json:"view_id"`
-	Version  string `json:"version"`
 	Snapshot string `json:"snapshot"`
 }
 type State struct {

@@ -165,12 +165,16 @@ func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, pr
 	}
 	// A missing or corrupt record is replaced so the owner can repair it.
 	// Storage errors still fail, so a transient read cannot discard settings.
-	record, err := s.loadWikiViewLocked(ctx, pid, index)
-	if err != nil {
-		if _, getErr := s.Blobs.Get(ctx, viewKey(pid, index.Wiki.ID, "view.json")); getErr != nil && !viewObjectMissing(getErr) {
-			return viewDefinition{}, getErr
+	record := newWikiViewRecord(pid)
+	if index.Wiki != nil {
+		body, err := s.Blobs.Get(ctx, viewKey(pid, index.Wiki.ID, "view.json"))
+		if err != nil && !viewObjectMissing(err) {
+			return viewDefinition{}, err
 		}
-		record = newWikiViewRecord(pid)
+		var saved wikiViewRecord
+		if err == nil && json.Unmarshal(body, &saved) == nil && index.Wiki.ID == record.ID && saved.ID == record.ID && saved.Slug == record.Slug {
+			record = saved
+		}
 	}
 	prior := record
 	if title != nil {
@@ -482,9 +486,6 @@ func (v *viewDefinition) applyEdit(edit viewEdit) bool {
 		return false
 	}
 	v.Title, v.Prompt = edit.Title, edit.Prompt
-	if v.Status == "running" {
-		v.Status, v.Error = "skipped", "設定が変更された"
-	}
 	return true
 }
 
@@ -576,7 +577,7 @@ func (s *Server) deleteViewFilesLocked(ctx context.Context, pid, id string) erro
 	return nil
 }
 
-func (s *Server) setViewStatusLocked(ctx context.Context, pid, id, version, status, reason string) (bool, error) {
+func (s *Server) setViewStatusLocked(ctx context.Context, pid, id, status, reason string) (bool, error) {
 	index, err := s.readViewIndexLocked(ctx, pid)
 	if err != nil {
 		return false, err
@@ -584,9 +585,6 @@ func (s *Server) setViewStatusLocked(ctx context.Context, pid, id, version, stat
 	for slug, entry := range index.Views {
 		if entry.ID != id {
 			continue
-		}
-		if entry.Version != version {
-			return false, nil
 		}
 		view, err := s.loadViewLocked(ctx, pid, slug, entry.Epoch, entry)
 		if err != nil {
@@ -598,7 +596,7 @@ func (s *Server) setViewStatusLocked(ctx context.Context, pid, id, version, stat
 	return false, nil
 }
 
-func (s *Server) publishViewLocked(ctx context.Context, pid, id, version, jobID, wikiSnapshotID string, bundle []byte) (bool, error) {
+func (s *Server) publishViewLocked(ctx context.Context, pid, id, jobID, wikiSnapshotID string, bundle []byte) (bool, error) {
 	index, err := s.readViewIndexLocked(ctx, pid)
 	if err != nil {
 		return false, err
@@ -616,9 +614,6 @@ func (s *Server) publishViewLocked(ctx context.Context, pid, id, version, jobID,
 		}
 		if entry.Result == jobID {
 			return true, s.recoverViewPublicationLocked(ctx, pid, entry)
-		}
-		if entry.Version != version {
-			return false, nil
 		}
 		prior, err := s.loadViewLocked(ctx, pid, slug, entry.Epoch, entry)
 		if err != nil {

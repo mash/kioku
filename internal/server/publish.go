@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -167,9 +168,12 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 			}
 		}
 	}
-	var views map[string]viewIndexEntry
+	var views []model.ViewJobResult
 	if job.WikiStatus != "" {
-		views = s.captureViewSettings(ctx, job.ProjectID)
+		views, err = s.captureViewSettings(ctx, job.ProjectID)
+		if err != nil {
+			slog.Warn("view settings capture deferred", "project", job.ProjectID, "error", err)
+		}
 	}
 	err = s.Store.Update(func(st *model.State) error {
 		if err := validate(*st); err != nil {

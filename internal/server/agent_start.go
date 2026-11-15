@@ -81,20 +81,16 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	var namespace string
 	var raw string
 	var viewPrompt string
-	var views map[string]viewIndexEntry
+	var views []model.ViewJobResult
 	unlock, err := s.lockProject(ctx, job.ProjectID)
 	if err != nil {
 		return err
 	}
 	if job.ViewTask != nil {
 		view, err := s.viewByIDLocked(ctx, job.ProjectID, job.ViewTask.ViewID)
-		if isNotFoundView(err) || err == nil && view.Version != job.ViewTask.Version {
+		if isNotFoundView(err) {
 			unlock()
-			reason := viewSettingsChanged
-			if err != nil {
-				reason = viewDeleted
-			}
-			return s.finishViewTask(job, "skipped", reason, nil)
+			return s.finishViewTask(job, "skipped", viewDeleted, nil)
 		}
 		if err != nil {
 			unlock()
@@ -102,7 +98,10 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		}
 		viewPrompt = view.Prompt
 	} else if job.WikiStatus != "" {
-		views = s.captureViewSettings(ctx, job.ProjectID)
+		views, err = s.captureViewSettings(ctx, job.ProjectID)
+		if err != nil {
+			slog.Warn("view settings capture deferred", "project", job.ProjectID, "error", err)
+		}
 	}
 	err = s.Store.Update(func(st *model.State) error {
 		if err := validateGeneration(*st, job); err != nil {

@@ -1,10 +1,13 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
@@ -77,6 +80,10 @@ func completeTestViewTask(t *testing.T, f *fixture, ma *fake.Server, child model
 
 func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
+	var projectMap viewDefinition
+	if code := f.request("GET", "/api/projects/"+p.ID+"/views/project-map", token, nil, &projectMap); code != 200 {
+		t.Fatal(code)
+	}
 	createTestView(t, f, token, p, "delivery", "Show this week's open work")
 	putFile(t, f, token, p.ID, "delivery.md", "Deliver the report on Friday.")
 	parent := queueTestViewGeneration(t, f, token, p)
@@ -105,7 +112,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 		t.Fatalf("View input returned %d: %s", status, body)
 	}
 	input := readInput(t, body)
-	if input["VIEW.md"] != "Show this week's open work" || !strings.Contains(input["wiki/index.md"], "Complete Wiki") {
+	if input["VIEW.md"] != projectMap.Prompt || !strings.Contains(input["wiki/index.md"], "Complete Wiki") {
 		t.Fatal("View did not receive its prompt and completed Wiki")
 	}
 	for name := range input {
@@ -126,7 +133,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 		len(progress.Views) != 2 || progress.Views[0].Status != "running" {
 		t.Fatalf("unexpected progress %d: %+v", code, progress)
 	}
-	completeTestViewTask(t, f, ma, first, `<h1>Delivery</h1><details><summary>Open work</summary><p>Friday</p></details><a href="wiki/index.md">Wiki index</a>`, 50)
+	completeTestViewTask(t, f, ma, first, "<h1>Project overview</h1>", 50)
 	second := nextTestViewTask(t, f, parent)
 	if second.Run == nil || second.Run.BudgetCents != 50 {
 		t.Fatalf("second View did not get 50 cents: %+v", second)
@@ -134,7 +141,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	if second.Run.Ref.ID == "" || second.Run.Ref.ID == first.Run.Ref.ID || second.Run.Ref.ID == parent.Run.Ref.ID {
 		t.Fatal("the second View must have its own runner session")
 	}
-	completeTestViewTask(t, f, ma, second, "<h1>Project overview</h1>", 50)
+	completeTestViewTask(t, f, ma, second, `<h1>Delivery</h1><details><summary>Open work</summary><p>Friday</p></details><a href="wiki/index.md">Wiki index</a>`, 50)
 	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +152,8 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	}
 	if code := f.request("GET", "/api/projects/"+p.ID+"/jobs/"+parent.ID, token, nil, &job); code != 200 ||
 		job.Status != "completed" || job.WikiStatus != "completed" || len(job.Views) != 2 ||
-		job.Views[0].Slug != "delivery" || job.Views[0].Status != "completed" ||
-		job.Views[1].Slug != "project-map" || job.Views[1].Status != "completed" {
+		job.Views[0].Slug != "project-map" || job.Views[0].Status != "completed" ||
+		job.Views[1].Slug != "delivery" || job.Views[1].Status != "completed" {
 		t.Fatalf("unexpected job response %d: %+v", code, job)
 	}
 	path := "/" + p.Namespace + "/views/delivery"
@@ -309,9 +316,10 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 	}
 	completeTestViewTask(t, f, ma, child, "<h1>Stale View</h1>", 50)
 	advance(parent)
-	if v := detail(); v.Status != "skipped" || v.JobID != initial.JobID || !v.GeneratedAt.Equal(*initial.GeneratedAt) {
-		t.Fatalf("settings change should keep the previous result: %+v", v)
+	if v := detail(); v.Status != "completed" || v.JobID != parent.ID {
+		t.Fatalf("settings change should publish the result: %+v", v)
 	}
+	initial = detail()
 
 	parent = queueTestViewGeneration(t, f, token, p)
 	child = nextTestViewTask(t, f, parent)
@@ -362,5 +370,263 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 	args := map[string]any{"project": p.Namespace, "view": "project-map", "path": "summary.md"}
 	if msg := connectorTool(t, f, access, "view_read", args, nil); msg == "" {
 		t.Fatal("invalidated View summary was still accessible")
+	}
+}
+
+func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
+	for _, beforeStart := range []bool{false, true} {
+		t.Run(fmt.Sprint("before-start=", beforeStart), func(t *testing.T) {
+			f, token, p, ma := managedFixture(t)
+			putFile(t, f, token, p.ID, "source.md", "Evidence")
+			parent := queueTestViewGeneration(t, f, token, p)
+			sendOutput(t, f, ma, parent, "Wiki")
+			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
+			if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			parent = storedJob(t, f, parent.ID)
+			childID := parent.ViewGeneration.ChildID
+			var child model.Job
+			if !beforeStart {
+				child = startTestGeneration(t, f, childID)
+			}
+			api := "/api/projects/" + p.ID + "/views/project-map"
+			var edited viewDefinition
+			if code := f.request("PATCH", api, token, map[string]string{"prompt": "判断待ちを表示する"}, &edited); code != 200 || edited.Status != "running" || edited.Error != "" {
+				t.Fatalf("edit: %d %+v", code, edited)
+			}
+			if beforeStart {
+				child = startTestGeneration(t, f, childID)
+			}
+			checkPrompt := func(child model.Job, wantNew bool) {
+				t.Helper()
+				raw := ma.Credential(child.Run.Ref.Resources["vault_id"])
+				code, body := agentRequest(t, f, child, raw, "GET", "input", nil)
+				if code != 200 {
+					t.Fatalf("input: %d", code)
+				}
+				prompt := readInput(t, body)["VIEW.md"]
+				if (prompt == edited.Prompt) != wantNew || prompt == "" {
+					t.Fatalf("prompt = %q, want new = %v", prompt, wantNew)
+				}
+			}
+			checkPrompt(child, beforeStart)
+			completeTestViewTask(t, f, ma, child, "<h1>Published</h1>", 50)
+			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			parent = storedJob(t, f, parent.ID)
+			if parent.Status != "completed" || parent.Views[0].Status != "completed" {
+				t.Fatalf("parent: %+v", parent)
+			}
+			var view viewDefinition
+			if code := f.request("GET", api, token, nil, &view); code != 200 || view.Status != "completed" || view.Prompt != edited.Prompt {
+				t.Fatalf("published: %d %+v", code, view)
+			}
+			parent = queueTestViewGeneration(t, f, token, p)
+			child = nextTestViewTask(t, f, parent)
+			checkPrompt(child, true)
+		})
+	}
+}
+
+func TestViewGenerationStopsAfterFailure(t *testing.T) {
+	for _, scenario := range []string{"failed", "missing", "failed-deleted", "remaining-deleted", "skipped-deleted", "write-retry"} {
+		t.Run(scenario, func(t *testing.T) {
+			f, token, p, ma := managedFixture(t)
+			api := "/api/projects/" + p.ID + "/views/"
+			if code := f.request("DELETE", api+"project-map", token, nil, nil); code != 204 {
+				t.Fatal(code)
+			}
+			for i, slug := range []string{"a-board", "b-map", "c-list"} {
+				createTestView(t, f, token, p, slug, "Prompt")
+				view, err := f.s.viewBySlugLocked(t.Context(), p.ID, slug)
+				if err != nil {
+					t.Fatal(err)
+				}
+				created := time.Date(2026, 1, 1, 0, i, 0, 0, time.UTC)
+				view.CreatedAt = &created
+				if err := f.s.writeViewRecord(t.Context(), viewKey(p.ID, view.ID, "view.json"), view); err != nil {
+					t.Fatal(err)
+				}
+			}
+			putFile(t, f, token, p.ID, "source.md", "Evidence")
+			parent := queueTestViewGeneration(t, f, token, p)
+			sendOutput(t, f, ma, parent, "Wiki")
+			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
+			if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			child := nextTestViewTask(t, f, parent)
+			parent = storedJob(t, f, parent.ID)
+			if parent.Views[0].Slug != "a-board" {
+				t.Fatal(parent.Views)
+			}
+			if scenario == "failed-deleted" || scenario == "skipped-deleted" {
+				if code := f.request("DELETE", api+"a-board", token, nil, nil); code != 204 {
+					t.Fatal(code)
+				}
+			}
+			if scenario == "remaining-deleted" {
+				if code := f.request("DELETE", api+"b-map", token, nil, nil); code != 204 {
+					t.Fatal(code)
+				}
+			}
+			if err := f.stateStore.Update(func(st *model.State) error {
+				child.Status, child.Error = "failed", "test failure"
+				if scenario == "skipped-deleted" {
+					child.Status, child.Error = "skipped", viewDeleted
+				}
+				st.Jobs[child.ID] = child
+				if scenario == "missing" {
+					delete(st.Jobs, child.ID)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "write-retry" {
+				f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, putSuffix: string(viewKey(p.ID, parent.Views[2].ViewID, "view.json"))}
+				if err := f.s.advanceViewGeneration(t.Context(), parent); err == nil {
+					t.Fatal("expected write failure")
+				}
+				checkpoint := storedJob(t, f, parent.ID)
+				if !reflect.DeepEqual(checkpoint, parent) {
+					t.Fatalf("parent changed before all writes succeeded: %+v", checkpoint)
+				}
+			}
+			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			parent = storedJob(t, f, parent.ID)
+			if scenario == "skipped-deleted" {
+				if parent.Views[0].Error != viewDeleted || parent.Views[1].Status != "running" || parent.ViewGeneration == nil {
+					t.Fatal(parent)
+				}
+				next := startTestGeneration(t, f, parent.ViewGeneration.ChildID)
+				completeTestViewTask(t, f, ma, next, "<h1>Next</h1>", 50)
+				return
+			}
+			if parent.Status != "completed" || parent.ViewGeneration != nil {
+				t.Fatal(parent)
+			}
+			if scenario == "failed-deleted" && (parent.Views[0].Status != "skipped" || parent.Views[0].Error != viewDeleted) {
+				t.Fatal(parent.Views)
+			}
+			if scenario == "missing" && parent.Views[0].Error != "View の生成ジョブが見つかりません" {
+				t.Fatal(parent.Views)
+			}
+			for _, result := range parent.Views[1:] {
+				if result.Status != "skipped" || result.Error != viewPreviousFailed {
+					t.Fatal(result)
+				}
+				if scenario == "remaining-deleted" && result.Slug == "b-map" {
+					continue
+				}
+				var view viewDefinition
+				if code := f.request("GET", api+result.Slug, token, nil, &view); code != 200 || view.Status != "skipped" || view.Error != viewPreviousFailed {
+					t.Fatalf("view: %d %+v", code, view)
+				}
+			}
+		})
+	}
+}
+
+func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
+	for _, stage := range []string{"captured", "empty-inbox", "publish"} {
+		t.Run(stage, func(t *testing.T) {
+			f, token, p, ma := managedFixture(t)
+			api := "/api/projects/" + p.ID + "/views/"
+			if code := f.request("DELETE", api+"project-map", token, nil, nil); code != 204 {
+				t.Fatal(code)
+			}
+			for i, slug := range []string{"zeta", "alpha"} {
+				createTestView(t, f, token, p, slug, slug)
+				view, err := f.s.viewBySlugLocked(t.Context(), p.ID, slug)
+				if err != nil {
+					t.Fatal(err)
+				}
+				created := time.Date(2026, 1, 1, 0, i, 0, 0, time.UTC)
+				view.CreatedAt = &created
+				if err := f.s.writeViewRecord(t.Context(), viewKey(p.ID, view.ID, "view.json"), view); err != nil {
+					t.Fatal(err)
+				}
+			}
+			putFile(t, f, token, p.ID, "source.md", "Evidence")
+			parent := queueTestViewGeneration(t, f, token, p)
+			sendOutput(t, f, ma, parent, "Wiki")
+			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
+			if stage != "publish" {
+				if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pending := stage != "captured"
+			if pending {
+				view, err := f.s.viewBySlugLocked(t.Context(), p.ID, "alpha")
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, getKey: viewKey(p.ID, view.ID, "view.json")}
+			}
+			if stage == "publish" {
+				if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+					t.Fatal(err)
+				}
+			} else if stage == "empty-inbox" {
+				if err := f.stateStore.Update(func(st *model.State) error {
+					job := st.Jobs[parent.ID]
+					job.Status = "completed"
+					job.ViewGeneration = nil
+					st.Jobs[job.ID] = job
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				parent = queueTestViewGeneration(t, f, token, p)
+			}
+			parent = storedJob(t, f, parent.ID)
+			if parent.ViewGeneration.Pending != pending {
+				t.Fatal(parent.ViewGeneration)
+			}
+			if pending {
+				f.s.Blobs = f.s.Blobs.(*viewFaultStore).Store
+			}
+			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			parent = storedJob(t, f, parent.ID)
+			if len(parent.Views) != 2 || parent.Views[0].Slug != "zeta" || parent.Views[1].Slug != "alpha" || parent.Views[0].Status != "running" || parent.ViewGeneration.Pending {
+				t.Fatal(parent.Views)
+			}
+			child := startTestGeneration(t, f, parent.ViewGeneration.ChildID)
+			raw := ma.Credential(child.Run.Ref.Resources["vault_id"])
+			code, body := agentRequest(t, f, child, raw, "GET", "input", nil)
+			if code != 200 || readInput(t, body)["VIEW.md"] != "zeta" {
+				t.Fatalf("first child input = %d: %s", code, body)
+			}
+		})
+	}
+}
+
+func TestViewGenerationCapturedEmptyListDoesNotRecapture(t *testing.T) {
+	f, token, p, _ := managedFixture(t)
+	if code := f.request("DELETE", "/api/projects/"+p.ID+"/views/project-map", token, nil, nil); code != 204 {
+		t.Fatal(code)
+	}
+	parent := queueTestViewGeneration(t, f, token, p)
+	if parent.ViewGeneration.Pending || len(parent.Views) != 0 {
+		t.Fatal(parent)
+	}
+	createTestView(t, f, token, p, "later", "Later")
+	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+		t.Fatal(err)
+	}
+	parent = storedJob(t, f, parent.ID)
+	if parent.Status != "completed" || len(parent.Views) != 0 {
+		t.Fatal(parent)
 	}
 }

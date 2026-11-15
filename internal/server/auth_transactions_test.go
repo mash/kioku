@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -136,6 +137,81 @@ func TestAgentLoginRejectionConsumesCode(t *testing.T) {
 	})
 	expectSQLStatus(t, err, 401)
 }
+
+func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
+	d, _ := sqlAuthFixture(t)
+	now := time.UnixMilli(1000)
+	old := store.SessionRow{ID: auth.Hash("old-agent"), Kind: "agent", Status: "active", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.AgentSessionData{AgentID: sqlTestPtr("existing"), Role: sqlTestPtr("read"), Name: "connector:host"})}
+	code := store.SessionRow{ID: auth.Hash("code"), Kind: "login_code", Status: "pending", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "grant", Role: sqlTestPtr("read")})}
+	sqlWrite(t, d, func(q *store.Queries) error {
+		if err := q.PutSession(old); err != nil {
+			return err
+		}
+		if err := q.PutSession(store.SessionRow{ID: "grant", Kind: "mcp", Status: "active", UserID: "u", Expires: 2000, Data: sqlJSON(t, store.MCPData{Active: true, TokenKind: "access", ProjectIDs: []string{"p"}})}); err != nil {
+			return err
+		}
+		// Fill the kind-wide limit without hitting this project's active limit.
+		for i := range 9999 {
+			row := old
+			row.ID = "capacity-" + strconv.Itoa(i)
+			row.ProjectID = sqlTestPtr("other-project")
+			if err := q.PutSession(row); err != nil {
+				return err
+			}
+		}
+		return q.PutSession(code)
+	})
+	err := d.Write(t.Context(), func(q *store.Queries) error {
+		_, _, err := exchangeAgentLogin(q, "code", "host", "", "new", "secret", now)
+		return err
+	})
+	expectSQLStatus(t, err, 429)
+	fixtureCheck(t, d.Read(t.Context(), func(q *store.Queries) error {
+		if _, err := q.Session(code.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("rejected login did not consume its code: %v", err)
+		}
+		row, err := q.Session(old.ID)
+		if err != nil {
+			return err
+		}
+		var data store.AgentSessionData
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			return err
+		}
+		if data.RevokedAt != nil {
+			t.Fatal("capacity rejection revoked the credential it failed to replace")
+		}
+		return nil
+	}))
+	// Once capacity is available, a fresh code issues the replacement and
+	// revokes the old credential together.
+	sqlWrite(t, d, func(q *store.Queries) error {
+		if err := q.DeleteSession("capacity-0"); err != nil {
+			return err
+		}
+		return q.PutSession(code)
+	})
+	sqlWrite(t, d, func(q *store.Queries) error {
+		_, _, err := exchangeAgentLogin(q, "code", "host", "", "new", "secret", now)
+		return err
+	})
+	fixtureCheck(t, d.Read(t.Context(), func(q *store.Queries) error {
+		row, err := q.Session(old.ID)
+		if err != nil {
+			return err
+		}
+		var data store.AgentSessionData
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			return err
+		}
+		if data.RevokedAt == nil || *data.RevokedAt != now.UnixMilli() {
+			t.Fatal("successful replacement did not revoke the old credential")
+		}
+		_, err = q.Session(auth.Hash("kioku_agent.new.secret"))
+		return err
+	}))
+}
+
 func sqlOAuthRequest(now time.Time) *fosite.Request {
 	session := &connectorSession{DefaultSession: fosite.DefaultSession{Subject: "u", ExpiresAt: map[fosite.TokenType]time.Time{fosite.AuthorizeCode: now.Add(time.Minute), fosite.AccessToken: now.Add(time.Hour), fosite.RefreshToken: now.Add(24 * time.Hour)}}, ProjectIDs: []string{"p"}}
 	return &fosite.Request{ID: "family", RequestedAt: now, Client: &fosite.DefaultClient{ID: "client", Public: true, RedirectURIs: []string{"https://example.com/callback"}}, Session: session, Form: url.Values{"code_challenge": {"challenge"}, "code_challenge_method": {"S256"}}}

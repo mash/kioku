@@ -119,6 +119,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		return store.SessionRow{}, "", err
 	}
 	active := 0
+	var replaced []string
 	for _, old := range agents {
 		if old.Status != "active" || old.Expires <= now.UnixMilli() {
 			continue
@@ -131,15 +132,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 			continue
 		}
 		if old.UserID == v.UserID && a.Name == name {
-			ms := now.UnixMilli()
-			a.RevokedAt = &ms
-			old.Data, err = json.Marshal(a)
-			if err != nil {
-				return store.SessionRow{}, "", err
-			}
-			if err = q.PutSession(old); err != nil {
-				return store.SessionRow{}, "", err
-			}
+			replaced = append(replaced, old.ID)
 		} else {
 			active++
 		}
@@ -158,6 +151,11 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 			return reject(fail(429, "too many agent sessions"))
 		}
 		return store.SessionRow{}, "", err
+	}
+	for _, key := range replaced {
+		if err = revokeAgentSession(q, key, now.UnixMilli()); err != nil {
+			return store.SessionRow{}, "", err
+		}
 	}
 	return issued, resolved, nil
 }

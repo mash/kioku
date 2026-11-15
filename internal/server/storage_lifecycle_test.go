@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -310,6 +311,80 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
+	for _, cost := range []*int64{nil, sqlTestPtr(int64(40))} {
+		o, b := storageFixture(t)
+		j := storageRunning(t, o, "j")
+		j.Status = "completed"
+		j.SessionID = nullableString("deleted-session")
+		j.Data.Run.UsesProviderFiles = true
+		j.Data.Run.UploadStarted = true
+		sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
+		if err := b.Put(t.Context(), sqlJobKey(j, "input.tar.gz"), []byte("in")); err != nil {
+			t.Fatal(err)
+		}
+		status := runner.Status{State: runner.StateStopped, Usage: runner.UsageSample{CostCents: cost}}
+		if done, err := o.cleanup(t.Context(), "j", status, func(context.Context, runner.Attempt) error {
+			// The last session DELETE succeeded, but deleting its input file failed.
+			return errors.New("provider input deletion failed")
+		}); err == nil || done {
+			t.Fatal(done, err)
+		}
+		resumed := newStorageOperations(o.db, b, *o.config)
+		resumed.now = func() time.Time { return time.UnixMilli(2000) }
+		cleaned := 0
+		cleanup := func(context.Context, runner.Attempt) error { cleaned++; return nil }
+		for _, state := range []runner.State{runner.StateUnknown, runner.StateRunning} {
+			if done, err := resumed.cleanup(t.Context(), "j", runner.Status{State: state}, cleanup); err != nil || done || cleaned != 0 {
+				t.Fatalf("cleanup ignored a newly discovered session: %v %v %d", done, err, cleaned)
+			}
+		}
+		// A fresh inspection now finds no sessions. Recorded usage proves that
+		// this is resumed cleanup, rather than a not-yet-visible Start.
+		if done, err := resumed.cleanup(t.Context(), "j", runner.Status{State: runner.StateNone}, cleanup); err != nil || !done || cleaned != 1 {
+			t.Fatalf("cleanup delayed after session deletion: %v %v %d", done, err, cleaned)
+		}
+		if got := readSQLJob(t, resumed, "j"); got.InputReady || !valueBool(got.CleanupComplete) {
+			t.Fatal(got)
+		}
+		if err := o.db.Read(t.Context(), func(q *store.Queries) error {
+			u, err := q.Usage("j")
+			if (u.Data.CostCents == nil) != (cost == nil) || cost != nil && *u.Data.CostCents != *cost {
+				t.Fatalf("cleanup changed the first usage: %#v", u.Data)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCleanupLockStateDoesNotGrowWithJobHistory(t *testing.T) {
+	o, _ := storageFixture(t)
+	locks := 0
+	for i := range 32 {
+		id := strconv.Itoa(i)
+		j := storageRunning(t, o, id)
+		j.Status = "completed"
+		sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
+		unlock, err := o.lock(t.Context(), "generate:p")
+		fixtureCheck(t, err)
+		done, err := o.cleanup(t.Context(), id, runner.Status{State: runner.StateStopped}, nil)
+		unlock()
+		if err != nil || !done {
+			t.Fatal(done, err)
+		}
+		count := 0
+		o.gates.Range(func(_, _ any) bool { count++; return true })
+		if i == 0 {
+			locks = count
+		} else if count != locks {
+			t.Fatalf("completed jobs retain lock state: first=%d now=%d", locks, count)
+		}
+	}
+}
+
 func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")

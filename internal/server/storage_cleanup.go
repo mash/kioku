@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -25,15 +26,10 @@ func sqlAttempt(j store.JobRow) runner.Attempt {
 	return runner.Attempt{Key: runner.AttemptKey{JobID: j.ID, AttemptID: j.ID, ProjectID: j.ProjectID}, Run: ref}
 }
 func (o *storageOperations) cleanup(ctx context.Context, id string, status runner.Status, providerCleanup func(context.Context, runner.Attempt) error) (bool, error) {
-	// The generation gate serializes repeated cleanup, without holding a project
-	// gate or SQL transaction during provider IO.
-	release, err := o.lock(ctx, "cleanup:"+id)
-	if err != nil {
-		return false, err
-	}
-	defer release()
+	// The caller holds the project generation gate across inspection and
+	// cleanup. Provider IO holds neither the content gate nor a SQL transaction.
 	var j store.JobRow
-	if err = o.db.Read(ctx, func(q *store.Queries) error { var e error; j, e = q.Job(id); return e }); err != nil {
+	if err := o.db.Read(ctx, func(q *store.Queries) error { var e error; j, e = q.Job(id); return e }); err != nil {
 		return false, err
 	}
 	if j.Data.Run == nil || valueBool(j.CleanupComplete) {
@@ -44,10 +40,24 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 	}
 	run := j.Data.Run
 	stopped := status.State == runner.StateStopped || status.State == runner.StateNone && (o.now().UnixMilli() >= run.PreparedAt+300000 || run.UsesProviderFiles && !run.UploadStarted && run.AbortReason != nil)
+	if !stopped && status.State == runner.StateNone {
+		// Usage is committed only after stopping the attempt. A previous cleanup
+		// may have deleted its last session before a later cleanup step failed.
+		if err := o.db.Read(ctx, func(q *store.Queries) error {
+			_, err := q.Usage(id)
+			stopped = err == nil
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}); err != nil {
+			return false, err
+		}
+	}
 	if !stopped {
 		return false, nil
 	}
-	if err = o.db.Write(ctx, func(q *store.Queries) error {
+	if err := o.db.Write(ctx, func(q *store.Queries) error {
 		current, e := q.Job(id)
 		if e != nil {
 			return e
@@ -66,7 +76,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		return false, err
 	}
 	if providerCleanup != nil {
-		if err = providerCleanup(ctx, sqlAttempt(j)); err != nil {
+		if err := providerCleanup(ctx, sqlAttempt(j)); err != nil {
 			return false, err
 		}
 	}

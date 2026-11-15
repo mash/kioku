@@ -30,6 +30,54 @@ func (r *testRunner) Inspect(ctx context.Context, a runner.Attempt) (runner.Stat
 func (r *testRunner) Stop(ctx context.Context, a runner.Attempt) error    { return r.stop(ctx, a) }
 func (r *testRunner) Cleanup(ctx context.Context, a runner.Attempt) error { return r.cleanup(ctx, a) }
 
+func TestConcurrentReconcileSerializesCleanup(t *testing.T) {
+	f, token, p, _ := managedFixture(t)
+	j := startManaged(t, f, token, p.ID, true)
+	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
+		row, err := q.Job(j.ID)
+		if err != nil {
+			return err
+		}
+		row.Status = "failed"
+		return q.PutJob(row)
+	}))
+	entered, release := make(chan struct{}), make(chan struct{})
+	inspections, cleanups := 0, 0
+	f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{
+		inspect: func(context.Context, runner.Attempt) (runner.Status, error) {
+			inspections++
+			return runner.Status{State: runner.StateStopped}, nil
+		},
+		cleanup: func(ctx context.Context, _ runner.Attempt) error {
+			cleanups++
+			if cleanups == 1 {
+				close(entered)
+			}
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}})
+	done := make(chan error, 1)
+	go func() { done <- f.s.reconcileAgentJob(t.Context(), fixtureRow(j)) }()
+	<-entered
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	err := f.s.reconcileAgentJob(ctx, fixtureRow(j))
+	cancel()
+	close(release)
+	fixtureCheck(t, <-done)
+	if !errors.Is(err, context.DeadlineExceeded) || inspections != 1 || cleanups != 1 {
+		t.Fatalf("concurrent cleanup: inspections=%d cleanups=%d error=%v", inspections, cleanups, err)
+	}
+	fixtureCheck(t, f.s.reconcileAgentJob(t.Context(), fixtureRow(j)))
+	if cleanups != 1 {
+		t.Fatal("completed cleanup ran again")
+	}
+}
+
 func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 	for _, tc := range []struct {
 		name                                        string

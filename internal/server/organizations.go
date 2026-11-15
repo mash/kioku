@@ -1,15 +1,16 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func validSlug(s string) bool { return model.ValidSlug(s) }
@@ -46,73 +47,40 @@ func projectSlug(name string) string {
 	}
 	return out
 }
-func orgBySlug(st model.State, slug string) (model.Organization, bool) {
-	for _, org := range st.Organizations {
-		if org.Slug == slug {
-			return org, true
-		}
+func orgOwner(q *store.Queries, slug, uid string) (model.Organization, error) {
+	row, err := q.OrganizationBySlug(slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Organization{}, fail(404, "organization not found or owner permission required")
 	}
-	return model.Organization{}, false
-}
-func orgOwner(st model.State, slug, uid string) (model.Organization, error) {
-	org, ok := orgBySlug(st, slug)
-	if !ok || org.Members[uid] != "owner" {
-		return org, fail(404, "organization not found or owner permission required")
+	if err != nil {
+		return model.Organization{}, err
 	}
-	return org, nil
-}
-func initializeOrganizations(st *model.State) {
-	if st.Organizations == nil {
-		st.Organizations = map[string]model.Organization{}
+	role, err := q.OrganizationRole(row.ID, uid)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" {
+		return model.Organization{}, fail(404, "organization not found or owner permission required")
 	}
+	if err != nil {
+		return model.Organization{}, err
+	}
+	return organizationProjection(q, row)
 }
-func personalOrg(st *model.State, uid string) model.Organization {
-	initializeOrganizations(st)
+func personalOrg(q *store.Queries, uid string) (model.Organization, error) {
 	id := "personal-" + uid
-	if org, ok := st.Organizations[id]; ok {
-		return org
+	row, err := q.Organization(id)
+	if err == nil {
+		return organizationProjection(q, row)
 	}
-	org := model.Organization{ID: id, Slug: "u-" + auth.Hash(uid)[:12], Name: "Personal projects", Members: map[string]string{uid: "owner"}, Created: time.Now().UTC()}
-	st.Organizations[id] = org
-	return org
-}
-func (s *Server) migrateOrganizations() error {
-	return s.Store.Update(func(st *model.State) error {
-		initializeOrganizations(st)
-		for id, p := range st.Projects {
-			if p.OrgID != "" {
-				continue
-			}
-			ownerID := ""
-			owners := []string{}
-			for uid, role := range p.Members {
-				if role == "owner" {
-					owners = append(owners, uid)
-				}
-			}
-			sort.Strings(owners)
-			if len(owners) == 0 {
-				return fmt.Errorf("project %s has no owner", id)
-			}
-			ownerID = owners[0]
-			org := personalOrg(st, ownerID)
-			slug := projectSlug(p.Name)
-			for _, other := range st.Projects {
-				if other.OrgID == org.ID && other.Slug == slug {
-					if len(slug) > 54 {
-						slug = strings.TrimRight(slug[:54], "-")
-					}
-					slug = slug + "-" + auth.Hash(id)[:8]
-					break
-				}
-			}
-			p.OrgID = org.ID
-			p.Slug = slug
-			p.Namespace = org.Slug + "/" + slug
-			st.Projects[id] = p
-		}
-		return nil
-	})
+	if !errors.Is(err, sql.ErrNoRows) {
+		return model.Organization{}, err
+	}
+	row = store.OrganizationRow{ID: id, Slug: "u-" + auth.Hash(uid)[:12], Data: store.OrganizationData{Name: "Personal projects", Created: time.Now().UnixMilli()}}
+	if err = q.PutOrganization(row); err != nil {
+		return model.Organization{}, err
+	}
+	if err = q.PutOrganizationMember(id, uid, "owner"); err != nil {
+		return model.Organization{}, err
+	}
+	return organizationProjection(q, row)
 }
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid string) error {
 	var req struct {
@@ -131,79 +99,110 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 	if len(req.Name) > 100 {
 		return fail(400, "organization name exceeds 100 bytes")
 	}
-	org := model.Organization{ID: auth.Token()[:20], Slug: req.Slug, Name: req.Name, Members: map[string]string{uid: "owner"}, Created: time.Now().UTC()}
-	if err := s.Store.Update(func(st *model.State) error {
-		initializeOrganizations(st)
+	org := store.OrganizationRow{ID: auth.Token()[:20], Slug: req.Slug, Data: store.OrganizationData{Name: req.Name, Created: time.Now().UnixMilli()}}
+	if err := s.mutation(r, uid, func(q *store.Queries) error {
+		orgs, e := q.OrganizationsForUser(uid)
+		if e != nil {
+			return e
+		}
 		owned := 0
-		for _, v := range st.Organizations {
-			if v.Members[uid] == "owner" {
+		for _, o := range orgs {
+			role, e := q.OrganizationRole(o.ID, uid)
+			if e != nil && !errors.Is(e, sql.ErrNoRows) {
+				return e
+			}
+			if role == "owner" {
 				owned++
 			}
 		}
 		if owned >= 20 {
 			return fail(429, "organization ownership limit reached")
 		}
-		if _, ok := orgBySlug(*st, org.Slug); ok {
+		if _, e = q.OrganizationBySlug(req.Slug); e == nil {
 			return fail(409, "organization slug is already in use")
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return e
 		}
-		st.Organizations[org.ID] = org
-		return nil
+		if e = q.PutOrganization(org); e != nil {
+			return e
+		}
+		return q.PutOrganizationMember(org.ID, uid, "owner")
 	}); err != nil {
 		return err
 	}
-	jsonOut(w, 201, map[string]any{"id": org.ID, "slug": org.Slug, "name": org.Name})
+	jsonOut(w, 201, map[string]any{"id": org.ID, "slug": org.Slug, "name": org.Data.Name})
 	return nil
 }
 func (s *Server) organizations(w http.ResponseWriter, r *http.Request, uid string) error {
 	out := []map[string]string{}
-	if err := s.Store.View(func(st model.State) error {
-		for _, org := range st.Organizations {
-			role := org.Members[uid]
-			if role == "" {
-				for _, p := range st.Projects {
-					if p.OrgID == org.ID && p.Members[uid] != "" {
-						role = "member"
-						break
-					}
-				}
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		orgs, e := q.OrganizationsForUser(uid)
+		if e != nil {
+			return e
+		}
+		for _, org := range orgs {
+			role, e := q.OrganizationRole(org.ID, uid)
+			if errors.Is(e, sql.ErrNoRows) {
+				role = "member"
+			} else if e != nil {
+				return e
 			}
-			if role != "" {
-				out = append(out, map[string]string{"id": org.ID, "slug": org.Slug, "name": org.Name, "role": role})
-			}
+			out = append(out, map[string]string{"id": org.ID, "slug": org.Slug, "name": org.Data.Name, "role": role})
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i]["slug"] < out[j]["slug"] })
 	jsonOut(w, 200, out)
 	return nil
 }
-func namespaceProject(st model.State, orgSlug, projectSlug, uid string) (model.Project, error) {
-	org, ok := orgBySlug(st, orgSlug)
-	if ok {
-		for id, p := range st.Projects {
-			if p.OrgID == org.ID && p.Slug == projectSlug {
-				return member(st, id, uid)
-			}
-		}
+func namespaceProject(q *store.Queries, orgSlug, slug, uid string, allowDeleting ...bool) (model.Project, error) {
+	org, err := q.OrganizationBySlug(orgSlug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Project{}, fail(404, "project not found")
 	}
-	return model.Project{}, fail(404, "project not found")
+	if err != nil {
+		return model.Project{}, err
+	}
+	p, err := q.ProjectBySlug(org.ID, slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Project{}, fail(404, "project not found")
+	}
+	if err != nil {
+		return model.Project{}, err
+	}
+	if len(allowDeleting) > 0 && allowDeleting[0] {
+		role, e := q.ProjectRole(p.ID, uid)
+		if errors.Is(e, sql.ErrNoRows) || e == nil && role != "owner" {
+			return model.Project{}, fail(404, "project not found")
+		}
+		if e != nil {
+			return model.Project{}, e
+		}
+		if _, e = q.User(uid); e != nil {
+			return model.Project{}, e
+		}
+		return projectProjection(q, p)
+	}
+	projected, e := projectProjection(q, p)
+	if e != nil {
+		return projected, e
+	}
+	_, e = sqlMember(q, p.ID, uid)
+	return projected, e
 }
-
 func (s *Server) namespacePage(w http.ResponseWriter, r *http.Request, uid string) error {
-	pid := ""
-	if err := s.Store.View(func(st model.State) error {
-		p, err := namespaceProject(st, r.PathValue("org"), r.PathValue("slug"), uid)
-		pid = p.ID
-		return err
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		p, e := namespaceProject(q, r.PathValue("org"), r.PathValue("slug"), uid)
+		if e == nil {
+			r.SetPathValue("project", p.ID)
+		}
+		return e
 	}); err != nil {
 		return err
 	}
-	r.SetPathValue("project", pid)
 	return s.projectPage(w, r, uid)
 }
-
 func (s *Server) Prepare() error {
 	s.prepareOnce.Do(func() {
 		if s.Config.Prompts == nil {
@@ -214,18 +213,10 @@ func (s *Server) Prepare() error {
 			s.prepareErr = errors.New("runners are not configured")
 			return
 		}
-		if s.prepareErr = s.migrateOrganizations(); s.prepareErr != nil {
-			return
-		}
-		s.prepareErr = s.Store.Update(func(st *model.State) error {
-			for id, job := range st.Jobs {
-				if job.Status == "running" && job.Run == nil && job.ViewGeneration == nil {
-					job.Status = "queued"
-					st.Jobs[id] = job
-				}
-			}
-			return nil
-		})
+
 	})
-	return s.prepareErr
+	if s.prepareErr != nil {
+		return s.prepareErr
+	}
+	return s.Store.Read(context.Background(), func(q *store.Queries) error { return q.Healthy() })
 }

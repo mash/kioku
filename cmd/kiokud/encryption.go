@@ -12,12 +12,7 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-// loadCipher runs while the server holds the catalog lock for dataDir.
-// An explicit key takes precedence and is never copied to disk.
-func loadCipher(dataDir, explicitKey string) (*auth.Cipher, error) {
-	return loadCipherForStorage(dataDir, explicitKey, true)
-}
-
+// loadCipherForStorage runs under the catalog process lock.
 func loadCipherForStorage(dataDir, explicitKey string, create bool) (*auth.Cipher, error) {
 	if explicitKey != "" {
 		return auth.NewCipher(explicitKey)

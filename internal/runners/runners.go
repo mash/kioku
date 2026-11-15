@@ -10,8 +10,8 @@ import (
 	"github.com/mash/kioku/prompts"
 
 	execrunner "github.com/mash/kioku/internal/runner/exec"
+	"github.com/mash/kioku/internal/store"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
 	openairunner "github.com/mash/kioku/internal/runner/openai"
@@ -62,13 +62,14 @@ func Load(c Config, onExit func(string, string)) (*Set, error) {
 
 func (s *Set) Close(ctx context.Context) error { return s.execRunner.Close(ctx) }
 
-// Retired jobs must never execute with the server's credentials.
-func (s *Set) New(job model.Job) (runner.Runner, error) {
-	if job.AnthropicConnectionID != "" {
-		return nil, errors.New("BYOK has been removed; this job cannot run")
-	}
-	if job.Run != nil {
-		switch job.Run.Ref.Resources["provider"] {
+// Select the recorded provider before the configured default.
+func (s *Set) New(job store.JobRow) (runner.Runner, error) {
+	if job.Data.Run != nil {
+		provider := ""
+		if job.Data.Run.Provider != nil {
+			provider = *job.Data.Run.Provider
+		}
+		switch provider {
 		case "openai":
 			if s.openaiRunner == nil {
 				return nil, errors.New("OpenAI runner unavailable")
@@ -82,7 +83,7 @@ func (s *Set) New(job model.Job) (runner.Runner, error) {
 		}
 	}
 	if s.config.Type == "openai" {
-		if job.Run != nil && job.Run.Ref.ID != "" {
+		if job.Data.Run != nil && job.SessionID != nil {
 			return nil, errors.New("cannot use OpenAI credentials for an existing non-OpenAI run")
 		}
 		return s.openaiRunner, nil

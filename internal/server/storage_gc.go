@@ -107,19 +107,27 @@ func (o *storageOperations) collectAllGarbage(ctx context.Context) (int, error) 
 	}
 	return removed, nil
 }
-func (o *storageOperations) maintenance(ctx context.Context, project string) (int, error) {
+func (o *storageOperations) maintenance(ctx context.Context, project string, commit ...func(*store.Queries) error) (int, error) {
 	now := o.now().UnixMilli()
 	if err := o.db.Write(ctx, func(q *store.Queries) error {
 		if e := q.CompactHistory(project, &now); e != nil {
 			return e
 		}
-		return q.PruneInvites(project, now)
+		if err := q.PruneInvites(project, now); err != nil {
+			return err
+		}
+		for _, fn := range commit {
+			if err := fn(q); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		return 0, err
 	}
 	return o.collectGarbage(ctx, project)
 }
-func (o *storageOperations) deleteProject(ctx context.Context, project string, reconcile func(context.Context, store.JobRow) error) error {
+func (o *storageOperations) deleteProject(ctx context.Context, project string, reconcile func(context.Context, store.JobRow) error, authorize ...func(*store.Queries) error) error {
 	unlock, err := o.lock(ctx, project)
 	if err != nil {
 		return err
@@ -128,6 +136,11 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 		p, e := q.Project(project)
 		if e != nil {
 			return e
+		}
+		for _, fn := range authorize {
+			if err := fn(q); err != nil {
+				return err
+			}
 		}
 		p.Deleting = true
 		if e = q.PutProject(p); e != nil {
@@ -141,7 +154,7 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 			if j.Status != "running" && j.Status != "queued" {
 				continue
 			}
-			if j.Data.Run == nil {
+			if j.Data.Run == nil || j.GenerationSnapshot != nil {
 				j.Status = "failed"
 				j.Data.Error = nullableString("project deleted")
 				if e = q.ReleaseInbox(project, j.ID); e != nil {
@@ -193,9 +206,15 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 	}); err != nil {
 		return err
 	}
-	keys, err := o.objects.List(ctx, "projects/"+project+"/")
+	prefix := "projects/" + project + "/"
+	keys, err := o.objects.List(ctx, prefix)
 	if err != nil {
 		return err
+	}
+	for _, key := range keys {
+		if !strings.HasPrefix(string(key), prefix) || !blob.ValidKey(key) {
+			return errors.New("invalid project listing")
+		}
 	}
 	for _, key := range keys {
 		if err = o.objects.Delete(ctx, key); err != nil {

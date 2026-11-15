@@ -122,9 +122,9 @@ func TestMigrationViewInitializationDistinguishesAbsentAndEmptyIndex(t *testing.
 			defer d.Close()
 			if e = d.Read(t.Context(), func(q *Queries) error {
 				v, e := q.ProjectViews("p")
-				want := 1
+				want := 0 // E8: no Wiki row until its first PATCH.
 				if which == "absent" {
-					want = 2
+					want = 1
 				}
 				if len(v) != want {
 					t.Fatal(v)

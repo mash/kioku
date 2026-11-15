@@ -82,7 +82,7 @@ func TestLifecycle(t *testing.T) {
 	}
 	a := runner.Attempt{Key: spec().Key, Run: ref}
 	status, err := r.Inspect(t.Context(), a)
-	if err != nil || status.State != runner.StateStopped || status.Cost != nil {
+	if err != nil || status.State != runner.StateStopped || status.Usage.CostCents != nil {
 		t.Fatal(status, err)
 	}
 	if err = r.Stop(t.Context(), a); err != nil {

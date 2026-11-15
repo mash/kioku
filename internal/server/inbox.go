@@ -11,6 +11,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
+	"github.com/mash/kioku/internal/store"
 )
 
 const maxPutBytes = 1 << 20
@@ -41,7 +42,7 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	return nil
 }
 
-func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest) error {
+func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest, hooks ...mutationHook) error {
 	item := model.InboxItem{ID: auth.Token()[:20], ProjectID: pid, Submitter: uid, Created: time.Now().UTC()}
 	encoded, err := json.Marshal(req)
 	if err != nil {
@@ -66,51 +67,9 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 	default:
 		return fail(400, "provide one file, or remove: true with source_url; put source_url and updated_at in the file frontmatter; the source_url argument is only for remove")
 	}
-	unlock, err := s.lockProject(ctx, pid)
-	if err != nil {
-		return err
+	if r, ok := ctx.Value(mutationRequestKey{}).(*http.Request); ok {
+		identity, _ := r.Context().Value(authContextKey{}).(requestIdentity)
+		hooks = append(hooks, mutationHook{check: func(q *store.Queries) error { return s.checkMutation(q, r, identity.principal.UserID, pid) }, audit: func(q *store.Queries) error { return s.auditMutation(q, r, uid, pid) }})
 	}
-	defer unlock()
-	check := func(st model.State) error {
-		p, err := member(st, pid, uid)
-		if err != nil {
-			return err
-		}
-		if !item.Remove && st.Revisions[p.Revision].StoredBytes > s.Config.MaxWikiBytes {
-			return fail(413, "published wiki exceeds max-wiki-bytes; remove sources first")
-		}
-		count := 0
-		for _, v := range st.Inbox {
-			if v.ProjectID == pid && !(v.RunID == "" && v.SourceURL == item.SourceURL) {
-				count++
-			}
-		}
-		if count >= maxInboxItems {
-			return fail(429, "project inbox is full")
-		}
-		return nil
-	}
-	if err = s.Store.View(check); err != nil {
-		return err
-	}
-	if !item.Remove {
-		if err = s.Blobs.Put(ctx, item.BodyKey(), []byte(body)); err != nil {
-			return err
-		}
-	}
-	return s.Store.Update(func(st *model.State) error {
-		if err := check(*st); err != nil {
-			return err
-		}
-		for id, v := range st.Inbox {
-			if v.ProjectID == pid && v.RunID == "" && v.SourceURL == item.SourceURL {
-				delete(st.Inbox, id)
-			}
-		}
-		st.Inbox[item.ID] = item
-		p := st.Projects[pid]
-		p.NextGenerateAt = time.Now().UTC().Add(s.Config.GenerateDebounce)
-		st.Projects[pid] = p
-		return nil
-	})
+	return s.storage.putInbox(ctx, store.InboxRow{ID: item.ID, ProjectID: pid, SourceURL: item.SourceURL, Remove: item.Remove, Created: item.Created.UnixMilli(), Data: store.InboxData{Submitter: uid}}, []byte(body), hooks...)
 }

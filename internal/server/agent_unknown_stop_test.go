@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/runner"
-
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestUnknownCostFailureStillStopsSessionAfterRecovery(t *testing.T) {
@@ -20,14 +19,14 @@ func TestUnknownCostFailureStillStopsSessionAfterRecovery(t *testing.T) {
 	ma.SetError("POST", path+"/events", 503)
 	ma.SetError("GET", path, 503)
 	ma.SetError("POST", path+"/archive", 503)
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
 		x.Created = time.Now().Add(-31 * 24 * time.Hour)
-		st.Jobs[x.ID] = x
+		fixtureJobsPut(t, st, x.ID, x)
 		return nil
 	})
-	if err := f.s.reconcileAgentJob(context.Background(), j); err != nil && !errors.Is(err, runner.ErrTemporary) {
+	if err := f.s.reconcileAgentJob(context.Background(), fixtureRow(j)); err != nil && !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
 	j = storedJob(t, f, j.ID)

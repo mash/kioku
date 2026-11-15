@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"golang.org/x/net/html"
 )
 
@@ -85,9 +86,9 @@ func connectorAuthCode(t *testing.T, f *fixture, client, human string, projectID
 	}
 	action, fields, options := consentControls(t, page)
 	projectIDs = append([]string(nil), projectIDs...)
-	_ = f.stateStore.View(func(st model.State) error {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 		for i, id := range projectIDs {
-			if p, ok := st.Projects[id]; ok {
+			if p, ok := fixtureProjectsFind(t, st, id); ok {
 				projectIDs[i] = p.Namespace
 			}
 		}
@@ -250,16 +251,20 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &tokens) != nil || tokens.Refresh == "" {
 		t.Fatal("initial exchange failed")
 	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		grant := st.OAuthTokens[auth.Hash(tokens.Refresh)]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		grant := fixtureOAuthTokensGet(t, st, auth.Hash(tokens.Refresh))
 		grant.Kind, grant.Expires = "access", time.Now().Add(time.Hour)
 		// These unrelated grants only occupy capacity; their Fosite request bodies
-		// are never read. Avoid serializing 20,000 copies of the real request on
+		// are never read. Avoid serializing 10,000 copies of the real request on
 		// every database transaction, while keeping the real refresh grant intact.
 		grant.Request = nil
-		for i := 0; len(st.OAuthTokens) < 20000; i++ {
+		count, err := st.KindSessions("mcp")
+		if err != nil {
+			return err
+		}
+		for i := 0; i < 10000-len(count); i++ {
 			grant.RequestID = "capacity-test-" + strconv.Itoa(i)
-			st.OAuthTokens[auth.Hash("capacity-test-"+strconv.Itoa(i))] = grant
+			fixtureOAuthTokensPut(t, st, auth.Hash("capacity-test-"+strconv.Itoa(i)), grant)
 		}
 		return nil
 	}); err != nil {
@@ -270,7 +275,10 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 	if response.Code != 503 || !strings.Contains(response.Body.String(), "temporarily_unavailable") {
 		t.Fatal("expected capacity failure", response.Code)
 	}
-	if err := f.stateStore.Update(func(st *model.State) error { delete(st.OAuthTokens, auth.Hash("capacity-test-0")); return nil }); err != nil {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		fixtureOAuthTokensDelete(t, st, auth.Hash("capacity-test-0"))
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if response = connectorForm(f, "POST", "/oauth/token", "", form); response.Code != 200 {

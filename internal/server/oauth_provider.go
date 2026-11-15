@@ -1,10 +1,11 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/ory/fosite"
 )
 
@@ -104,36 +106,29 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request, _ string)
 			return fail(400, "unsupported response type")
 		}
 	}
-	client := model.OAuthClient{ID: auth.Token(), Name: req.Name, RedirectURIs: req.RedirectURIs, Created: time.Now().UTC()}
-	if err := s.Store.Update(func(st *model.State) error {
-		prune(st)
-		if len(st.OAuthClients) >= 10000 {
-			return fail(429, "too many OAuth clients")
+	client := store.OAuthClientRow{ClientID: auth.Token(), Data: store.OAuthClientData{ClientName: req.Name, RedirectURIs: req.RedirectURIs, Created: time.Now().UnixMilli()}}
+	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
+			return err
 		}
-		st.OAuthClients[client.ID] = client
-		return nil
+		return q.InsertOAuthClient(client)
 	}); err != nil {
 		return err
 	}
-	jsonOut(w, 201, map[string]any{"client_id": client.ID, "client_name": client.Name, "redirect_uris": client.RedirectURIs, "token_endpoint_auth_method": "none", "grant_types": []string{"authorization_code", "refresh_token"}, "response_types": []string{"code"}, "scope": connectorScope})
+	jsonOut(w, 201, map[string]any{"client_id": client.ClientID, "client_name": client.Data.ClientName, "redirect_uris": client.Data.RedirectURIs, "token_endpoint_auth_method": "none", "grant_types": []string{"authorization_code", "refresh_token"}, "response_types": []string{"code"}, "scope": connectorScope})
 	return nil
 }
 
-func (s *Server) browserSession(r *http.Request) (string, model.Session) {
-	cookie, err := r.Cookie("kioku_session")
-	if err != nil {
-		return "", model.Session{}
+func (s *Server) browserSession(r *http.Request) (string, authenticatedSession, error) {
+	copy := r.Clone(r.Context())
+	copy.Header = copy.Header.Clone()
+	copy.Header.Del("Authorization")
+	copy = copy.WithContext(context.WithValue(copy.Context(), authContextKey{}, struct{}{}))
+	key, session, err := s.session(copy)
+	if session.AgentID != "" {
+		session = authenticatedSession{}
 	}
-	key := auth.Hash(cookie.Value)
-	var session model.Session
-	_ = s.Store.View(func(st model.State) error {
-		value, ok := st.Sessions[key]
-		if _, exists := st.Users[value.UserID]; ok && exists && value.AgentID == "" && value.Expires.After(time.Now()) {
-			session = value
-		}
-		return nil
-	})
-	return key, session
+	return key, session, err
 }
 
 // Resource indicators are an MCP adapter around Fosite's audience handling.
@@ -149,8 +144,8 @@ func (s *Server) oauthResource(form url.Values) error {
 	return nil
 }
 
-func (s *Server) authorizationRequest(r *http.Request) (model.OAuthClient, error) {
-	var client model.OAuthClient
+func (s *Server) authorizationRequest(r *http.Request) (store.OAuthClientRow, error) {
+	var client store.OAuthClientRow
 	if err := s.oauthResource(r.Form); err != nil {
 		return client, err
 	}
@@ -162,14 +157,14 @@ func (s *Server) authorizationRequest(r *http.Request) (model.OAuthClient, error
 	if !validChallenge(r.Form.Get("code_challenge")) || r.Form.Get("code_challenge_method") != "S256" {
 		return client, fosite.ErrInvalidRequest
 	}
-	err := s.Store.View(func(st model.State) error {
-		provider, _ := s.connectorOAuth(&st)
+	err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		provider, _ := newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
 		request, err := provider.NewAuthorizeRequest(r.Context(), r)
 		if err != nil {
 			return err
 		}
-		client = st.OAuthClients[request.GetClient().GetID()]
-		return nil
+		client, err = q.OAuthClient(request.GetClient().GetID())
+		return err
 	})
 	return client, err
 }
@@ -201,7 +196,10 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	if callbackOrigin == "" {
 		return fail(400, "invalid redirect URI")
 	}
-	key, session := s.browserSession(r)
+	key, session, err := s.browserSession(r)
+	if err != nil {
+		return err
+	}
 	if session.UserID == "" {
 		if r.Method == "POST" {
 			return fail(401, "browser login required")
@@ -228,13 +226,26 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 		data := struct {
 			UserID, Email, Name, Action, CallbackOrigin, Problem string
 			Projects                                             []model.Project
-		}{UserID: session.UserID, Name: client.Name, Action: "/oauth/authorize?" + r.Form.Encode(), CallbackOrigin: callbackOrigin}
-		if err := s.Store.View(func(st model.State) error {
-			data.Email = st.Users[session.UserID].Email
-			for _, p := range st.Projects {
-				if p.Members[session.UserID] != "" && !p.Deleting {
-					data.Projects = append(data.Projects, p)
+		}{UserID: session.UserID, Name: client.Data.ClientName, Action: "/oauth/authorize?" + r.Form.Encode(), CallbackOrigin: callbackOrigin}
+		if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+			u, err := q.User(session.UserID)
+			if err != nil {
+				return err
+			}
+			data.Email = u.Email
+			rows, err := q.ProjectsForUser(session.UserID)
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				if row.Deleting {
+					continue
 				}
+				p, err := projectProjection(q, row)
+				if err != nil {
+					return err
+				}
+				data.Projects = append(data.Projects, p)
 			}
 			return nil
 		}); err != nil {
@@ -260,10 +271,15 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	var provider fosite.OAuth2Provider
 	var request fosite.AuthorizeRequester
 	var response fosite.AuthorizeResponder
-	if err := s.Store.Update(func(st *model.State) error {
-		prune(st)
-		current, ok := st.Sessions[key]
-		if !ok || current.UserID != session.UserID || !current.Expires.After(time.Now()) {
+	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
+			return err
+		}
+		current, err := q.Session(key)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err != nil || current.Kind != "web" || current.Status != "active" || current.UserID != session.UserID || current.Expires <= time.Now().UnixMilli() {
 			return fail(401, "browser session expired")
 		}
 		slices.Sort(namespaces)
@@ -274,13 +290,13 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 			if len(parts) != 2 {
 				return fail(400, "selected project is unavailable; reopen the consent page")
 			}
-			project, err := namespaceProject(*st, parts[0], parts[1], current.UserID)
+			project, err := namespaceProject(q, parts[0], parts[1], current.UserID)
 			if err != nil {
 				return fail(400, "selected project is unavailable; reopen the consent page")
 			}
 			projectIDs[i] = project.ID
 		}
-		provider, _ = s.connectorOAuth(st)
+		provider, _ = newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
 		request, err = provider.NewAuthorizeRequest(r.Context(), r)
 		if err != nil {
 			return err
@@ -312,13 +328,12 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 	var request fosite.AccessRequester
 	var response fosite.AccessResponder
 	var problem error
-	err := s.Store.Update(func(st *model.State) error {
-		prune(st)
-		var storage *oauthStorage
-		provider, storage = s.connectorOAuth(st)
-		// On ordinary errors roll back every partial Fosite mutation. Replay errors
-		// must instead commit family revocation, even though the HTTP request fails.
-		codes, tokens := maps.Clone(st.OAuthCodes), maps.Clone(st.OAuthTokens)
+	err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
+			return err
+		}
+		var adapter *oauthSQL
+		provider, adapter = newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
 		problem = s.oauthResource(r.PostForm)
 		if problem == nil {
 			request, problem = provider.NewAccessRequest(r.Context(), r, &connectorSession{})
@@ -326,16 +341,19 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 		if problem == nil {
 			response, problem = provider.NewAccessResponse(r.Context(), request)
 		}
-		if problem != nil && !storage.replay {
-			st.OAuthCodes, st.OAuthTokens = codes, tokens
+		if adapter.failure != nil {
+			return adapter.failure
 		}
-		if errors.Is(problem, errOAuthCapacity) {
-			problem = fosite.ErrTemporarilyUnavailable
+		if problem != nil && adapter.replay {
+			return store.RejectAfterCommit(problem)
 		}
-		return nil
+		return problem
 	})
-	if err != nil {
-		return err
+	if err != nil && (problem == nil || !errors.Is(err, problem)) {
+		return s.resolveExchange(r.Context(), err, 400)
+	}
+	if errors.Is(problem, store.ErrSessionCapacity) {
+		problem = fosite.ErrTemporarilyUnavailable
 	}
 	if problem != nil {
 		provider.WriteAccessError(r.Context(), w, request, problem)

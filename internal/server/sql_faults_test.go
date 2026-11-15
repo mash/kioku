@@ -1,0 +1,30 @@
+package server
+
+import (
+	"database/sql"
+	"sync"
+	"testing"
+)
+
+var fixtureDatabasePaths sync.Map
+
+func fixtureSQL(t testing.TB, f *fixture, statement string) {
+	t.Helper()
+	path, ok := fixtureDatabasePaths.Load(f.stateStore)
+	if !ok {
+		t.Fatal("fixture database path missing")
+	}
+	db, err := sql.Open("sqlite", path.(string))
+	fixtureCheck(t, err)
+	defer db.Close()
+	_, err = db.Exec(statement)
+	fixtureCheck(t, err)
+}
+func fixtureSQLFault(t testing.TB, f *fixture, table, event, condition string) func() {
+	t.Helper()
+	fixtureSQL(t, f, "CREATE TRIGGER fixture_failure BEFORE "+event+" ON "+table+" WHEN "+condition+" BEGIN SELECT RAISE(ABORT,'injected SQL failure'); END")
+	var once sync.Once
+	restore := func() { once.Do(func() { fixtureSQL(t, f, "DROP TRIGGER fixture_failure") }) }
+	t.Cleanup(restore)
+	return restore
+}

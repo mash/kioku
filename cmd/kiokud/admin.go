@@ -17,7 +17,7 @@ import (
 )
 
 // Online backups are operator-only. No public HTTP route exposes account data.
-func serveAdmin(ctx context.Context, path string, stateStore *store.Store) (func(), error) {
+func serveAdmin(ctx context.Context, path string, stateStore *store.Database) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}

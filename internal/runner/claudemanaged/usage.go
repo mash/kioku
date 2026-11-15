@@ -128,7 +128,6 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 		out.State = runner.StateNone
 	}
 	out.Usage = runner.SumUsage(samples)
-	out.Cost = out.Usage.CostCents
 	if len(ids) > 1 {
 		out.Reason = "multiple Claude sessions for one attempt"
 		out.Failed = true

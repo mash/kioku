@@ -15,7 +15,6 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/cli"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
@@ -24,7 +23,7 @@ import (
 
 func TestCLIFullWorkflow(t *testing.T) {
 	data := t.TempDir()
-	stateStore, err := store.Open(data)
+	stateStore, err := store.OpenDatabase(filepath.Join(data, "catalog.sqlite"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +75,18 @@ func TestCLIFullWorkflow(t *testing.T) {
 	}
 	// Authentication is seeded only in this test, never through a server route.
 	token := auth.Token()
-	if err = stateStore.Update(func(st *model.State) error {
-		st.Users["test-user"] = model.User{ID: "test-user", Name: "Alice", Email: "alice@example.com", Identities: map[string]string{"test": "alice"}}
-		st.Sessions[auth.Hash(token)] = model.Session{UserID: "test-user", Expires: time.Now().Add(time.Hour)}
-		return nil
+	if err = stateStore.Write(t.Context(), func(q *store.Queries) error {
+		if e := q.PutUser(store.UserRow{ID: "test-user", Email: "alice@example.com", Data: store.UserData{Name: "Alice"}}); e != nil {
+			return e
+		}
+		if e := q.PutIdentity("test-user", "test", "alice"); e != nil {
+			return e
+		}
+		raw, e := json.Marshal(store.IdentitySessionData{})
+		if e != nil {
+			return e
+		}
+		return q.PutSession(store.SessionRow{ID: auth.Hash(token), Kind: "cli", Status: "active", UserID: "test-user", Expires: time.Now().Add(time.Hour).UnixMilli(), Data: raw})
 	}); err != nil {
 		t.Fatal(err)
 	}

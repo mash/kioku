@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
-func securityProject(t *testing.T, f *fixture, token string) model.Project {
+func securityProject(t *testing.T, f *fixture, token string) fixtureProject {
 	t.Helper()
-	var p model.Project
+	var p fixtureProject
 	if c := f.request("POST", "/api/projects", token, map[string]string{"name": "Security regression"}, &p); c != 201 {
 		t.Fatal(c)
 	}
@@ -46,11 +46,11 @@ func TestEmailInviteUsesCurrentProviderProof(t *testing.T) {
 	if c := f.request("POST", "/api/join", token, map[string]string{"token": invite.URL}, nil); c != 403 {
 		t.Fatalf("stale email invitation accepted: %d", c)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Projects[p.ID].Members[user.ID] != "" {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureProjectsGet(t, st, p.ID).Members[user.ID] != "" {
 			t.Error("unauthorized membership")
 		}
-		if st.Users[user.ID].Email != "new@elsewhere.example" {
+		if fixtureUsersGet(t, st, user.ID).Email != "new@elsewhere.example" {
 			t.Error("profile email was not refreshed")
 		}
 		return nil
@@ -73,11 +73,11 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 			f.request("POST", "/api/projects/"+p.Namespace+"/invites", owner, map[string]string{"email": "member@example.com"}, &invite)
 			expected := 502
 			if mode == "legacy session" {
-				if err := f.stateStore.Update(func(st *model.State) error {
-					for k, v := range st.Sessions {
-						if st.Users[v.UserID].Email == "member@example.com" {
-							v.IdentityCredential = ""
-							st.Sessions[k] = v
+				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					for k, v := range fixtureSessionsList(t, st) {
+						if fixtureUsersGet(t, st, v.UserID).Email == "member@example.com" {
+							v.IdentityAccessToken = ""
+							fixtureSessionsPut(t, st, k, v)
 						}
 					}
 					return nil
@@ -105,8 +105,8 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 			if c := f.request("POST", "/api/join", token, map[string]string{"token": invite.URL}, nil); c != expected {
 				t.Fatal(mode, c)
 			}
-			_ = f.stateStore.View(func(st model.State) error {
-				for _, inv := range st.Invites {
+			_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				for _, inv := range fixtureInvitesList(t, st) {
 					if inv.ProjectID == p.ID && inv.UsedBy != "" {
 						t.Error("failed verification consumed invite")
 					}
@@ -235,11 +235,11 @@ func TestSlowHTTPResponseDoesNotHoldDatabaseMutex(t *testing.T) {
 	<-w.started
 	database := make(chan error, 1)
 	go func() {
-		database <- f.stateStore.Update(func(st *model.State) error {
-			u := st.Users
+		database <- f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+			u := fixtureUsersList(t, st)
 			for id, user := range u {
 				user.Name = "Updated while response is blocked"
-				st.Users[id] = user
+				fixtureUsersPut(t, st, id, user)
 			}
 			return nil
 		})

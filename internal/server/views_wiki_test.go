@@ -1,14 +1,17 @@
 package server
 
 import (
-	"encoding/json"
+	"context"
+	"database/sql"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -23,14 +26,14 @@ func TestWikiViewDetail(t *testing.T) {
 		{"unpublished", false, false}, {"published", true, false}, {"incomplete", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := f.stateStore.Update(func(st *model.State) error {
-				project := st.Projects[p.ID]
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				project := fixtureProjectsGet(t, st, p.ID)
 				project.WikiUpdatedAt = time.Time{}
 				if tc.published {
 					project.WikiUpdatedAt = updated
 				}
 				project.WikiIncomplete = tc.incomplete
-				st.Projects[p.ID] = project
+				fixtureProjectsPut(t, st, p.ID, project)
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -54,7 +57,6 @@ func TestWikiViewDetail(t *testing.T) {
 func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 	f, owner, p := orgProject(t)
 	path := "/api/projects/" + p.ID + "/views"
-	ctx := t.Context()
 	id := newWikiViewRecord(p.ID).ID
 	patch := func(body any) viewDetail {
 		t.Helper()
@@ -80,12 +82,9 @@ func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 	if got := patch(map[string]string{"title": "Notes"}); got.Title != "Notes" || got.Prompt != prompts.DefaultWikiPrompt() {
 		t.Fatalf("title-only = %+v", got)
 	}
-	var disk map[string]any
-	if err := f.s.readViewRecord(ctx, viewKey(p.ID, id, "view.json"), &disk); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(disk, map[string]any{"view_id": id, "slug": "wiki", "title": "Notes"}) {
-		t.Fatalf("title-only record = %v", disk)
+	row := fixtureViewRow(t, f, p.ID, id)
+	if row.CreatedAt != nil || row.BundleHash != nil || row.ViewEpoch != nil || valueString(row.Data.Title) != "Notes" || row.Data.Prompt != nil {
+		t.Fatal(row)
 	}
 	if got := patch(map[string]string{"prompt": "Saved"}); got.Title != "Notes" || got.Prompt != "Saved" {
 		t.Fatal(got)
@@ -96,30 +95,10 @@ func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 	if got := patch(map[string]string{"title": "Both", "prompt": "Both prompt"}); got.Title != "Both" || got.Prompt != "Both prompt" {
 		t.Fatal(got)
 	}
-	disk = nil
-	if err := f.s.readViewRecord(ctx, viewKey(p.ID, id, "view.json"), &disk); err != nil {
-		t.Fatal(err)
-	}
-	if len(disk) != 4 {
-		t.Fatalf("unexpected record fields: %v", disk)
-	}
-	var index struct {
-		Views map[string]map[string]any `json:"views"`
-	}
-	if err := f.s.readViewRecord(ctx, viewsKey(p.ID, "index.json"), &index); err != nil {
-		t.Fatal(err)
-	}
-	if entry := index.Views["wiki"]; len(entry) != 2 || entry["id"] != id || entry["settings_generation"] == "" {
-		t.Fatalf("index = %v", index)
-	}
-	before, err := f.s.Blobs.Get(ctx, viewsKey(p.ID, "index.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := fixtureViewRow(t, f, p.ID, id)
 	checkError("DELETE", "/wiki", owner, nil, 409, "the wiki view cannot be deleted")
-	after, err := f.s.Blobs.Get(ctx, viewsKey(p.ID, "index.json"))
-	if err != nil || string(before) != string(after) {
-		t.Fatal("delete changed index", err)
+	if after := fixtureViewRow(t, f, p.ID, id); !reflect.DeepEqual(before, after) {
+		t.Fatal("delete changed settings", after)
 	}
 	var created viewDefinition
 	if code := f.request("POST", path, owner, map[string]string{"title": "Wiki", "prompt": "x"}, &created); code != 201 || !strings.HasPrefix(created.Slug, "view-") || created.CreatedAt == nil {
@@ -130,10 +109,10 @@ func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 func TestWikiViewAuthorization(t *testing.T) {
 	f, owner, p := orgProject(t)
 	reader := f.login("wiki-reader@example.com")
-	if err := f.stateStore.Update(func(st *model.State) error {
-		project := st.Projects[p.ID]
-		project.Members[st.Sessions[auth.Hash(reader)].UserID] = "member"
-		st.Projects[p.ID] = project
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		project := fixtureProjectsGet(t, st, p.ID)
+		project.Members[fixtureSessionsGet(t, st, auth.Hash(reader)).UserID] = "member"
+		fixtureProjectsPut(t, st, p.ID, project)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -161,117 +140,37 @@ func TestWikiViewAuthorization(t *testing.T) {
 	}
 }
 
-func TestWikiViewCorruptionAndRepair(t *testing.T) {
-	for _, body := range []string{"broken", `{"view_id":"wrong","slug":"wiki"}`, `{"view_id":"id","slug":"wrong"}`, "null", ""} {
-		t.Run(body, func(t *testing.T) {
-			f, owner, p := orgProject(t)
-			ctx := t.Context()
-			path := "/api/projects/" + p.ID + "/views/wiki"
-			if code := f.request("PATCH", path, owner, map[string]string{"prompt": "Old"}, nil); code != 200 {
-				t.Fatal(code)
-			}
-			key := viewKey(p.ID, newWikiViewRecord(p.ID).ID, "view.json")
-			if body == "" {
-				if err := f.s.Blobs.Delete(ctx, key); err != nil {
-					t.Fatal(err)
-				}
-			} else if err := f.s.Blobs.Put(ctx, key, []byte(body)); err != nil {
-				t.Fatal(err)
-			}
-			if code := f.request("GET", path, owner, nil, nil); code != 500 {
-				t.Fatal(code)
-			}
-			unlock, err := f.s.lockProject(ctx, p.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = f.s.listViewsLocked(ctx, p.ID)
-			unlock()
-			if err == nil {
-				t.Fatal("corrupt wiki listed")
-			}
-			if w := browserPage(t, f, "/"+p.Namespace, owner); w.Code != 500 {
-				t.Fatalf("project page = %d", w.Code)
-			}
-			var got viewDetail
-			if code := f.request("PATCH", path, owner, map[string]string{"title": "Repaired"}, &got); code != 200 || got.Prompt != prompts.DefaultWikiPrompt() {
-				t.Fatal(code, got)
-			}
-			if code := f.request("GET", path, owner, nil, nil); code != 200 {
-				t.Fatal(code)
-			}
-			if err := f.s.Blobs.Put(ctx, viewsKey(p.ID, "index.json"), []byte("broken")); err != nil {
-				t.Fatal(err)
-			}
-			for _, method := range []string{"GET", "PATCH"} {
-				if code := f.request(method, path, owner, map[string]string{"prompt": "x"}, nil); code != 500 {
-					t.Fatalf("bad index %s = %d", method, code)
-				}
-			}
-		})
-	}
-}
-
-func TestWikiViewSurvivesIndexWritesAndCollection(t *testing.T) {
+// E8: Wiki settings are optional SQL rows; obsolete object records are never read.
+func TestWikiViewDoesNotReadObsoleteRecords(t *testing.T) {
 	f, owner, p := orgProject(t)
-	ctx := t.Context()
-	path := "/api/projects/" + p.ID + "/views"
-	if code := f.request("PATCH", path+"/wiki", owner, map[string]string{"prompt": "Keep me"}, nil); code != 200 {
-		t.Fatal(code)
+	api := "/api/projects/" + p.ID + "/views/wiki"
+	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		_, err := q.ViewBySlug(p.ID, "wiki")
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal("unexpected settings row", err)
+		}
+		return nil
+	}))
+	for _, key := range []blob.Key{viewsKey(p.ID, "index.json"), viewKey(p.ID, newWikiViewRecord(p.ID).ID, "view.json")} {
+		fixtureCheck(t, f.s.Blobs.Put(t.Context(), key, []byte("broken")))
 	}
-	if code := f.request("POST", path, owner, map[string]string{"slug": "temporary", "title": "Temp", "prompt": "x"}, nil); code != 201 {
-		t.Fatal(code)
-	}
-	if code := f.request("DELETE", path+"/temporary", owner, nil, nil); code != 204 {
-		t.Fatal(code)
-	}
-	setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
-	func() {
-		unlock, err := f.s.lockProject(ctx, p.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer unlock()
-		if err := f.s.seedViewsLocked(ctx, p.ID); err != nil {
-			t.Fatal(err)
-		}
-		title := "Updated map"
-		view, err := f.s.updateViewLocked(ctx, p.ID, "project-map", &title, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "job", "wiki-1", []byte("bundle")); !ok || err != nil {
-			t.Fatal(ok, err)
-		}
-		setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-2")
-		if err := f.s.invalidateViewsLocked(ctx, p.ID); err != nil {
-			t.Fatal(err)
-		}
-		if err := f.s.collectViewsLocked(ctx, p.ID); err != nil {
-			t.Fatal(err)
-		}
-		index, err := f.s.readViewIndexLocked(ctx, p.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := index.Views["wiki"]; ok || index.Wiki == nil {
-			t.Fatalf("index = %+v", index)
-		}
-		if _, err := f.s.viewBySlugLocked(ctx, p.ID, "wiki"); err == nil {
-			t.Fatal("ordinary lookup found wiki")
-		}
-		body, err := json.Marshal(index)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var roundtrip viewIndex
-		if err := json.Unmarshal(body, &roundtrip); err != nil || !reflect.DeepEqual(roundtrip, index) {
-			t.Fatal("index roundtrip", err)
-		}
-	}()
 	var got viewDetail
-	if code := f.request("GET", path+"/wiki", owner, nil, &got); code != 200 || got.Prompt != "Keep me" {
-		t.Fatal(code, got)
+	if c := f.request("GET", api, owner, nil, &got); c != 200 || got.Prompt != prompts.DefaultWikiPrompt() {
+		t.Fatal(c, got)
+	}
+	if c := f.request("PATCH", api, owner, map[string]string{"prompt": "Keep me"}, nil); c != 200 {
+		t.Fatal(c)
+	}
+	if c := f.request("POST", "/api/projects/"+p.ID+"/views", owner, map[string]string{"slug": "temporary", "title": "Temp", "prompt": "x"}, nil); c != 201 {
+		t.Fatal(c)
+	}
+	if c := f.request("DELETE", "/api/projects/"+p.ID+"/views/temporary", owner, nil, nil); c != 204 {
+		t.Fatal(c)
+	}
+	_, err := f.s.storage.collectGarbage(t.Context(), p.ID)
+	fixtureCheck(t, err)
+	if c := f.request("GET", api, owner, nil, &got); c != 200 || got.Prompt != "Keep me" {
+		t.Fatal(c, got)
 	}
 }
 
@@ -283,25 +182,20 @@ func TestWikiViewListCreationOrder(t *testing.T) {
 	if code := f.request("POST", path, owner, map[string]string{"slug": "a-first-alphabetically", "title": "A", "prompt": "x"}, &created); code != 201 || created.CreatedAt == nil {
 		t.Fatal(code, created)
 	}
+	fixtureViewCreated(t, f, p.ID, created.ID, p.Created.Add(time.Second))
 	unlock, err := f.s.lockProject(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
-	index, err := f.s.readViewIndexLocked(ctx, p.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, slug := range []string{"b-legacy", "a-legacy"} {
-		id := "vw_" + slug
-		if err := f.s.writeViewRecord(ctx, viewKey(p.ID, id, "view.json"), viewDefinition{ID: id, Slug: slug, Title: slug, Prompt: "x", Status: "pending"}); err != nil {
-			t.Fatal(err)
+	fixtureCheck(t, f.stateStore.Write(ctx, func(q *store.Queries) error {
+		for _, slug := range []string{"b-legacy", "a-legacy"} {
+			if err := q.PutView(store.ViewRow{ID: "vw_" + slug, ProjectID: p.ID, Slug: slug, Data: store.ViewData{Title: &slug, Prompt: nullableString("x"), Status: nullableString("pending")}}); err != nil {
+				return err
+			}
 		}
-		index.Views[slug] = viewIndexEntry{ID: id, Version: "v"}
-	}
-	if err := f.s.writeViewRecord(ctx, viewsKey(p.ID, "index.json"), index); err != nil {
-		t.Fatal(err)
-	}
+		return nil
+	}))
 	views, err := f.s.listViewsLocked(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +204,11 @@ func TestWikiViewListCreationOrder(t *testing.T) {
 	for _, v := range views {
 		slugs = append(slugs, v.Slug)
 	}
-	if want := []string{"wiki", "project-map", created.Slug, "a-legacy", "b-legacy"}; !reflect.DeepEqual(slugs, want) {
+	want := []string{"wiki", "project-map", created.Slug, "a-legacy", "b-legacy"}
+	if newWikiViewRecord(p.ID).ID > "vw_"+auth.Hash(p.ID + "/project-map")[:20] {
+		want[0], want[1] = want[1], want[0]
+	}
+	if !reflect.DeepEqual(slugs, want) {
 		t.Fatal(slugs, want)
 	}
 	if views[1].CreatedAt == nil {

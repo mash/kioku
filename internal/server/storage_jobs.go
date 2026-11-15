@@ -99,6 +99,9 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		if errors.As(err, &api) && api.status == 404 && api.message == viewDeleted {
 			return input.Job, o.finishView(ctx, id, "skipped", viewDeleted)
 		}
+		if errors.As(err, &api) {
+			return input.Job, o.failPreparation(ctx, id, err)
+		}
 		return input.Job, err
 	}
 	if input.Job.ParentID == nil && len(input.Inbox) == 0 {
@@ -222,7 +225,7 @@ func (o *storageOperations) saveRunRef(ctx context.Context, id string, ref runne
 		return q.PutJob(j)
 	})
 }
-func (o *storageOperations) saveOutput(ctx context.Context, id string, body []byte, authorize func(*store.Queries) error) (string, error) {
+func (o *storageOperations) saveOutput(ctx context.Context, id string, body []byte, authorize func(*store.Queries) error, commit ...func(*store.Queries) error) (string, error) {
 	var j store.JobRow
 	if err := o.db.Read(ctx, func(q *store.Queries) error { var err error; j, err = q.Job(id); return err }); err != nil {
 		return "", err
@@ -253,7 +256,17 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 	}
 	hash := string(model.HashContent(body))
 	if valueString(j.OutputHash) == hash {
-		return hash, nil
+		return hash, o.db.Write(ctx, func(q *store.Queries) error {
+			if err := check(q); err != nil {
+				return err
+			}
+			for _, fn := range commit {
+				if err := fn(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	}
 	prefix := "projects/" + j.ProjectID + "/.kioku/jobs/" + id + "/"
 	keys, err := o.objects.List(ctx, prefix)
@@ -278,7 +291,15 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		j.OutputHash = &hash
 		j.Phase = nullableString("output_received")
 		j.Data.Run.OutputRejection = nil
-		return q.PutJob(j)
+		if err := q.PutJob(j); err != nil {
+			return err
+		}
+		for _, fn := range commit {
+			if err := fn(q); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return hash, err
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func accountID(t *testing.T, f *fixture, token string) string {
@@ -66,11 +68,11 @@ func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
 	p := securityProject(t, f, human)
 	_, agent := testAgent(t, f, human, p.ID, "read")
 	extra := auth.Token()
-	_ = f.stateStore.Update(func(st *model.State) error {
-		u := st.Users[uid]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		u := fixtureUsersGet(t, st, uid)
 		u.Identities["github"] = "github-user"
-		st.Users[uid] = u
-		st.Sessions[auth.Hash(extra)] = model.Session{UserID: uid, IdentityProvider: "github", IdentityID: "github-user", Expires: time.Now().Add(time.Hour)}
+		fixtureUsersPut(t, st, uid, u)
+		fixtureSessionsPut(t, st, auth.Hash(extra), fixtureSession{UserID: uid, IdentityProvider: "github", IdentityID: "github-user", Expires: time.Now().Add(time.Hour)})
 		return nil
 	})
 	if c := f.request("DELETE", "/api/account/identities/google", human, nil, nil); c != 409 {
@@ -104,13 +106,13 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.ID+"/owner", human, map[string]string{"target": target}, nil); c != 409 {
 		t.Fatal("nonmember made owner", c)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		v := st.Projects[p.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		v := fixtureProjectsGet(t, st, p.ID)
 		v.Members[target] = "member"
-		st.Projects[v.ID] = v
+		fixtureProjectsPut(t, st, v.ID, v)
 		return nil
 	})
-	var job model.Job
+	var job fixtureJob
 	if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "facts.md", Content: testSourceContent(testSourceURL("facts.md", "Retained team evidence"), "Retained team evidence")}}, &job); c != 202 {
 		t.Fatal(c)
 	}
@@ -118,7 +120,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 		t.Fatal(c)
 	}
 	var slug string
-	_ = f.stateStore.View(func(st model.State) error { slug = st.Organizations[p.OrgID].Slug; return nil })
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error { slug = fixtureOrganizationsGet(t, st, p.OrgID).Slug; return nil })
 	if c := f.request("POST", "/api/orgs/"+slug+"/owner", human, map[string]string{"target": target}, nil); c != 200 {
 		t.Fatal(c)
 	}
@@ -131,18 +133,17 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("GET", "/api/me", human, nil, nil); c != 401 {
 		t.Fatal("deleted account session active", c)
 	}
-	var projects []model.ProjectEntry
+	var projects []fixtureProjectEntry
 	if c := f.request("GET", "/api/projects", other, nil, &projects); c != 200 || len(projects) != 1 || projects[0].Namespace != p.Namespace || projects[0].InboxCount != 1 {
 		t.Fatal("team evidence lost", c, projects)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if _, ok := st.Users[uid]; ok {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if _, ok := fixtureUsersFind(t, st, uid); ok {
 			t.Error("profile retained")
 		}
-		if st.Projects[p.ID].Members[target] != "owner" || st.Projects[p.ID].Members[uid] != "" || st.Organizations[p.OrgID].Members[target] != "owner" {
+		if fixtureProjectsGet(t, st, p.ID).Members[target] != "owner" || fixtureProjectsGet(t, st, p.ID).Members[uid] != "" || fixtureOrganizationsGet(t, st, p.OrgID).Members[target] != "owner" {
 			t.Error("ownership or membership incorrect")
 		}
 		return nil
 	})
 }
-func accountUID(st *model.State, raw string) string { return st.Sessions[auth.Hash(raw)].UserID }

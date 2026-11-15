@@ -9,6 +9,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func (f *fixture) readWiki(base, token string) map[string]string {
@@ -32,7 +33,7 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	other := f.login("other@example.com")
-	var p model.Project
+	var p fixtureProject
 	if code := f.request("POST", "/api/projects", token, map[string]string{"name": "sync"}, &p); code != 201 {
 		t.Fatal(code)
 	}
@@ -41,21 +42,21 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 	if code := f.request("GET", endpoint+"?manifest=1", token, nil, &manifest); code != 200 || manifest.Files == nil || len(manifest.Files) != 0 {
 		t.Fatal("empty wiki manifest", code, manifest)
 	}
-	key := blob.Key("projects/" + p.ID + "/wiki/index.md")
+	key := model.WikiContentKey(p.ID, model.HashContent([]byte("first")))
 	if err := f.s.Blobs.Put(context.Background(), key, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		current := st.Projects[p.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		current := fixtureProjectsGet(t, st, p.ID)
 		current.Revision = "revision"
 		current.WikiIncomplete = true
-		st.Projects[p.ID] = current
-		st.Revisions["revision"] = model.Revision{
+		fixtureProjectsPut(t, st, p.ID, current)
+		fixtureRevisionsPut(t, st, "revision", fixtureRevision{
 			ID: "revision", ProjectID: p.ID,
 			Files:      map[string]blob.Key{"wiki/index.md": key, "maps/graph.json": "missing-object"},
 			FileHashes: map[string]string{"wiki/index.md": auth.Hash("first")},
 			FileBytes:  map[string]int64{"wiki/index.md": 5},
-		}
+		})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -73,9 +74,13 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 	}
 	// The file endpoint returns the current bytes even if publication advanced
 	// between the manifest and file requests. The client verifies their own hash.
+	key = model.WikiContentKey(p.ID, model.HashContent([]byte("second")))
 	if err := f.s.Blobs.Put(context.Background(), key, []byte("second")); err != nil {
 		t.Fatal(err)
 	}
+	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
+		return q.PutWikiFile(store.WikiFileRow{ProjectID: p.ID, Path: "wiki/index.md", Hash: auth.Hash("second"), Data: store.WikiFileData{Bytes: 6}})
+	}))
 	var file model.SnapshotFile
 	if code := f.request("GET", endpoint+"?file=wiki%2Findex.md", token, nil, &file); code != 200 || file.Body != "second" || file.Hash != auth.Hash(file.Body) {
 		t.Fatal(code, file)

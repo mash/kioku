@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/store"
 )
 
 type crashAfterVaultCreate struct {
@@ -37,17 +37,17 @@ func TestManagedVaultCreationCrashRecoversCleanup(t *testing.T) {
 				t.Error("crash point not reached")
 			}
 		}()
-		_ = f.s.startAgentJob(context.Background(), j)
+		_ = f.s.startAgentJob(context.Background(), fixtureRow(j))
 	}()
 	f.runnerConfig.ManagedAgents = client
 	f.setRunners()
 	if crash.vault == "" || ma.Credential(crash.vault) == "" {
 		t.Fatal("remote credential was not created")
 	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		current := st.Jobs[j.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		current := fixtureJobsGet(t, st, j.ID)
 		current.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
-		st.Jobs[j.ID] = current
+		fixtureJobsPut(t, st, j.ID, current)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

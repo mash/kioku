@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
 	"github.com/mash/kioku/internal/runners"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestClaudeFileGenerationRecoversAndValidatesSessionOutput(t *testing.T) {
@@ -101,7 +103,7 @@ func TestClaudeFileGenerationRecoversAndValidatesSessionOutput(t *testing.T) {
 				ManagedAgents: claudemanaged.NewAPI(remote.URL, "synthetic", remote.Client()), BaseURL: f.s.Config.BaseURL}
 			f.setRunners()
 			j := managedJob(t, f, token, project.ID, true)
-			if err := f.s.startAgentJob(t.Context(), j); err != nil {
+			if err := f.s.startAgentJob(t.Context(), fixtureRow(j)); err != nil {
 				t.Fatal(err)
 			}
 			j = storedJob(t, f, j.ID)
@@ -111,15 +113,15 @@ func TestClaudeFileGenerationRecoversAndValidatesSessionOutput(t *testing.T) {
 				}
 				return
 			}
-			if j.Run.TokenID != "" || !j.Run.Ref.UsesProviderFiles || j.Run.Ref.Resources["input_file_id"] != "input" {
+			if !j.Run.Ref.UsesProviderFiles || j.Run.Ref.Resources["input_file_id"] != "input" {
 				t.Fatal(j.Run)
 			}
 			// Recover the saved session ID as if kiokud stopped before recording
 			// the transition to agent_running.
-			if err := f.stateStore.Update(func(st *model.State) error {
-				current := st.Jobs[j.ID]
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				current := fixtureJobsGet(t, st, j.ID)
 				current.Run.Phase = model.PhasePreparing
-				st.Jobs[j.ID] = current
+				fixtureJobsPut(t, st, j.ID, current)
 				return nil
 			}); err != nil {
 				t.Fatal(err)

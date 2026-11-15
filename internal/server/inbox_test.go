@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
@@ -32,31 +34,31 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Remove != tc.remove {
 			t.Fatal("stored remove flag", item)
 		}
-		f.stateStore.View(func(st model.State) error {
-			if len(st.Inbox) != 1 || len(st.Jobs) != 0 {
-				t.Fatal("not replaced", st.Inbox)
+		f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+			if len(fixtureInboxList(t, st)) != 1 || len(fixtureJobsList(t, st)) != 0 {
+				t.Fatal("not replaced", fixtureInboxList(t, st))
 			}
 			return nil
 		})
 	}
-	f.stateStore.Update(func(st *model.State) error {
-		for id, v := range st.Inbox {
+	f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		for id, v := range fixtureInboxList(t, st) {
 			v.RunID = "running"
-			st.Inbox[id] = v
+			fixtureInboxPut(t, st, id, v)
 		}
 		return nil
 	})
 	if c := f.request("POST", base+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/a", "Source body")}}, nil); c != 202 {
 		t.Fatal(c)
 	}
-	var projects []model.ProjectEntry
+	var projects []fixtureProjectEntry
 	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 2 || len(projects[0].Inbox) != 2 {
 		t.Fatal(c, projects)
 	}
-	f.stateStore.Update(func(st *model.State) error {
-		for i := len(st.Inbox); i < 200; i++ {
+	f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		for i := len(fixtureInboxList(t, st)); i < 200; i++ {
 			id := fmt.Sprint(i)
-			st.Inbox[id] = model.InboxItem{ID: id, ProjectID: p.ID, SourceURL: "https://example.com/" + id}
+			fixtureInboxPut(t, st, id, model.InboxItem{ID: id, ProjectID: p.ID, SourceURL: "https://example.com/" + id})
 		}
 		return nil
 	})
@@ -66,11 +68,11 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 	if c := f.request("POST", base+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, nil); c != 202 {
 		t.Fatal(c)
 	}
-	f.stateStore.Update(func(st *model.State) error {
-		q := st.Projects[p.ID]
+	f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		q := fixtureProjectsGet(t, st, p.ID)
 		q.Revision = "r"
-		st.Projects[p.ID] = q
-		st.Revisions["r"] = model.Revision{ID: "r", ProjectID: p.ID, StoredBytes: f.s.Config.MaxWikiBytes + 1}
+		fixtureProjectsPut(t, st, p.ID, q)
+		fixtureRevisionsPut(t, st, "r", fixtureRevision{ID: "r", ProjectID: p.ID, StoredBytes: f.s.Config.MaxWikiBytes + 1})
 		return nil
 	})
 	if c := f.request("POST", base+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/a", "Source body")}}, nil); c != 413 {
@@ -100,9 +102,9 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.Namespace+"/put", token, model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", strings.Repeat("a", 1<<20))}}, nil); c != 413 {
 		t.Fatal(c)
 	}
-	f.stateStore.View(func(st model.State) error {
-		if len(st.Inbox) != 0 {
-			t.Fatal(st.Inbox)
+	f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if len(fixtureInboxList(t, st)) != 0 {
+			t.Fatal(fixtureInboxList(t, st))
 		}
 		return nil
 	})
@@ -116,7 +118,7 @@ func TestInboxOrphanGC(t *testing.T) {
 	if err := f.s.Blobs.Put(t.Context(), item.BodyKey(), []byte("body")); err != nil {
 		t.Fatal(err)
 	}
-	n, err := f.s.gc(httptest.NewRequest("POST", "/", nil), p.ID)
+	n, err := f.s.storage.collectGarbage(t.Context(), p.ID)
 	if err != nil || n != 1 {
 		t.Fatal(n, err)
 	}

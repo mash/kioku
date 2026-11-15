@@ -12,6 +12,7 @@ import (
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/wiki"
 )
 
@@ -111,11 +112,17 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error 
 		}
 	}
 	sort.Strings(data.Providers)
-	if err := s.Store.View(func(st model.State) error {
-		for _, p := range st.Projects {
-			if p.Members[uid] != "" {
-				data.Projects = append(data.Projects, p)
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		rows, err := q.ProjectsForUser(uid)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			p, err := projectProjection(q, row)
+			if err != nil {
+				return err
 			}
+			data.Projects = append(data.Projects, p)
 		}
 		return nil
 	}); err != nil {
@@ -181,8 +188,9 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	}
 	defer unlock()
 	var key blob.Key
-	err = s.Store.View(func(st model.State) error {
-		p, err := member(st, r.PathValue("project"), uid)
+	var rev model.Revision
+	err = s.Store.Read(r.Context(), func(q *store.Queries) error {
+		p, err := member(q, r.PathValue("project"), uid)
 		if err != nil {
 			return err
 		}
@@ -190,18 +198,32 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		data.CanEdit = p.Members[uid] == "owner"
 		data.Presets = projectViewPresets
 		data.MaxBudget = fmt.Sprintf("%.2f", float64(s.Config.AgentMaxSessionCents)/100)
-		for _, j := range st.Jobs {
-			if j.ProjectID == p.ID && j.Kind == "generate" {
-				j.Error = strings.ReplaceAll(j.Error, p.ID, "[project]")
-				data.RecentJobs = append(data.RecentJobs, j)
+		jobs, err := q.ProjectJobs(p.ID)
+		if err != nil {
+			return err
+		}
+		for _, row := range jobs {
+			if row.Kind != "generate" {
+				continue
+			}
+			j, err := jobProjection(q, row)
+			if err != nil {
+				return err
+			}
+			j.Error = strings.ReplaceAll(j.Error, p.ID, "[project]")
+			data.RecentJobs = append(data.RecentJobs, j)
+			if len(data.RecentJobs) == 5 {
+				break
 			}
 		}
-		sort.Slice(data.RecentJobs, func(i, j int) bool { return data.RecentJobs[i].Created.After(data.RecentJobs[j].Created) })
-		if len(data.RecentJobs) > 5 {
-			data.RecentJobs = data.RecentJobs[:5]
+		project, err := q.Project(p.ID)
+		if err != nil {
+			return err
 		}
-
-		rev := st.Revisions[p.Revision]
+		rev, err = wikiProjection(q, project)
+		if err != nil {
+			return err
+		}
 		for name := range rev.Files {
 			if wiki.ValidFile(name) {
 				data.Files = append(data.Files, name)
@@ -225,11 +247,11 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	}
 	sort.Strings(data.Files)
 	if key != "" {
-		b, err := s.Blobs.Get(r.Context(), key)
+		body, err := s.wikiFile(r.Context(), rev, data.File)
 		if err != nil {
 			return err
 		}
-		data.Body = string(b)
+		data.Body = body
 	}
 	data.Markdown = markdownView(data.Body, data.File, data.Files)
 	views, err := s.listViewsLocked(r.Context(), data.Project.ID)

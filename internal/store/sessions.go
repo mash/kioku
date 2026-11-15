@@ -3,6 +3,9 @@ package store
 import "errors"
 
 func (q *Queries) UserSessions(user, kind string) ([]SessionRow, error) {
+	if kind == "" {
+		return q.listSession("WHERE user_id=? ORDER BY id", user)
+	}
 	return q.listSession("WHERE user_id=? AND kind=? ORDER BY id", user, kind)
 }
 func (q *Queries) ProjectSessions(project, kind string) ([]SessionRow, error) {

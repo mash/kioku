@@ -21,7 +21,6 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/authtest"
 	"github.com/mash/kioku/internal/blob/local"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
@@ -351,7 +350,7 @@ func (f *loginFixture) exchangeCount() int {
 func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 	google := authtest.NewGoogle(t)
 	dir := t.TempDir()
-	stateStore, err := store.Open(dir)
+	stateStore, err := store.OpenDatabase(filepath.Join(dir, "catalog.sqlite"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,10 +449,21 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 	if loaded.Config.Token == "" {
 		t.Fatal("missing saved session")
 	}
-	if err := stateStore.View(func(st model.State) error {
-		session := st.Sessions[auth.Hash(loaded.Config.Token)]
-		if session.IdentityID != "attacker-id" || st.Users[session.UserID].Email != "attacker@example.com" {
-			t.Error("scenario did not save the attacker's session")
+	if err := stateStore.Read(t.Context(), func(q *store.Queries) error {
+		session, err := q.Session(auth.Hash(loaded.Config.Token))
+		if err != nil {
+			return err
+		}
+		var d store.IdentitySessionData
+		if err = json.Unmarshal(session.Data, &d); err != nil {
+			return err
+		}
+		user, err := q.User(session.UserID)
+		if err != nil {
+			return err
+		}
+		if d.IdentityID == nil || *d.IdentityID != "attacker-id" || user.Email != "attacker@example.com" {
+			t.Error("scenario did not save attacker's session")
 		}
 		return nil
 	}); err != nil {

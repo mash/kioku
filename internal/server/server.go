@@ -2,15 +2,13 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +16,6 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/publicapi"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
@@ -43,28 +40,31 @@ type Config struct {
 
 // Runners supplies configured runners.
 type Runners interface {
-	New(model.Job) (runner.Runner, error)
+	New(store.JobRow) (runner.Runner, error)
 }
 
 // SetRunners injects generation services before serving requests or starting workers.
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
-	mcpTools     map[string]any
-	runners      Runners
-	Config       Config
-	Store        *store.Store
-	Blobs        blob.Store
-	Cipher       *auth.Cipher
-	wake         chan struct{}
-	mux          *http.ServeMux
-	projectLocks sync.Map
-	prepareOnce  sync.Once
-	prepareErr   error
-	rateMu       sync.Mutex
-	rates        map[string]rateWindow
-	requests     atomic.Uint64
-	failures     atomic.Uint64
+	mcpTools    map[string]any
+	runners     Runners
+	Config      Config
+	Store       catalog
+	Blobs       blob.Store
+	Cipher      *auth.Cipher
+	wake        chan struct{}
+	mux         *http.ServeMux
+	storage     *storageOperations
+	fatal       chan struct{}
+	fatalOnce   sync.Once
+	fatalError  atomic.Pointer[store.FatalDatabaseError]
+	prepareOnce sync.Once
+	prepareErr  error
+	rateMu      sync.Mutex
+	rates       map[string]rateWindow
+	requests    atomic.Uint64
+	failures    atomic.Uint64
 }
 type apiError struct {
 	status  int
@@ -73,7 +73,7 @@ type apiError struct {
 
 func (e apiError) Error() string            { return e.message }
 func fail(status int, message string) error { return apiError{status, message} }
-func New(c Config, stateStore *store.Store, b blob.Store, key *auth.Cipher) *Server {
+func New(c Config, stateStore catalog, b blob.Store, key *auth.Cipher) *Server {
 	if c.AgentMaxSessions == 0 {
 		c.AgentMaxSessions = 4
 	}
@@ -92,10 +92,12 @@ func New(c Config, stateStore *store.Store, b blob.Store, key *auth.Cipher) *Ser
 	if c.RatePerMinute <= 0 {
 		c.RatePerMinute = 600
 	}
-	s := &Server{Config: c, Store: stateStore, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
+	s := &Server{fatal: make(chan struct{}), Config: c, Store: stateStore, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
 	if c.Prompts != nil {
 		s.mcpTools = mcpTools(c.Prompts)
 	}
+	s.storage = newStorageOperations(stateStore, b, c)
+	s.storage.config = &s.Config
 	s.routes()
 	return s
 }
@@ -105,8 +107,16 @@ const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fatal := s.fatalError.Load(); fatal != nil {
+			status := 503
+			if r.URL.Path == "/healthz" {
+				status = 500
+			}
+			writeError(w, fail(status, "storage recovery failed"))
+			return
+		}
 		if err := s.Prepare(); err != nil {
-			writeError(w, err)
+			s.requestError(w, r, err)
 			return
 		}
 		start := time.Now()
@@ -142,7 +152,7 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 		if err := checkClientVersion(r); err != nil {
-			writeError(w, err)
+			s.requestError(w, r, err)
 			return
 		}
 		s.mux.ServeHTTP(w, r)
@@ -187,8 +197,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}", s.wrap(s.deleteProject, true))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := s.Store.View(func(model.State) error { return nil }); err != nil {
-			writeError(w, err)
+		if err := s.Store.Read(r.Context(), func(q *store.Queries) error { return q.Healthy() }); err != nil {
+			s.requestError(w, r, err)
 			return
 		}
 		jsonOut(w, 200, map[string]string{"status": "ok"})
@@ -220,14 +230,18 @@ func (s *Server) routes() {
 type authContextKey struct{}
 type requestIdentity struct {
 	key       string
-	principal model.Session
+	principal authenticatedSession
 }
 
 type handler func(http.ResponseWriter, *http.Request, string) error
 
 func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key, principal := s.session(r)
+		key, principal, err := s.session(r)
+		if err != nil {
+			s.requestError(w, r, err)
+			return
+		}
 		r = r.WithContext(context.WithValue(r.Context(), authContextKey{}, requestIdentity{key: key, principal: principal}))
 		uid := principal.UserID
 		if principal.Role == "job" && r.Pattern != agentInputRoute && r.Pattern != agentOutputRoute {
@@ -237,58 +251,58 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 		if strings.HasPrefix(r.URL.Path, "/api/projects/") && r.PathValue("slug") != "" && r.PathValue("org") != "" {
 			if uid == "" {
 				if err := s.authorizeAgent(r, principal); err != nil {
-					writeError(w, err)
+					s.requestError(w, r, err)
 					return
 				}
 				writeError(w, fail(401, "login required"))
 				return
 			}
-			err := s.Store.View(func(st model.State) error {
-				p, err := namespaceProject(st, r.PathValue("org"), r.PathValue("slug"), uid)
+			err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+				if principal.Role == "job" {
+					org, e := q.OrganizationBySlug(r.PathValue("org"))
+					if errors.Is(e, sql.ErrNoRows) {
+						return fail(403, "invalid job credential")
+					}
+					if e != nil {
+						return e
+					}
+					p, e := q.ProjectBySlug(org.ID, r.PathValue("slug"))
+					if errors.Is(e, sql.ErrNoRows) {
+						return fail(403, "invalid job credential")
+					}
+					if e != nil {
+						return e
+					}
+					r.SetPathValue("project", p.ID)
+					_, e = checkSQLJobCredential(q, s.Cipher, requestBearer(r), p.ID, r.PathValue("job"), time.Now())
+					return e
+				}
+				p, err := namespaceProject(q, r.PathValue("org"), r.PathValue("slug"), uid, r.Pattern == "DELETE /api/projects/{org}/{slug}")
 				if err == nil {
 					r.SetPathValue("project", p.ID)
 				}
 				return err
 			})
 			if err != nil {
-				writeError(w, err)
+				s.requestError(w, r, err)
 				return
 			}
 		}
 		if err := s.authorizeAgent(r, principal); err != nil {
-			writeError(w, err)
+			s.requestError(w, r, err)
 			return
 		}
 		if required && uid == "" {
 			writeError(w, fail(401, "login required"))
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), mutationRequestKey{}, r))
 		if err := fn(w, r, uid); err != nil {
-			writeError(w, err)
-		} else if pid := r.PathValue("project"); pid != "" && r.Method != "GET" && r.Method != "HEAD" {
-			detail := r.Pattern
-			if principal.AgentID != "" {
-				detail += " agent=" + principal.AgentID
-			}
-			s.recordAudit(pid, uid, r.Method, detail)
-		}
-	}
-}
-func (s *Server) recordAudit(pid, uid, action, detail string) {
-	if err := s.Store.Update(func(st *model.State) error {
-		if _, ok := st.Projects[pid]; ok {
-			if st.Audit == nil {
-				st.Audit = map[string]model.Audit{}
-			}
-			id := auth.Token()[:20]
-			st.Audit[id] = model.Audit{ID: id, ProjectID: pid, UserID: uid, Action: action, Detail: detail, Created: time.Now().UTC()}
-		}
-		return nil
-	}); err != nil {
-		slog.Error("audit write failed", "error", err)
-	}
-}
+			s.requestError(w, r, err)
 
+		}
+	}
+}
 func writeError(w http.ResponseWriter, err error) {
 	var e apiError
 	if errors.As(err, &e) {
@@ -313,352 +327,5 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return fail(400, "unexpected trailing JSON")
 	}
-	return nil
-}
-func (s *Server) session(r *http.Request) (string, model.Session) {
-	if identity, ok := r.Context().Value(authContextKey{}).(requestIdentity); ok {
-		return identity.key, identity.principal
-	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if token == "" {
-		if c, err := r.Cookie("kioku_session"); err == nil {
-			token = c.Value
-		}
-	}
-	key := auth.Hash(token)
-	var session model.Session
-	_ = s.Store.View(func(st model.State) error {
-		v, ok := st.Sessions[key]
-		if _, exists := st.Users[v.UserID]; ok && exists && v.Expires.After(time.Now()) {
-			session = v
-		} else if r.Header.Get("Authorization") != "" {
-			if scoped, valid := agentFromBearer(st, token); valid {
-				session = scoped
-			}
-		}
-		return nil
-	})
-	return key, session
-}
-func (s *Server) userID(r *http.Request) string { _, session := s.session(r); return session.UserID }
-
-func member(st model.State, pid, uid string) (model.Project, error) {
-	p, ok := st.Projects[pid]
-	if !ok || p.Members[uid] == "" {
-		return p, fail(404, "project not found")
-	}
-	if p.Deleting {
-		return p, fail(409, "project deletion is in progress")
-	}
-	return p, nil
-}
-func owner(st model.State, pid, uid string) (model.Project, error) {
-	p, err := member(st, pid, uid)
-	if err == nil && p.Members[uid] != "owner" {
-		err = fail(403, "owner permission required")
-	}
-	return p, err
-}
-func (s *Server) check(pid, uid string) error {
-	return s.Store.View(func(st model.State) error { _, err := member(st, pid, uid); return err })
-}
-func (s *Server) me(w http.ResponseWriter, r *http.Request, uid string) error {
-	if _, principal := s.session(r); principal.AgentID != "" {
-		return s.Store.View(func(st model.State) error {
-			jsonOut(w, 200, map[string]any{"agent_id": principal.AgentID, "namespace": st.Projects[principal.ProjectID].Namespace, "role": principal.Role, "expires": principal.Expires})
-			return nil
-		})
-	}
-	return s.Store.View(func(st model.State) error {
-		u := st.Users[uid]
-		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email})
-		return nil
-	})
-}
-func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) error {
-	_, principal := s.session(r)
-	return s.Store.View(func(st model.State) error {
-		out := []model.ProjectEntry{}
-		for _, p := range st.Projects {
-			if p.Members[uid] != "" && (principal.AgentID == "" || p.ID == principal.ProjectID) {
-				entry := model.ProjectEntry{Project: p, Inbox: []model.InboxEntry{}}
-				for _, item := range st.Inbox {
-					if item.ProjectID == p.ID {
-						entry.Inbox = append(entry.Inbox, model.InboxEntry{SourceURL: item.SourceURL, Remove: item.Remove})
-					}
-				}
-				sort.Slice(entry.Inbox, func(i, j int) bool {
-					if entry.Inbox[i].SourceURL == entry.Inbox[j].SourceURL {
-						return !entry.Inbox[i].Remove && entry.Inbox[j].Remove
-					}
-					return entry.Inbox[i].SourceURL < entry.Inbox[j].SourceURL
-				})
-				entry.InboxCount = len(entry.Inbox)
-				out = append(out, entry)
-			}
-		}
-		sort.Slice(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })
-		jsonOut(w, 200, out)
-		return nil
-	})
-}
-func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid string) error {
-	var req struct {
-		Name         string `json:"name"`
-		Organization string `json:"organization"`
-		Slug         string `json:"slug"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len(req.Name) > 100 {
-		return fail(400, "name must contain 1–100 bytes")
-	}
-	p := model.Project{ID: auth.Token()[:20], Name: req.Name, Members: map[string]string{uid: "owner"}, Created: time.Now().UTC()}
-	if strings.Contains(req.Name, "/") {
-		parts := strings.Split(req.Name, "/")
-		if len(parts) != 2 || req.Organization != "" {
-			return fail(400, "use organization/project")
-		}
-		req.Organization = parts[0]
-		req.Slug = parts[1]
-		p.Name = parts[1]
-	}
-	if req.Slug == "" {
-		req.Slug = projectSlug(p.Name)
-	}
-	if !validSlug(req.Slug) {
-		return fail(400, "invalid project slug")
-	}
-	err := s.Store.Update(func(st *model.State) error {
-		initializeOrganizations(st)
-		var org model.Organization
-		if req.Organization == "" {
-			org = personalOrg(st, uid)
-			if org.Members[uid] != "owner" {
-				return fail(409, "personal namespace ownership changed; select a named organization")
-			}
-		} else {
-			var err error
-			org, err = orgOwner(*st, req.Organization, uid)
-			if err != nil {
-				return err
-			}
-		}
-		p.OrgID = org.ID
-		p.Slug = req.Slug
-		p.Namespace = org.Slug + "/" + p.Slug
-		for _, existing := range st.Projects {
-			if existing.Namespace == p.Namespace {
-				return fail(409, "project name is already in use in this organization")
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	if manager, ok := s.Blobs.(interface {
-		EnsureProject(context.Context, string) error
-	}); ok {
-		if err := manager.EnsureProject(r.Context(), p.ID); err != nil {
-			return err
-		}
-	}
-	if err := s.seedViewsLocked(r.Context(), p.ID); err != nil {
-		return err
-	}
-	if err := s.Store.Update(func(st *model.State) error {
-		for _, existing := range st.Projects {
-			if existing.Namespace == p.Namespace {
-				return fail(409, "project namespace is already in use")
-			}
-		}
-		p.StorageRoot = "projects/" + p.ID + "/"
-		if buckets, ok := s.Blobs.(interface{ Bucket(string) string }); ok {
-			p.StorageBucket = buckets.Bucket(p.ID)
-		}
-		st.Projects[p.ID] = p
-		return nil
-	}); err != nil {
-		return err
-	}
-	jsonOut(w, 201, p)
-	return nil
-}
-func (s *Server) members(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.Store.View(func(st model.State) error {
-		p, err := member(st, r.PathValue("project"), uid)
-		if err != nil {
-			return err
-		}
-		out := []map[string]any{}
-		for id, role := range p.Members {
-			u := st.Users[id]
-			out = append(out, map[string]any{"id": id, "name": u.Name, "email": u.Email, "role": role, "status": "active"})
-		}
-		if p.Members[uid] == "owner" {
-			for _, inv := range st.Invites {
-				if inv.ProjectID == p.ID && inv.UsedBy == "" && inv.Expires.After(time.Now()) {
-					out = append(out, map[string]any{"id": inv.ID, "email": inv.Email, "role": "member", "status": "invited", "expires": inv.Expires})
-				}
-			}
-		}
-		sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]["id"]) < fmt.Sprint(out[j]["id"]) })
-		jsonOut(w, 200, out)
-		return nil
-	})
-}
-func (s *Server) invite(w http.ResponseWriter, r *http.Request, uid string) error {
-	var req struct {
-		Email string `json:"email"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if req.Email != "" && (!strings.Contains(req.Email, "@") || len(req.Email) > 254) {
-		return fail(400, "invalid email")
-	}
-	token := auth.Token()
-	inv := model.Invite{ID: auth.Token()[:20], ProjectID: r.PathValue("project"), Email: req.Email, CreatedBy: uid, Expires: time.Now().Add(7 * 24 * time.Hour), TokenHash: auth.Hash(token)}
-	if err := s.Store.Update(func(st *model.State) error {
-		if _, err := owner(*st, inv.ProjectID, uid); err != nil {
-			return err
-		}
-		st.Invites[inv.ID] = inv
-		return nil
-	}); err != nil {
-		return err
-	}
-	jsonOut(w, 201, map[string]any{"url": s.Config.BaseURL + "/invite/" + token, "expires": inv.Expires, "email": inv.Email})
-	return nil
-}
-func (s *Server) join(w http.ResponseWriter, r *http.Request, uid string) error {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	if u, err := url.Parse(req.Token); err == nil && u.Host != "" {
-		req.Token = strings.TrimPrefix(u.Path, "/invite/")
-	}
-	// Resolve the invite before contacting a provider; email-bound invitations
-	// require current provider proof, never a cached profile email.
-	var boundEmail string
-	if err := s.Store.View(func(st model.State) error {
-		for _, inv := range st.Invites {
-			if inv.TokenHash == auth.Hash(req.Token) {
-				if inv.UsedBy != "" || !inv.Expires.After(time.Now()) {
-					return fail(410, "invite expired or already used")
-				}
-				boundEmail = inv.Email
-				return nil
-			}
-		}
-		return fail(404, "invite not found")
-	}); err != nil {
-		return err
-	}
-	verifiedEmail := ""
-	if boundEmail != "" {
-		var err error
-		verifiedEmail, err = s.currentEmail(r, uid)
-		if err != nil {
-			return err
-		}
-	}
-	var result model.Project
-	err := s.Store.Update(func(st *model.State) error {
-		for id, inv := range st.Invites {
-			if inv.TokenHash != auth.Hash(req.Token) {
-				continue
-			}
-			if inv.UsedBy != "" || !inv.Expires.After(time.Now()) {
-				return fail(410, "invite expired or already used")
-			}
-			if inv.Email != "" && !strings.EqualFold(inv.Email, verifiedEmail) {
-				return fail(403, "invite is restricted to a different verified email")
-			}
-			p, ok := st.Projects[inv.ProjectID]
-			if !ok {
-				return fail(404, "project not found")
-			}
-			if p.Deleting {
-				return fail(409, "project deletion is in progress")
-			}
-			if p.Members[uid] == "" {
-				p.Members[uid] = "member"
-			}
-			inv.UsedBy = uid
-			st.Invites[id] = inv
-			st.Projects[p.ID] = p
-			result = p
-			return nil
-		}
-		return fail(404, "invite not found")
-	})
-	if err != nil {
-		return err
-	}
-	jsonOut(w, 200, result)
-	return nil
-}
-func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, uid string) error {
-	err := s.Store.Update(func(st *model.State) error {
-		p, err := owner(*st, r.PathValue("project"), uid)
-		if err != nil {
-			return err
-		}
-		target := r.PathValue("member")
-		for id := range p.Members {
-			if strings.EqualFold(st.Users[id].Email, target) {
-				target = id
-				break
-			}
-		}
-		if p.Members[target] == "owner" {
-			return fail(400, "cannot remove the project owner")
-		}
-		if p.Members[target] == "" {
-			return fail(404, "member not found")
-		}
-		delete(p.Members, target)
-		revokeAgents(st, target, p.ID)
-		st.Projects[p.ID] = p
-		return nil
-	})
-	if err == nil {
-		jsonOut(w, 200, map[string]bool{"removed": true})
-	}
-	return err
-}
-func (s *Server) logout(w http.ResponseWriter, r *http.Request, uid string) error {
-	if _, principal := s.session(r); principal.AgentID != "" {
-		if err := s.Store.Update(func(st *model.State) error {
-			t := st.AgentTokens[principal.AgentID]
-			t.RevokedAt = time.Now().UTC()
-			st.AgentTokens[t.ID] = t
-			return nil
-		}); err != nil {
-			return err
-		}
-		jsonOut(w, 200, map[string]bool{"logged_out": true})
-		return nil
-	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if token == "" {
-		if c, err := r.Cookie("kioku_session"); err == nil {
-			token = c.Value
-		}
-	}
-	if err := s.Store.Update(func(st *model.State) error { delete(st.Sessions, auth.Hash(token)); return nil }); err != nil {
-		return err
-	}
-	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode})
-	jsonOut(w, 200, map[string]bool{"logged_out": true})
 	return nil
 }

@@ -9,8 +9,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/runner"
-
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
@@ -20,20 +19,20 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Summary")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-	_ = f.stateStore.Update(func(st *model.State) error {
-		v := st.AgentTokens[id]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		v := fixtureAgentTokensGet(t, st, id)
 		v.RevokedAt = time.Now().UTC()
-		st.AgentTokens[id] = v
+		fixtureAgentTokensPut(t, st, id, v)
 		return nil
 	})
 	if got := reconcileManaged(t, f, j); got.Status != "failed" {
 		t.Fatal(got)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Projects[p.ID].Revision != "" || len(st.Revisions) != 0 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureProjectsGet(t, st, p.ID).Revision != "" || len(fixtureRevisionsList(t, st)) != 0 {
 			t.Error("revoked job published")
 		}
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {
 			t.Error("actual consumed cost lost")
 		}
 		return nil
@@ -45,7 +44,7 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 		t.Run(fmt.Sprint(state), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
 			f.s.Config.AgentMaxSessions = 2
-			var other model.Project
+			var other fixtureProject
 			if code := f.request("POST", "/api/projects", token, map[string]string{"name": "acme/other"}, &other); code != 201 {
 				t.Fatal(code)
 			}
@@ -82,10 +81,10 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 					t.Error("worker did not stop")
 				}
 			})
-			queue := func(pid string) model.Job {
+			queue := func(pid string) fixtureJob {
 				t.Helper()
 				putFile(t, f, token, pid, "worker.md", "Evidence")
-				var j model.Job
+				var j fixtureJob
 				if code := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &j); code != 202 {
 					t.Fatal(code)
 				}
@@ -112,10 +111,10 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 			if got := storedJob(t, f, second.ID); got.Status != "running" {
 				t.Fatalf("second job: %+v", got)
 			}
-			if err := f.stateStore.Update(func(st *model.State) error {
-				j := st.Jobs[first.ID]
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				j := fixtureJobsGet(t, st, first.ID)
 				j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
-				st.Jobs[j.ID] = j
+				fixtureJobsPut(t, st, j.ID, j)
 				return nil
 			}); err != nil {
 				t.Fatal(err)

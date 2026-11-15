@@ -2,14 +2,14 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/store"
 )
 
 func (s *Server) notify() {
@@ -18,29 +18,28 @@ func (s *Server) notify() {
 	default:
 	}
 }
-
-// RunWorker uses a durable queue. One worker serializes publication in this
-// queue, so concurrent submissions cannot overwrite each other.
 func (s *Server) RunWorker(ctx context.Context) error {
+	if fatal := s.fatalError.Load(); fatal != nil {
+		return fatal
+	}
 	if err := s.Prepare(); err != nil {
 		return err
 	}
-	// Recover existing runs before dequeuing any new job.
 	if err := s.reconcileAgentJobs(ctx); err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return err
+		s.reportFatal(s.databaseError(ctx, err))
+		slog.Error("agent reconciliation deferred", "error", err)
 	}
-	maintenanceCtx, stopMaintenance := context.WithCancel(ctx)
-	maintenanceDone := make(chan struct{})
-	go func() { defer close(maintenanceDone); s.runMaintenance(maintenanceCtx) }()
-	defer func() { stopMaintenance(); <-maintenanceDone }()
+	maintenanceCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); s.runMaintenance(maintenanceCtx) }()
+	defer func() { cancel(); <-done }()
 	s.notify()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-s.fatal:
+			return s.fatalError.Load()
 		case <-ctx.Done():
 			return nil
 		case <-s.wake:
@@ -48,50 +47,22 @@ func (s *Server) RunWorker(ctx context.Context) error {
 		}
 		for ctx.Err() == nil {
 			if err := s.advanceViewGenerations(ctx); err != nil {
+				s.reportFatal(s.databaseError(ctx, err))
 				slog.Error("view generation deferred", "error", err)
+				break
 			}
-			var job model.Job
-			err := s.Store.Update(func(st *model.State) error {
-				pending := []model.Job{}
-				running := map[string]bool{}
-				sessions := 0
-				for _, j := range st.Jobs {
-					if j.Status == "running" {
-						running[j.ProjectID] = true
-						if j.ViewGeneration == nil {
-							sessions++
-						}
-					}
-				}
-				for _, j := range st.Jobs {
-					if j.Status == "queued" {
-						if sessions >= s.Config.AgentMaxSessions || (running[j.ProjectID] && j.ViewTask == nil) {
-							continue
-						}
-						pending = append(pending, j)
-					}
-				}
-				if len(pending) == 0 {
-					return nil
-				}
-				sort.Slice(pending, func(i, j int) bool {
-					if pending[i].Created.Equal(pending[j].Created) {
-						return pending[i].ID < pending[j].ID
-					}
-					return pending[i].Created.Before(pending[j].Created)
-				})
-				job = pending[0]
-				job.Status = "running"
-				if job.WikiStatus != "" {
-					job.WikiStatus = "running"
-				}
-				st.Jobs[job.ID] = job
-				return nil
-			})
-			if err != nil {
+			var job store.JobRow
+			err := s.Store.Read(ctx, func(q *store.Queries) error {
+				var err error
+				job, err = q.NextQueued(s.Config.AgentMaxSessions)
 				return err
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				break
 			}
-			if job.ID == "" {
+			if err != nil {
+				s.reportFatal(s.databaseError(ctx, err))
+				slog.Error("queue selection deferred", "error", err)
 				break
 			}
 			jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -100,73 +71,72 @@ func (s *Server) RunWorker(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if errors.Is(err, runner.ErrTemporary) {
-				slog.Warn("agent start awaits reconciliation", "job", job.ID)
-			} else if err != nil {
-				return err
+			if err != nil {
+				s.reportFatal(s.databaseError(ctx, err))
+				slog.Warn("agent start deferred", "job", job.ID, "error", err)
+				break
 			}
 		}
 	}
 }
-
-// Maintenance must keep running while the generation queue is busy.
 func (s *Server) runMaintenance(ctx context.Context) {
-	count, err := s.Store.CountProjects(func(p model.Project) bool { return !p.NextGenerateAt.IsZero() })
-	if err != nil {
-		slog.Error("generation scheduling deferred", "error", err)
-	} else {
-		slog.Info("automatic generation deadlines loaded", "projects", count)
-	}
-	var lastReconcile time.Time
+	var lastReconcile, lastGC time.Time
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if time.Since(lastReconcile) >= 30*time.Second {
+		now := time.Now()
+		if now.Sub(lastReconcile) >= 30*time.Second {
 			if err := s.reconcileAgentJobs(ctx); err != nil {
+				s.reportFatal(s.databaseError(ctx, err))
 				slog.Error("agent reconciliation deferred", "error", err)
 			}
-			lastReconcile = time.Now()
+			lastReconcile = now
 		}
-		if err := s.scheduleGenerations(time.Now().UTC()); err != nil {
+		if err := s.scheduleGenerations(now); err != nil {
+			s.reportFatal(s.databaseError(ctx, err))
 			slog.Error("generation scheduling deferred", "error", err)
 		}
+		if now.Sub(lastGC) >= time.Hour {
+			if _, err := s.storage.collectAllGarbage(ctx); err != nil {
+				s.reportFatal(s.databaseError(ctx, err))
+				slog.Warn("garbage collection deferred", "error", err)
+			}
+			lastGC = now
+		}
 		select {
+		case <-s.fatal:
+			return
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
 	}
 }
-
 func (s *Server) job(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid, id := r.PathValue("project"), r.PathValue("job")
-	var j model.Job
-	var found bool
-	var validAfter time.Time
-	if err := s.Store.View(func(st model.State) error {
-		p, err := member(st, pid, uid)
+	var job model.Job
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		if _, err := sqlMember(q, pid, uid); err != nil {
+			return err
+		}
+		j, err := q.Job(id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "job not found")
+		}
 		if err != nil {
 			return err
 		}
-		j, found = st.Jobs[id]
-		validAfter = p.JobsValidAfter
-		return nil
+		if j.ProjectID != pid || j.ParentID != nil {
+			return fail(404, "job not found")
+		}
+		job, err = jobProjection(q, j)
+		return err
 	}); err != nil {
 		return err
 	}
-	if !found {
-		var err error
-		j, err = s.Store.ArchivedJob(r.Context(), pid, id)
-		if err != nil {
-			return fail(404, "job not found")
-		}
-	}
-	if j.ProjectID != pid || j.ViewTask != nil || j.Created.Before(validAfter) {
-		return fail(404, "job not found")
-	}
-	jsonOut(w, 200, j)
+	jsonOut(w, 200, job)
 	return nil
 }

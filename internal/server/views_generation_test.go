@@ -1,6 +1,9 @@
 package server
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,16 +14,17 @@ import (
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
+	"github.com/mash/kioku/internal/store"
 )
 
-func createTestView(t *testing.T, f *fixture, token string, p model.Project, slug, prompt string) {
+func createTestView(t *testing.T, f *fixture, token string, p fixtureProject, slug, prompt string) {
 	t.Helper()
 	if code := f.request("POST", "/api/projects/"+p.ID+"/views", token, map[string]string{"slug": slug, "title": slug, "prompt": prompt}, nil); code != 201 {
 		t.Fatalf("create view: %d", code)
 	}
 }
 
-func queueTestViewGeneration(t *testing.T, f *fixture, token string, p model.Project) model.Job {
+func queueTestViewGeneration(t *testing.T, f *fixture, token string, p fixtureProject) fixtureJob {
 	t.Helper()
 	var accepted struct {
 		ID         string                `json:"id"`
@@ -33,29 +37,29 @@ func queueTestViewGeneration(t *testing.T, f *fixture, token string, p model.Pro
 	return startTestGeneration(t, f, accepted.ID)
 }
 
-func startTestGeneration(t *testing.T, f *fixture, id string) model.Job {
+func startTestGeneration(t *testing.T, f *fixture, id string) fixtureJob {
 	t.Helper()
-	var job model.Job
-	if err := f.stateStore.Update(func(st *model.State) error {
-		job = st.Jobs[id]
-		job.Status = "running"
+	var job fixtureJob
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		job = fixtureJobsGet(t, st, id)
+		job.Status = "queued"
 		if job.WikiStatus != "" {
 			job.WikiStatus = "running"
 		}
-		st.Jobs[id] = job
+		fixtureJobsPut(t, st, id, job)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.startAgentJob(t.Context(), job); err != nil {
+	if err := f.s.startAgentJob(t.Context(), fixtureRow(job)); err != nil {
 		t.Fatal(err)
 	}
 	return storedJob(t, f, id)
 }
 
-func nextTestViewTask(t *testing.T, f *fixture, parent model.Job) model.Job {
+func nextTestViewTask(t *testing.T, f *fixture, parent fixtureJob) fixtureJob {
 	t.Helper()
-	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 		t.Fatal(err)
 	}
 	job := storedJob(t, f, parent.ID)
@@ -65,7 +69,7 @@ func nextTestViewTask(t *testing.T, f *fixture, parent model.Job) model.Job {
 	return startTestGeneration(t, f, job.ViewGeneration.ChildID)
 }
 
-func completeTestViewTask(t *testing.T, f *fixture, ma *fake.Server, child model.Job, html string, cost int64) {
+func completeTestViewTask(t *testing.T, f *fixture, ma *fake.Server, child fixtureJob, html string, cost int64) {
 	t.Helper()
 	payload := outputArchive(t, map[string]string{"index.html": html, "summary.md": "# Delivery"})
 	token := ma.Credential(child.Run.Ref.Resources["vault_id"])
@@ -73,7 +77,7 @@ func completeTestViewTask(t *testing.T, f *fixture, ma *fake.Server, child model
 		t.Fatalf("View upload returned %d: %s", status, body)
 	}
 	ma.SetStatus(child.Run.Ref.ID, "idle", "end_turn", cost)
-	if err := f.s.reconcileAgentJob(t.Context(), child); err != nil {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(child)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -92,7 +96,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	}
 	sendOutput(t, f, ma, parent, "Complete Wiki")
 	ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 100)
-	if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 		t.Fatal(err)
 	}
 	restartManagedFixture(t, f)
@@ -142,7 +146,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 		t.Fatal("the second View must have its own runner session")
 	}
 	completeTestViewTask(t, f, ma, second, `<h1>Delivery</h1><details><summary>Open work</summary><p>Friday</p></details><a href="wiki/index.md">Wiki index</a>`, 50)
-	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 		t.Fatal(err)
 	}
 	var job struct {
@@ -198,7 +202,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	if msg := connectorTool(t, f, access, "view_read", args, nil); msg == "" {
 		t.Fatal("missing View file was readable")
 	}
-	var other model.Project
+	var other fixtureProject
 	if code := f.request("POST", "/api/projects", token, map[string]string{"name": "acme/other"}, &other); code != 201 {
 		t.Fatal("create unrelated project", code)
 	}
@@ -231,7 +235,7 @@ func TestViewGenerationUsesRemainingBudgetWhenWikiCostIsUnknown(t *testing.T) {
 	session := ma.Session(parent.Run.Ref.ID)
 	session.CostAmount = ""
 	ma.SetSession(session)
-	if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 		t.Fatal(err)
 	}
 	first := nextTestViewTask(t, f, parent)
@@ -244,7 +248,7 @@ func TestViewGenerationUsesRemainingBudgetWhenWikiCostIsUnknown(t *testing.T) {
 		t.Fatalf("known View cost was not deducted: %+v", second)
 	}
 	completeTestViewTask(t, f, ma, second, "<h1>Project map</h1>", 50)
-	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -258,17 +262,17 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 	}, nil); code != 202 {
 		t.Fatal("put source", code)
 	}
-	finishWiki := func(job model.Job, title string) {
+	finishWiki := func(job fixtureJob, title string) {
 		t.Helper()
 		sendOutput(t, f, ma, job, title)
 		ma.SetStatus(job.Run.Ref.ID, "idle", "end_turn", 100)
-		if err := f.s.reconcileAgentJob(t.Context(), job); err != nil {
+		if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(job)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	advance := func(job model.Job) {
+	advance := func(job fixtureJob) {
 		t.Helper()
-		if err := f.s.advanceViewGeneration(t.Context(), job); err != nil {
+		if err := f.s.storage.advanceViews(t.Context(), job.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -296,7 +300,7 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 	parent = queueTestViewGeneration(t, f, token, p)
 	sendOutput(t, f, ma, parent, "Updated Wiki")
 	ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 200)
-	if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 		t.Fatal(err)
 	}
 	advance(parent)
@@ -328,7 +332,7 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 		t.Fatalf("invalid View returned %d", code)
 	}
 	ma.SetStatus(child.Run.Ref.ID, "idle", "end_turn", 50)
-	if err := f.s.reconcileAgentJob(t.Context(), child); err != nil {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(child)); err != nil {
 		t.Fatal(err)
 	}
 	advance(parent)
@@ -381,15 +385,15 @@ func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
 			parent := queueTestViewGeneration(t, f, token, p)
 			sendOutput(t, f, ma, parent, "Wiki")
 			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
-			if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+			if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+			if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 				t.Fatal(err)
 			}
 			parent = storedJob(t, f, parent.ID)
 			childID := parent.ViewGeneration.ChildID
-			var child model.Job
+			var child fixtureJob
 			if !beforeStart {
 				child = startTestGeneration(t, f, childID)
 			}
@@ -401,7 +405,7 @@ func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
 			if beforeStart {
 				child = startTestGeneration(t, f, childID)
 			}
-			checkPrompt := func(child model.Job, wantNew bool) {
+			checkPrompt := func(child fixtureJob, wantNew bool) {
 				t.Helper()
 				raw := ma.Credential(child.Run.Ref.Resources["vault_id"])
 				code, body := agentRequest(t, f, child, raw, "GET", "input", nil)
@@ -415,7 +419,7 @@ func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
 			}
 			checkPrompt(child, beforeStart)
 			completeTestViewTask(t, f, ma, child, "<h1>Published</h1>", 50)
-			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+			if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 				t.Fatal(err)
 			}
 			parent = storedJob(t, f, parent.ID)
@@ -449,15 +453,13 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				}
 				created := time.Date(2026, 1, 1, 0, i, 0, 0, time.UTC)
 				view.CreatedAt = &created
-				if err := f.s.writeViewRecord(t.Context(), viewKey(p.ID, view.ID, "view.json"), view); err != nil {
-					t.Fatal(err)
-				}
+				fixtureViewCreated(t, f, p.ID, view.ID, created)
 			}
 			putFile(t, f, token, p.ID, "source.md", "Evidence")
 			parent := queueTestViewGeneration(t, f, token, p)
 			sendOutput(t, f, ma, parent, "Wiki")
 			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
-			if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+			if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 				t.Fatal(err)
 			}
 			child := nextTestViewTask(t, f, parent)
@@ -475,30 +477,44 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 					t.Fatal(code)
 				}
 			}
-			if err := f.stateStore.Update(func(st *model.State) error {
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 				child.Status, child.Error = "failed", "test failure"
 				if scenario == "skipped-deleted" {
 					child.Status, child.Error = "skipped", viewDeleted
 				}
-				st.Jobs[child.ID] = child
+				child.Run.CleanupComplete = true
+				fixtureJobsPut(t, st, child.ID, child)
+				if e := st.RecordUsage(store.UsageRow{AttemptID: child.ID, JobID: child.ID, ProjectID: p.ID, Data: model.UsageValues{UserID: child.UserID}}); e != nil {
+					return e
+				}
 				if scenario == "missing" {
-					delete(st.Jobs, child.ID)
+					fixtureJobsDelete(t, st, child.ID)
 				}
 				return nil
 			}); err != nil {
 				t.Fatal(err)
 			}
+			if scenario == "missing" {
+				if err := f.s.storage.advanceViews(t.Context(), parent.ID); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatal("missing child must be unavailable", err)
+				}
+				if got := storedJob(t, f, parent.ID); got.ViewGeneration.ChildID != child.ID {
+					t.Fatal("missing child checkpoint lost", got)
+				}
+				return
+			}
 			if scenario == "write-retry" {
-				f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, putSuffix: string(viewKey(p.ID, parent.Views[2].ViewID, "view.json"))}
-				if err := f.s.advanceViewGeneration(t.Context(), parent); err == nil {
+				restore := fixtureSQLFault(t, f, "views", "UPDATE", "1")
+				if err := f.s.storage.advanceViews(t.Context(), parent.ID); err == nil {
 					t.Fatal("expected write failure")
 				}
 				checkpoint := storedJob(t, f, parent.ID)
 				if !reflect.DeepEqual(checkpoint, parent) {
 					t.Fatalf("parent changed before all writes succeeded: %+v", checkpoint)
 				}
+				restore()
 			}
-			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+			if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 				t.Fatal(err)
 			}
 			parent = storedJob(t, f, parent.ID)
@@ -517,11 +533,14 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				t.Fatal(parent.Views)
 			}
 			for _, result := range parent.Views[1:] {
+				if scenario == "remaining-deleted" && result.Slug == "b-map" {
+					if result.Status != "skipped" || result.Error != viewDeleted {
+						t.Fatal(result)
+					}
+					continue
+				}
 				if result.Status != "skipped" || result.Error != viewPreviousFailed {
 					t.Fatal(result)
-				}
-				if scenario == "remaining-deleted" && result.Slug == "b-map" {
-					continue
 				}
 				var view viewDefinition
 				if code := f.request("GET", api+result.Slug, token, nil, &view); code != 200 || view.Status != "skipped" || view.Error != viewPreviousFailed {
@@ -548,37 +567,27 @@ func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
 				}
 				created := time.Date(2026, 1, 1, 0, i, 0, 0, time.UTC)
 				view.CreatedAt = &created
-				if err := f.s.writeViewRecord(t.Context(), viewKey(p.ID, view.ID, "view.json"), view); err != nil {
-					t.Fatal(err)
-				}
+				fixtureViewCreated(t, f, p.ID, view.ID, created)
 			}
 			putFile(t, f, token, p.ID, "source.md", "Evidence")
 			parent := queueTestViewGeneration(t, f, token, p)
 			sendOutput(t, f, ma, parent, "Wiki")
 			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
 			if stage != "publish" {
-				if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+				if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 					t.Fatal(err)
 				}
-			}
-			pending := stage != "captured"
-			if pending {
-				view, err := f.s.viewBySlugLocked(t.Context(), p.ID, "alpha")
-				if err != nil {
-					t.Fatal(err)
-				}
-				f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, getKey: viewKey(p.ID, view.ID, "view.json")}
 			}
 			if stage == "publish" {
-				if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+				if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 					t.Fatal(err)
 				}
 			} else if stage == "empty-inbox" {
-				if err := f.stateStore.Update(func(st *model.State) error {
-					job := st.Jobs[parent.ID]
+				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					job := fixtureJobsGet(t, st, parent.ID)
 					job.Status = "completed"
 					job.ViewGeneration = nil
-					st.Jobs[job.ID] = job
+					fixtureJobsPut(t, st, job.ID, job)
 					return nil
 				}); err != nil {
 					t.Fatal(err)
@@ -586,13 +595,10 @@ func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
 				parent = queueTestViewGeneration(t, f, token, p)
 			}
 			parent = storedJob(t, f, parent.ID)
-			if parent.ViewGeneration.Pending != pending {
-				t.Fatal(parent.ViewGeneration)
+			if parent.ViewGeneration == nil || parent.ViewGeneration.Pending {
+				t.Fatal("view list was not captured in SQL transaction", parent)
 			}
-			if pending {
-				f.s.Blobs = f.s.Blobs.(*viewFaultStore).Store
-			}
-			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+			if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 				t.Fatal(err)
 			}
 			parent = storedJob(t, f, parent.ID)
@@ -615,11 +621,11 @@ func TestViewGenerationCapturedEmptyListDoesNotRecapture(t *testing.T) {
 		t.Fatal(code)
 	}
 	parent := queueTestViewGeneration(t, f, token, p)
-	if parent.ViewGeneration.Pending || len(parent.Views) != 0 {
+	if parent.ViewGeneration != nil || len(parent.Views) != 0 {
 		t.Fatal(parent)
 	}
 	createTestView(t, f, token, p, "later", "Later")
-	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 		t.Fatal(err)
 	}
 	parent = storedJob(t, f, parent.ID)

@@ -2,17 +2,15 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
-	"io/fs"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -45,96 +43,10 @@ type viewDefinition struct {
 	JobID          string     `json:"job_id,omitempty"`
 	WikiSnapshotID string     `json:"wiki_snapshot_id,omitempty"`
 	GeneratedAt    *time.Time `json:"generated_at,omitempty"`
-	Version        string     `json:"-"`
-}
-
-type viewIndex struct {
-	Wiki    *viewIndexEntry           `json:"-"`
-	Views   map[string]viewIndexEntry `json:"views"`
-	Removed []string                  `json:"removed,omitempty"`
-}
-
-type viewIndexEntry struct {
-	ID      string `json:"id"`
-	Version string `json:"settings_generation"`
-	Result  string `json:"result_job_id,omitempty"`
-	Hash    string `json:"bundle_hash,omitempty"`
-	Epoch   string `json:"view_epoch,omitempty"`
-}
-
-type viewResult struct {
-	Status         string     `json:"status"`
-	Error          string     `json:"error,omitempty"`
-	JobID          string     `json:"job_id,omitempty"`
-	WikiSnapshotID string     `json:"wiki_snapshot_id,omitempty"`
-	GeneratedAt    *time.Time `json:"generated_at,omitempty"`
-}
-
-type viewPublication struct {
-	Prior     viewResult `json:"prior"`
-	Next      viewResult `json:"next"`
-	PriorHash string     `json:"prior_hash,omitempty"`
-	NextHash  string     `json:"next_hash,omitempty"`
-}
-
-type viewEdit struct {
-	Version string `json:"settings_generation"`
-	Title   string `json:"title"`
-	Prompt  string `json:"prompt"`
-}
-
-func (index *viewIndex) UnmarshalJSON(body []byte) error {
-	type plain viewIndex
-	var decoded plain
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return err
-	}
-	*index = viewIndex(decoded)
-	if entry, ok := index.Views[wikiViewSlug]; ok {
-		index.Wiki = &entry
-		delete(index.Views, wikiViewSlug)
-	}
-	return nil
-}
-
-func (index viewIndex) MarshalJSON() ([]byte, error) {
-	type plain viewIndex
-	encoded := plain(index)
-	encoded.Views = make(map[string]viewIndexEntry, len(index.Views)+1)
-	for slug, entry := range index.Views {
-		encoded.Views[slug] = entry
-	}
-	if index.Wiki != nil {
-		encoded.Views[wikiViewSlug] = *index.Wiki
-	}
-	return json.Marshal(encoded)
 }
 
 func newWikiViewRecord(pid string) wikiViewRecord {
 	return wikiViewRecord{ID: "vw_" + auth.Hash(pid + "/wiki")[:20], Slug: wikiViewSlug}
-}
-
-func (s *Server) readWikiViewLocked(ctx context.Context, pid string) (wikiViewRecord, error) {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return wikiViewRecord{}, err
-	}
-	return s.loadWikiViewLocked(ctx, pid, index)
-}
-
-func (s *Server) loadWikiViewLocked(ctx context.Context, pid string, index viewIndex) (wikiViewRecord, error) {
-	expected := newWikiViewRecord(pid)
-	if index.Wiki == nil {
-		return expected, nil
-	}
-	var record wikiViewRecord
-	if err := s.readViewRecord(ctx, viewKey(pid, index.Wiki.ID, "view.json"), &record); err != nil {
-		return record, err
-	}
-	if index.Wiki.ID != expected.ID || record.ID != expected.ID || record.Slug != expected.Slug {
-		return record, errors.New("wiki view metadata does not match project index")
-	}
-	return record, nil
 }
 
 func (s *Server) defaultWikiPrompt() string {
@@ -158,65 +70,6 @@ func (s *Server) wikiViewDefinition(record wikiViewRecord, project model.Project
 	return view
 }
 
-// viewForDisplayLocked returns the View that the API and Web pages show,
-// including the Wiki View, which generation never reads through this path.
-func (s *Server) viewForDisplayLocked(ctx context.Context, project model.Project, slug string) (viewDefinition, error) {
-	if slug != wikiViewSlug {
-		return s.viewBySlugLocked(ctx, project.ID, slug)
-	}
-	record, err := s.readWikiViewLocked(ctx, project.ID)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	return s.wikiViewDefinition(record, project), nil
-}
-
-func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, prompt *string) (viewDefinition, error) {
-	if title == nil && prompt == nil {
-		return viewDefinition{}, fail(400, "provide title or prompt with text")
-	}
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	// A full replacement does not read the saved record. A partial update keeps
-	// the other saved field; a missing or corrupt record is replaced so the
-	// owner can repair it, and storage errors fail so settings are not lost.
-	record := newWikiViewRecord(pid)
-	if index.Wiki != nil && (title == nil || prompt == nil) {
-		body, err := s.Blobs.Get(ctx, viewKey(pid, index.Wiki.ID, "view.json"))
-		if err != nil && !viewObjectMissing(err) {
-			return viewDefinition{}, err
-		}
-		var saved wikiViewRecord
-		if err == nil && json.Unmarshal(body, &saved) == nil && index.Wiki.ID == record.ID && saved.ID == record.ID && saved.Slug == record.Slug {
-			record = saved
-		}
-	}
-	if title != nil {
-		record.Title = *title
-	}
-	if prompt != nil {
-		record.Prompt = *prompt
-	}
-	// view.json is the commit point. The index changes only on the first save,
-	// so a failed index write leaves the Wiki View on its defaults.
-	if err := s.writeViewRecord(ctx, viewKey(pid, record.ID, "view.json"), record); err != nil {
-		return viewDefinition{}, err
-	}
-	if index.Wiki == nil {
-		index.Wiki = &viewIndexEntry{ID: record.ID, Version: auth.Token()[:20]}
-		if err := s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index); err != nil {
-			return viewDefinition{}, err
-		}
-	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	return s.wikiViewDefinition(record, project), nil
-}
-
 func sortViews(views []viewDefinition) {
 	sort.Slice(views, func(i, j int) bool {
 		a, b := views[i], views[j]
@@ -233,660 +86,277 @@ func sortViews(views []viewDefinition) {
 	})
 }
 
-func (v viewDefinition) result() viewResult {
-	return viewResult{v.Status, v.Error, v.JobID, v.WikiSnapshotID, v.GeneratedAt}
-}
-
-func (v *viewDefinition) applyResult(result viewResult) {
-	v.Status, v.Error = result.Status, result.Error
-	v.JobID, v.WikiSnapshotID, v.GeneratedAt = result.JobID, result.WikiSnapshotID, result.GeneratedAt
-}
-
-const maxViewRecordBytes = 16 << 20
-
-func viewsKey(pid string, suffix string) blob.Key {
-	return blob.Key("projects/" + pid + "/.kioku/views/" + suffix)
-}
-
-func viewKey(pid, id, name string) blob.Key {
-	return viewsKey(pid, id+"/"+name)
-}
-
-func viewObjectMissing(err error) bool {
-	var missing interface{ NotFound() bool }
-	return errors.Is(err, fs.ErrNotExist) || errors.As(err, &missing) && missing.NotFound()
-}
-
-func (s *Server) readViewRecord(ctx context.Context, key blob.Key, value any) error {
-	body, err := s.Blobs.Get(ctx, key)
-	if err != nil {
-		return err
+func completeViewWikiRevision(p model.Project) string { return p.WikiCompleteRevision }
+func viewProjection(row store.ViewRow, p model.Project, s *Server) viewDefinition {
+	if row.Slug == wikiViewSlug {
+		return s.wikiViewDefinition(wikiViewRecord{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt)}, p)
 	}
-	return json.Unmarshal(body, value)
-}
-
-func encodeViewRecord(value any) ([]byte, error) {
-	body, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
+	v := viewDefinition{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt), Status: valueString(row.Data.Status), Error: valueString(row.Data.Error), JobID: valueString(row.Data.JobID), WikiSnapshotID: valueString(row.Data.WikiSnapshotID)}
+	if row.CreatedAt != nil {
+		t := storageDate(*row.CreatedAt)
+		v.CreatedAt = &t
 	}
-	if len(body) > maxViewRecordBytes {
-		return nil, fail(400, "view record exceeds storage limit")
+	if row.Data.GeneratedAt != nil {
+		t := storageDate(*row.Data.GeneratedAt)
+		v.GeneratedAt = &t
 	}
-	return body, nil
-}
-
-func (s *Server) writeViewRecord(ctx context.Context, key blob.Key, value any) error {
-	body, err := encodeViewRecord(value)
-	if err != nil {
-		return err
+	if row.BundleHash != nil && valueString(row.ViewEpoch) != p.ViewEpoch {
+		v.JobID = ""
+		v.WikiSnapshotID = ""
+		v.GeneratedAt = nil
 	}
-	return s.Blobs.Put(ctx, key, body)
+	return v
 }
-
-func (s *Server) readViewIndexLocked(ctx context.Context, pid string) (viewIndex, error) {
-	var index viewIndex
-	err := s.readViewRecord(ctx, viewsKey(pid, "index.json"), &index)
-	if !viewObjectMissing(err) {
-		if err == nil && index.Views == nil {
-			index.Views = map[string]viewIndexEntry{}
+func (s *Server) readWikiViewLocked(ctx context.Context, pid string) (wikiViewRecord, error) {
+	var record wikiViewRecord
+	err := s.Store.Read(ctx, func(q *store.Queries) error {
+		row, err := q.ViewBySlug(pid, wikiViewSlug)
+		if errors.Is(err, sql.ErrNoRows) {
+			record = newWikiViewRecord(pid)
+			return nil
 		}
-		return index, err
-	}
-	// The index also records that the default was initialized, including after
-	// the user deletes it. A retry of the initial write uses the same ID.
-	id := "vw_" + auth.Hash(pid + "/project-map")[:20]
-	preset := projectViewPresets[0]
-	now := time.Now().UTC()
-	view := viewDefinition{CreatedAt: &now, ID: id, Slug: "project-map", Title: preset.Title, Prompt: preset.Prompt, Status: "pending"}
-	if err := s.writeViewRecord(ctx, viewKey(pid, id, "view.json"), view); err != nil {
-		return index, err
-	}
-	index.Views = map[string]viewIndexEntry{"project-map": {ID: id, Version: auth.Token()[:20]}}
-	return index, s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index)
+		if err != nil {
+			return err
+		}
+		record = wikiViewRecord{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt)}
+		return nil
+	})
+	return record, err
 }
-
-func (s *Server) seedViewsLocked(ctx context.Context, pid string) error {
-	_, err := s.readViewIndexLocked(ctx, pid)
-	return err
-}
-
 func (s *Server) viewProjectLocked(pid string) (model.Project, error) {
 	var p model.Project
-	err := s.Store.View(func(st model.State) error {
-		var ok bool
-		p, ok = st.Projects[pid]
-		if !ok || p.Deleting {
+	err := s.Store.Read(context.Background(), func(q *store.Queries) error {
+		row, err := q.Project(pid)
+		if errors.Is(err, sql.ErrNoRows) {
 			return fail(404, "project not found")
 		}
-		return nil
+		if err != nil {
+			return err
+		}
+		if row.Deleting {
+			return fail(404, "project not found")
+		}
+		p, err = projectProjection(q, row)
+		return err
 	})
 	return p, err
 }
-
-func completeViewWikiRevision(project model.Project) string {
-	if project.WikiCompleteRevision != "" {
-		return project.WikiCompleteRevision
-	}
-	if !project.WikiIncomplete {
-		return project.Revision
-	}
-	return ""
-}
-
-// Callers hold the project lock for authorization, lookup, and the associated
-// read or write. The index defines visibility and commits a published result.
 func (s *Server) listViewsLocked(ctx context.Context, pid string) ([]viewDefinition, error) {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return nil, err
-	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.collectDeletedViewsLocked(ctx, pid, index); err != nil {
-		slog.Warn("view cleanup deferred", "project", pid, "error", err)
-	}
-	views, err := s.readViewsLocked(ctx, pid, project.ViewEpoch, index)
-	if err != nil {
-		return nil, err
-	}
-	wiki, err := s.loadWikiViewLocked(ctx, pid, index)
-	if err != nil {
-		return nil, err
-	}
-	views = append(views, s.wikiViewDefinition(wiki, project))
-	sortViews(views)
-	return views, nil
-}
-
-func (s *Server) readViewsLocked(ctx context.Context, pid, epoch string, index viewIndex) ([]viewDefinition, error) {
-	views := make([]viewDefinition, 0, len(index.Views))
-	for slug, entry := range index.Views {
-		view, err := s.loadViewLocked(ctx, pid, slug, epoch, entry)
+	views := []viewDefinition{}
+	err := s.Store.Read(ctx, func(q *store.Queries) error {
+		row, err := q.Project(pid)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		views = append(views, view)
-	}
-	return views, nil
+		if row.Deleting {
+			return fail(404, "project not found")
+		}
+		p, err := projectProjection(q, row)
+		if err != nil {
+			return err
+		}
+		rows, err := q.ProjectViews(pid)
+		if err != nil {
+			return err
+		}
+		hasWiki := false
+		for _, row := range rows {
+			if row.Slug == wikiViewSlug {
+				hasWiki = true
+			}
+			views = append(views, viewProjection(row, p, s))
+		}
+		if !hasWiki {
+			views = append(views, s.wikiViewDefinition(newWikiViewRecord(pid), p))
+		}
+		return nil
+	})
+	sortViews(views)
+	return views, err
 }
-
 func (s *Server) viewBySlugLocked(ctx context.Context, pid, slug string) (viewDefinition, error) {
 	return s.findViewLocked(ctx, pid, slug, "")
 }
-
 func (s *Server) viewByIDLocked(ctx context.Context, pid, id string) (viewDefinition, error) {
 	return s.findViewLocked(ctx, pid, "", id)
 }
-
+func (s *Server) viewForDisplayLocked(ctx context.Context, p model.Project, slug string) (viewDefinition, error) {
+	return s.viewBySlugLocked(ctx, p.ID, slug)
+}
 func (s *Server) findViewLocked(ctx context.Context, pid, slug, id string) (viewDefinition, error) {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	if id != "" {
-		for name, entry := range index.Views {
-			if entry.ID == id {
-				slug = name
-				break
-			}
+	var v viewDefinition
+	err := s.Store.Read(ctx, func(q *store.Queries) error {
+		p, err := q.Project(pid)
+		if err != nil {
+			return err
 		}
-	}
-	entry, exists := index.Views[slug]
-	if !exists {
-		return viewDefinition{}, fail(404, "view not found")
-	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	return s.loadViewLocked(ctx, pid, slug, project.ViewEpoch, entry)
+		if p.Deleting {
+			return fail(404, "project not found")
+		}
+		var row store.ViewRow
+		if id != "" {
+			row, err = q.View(pid, id)
+		} else {
+			row, err = q.ViewBySlug(pid, slug)
+		}
+		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
+			row = store.ViewRow{ProjectID: pid, ID: newWikiViewRecord(pid).ID, Slug: wikiViewSlug}
+			err = nil
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "view not found")
+		}
+		if err != nil {
+			return err
+		}
+		project, err := projectProjection(q, p)
+		if err != nil {
+			return err
+		}
+		v = viewProjection(row, project, s)
+		return nil
+	})
+	return v, err
 }
-
-func (s *Server) loadViewLocked(ctx context.Context, pid, slug, epoch string, entry viewIndexEntry) (viewDefinition, error) {
-	var view viewDefinition
-	if err := s.recoverViewPublicationLocked(ctx, pid, entry); err != nil {
-		return view, err
-	}
-	err := s.readViewRecord(ctx, viewKey(pid, entry.ID, "view.json"), &view)
-	if err != nil {
-		return view, err
-	}
-	if view.ID != entry.ID || view.Slug != slug || view.JobID != entry.Result {
-		return view, errors.New("view metadata does not match project index")
-	}
-	if err := s.recoverViewEditLocked(ctx, pid, entry.Version, &view); err != nil {
-		return view, err
-	}
-	if entry.Result != "" && entry.Epoch != epoch {
-		view.clearResult()
-	}
-	view.Version = entry.Version
-	return view, nil
-}
-
-func (v *viewDefinition) clearResult() {
-	v.JobID, v.WikiSnapshotID, v.GeneratedAt = "", "", nil
-}
-
 func (s *Server) createViewLocked(ctx context.Context, pid, slug, title, prompt string) (viewDefinition, error) {
 	if strings.TrimSpace(title) == "" || strings.TrimSpace(prompt) == "" {
 		return viewDefinition{}, fail(400, "title and prompt must contain text")
 	}
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	id := "vw_" + auth.Token()[:20]
-	if slug == "" {
-		slug = projectSlug(title)
-		if _, exists := index.Views[slug]; exists || slug == wikiViewSlug {
-			slug = "view-" + auth.Hash(id)[:20]
+	var result viewDefinition
+	err := s.write(ctx, func(q *store.Queries) error {
+		p, err := q.Project(pid)
+		if err != nil {
+			return err
 		}
-	}
-	if !validSlug(slug) {
-		return viewDefinition{}, fail(400, "invalid view slug")
-	}
-	if _, exists := index.Views[slug]; exists || slug == wikiViewSlug {
-		return viewDefinition{}, fail(409, "view slug is already in use")
-	}
-	now := time.Now().UTC()
-	view := viewDefinition{CreatedAt: &now, ID: id, Slug: slug, Title: title, Prompt: prompt, Status: "pending", Version: auth.Token()[:20]}
-	if err = s.writeViewRecord(ctx, viewKey(pid, id, "view.json"), view); err != nil {
-		return viewDefinition{}, err
-	}
-	index.Views[slug] = viewIndexEntry{ID: id, Version: view.Version}
-	return view, s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index)
+		id := "vw_" + auth.Token()[:20]
+		if slug == "" {
+			slug = projectSlug(title)
+			_, err = q.ViewBySlug(pid, slug)
+			if err == nil || slug == wikiViewSlug {
+				slug = "view-" + auth.Hash(id)[:20]
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		if !validSlug(slug) {
+			return fail(400, "invalid view slug")
+		}
+		_, err = q.ViewBySlug(pid, slug)
+		if err == nil || slug == wikiViewSlug {
+			return fail(409, "view slug is already in use")
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		now := time.Now().UnixMilli()
+		row := store.ViewRow{ID: id, ProjectID: pid, Slug: slug, CreatedAt: &now, Data: store.ViewData{Title: &title, Prompt: &prompt, Status: nullableString("pending")}}
+		if err := q.PutView(row); err != nil {
+			return err
+		}
+		project, err := projectProjection(q, p)
+		if err != nil {
+			return err
+		}
+		result = viewProjection(row, project, s)
+		return nil
+	})
+	return result, err
 }
-
+func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, prompt *string) (viewDefinition, error) {
+	return s.updateViewLocked(ctx, pid, wikiViewSlug, title, prompt)
+}
 func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, title, prompt *string) (viewDefinition, error) {
-	if (title == nil && prompt == nil) || (title != nil && strings.TrimSpace(*title) == "") || (prompt != nil && strings.TrimSpace(*prompt) == "") {
+	if title == nil && prompt == nil || title != nil && strings.TrimSpace(*title) == "" || prompt != nil && strings.TrimSpace(*prompt) == "" {
 		return viewDefinition{}, fail(400, "provide title or prompt with text")
 	}
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	entry, exists := index.Views[slug]
-	if !exists {
-		return viewDefinition{}, fail(404, "view not found")
-	}
-	// Load the on-disk result fields even when its epoch is obsolete. Only
-	// invalidation changes those fields and their corresponding index values.
-	view, err := s.loadViewLocked(ctx, pid, slug, entry.Epoch, entry)
-	if err != nil {
-		return viewDefinition{}, err
-	}
-	edit := viewEdit{Version: auth.Token()[:20], Title: view.Title, Prompt: view.Prompt}
-	if title != nil {
-		edit.Title = *title
-	}
-	if prompt != nil {
-		edit.Prompt = *prompt
-	}
-	if view.applyEdit(edit) {
-		if err := s.commitViewEditLocked(ctx, pid, index, entry, edit, view); err != nil {
-			return viewDefinition{}, err
+	var result viewDefinition
+	err := s.write(ctx, func(q *store.Queries) error {
+		row, err := q.ViewBySlug(pid, slug)
+		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
+			row = store.ViewRow{ProjectID: pid, ID: newWikiViewRecord(pid).ID, Slug: wikiViewSlug}
+			err = nil
 		}
-		view.Version = edit.Version
-	}
-	project, err := s.viewProjectLocked(pid)
-	if entry.Result != "" && entry.Epoch != project.ViewEpoch {
-		view.clearResult()
-	}
-	return view, err
-}
-
-func (v *viewDefinition) applyEdit(edit viewEdit) bool {
-	if v.Title == edit.Title && v.Prompt == edit.Prompt {
-		return false
-	}
-	v.Title, v.Prompt = edit.Title, edit.Prompt
-	return true
-}
-
-func (s *Server) commitViewEditLocked(ctx context.Context, pid string, index viewIndex, entry viewIndexEntry, edit viewEdit, view viewDefinition) error {
-	body, err := encodeViewRecord(view)
-	if err != nil {
-		return err
-	}
-	if err := s.writeViewRecord(ctx, viewKey(pid, view.ID, "edit.json"), edit); err != nil {
-		return err
-	}
-	entry.Version = edit.Version
-	index.Views[view.Slug] = entry
-	// The index changes the settings generation atomically. Recovery applies
-	// the matching edit before another operation can read or use those settings.
-	if err = s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index); err != nil {
-		return err
-	}
-	if err := s.Blobs.Put(ctx, viewKey(pid, view.ID, "view.json"), body); err != nil {
-		return err
-	}
-	s.clearViewEditLocked(ctx, pid, view.ID)
-	return nil
-}
-
-func (s *Server) recoverViewEditLocked(ctx context.Context, pid, version string, view *viewDefinition) error {
-	var edit viewEdit
-	err := s.readViewRecord(ctx, viewKey(pid, view.ID, "edit.json"), &edit)
-	if viewObjectMissing(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if edit.Version == version && view.applyEdit(edit) {
-		if err := s.writeViewRecord(ctx, viewKey(pid, view.ID, "view.json"), view); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "view not found")
+		}
+		if err != nil {
 			return err
 		}
-	}
-	s.clearViewEditLocked(ctx, pid, view.ID)
-	return nil
+		if title != nil {
+			row.Data.Title = title
+		}
+		if prompt != nil {
+			row.Data.Prompt = prompt
+		}
+		if err = q.PutView(row); err != nil {
+			return err
+		}
+		p, err := q.Project(pid)
+		if err != nil {
+			return err
+		}
+		project, err := projectProjection(q, p)
+		if err != nil {
+			return err
+		}
+		result = viewProjection(row, project, s)
+		return nil
+	})
+	return result, err
 }
-
-func (s *Server) clearViewEditLocked(ctx context.Context, pid, id string) {
-	if err := s.Blobs.Delete(ctx, viewKey(pid, id, "edit.json")); err != nil && !viewObjectMissing(err) {
-		slog.Warn("view edit cleanup deferred", "project", pid, "error", err)
-	}
-}
-
 func (s *Server) deleteViewLocked(ctx context.Context, pid, slug string) error {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return err
+	if slug == wikiViewSlug {
+		return fail(409, "the wiki view cannot be deleted")
 	}
-	entry, exists := index.Views[slug]
-	if !exists {
-		return fail(404, "view not found")
-	}
-	delete(index.Views, slug)
-	index.Removed = append(index.Removed, entry.ID)
-	if err := s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index); err != nil {
-		return err
-	}
-	if err := s.collectDeletedViewsLocked(ctx, pid, index); err != nil {
-		slog.Warn("view cleanup deferred", "project", pid, "error", err)
-	}
-	return nil
-}
-
-func (s *Server) collectDeletedViewsLocked(ctx context.Context, pid string, index viewIndex) error {
-	if len(index.Removed) == 0 {
-		return nil
-	}
-	for _, id := range index.Removed {
-		if err := s.deleteViewFilesLocked(ctx, pid, id); err != nil {
-			return err
+	return s.write(ctx, func(q *store.Queries) error {
+		row, err := q.ViewBySlug(pid, slug)
+		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
+			row = store.ViewRow{ProjectID: pid, ID: newWikiViewRecord(pid).ID, Slug: wikiViewSlug}
+			err = nil
 		}
-	}
-	index.Removed = nil
-	return s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index)
-}
-
-func (s *Server) deleteViewFilesLocked(ctx context.Context, pid, id string) error {
-	for _, name := range []string{"bundle.zip", "view.json", "edit.json", "publish.json", "previous.zip", "candidate.zip"} {
-		if err := s.Blobs.Delete(ctx, viewKey(pid, id, name)); err != nil && !viewObjectMissing(err) {
-			return err
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "view not found")
 		}
-	}
-	return nil
-}
-
-func (s *Server) setViewStatusLocked(ctx context.Context, pid, id, status, reason string) (bool, error) {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return false, err
-	}
-	for slug, entry := range index.Views {
-		if entry.ID != id {
-			continue
-		}
-		view, err := s.loadViewLocked(ctx, pid, slug, entry.Epoch, entry)
-		if err != nil {
-			return false, err
-		}
-		view.Status, view.Error = status, reason
-		return true, s.writeViewRecord(ctx, viewKey(pid, id, "view.json"), view)
-	}
-	return false, nil
-}
-
-func (s *Server) publishViewLocked(ctx context.Context, pid, id, jobID, wikiSnapshotID string, bundle []byte) (bool, error) {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return false, err
-	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return false, err
-	}
-	if wikiSnapshotID == "" || project.WikiIncomplete || completeViewWikiRevision(project) != wikiSnapshotID {
-		return false, nil
-	}
-	for slug, entry := range index.Views {
-		if entry.ID != id {
-			continue
-		}
-		if entry.Result == jobID {
-			return true, s.recoverViewPublicationLocked(ctx, pid, entry)
-		}
-		prior, err := s.loadViewLocked(ctx, pid, slug, entry.Epoch, entry)
-		if err != nil {
-			return false, err
-		}
-		next := prior
-		now := time.Now().UTC()
-		next.Status, next.Error = "completed", ""
-		next.JobID, next.WikiSnapshotID, next.GeneratedAt = jobID, wikiSnapshotID, &now
-		hash := auth.Hash(string(bundle))
-		record := viewPublication{Prior: prior.result(), Next: next.result(), PriorHash: entry.Hash, NextHash: hash}
-		if err = s.stageViewPublicationLocked(ctx, pid, entry, record, bundle); err != nil {
-			return false, err
-		}
-		entry.Result, entry.Hash, entry.Epoch = jobID, hash, project.ViewEpoch
-		index.Views[slug] = entry
-		return true, s.commitViewPublicationLocked(ctx, pid, index, entry, next, bundle)
-	}
-	return false, nil
-}
-
-func (s *Server) stageViewPublicationLocked(ctx context.Context, pid string, entry viewIndexEntry, record viewPublication, bundle []byte) error {
-	id := entry.ID
-	if entry.Result != "" {
-		old, err := s.Blobs.Get(ctx, viewKey(pid, id, "bundle.zip"))
 		if err != nil {
 			return err
 		}
-		if auth.Hash(string(old)) != entry.Hash {
-			return errors.New("previous view bundle failed integrity check")
-		}
-		if err = s.Blobs.Put(ctx, viewKey(pid, id, "previous.zip"), old); err != nil {
-			return err
-		}
-	}
-	if err := s.Blobs.Put(ctx, viewKey(pid, id, "candidate.zip"), bundle); err != nil {
-		return err
-	}
-	return s.writeViewRecord(ctx, viewKey(pid, id, "publish.json"), record)
+		return q.DeleteView(pid, row.ID)
+	})
 }
-
-func (s *Server) commitViewPublicationLocked(ctx context.Context, pid string, index viewIndex, entry viewIndexEntry, next viewDefinition, bundle []byte) error {
-	id := entry.ID
-	if err := s.Blobs.Put(ctx, viewKey(pid, id, "bundle.zip"), bundle); err != nil {
-		return err
-	}
-	if err := s.writeViewRecord(ctx, viewKey(pid, id, "view.json"), next); err != nil {
-		return err
-	}
-	if err := s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index); err != nil {
-		return err
-	}
-	s.clearViewPublicationLocked(ctx, pid, id)
-	return nil
-}
-
-func (s *Server) recoverViewPublicationLocked(ctx context.Context, pid string, entry viewIndexEntry) error {
-	id := entry.ID
-	var record viewPublication
-	err := s.readViewRecord(ctx, viewKey(pid, id, "publish.json"), &record)
-	if viewObjectMissing(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	result, backup, hash := record.Prior, "previous.zip", record.PriorHash
-	if entry.Result == record.Next.JobID {
-		result, backup, hash = record.Next, "candidate.zip", record.NextHash
-	}
-	if entry.Result != result.JobID || entry.Hash != hash {
-		return errors.New("view index and publication record disagree")
-	}
-	metaKey := viewKey(pid, id, "view.json")
-	var view viewDefinition
-	if err := s.readViewRecord(ctx, metaKey, &view); err != nil {
-		return err
-	}
-	// Settings writes and deletion recover under the same lock first. Only
-	// restore result fields, so recovery cannot revert newer configuration.
-	if view.JobID != result.JobID {
-		view.applyResult(result)
-		if err := s.writeViewRecord(ctx, metaKey, view); err != nil {
-			return err
-		}
-	}
-	if err := s.restoreViewBundleLocked(ctx, pid, entry, backup); err != nil {
-		if entry.Result != "" {
-			return err
-		}
-		// The index already prevents reads of this ZIP. Keep the record so
-		// later recovery can retry deleting the unreferenced object.
-		slog.Warn("view bundle deletion deferred", "project", pid, "error", err)
-		return nil
-	}
-	s.clearViewPublicationLocked(ctx, pid, id)
-	return nil
-}
-
-func (s *Server) restoreViewBundleLocked(ctx context.Context, pid string, entry viewIndexEntry, backup string) error {
-	key := viewKey(pid, entry.ID, "bundle.zip")
-	if entry.Result == "" {
-		err := s.Blobs.Delete(ctx, key)
-		if viewObjectMissing(err) {
-			return nil
-		}
-		return err
-	}
-	current, err := s.Blobs.Get(ctx, key)
-	if err == nil && auth.Hash(string(current)) == entry.Hash {
-		return nil
-	}
-	body, err := s.Blobs.Get(ctx, viewKey(pid, entry.ID, backup))
-	if err != nil {
-		return err
-	}
-	if auth.Hash(string(body)) != entry.Hash {
-		return errors.New("view recovery bundle failed integrity check")
-	}
-	return s.Blobs.Put(ctx, key, body)
-}
-
-func (s *Server) clearViewPublicationLocked(ctx context.Context, pid, id string) {
-	if err := s.removeViewPublicationLocked(ctx, pid, id); err != nil {
-		slog.Warn("view publication cleanup deferred", "project", pid, "error", err)
-	}
-}
-
-func (s *Server) removeViewPublicationLocked(ctx context.Context, pid, id string) error {
-	// Once the record is gone there is nothing to recover, even if deleting
-	// a staging copy fails. Later attempts can overwrite the staging names.
-	if err := s.Blobs.Delete(ctx, viewKey(pid, id, "publish.json")); err != nil && !viewObjectMissing(err) {
-		return err
-	}
-	for _, name := range []string{"previous.zip", "candidate.zip"} {
-		if err := s.Blobs.Delete(ctx, viewKey(pid, id, name)); err != nil && !viewObjectMissing(err) {
-			slog.Warn("view staging cleanup deferred", "project", pid, "error", err)
-		}
-	}
-	return nil
-}
-
-func (s *Server) readViewBundleLocked(ctx context.Context, pid string, view viewDefinition) ([]byte, error) {
-	if view.JobID == "" {
+func (s *Server) readViewBundleLocked(ctx context.Context, pid string, v viewDefinition) ([]byte, error) {
+	if v.JobID == "" {
 		return nil, fail(404, "view result not found")
 	}
-	index, err := s.readViewIndexLocked(ctx, pid)
+	var row store.ViewRow
+	err := s.Store.Read(ctx, func(q *store.Queries) error {
+		var err error
+		row, err = q.View(pid, v.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "view result not found")
+		}
+		if err != nil {
+			return err
+		}
+		p, err := q.Project(pid)
+		if err != nil {
+			return err
+		}
+		if row.BundleHash == nil || valueString(row.Data.JobID) != v.JobID || !equalOptional(row.ViewEpoch, p.ViewEpoch) {
+			return fail(404, "view result not found")
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return nil, err
-	}
-	entry := index.Views[view.Slug]
-	if entry.Result != view.JobID || entry.ID != view.ID || entry.Epoch != project.ViewEpoch {
-		return nil, fail(404, "view result not found")
-	}
-	if err := s.recoverViewPublicationLocked(ctx, pid, entry); err != nil {
-		return nil, err
-	}
-	body, err := s.Blobs.Get(ctx, viewKey(pid, view.ID, "bundle.zip"))
-	if err == nil && auth.Hash(string(body)) != entry.Hash {
+	body, err := s.Blobs.Get(ctx, model.ViewContentKey(pid, v.ID, model.ContentHash(*row.BundleHash)))
+	if err == nil && string(model.HashContent(body)) != *row.BundleHash {
 		return nil, errors.New("view bundle failed integrity check")
 	}
 	return body, err
 }
 
-func (s *Server) invalidateViewsLocked(ctx context.Context, pid string) error {
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return err
-	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return err
-	}
-	for slug, entry := range index.Views {
-		if entry.Result == "" || entry.Epoch == project.ViewEpoch {
-			continue
-		}
-		if err := s.invalidateViewResultLocked(ctx, pid, slug, &index, entry); err != nil {
-			return err
-		}
-	}
-	return s.collectDeletedViewsLocked(ctx, pid, index)
-}
-
-func (s *Server) invalidateViewResultLocked(ctx context.Context, pid, slug string, index *viewIndex, entry viewIndexEntry) error {
-	prior, err := s.loadViewLocked(ctx, pid, slug, entry.Epoch, entry)
-	if err != nil {
-		return err
-	}
-	next := prior
-	next.clearResult()
-	record := viewPublication{Prior: prior.result(), Next: next.result(), PriorHash: entry.Hash}
-	if err := s.writeViewRecord(ctx, viewKey(pid, entry.ID, "publish.json"), record); err != nil {
-		return err
-	}
-	if err := s.writeViewRecord(ctx, viewKey(pid, entry.ID, "view.json"), next); err != nil {
-		return err
-	}
-	entry.Result, entry.Hash, entry.Epoch = "", "", ""
-	index.Views[slug] = entry
-	if err := s.writeViewRecord(ctx, viewsKey(pid, "index.json"), *index); err != nil {
-		return err
-	}
-	return s.recoverViewPublicationLocked(ctx, pid, entry)
-}
-
-func (s *Server) collectViewsLocked(ctx context.Context, pid string) error {
-	if err := s.invalidateViewsLocked(ctx, pid); err != nil {
-		return err
-	}
-	index, err := s.readViewIndexLocked(ctx, pid)
-	if err != nil {
-		return err
-	}
-	live := make(map[string]bool, len(index.Views)+1)
-	if index.Wiki != nil {
-		live[index.Wiki.ID] = true
-	}
-	project, err := s.viewProjectLocked(pid)
-	if err != nil {
-		return err
-	}
-	for slug, entry := range index.Views {
-		live[entry.ID] = true
-		if _, err := s.loadViewLocked(ctx, pid, slug, project.ViewEpoch, entry); err != nil {
-			return err
-		}
-	}
-	prefix := string(viewsKey(pid, ""))
-	keys, err := s.Blobs.List(ctx, prefix)
-	if err != nil {
-		return err
-	}
-	for _, key := range keys {
-		suffix, inProject := strings.CutPrefix(string(key), prefix)
-		id, name, found := strings.Cut(suffix, "/")
-		if !inProject || !found || !strings.HasPrefix(id, "vw_") {
-			continue
-		}
-		if live[id] {
-			if name != "previous.zip" && name != "candidate.zip" {
-				continue
-			}
-			_, err := s.Blobs.Get(ctx, viewKey(pid, id, "publish.json"))
-			if !viewObjectMissing(err) {
-				continue
-			}
-		}
-		if err := s.Blobs.Delete(ctx, key); err != nil && !viewObjectMissing(err) {
-			return err
-		}
-	}
-	return nil
+func isNotFoundView(err error) bool {
+	var problem apiError
+	return errors.As(err, &problem) && problem.status == 404
 }

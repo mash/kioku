@@ -11,22 +11,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
 
-func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T) {
+func TestOnlineBackupKeepsServiceOpenAndIncludesAllSQLContent(t *testing.T) {
 	dir := t.TempDir()
-	stateStore, err := store.Open(dir)
+	stateStore, err := store.OpenDatabase(filepath.Join(dir, "catalog.sqlite"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stateStore.Close()
-	if err = stateStore.Update(func(st *model.State) error {
-		st.Users["u"] = model.User{ID: "u"}
-		st.Projects["p"] = model.Project{ID: "p"}
-		st.Inbox["s"] = model.InboxItem{ID: "s", ProjectID: "p"}
-		return nil
+	if err = stateStore.Write(t.Context(), func(q *store.Queries) error {
+		if err := q.PutUser(store.UserRow{ID: "u"}); err != nil {
+			return err
+		}
+		if err := q.PutProject(store.ProjectRow{ID: "p", Slug: "p"}); err != nil {
+			return err
+		}
+		return q.PutInbox(store.InboxRow{ID: "s", ProjectID: "p", SourceURL: "https://example.com/a"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -60,25 +62,30 @@ func TestOnlineBackupKeepsServiceStoreOpenAndExcludesProjectContent(t *testing.T
 	if resp.StatusCode != 200 {
 		t.Fatal(resp.StatusCode, string(raw))
 	}
-	if err = stateStore.Update(func(st *model.State) error {
-		u := st.Users["u"]
-		u.Name = "Still serving"
-		st.Users[u.ID] = u
-		return nil
+	if err = stateStore.Write(t.Context(), func(q *store.Queries) error {
+		return q.PutUser(store.UserRow{ID: "u", Data: store.UserData{Name: "Still serving"}})
 	}); err != nil {
 		t.Fatal("backup closed or poisoned live store", err)
 	}
-	restored, err := store.OpenControl(backup)
+	restored, err := store.OpenBackupDatabase(backup)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	_ = restored.View(func(st model.State) error {
-		if len(st.Inbox) != 0 || st.Users["u"].ID != "u" {
-			t.Error("backup did not separate config and content")
+	if err := restored.Read(t.Context(), func(q *store.Queries) error {
+		u, err := q.User("u")
+		if err != nil {
+			return err
 		}
-		return nil
-	})
+		items, err := q.ProjectInbox("p")
+		if len(items) != 1 || u.Data.Name != "" {
+			t.Error("backup mixed snapshots or lost SQL content")
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if second, err := serveAdmin(context.Background(), socket, stateStore); err == nil {
 		second()
 		t.Fatal("active admin socket replaced")

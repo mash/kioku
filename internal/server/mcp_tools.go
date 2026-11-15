@@ -10,7 +10,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/wiki"
 )
 
@@ -153,15 +155,27 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 
 func (s *Server) mcpProjects(key string) (any, error) {
 	projects := []map[string]string{}
-	err := s.Store.View(func(st model.State) error {
-		grant, ok := connectorGrant(st, key)
+	err := s.Store.Read(context.Background(), func(q *store.Queries) error {
+		grant, ok, err := connectorGrant(q, key)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return fail(401, "connector login required")
 		}
-		for _, p := range st.Projects {
-			if role := p.Members[grant.UserID]; role != "" && !p.Deleting && slices.Contains(grant.ProjectIDs, p.ID) {
-				projects = append(projects, map[string]string{"namespace": p.Namespace, "name": p.Name, "role": role})
+		rows, err := q.ProjectsForUser(grant.UserID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Deleting || !slices.Contains(grant.ProjectIDs, row.ID) {
+				continue
 			}
+			p, err := projectProjection(q, row)
+			if err != nil {
+				return err
+			}
+			projects = append(projects, map[string]string{"namespace": p.Namespace, "name": p.Name, "role": p.Members[grant.UserID]})
 		}
 		return nil
 	})
@@ -172,9 +186,9 @@ func (s *Server) mcpProjects(key string) (any, error) {
 func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) (model.Revision, func(), error) {
 	var project model.Project
 	var uid string
-	if err := s.Store.View(func(st model.State) error {
+	if err := s.Store.Read(ctx, func(q *store.Queries) error {
 		var err error
-		project, uid, err = connectorProject(st, key, namespace)
+		project, uid, err = connectorProject(q, key, namespace)
 		return err
 	}); err != nil {
 		return model.Revision{}, nil, err
@@ -224,9 +238,9 @@ func mcpTextPage(namespace, name, body string, offset int) (map[string]any, erro
 
 func (s *Server) lockConnectorProject(ctx context.Context, key, namespace string) (model.Project, func(), error) {
 	resolve := func() (p model.Project, err error) {
-		err = s.Store.View(func(st model.State) error {
+		err = s.Store.Read(ctx, func(q *store.Queries) error {
 			var err error
-			p, _, err = connectorProject(st, key, namespace)
+			p, _, err = connectorProject(q, key, namespace)
 			return err
 		})
 		return p, err
@@ -373,16 +387,29 @@ func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string
 func (s *Server) mcpSourcePut(ctx context.Context, key, namespace string, req model.PutRequest) (any, error) {
 	var project model.Project
 	var uid string
-	if err := s.Store.View(func(st model.State) error {
+	if err := s.Store.Read(ctx, func(q *store.Queries) error {
 		var err error
-		project, uid, err = connectorProject(st, key, namespace)
+		project, uid, err = connectorProject(q, key, namespace)
 		return err
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.acceptInbox(ctx, project.ID, uid, req); err != nil {
+	if err := s.acceptInbox(ctx, project.ID, uid, req, mutationHook{check: func(q *store.Queries) error {
+		p, user, err := connectorProject(q, key, namespace)
+		if err != nil {
+			return err
+		}
+		if p.ID != project.ID || user != uid {
+			return fail(404, "project not found")
+		}
+		return nil
+	}, audit: func(q *store.Queries) error {
+		if err := q.PutAudit(store.AuditRow{ID: auth.Token()[:20], ProjectID: project.ID, Created: time.Now().UnixMilli(), Data: store.AuditData{UserID: uid, Action: "POST", Detail: "mcp source_put"}}); err != nil {
+			return err
+		}
+		return q.CompactHistory(project.ID, nil)
+	}}); err != nil {
 		return nil, err
 	}
-	s.recordAudit(project.ID, uid, "POST", "mcp source_put")
 	return struct{}{}, nil
 }

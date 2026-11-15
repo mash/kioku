@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/store"
 )
 
 func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
@@ -25,21 +25,19 @@ func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if typ == "session.status_idled" || typ == "session.status_terminated" {
-		var job model.Job
-		err = s.Store.View(func(st model.State) error {
-			for _, j := range st.Jobs {
-				if j.Status == "running" && j.Run != nil && j.Run.Ref.ID == id && id != "" {
-					job = j
-					break
+		var jobs []store.JobRow
+		err = s.Store.Read(r.Context(), func(q *store.Queries) error { var err error; jobs, err = q.JobsBySession(id); return err })
+		if err == nil && id != "" {
+			for _, job := range jobs {
+				if job.Data.Run != nil {
+					if e := s.reconcileAgentJob(r.Context(), job); e != nil {
+						err = e
+					}
 				}
 			}
-			return nil
-		})
-		if err == nil && job.ID != "" {
-			err = s.reconcileAgentJob(r.Context(), job)
 		}
 		if err != nil {
-			slog.Error("agent webhook reconciliation deferred", "job", job.ID, "error", err)
+			slog.Error("agent webhook reconciliation deferred", "session", id, "error", err)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)

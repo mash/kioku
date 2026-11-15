@@ -3,21 +3,19 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
-func wikiInputArchive(t *testing.T, f *fixture, job model.Job) []byte {
+func wikiInputArchive(t *testing.T, f *fixture, job fixtureJob) []byte {
 	t.Helper()
-	data, err := f.s.Blobs.Get(t.Context(), agentJobKey(job, "input.tar.gz"))
+	data, err := f.s.Blobs.Get(t.Context(), fixtureJobKey(job, "input.tar.gz"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +79,11 @@ func TestWikiPromptGeneration(t *testing.T) {
 			}
 			sendOutput(t, f, ma, parent, "Published Wiki")
 			ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
-			if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+			if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.stateStore.View(func(st model.State) error {
-				for _, item := range st.Inbox {
+			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				for _, item := range fixtureInboxList(t, st) {
 					if item.ProjectID == p.ID {
 						t.Error("published inbox was not consumed")
 					}
@@ -103,10 +101,10 @@ func TestWikiPromptGeneration(t *testing.T) {
 				t.Fatal("View did not receive its prompt and published Wiki")
 			}
 			completeTestViewTask(t, f, ma, child, "<h1>Project map</h1>", 50)
-			if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+			if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 				t.Fatal(err)
 			}
-			var got model.Job
+			var got fixtureJob
 			if code := f.request("GET", "/api/projects/"+p.ID+"/jobs/"+parent.ID, token, nil, &got); code != 200 || got.Status != "completed" || got.WikiStatus != "completed" || len(got.Views) != 1 || got.Views[0].Slug != "project-map" || got.Views[0].Status != "completed" {
 				t.Fatalf("job = %d: %+v", code, got)
 			}
@@ -133,10 +131,10 @@ func TestEmptyInboxDoesNotReadWikiPrompt(t *testing.T) {
 	parent := queueTestViewGeneration(t, f, token, p)
 	sendOutput(t, f, ma, parent, "Published Wiki")
 	ma.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 200)
-	if err := f.s.reconcileAgentJob(t.Context(), parent); err != nil {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 		t.Fatal(err)
 	}
 	if code := f.request("PATCH", "/api/projects/"+p.ID+"/views/wiki", token, map[string]string{"prompt": "Saved"}, nil); code != 200 {
@@ -148,16 +146,17 @@ func TestEmptyInboxDoesNotReadWikiPrompt(t *testing.T) {
 	}
 	counter := &wikiPromptReadCounter{Store: f.s.Blobs, key: key}
 	f.s.Blobs = counter
+	f.s.storage.objects = f.s.Blobs
 	parent = queueTestViewGeneration(t, f, token, p)
 	if !parent.Unchanged || parent.Run != nil {
 		t.Fatalf("empty inbox started Wiki: %+v", parent)
 	}
 	child := nextTestViewTask(t, f, parent)
 	completeTestViewTask(t, f, ma, child, "<h1>Project map</h1>", 50)
-	if err := f.s.advanceViewGeneration(t.Context(), parent); err != nil {
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	var got model.Job
+	var got fixtureJob
 	if code := f.request("GET", "/api/projects/"+p.ID+"/jobs/"+parent.ID, token, nil, &got); code != 200 || got.Status != "completed" || !got.Unchanged || got.Views[0].Status != "completed" {
 		t.Fatalf("job = %d: %+v", code, got)
 	}
@@ -166,131 +165,42 @@ func TestEmptyInboxDoesNotReadWikiPrompt(t *testing.T) {
 	}
 }
 
-func TestWikiPromptFailureMatchesMissingInboxBody(t *testing.T) {
-	type outcome struct {
-		Status, Error, WikiStatus string
-		Released                  bool
+// E13: input preparation failure precedes Run creation and inbox assignment.
+func TestMissingInboxBodyFailsBeforeStartingRun(t *testing.T) {
+	f, token, p, ma := managedFixture(t)
+	item := putFile(t, f, token, p.ID, "source.md", "Evidence")
+	body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
+	fixtureCheck(t, err)
+	fixtureCheck(t, f.s.Blobs.Delete(t.Context(), item.BodyKey()))
+	parent := managedJob(t, f, token, p.ID, false)
+	fixtureCheck(t, f.s.startAgentJob(t.Context(), fixtureRow(parent)))
+	parent = storedJob(t, f, parent.ID)
+	if parent.Status != "failed" || parent.Run != nil || parent.Error == "" || parent.WikiStatus != "failed" {
+		t.Fatal(parent)
 	}
-	var outcomes []outcome
-	for _, corrupt := range []bool{false, true} {
-		name := "missing inbox body"
-		if corrupt {
-			name = "corrupt Wiki settings"
+	if item := fixtureInboxGet(t, f, item.ID); item.RunID != "" {
+		t.Fatal(item)
+	}
+	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		_, e := q.Usage(parent.ID)
+		if !errors.Is(e, sql.ErrNoRows) {
+			t.Fatal("usage without Run", e)
 		}
-		t.Run(name, func(t *testing.T) {
-			f, token, p, ma := managedFixture(t)
-			api := "/api/projects/" + p.ID + "/views/wiki"
-			if code := f.request("PATCH", api, token, map[string]string{"prompt": "Saved"}, nil); code != 200 {
-				t.Fatal(code)
-			}
-			putFile(t, f, token, p.ID, "source.md", "Evidence")
-			var item model.InboxItem
-			if err := f.stateStore.View(func(st model.State) error {
-				for _, in := range st.Inbox {
-					if in.ProjectID == p.ID {
-						item = in
-					}
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			key := item.BodyKey()
-			if corrupt {
-				key = viewKey(p.ID, newWikiViewRecord(p.ID).ID, "view.json")
-			}
-			original, err := f.s.Blobs.Get(t.Context(), key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if corrupt {
-				err = f.s.Blobs.Put(t.Context(), key, []byte("{"))
-			} else {
-				err = f.s.Blobs.Delete(t.Context(), key)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, readErr := f.s.Blobs.Get(t.Context(), key)
-			if corrupt {
-				_, readErr = f.s.readWikiViewLocked(t.Context(), p.ID)
-			}
-			if readErr == nil {
-				t.Fatal("fixture must fail to read")
-			}
-			var parent model.Job
-			if code := f.request("POST", "/api/projects/"+p.ID+"/generate", token, map[string]int{"budget_cents": 200}, &parent); code != 202 {
-				t.Fatal(code)
-			}
-			if err := f.stateStore.Update(func(st *model.State) error {
-				parent = st.Jobs[parent.ID]
-				parent.Status, parent.WikiStatus = "running", "running"
-				st.Jobs[parent.ID] = parent
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.s.startAgentJob(t.Context(), parent); !errors.Is(err, runner.ErrTemporary) {
-				t.Fatalf("start error = %v, want stop confirmation pending", err)
-			}
-			parent = storedJob(t, f, parent.ID)
-			var initial model.Job
-			if code := f.request("GET", "/api/projects/"+p.ID+"/jobs/"+parent.ID, token, nil, &initial); code != 200 || initial.Status != "running" || initial.Error != "" || initial.WikiStatus != "running" {
-				t.Fatalf("initial job = %d: %+v", code, initial)
-			}
-			if parent.Run.AbortReason != readErr.Error() {
-				t.Fatalf("abort reason = %q, want %q", parent.Run.AbortReason, readErr)
-			}
-			if err := f.stateStore.Update(func(st *model.State) error {
-				if st.Inbox[item.ID].RunID != parent.Run.Attempt.ID {
-					t.Error("inbox was released before stop confirmation")
-				}
-				job := st.Jobs[parent.ID]
-				job.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
-				st.Jobs[job.ID] = job
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.s.reconcileAgentJob(t.Context(), storedJob(t, f, parent.ID)); err != nil {
-				t.Fatal(err)
-			}
-			var got model.Job
-			if code := f.request("GET", "/api/projects/"+p.ID+"/jobs/"+parent.ID, token, nil, &got); code != 200 || got.Status != "failed" || got.WikiStatus != "failed" || got.Error != readErr.Error() || len(got.Views) != 0 {
-				t.Fatalf("failed job = %d: %+v", code, got)
-			}
-			released := false
-			if err := f.stateStore.View(func(st model.State) error { in, ok := st.Inbox[item.ID]; released = ok && in.RunID == ""; return nil }); err != nil {
-				t.Fatal(err)
-			}
-			if !released {
-				t.Fatal("inbox not released")
-			}
-			for _, req := range ma.Requests() {
-				if req.Method == "POST" && req.Path == "/v1/sessions" {
-					t.Fatal("runner started on input failure")
-				}
-			}
-			t.Logf("initial=%s/%s error=%q; final=%s/%s error=%q; released=%v; no session started", initial.Status, initial.WikiStatus, initial.Error, got.Status, got.WikiStatus, got.Error, released)
-			outcomes = append(outcomes, outcome{got.Status, "input read error", got.WikiStatus, released})
-			if err := f.s.Blobs.Put(t.Context(), key, original); err != nil {
-				t.Fatal(err)
-			}
-			retry := queueTestViewGeneration(t, f, token, p)
-			if retry.Run == nil || retry.Run.Ref.ID == "" || len(retry.Run.InboxIDs) != 1 || retry.Run.InboxIDs[0] != item.ID {
-				t.Fatalf("released item was not retried: %+v", retry)
-			}
-			sendOutput(t, f, ma, retry, "Retried Wiki")
-			ma.SetStatus(retry.Run.Ref.ID, "idle", "end_turn", 200)
-			if err := f.s.reconcileAgentJob(t.Context(), retry); err != nil {
-				t.Fatal(err)
-			}
-			if storedJob(t, f, retry.ID).WikiStatus != "completed" {
-				t.Fatal("retry did not publish")
-			}
-		})
+		return nil
+	}))
+	for _, req := range ma.Requests() {
+		if req.Method == "POST" && req.Path == "/v1/sessions" {
+			t.Fatal("provider started before input ready")
+		}
 	}
-	if len(outcomes) != 2 || !reflect.DeepEqual(outcomes[0], outcomes[1]) {
-		t.Fatalf("failure outcomes differ: %+v", outcomes)
+	fixtureCheck(t, f.s.Blobs.Put(t.Context(), item.BodyKey(), body))
+	retry := startManaged(t, f, token, p.ID, false)
+	if retry.Run == nil || len(retry.Run.InboxIDs) != 1 || retry.Run.InboxIDs[0] != item.ID {
+		t.Fatal(retry)
+	}
+	sendOutput(t, f, ma, retry, "Retried Wiki")
+	ma.SetStatus(retry.Run.Ref.ID, "idle", "end_turn", 200)
+	if got := reconcileManaged(t, f, retry); got.Status != "completed" {
+		t.Fatal(got)
 	}
 }

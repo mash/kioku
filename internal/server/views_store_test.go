@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 type viewFaultStore struct {
@@ -52,218 +53,163 @@ func (s *viewFaultStore) Delete(ctx context.Context, key blob.Key) error {
 
 func setCompleteViewWiki(t *testing.T, f *fixture, pid, wiki, epoch string) {
 	t.Helper()
-	if err := f.stateStore.Update(func(st *model.State) error {
-		project := st.Projects[pid]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		project := fixtureProjectsGet(t, st, pid)
 		project.WikiCompleteRevision, project.ViewEpoch = wiki, epoch
-		st.Projects[pid] = project
+		fixtureProjectsPut(t, st, pid, project)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// E9: ZIP PUT precedes the one SQL transaction for publication and child result.
 func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
-	for _, tc := range []struct {
-		name, suffix string
-		applied      bool
-		wantJob      string
-		wantBundle   string
-	}{
-		{"bundle", "/bundle.zip", true, "old-job", "old bundle"},
-		{"metadata", "/view.json", true, "old-job", "old bundle"},
-		{"before commit", "/index.json", false, "old-job", "old bundle"},
-		{"after commit", "/index.json", true, "new-job", "new bundle"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, boundary := range []string{"bundle", "SQL"} {
+		t.Run(boundary, func(t *testing.T) {
 			f, _, p := orgProject(t)
 			ctx := t.Context()
 			setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
-			unlock, err := f.s.lockProject(ctx, p.ID)
-			if err != nil {
-				t.Fatal(err)
+			v, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
+			fixtureCheck(t, err)
+			fixtureViewBundle(t, f, p.ID, v.ID, "old-job", "wiki-1", []byte("old bundle"))
+			child := fixtureViewJob(t, f, p.ID, v.ID, "new-job", "wiki-1")
+			objects := f.s.Blobs
+			restore := func() {}
+			if boundary == "bundle" {
+				f.s.Blobs = &viewFaultStore{Store: objects, putSuffix: ".zip", putApplied: true}
+				f.s.storage.objects = f.s.Blobs
+			} else {
+				restore = fixtureSQLFault(t, f, "jobs", "UPDATE", "NEW.status='completed'")
 			}
-			defer unlock()
-
-			view, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "old-job", "wiki-1", []byte("old bundle")); !ok || err != nil {
-				t.Fatalf("initial publication = %v, %v", ok, err)
-			}
-			f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, putSuffix: tc.suffix, putApplied: tc.applied}
-			if _, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "new-job", "wiki-1", []byte("new bundle")); err == nil {
+			bundle := &viewBundle{files: map[string][]byte{"index.html": []byte("new bundle")}}
+			if err := f.s.storage.publishView(ctx, child, bundle); err == nil {
 				t.Fatal("publication was not interrupted")
 			}
-
-			view, err = f.s.viewByIDLocked(ctx, p.ID, view.ID)
-			if err != nil || view.JobID != tc.wantJob || view.GeneratedAt == nil || view.WikiSnapshotID != "wiki-1" {
-				t.Fatalf("recovered metadata = %+v, %v", view, err)
+			got := fixtureViewRow(t, f, p.ID, v.ID)
+			if valueString(got.Data.JobID) != "old-job" || storedJob(t, f, child).Status != "running" {
+				t.Fatal("uncommitted publication visible", got)
 			}
-			body, err := f.s.readViewBundleLocked(ctx, p.ID, view)
-			if err != nil || string(body) != tc.wantBundle {
-				t.Fatalf("recovered bundle = %q, %v", body, err)
+			body, err := f.s.storage.readViewBundle(ctx, p.ID, v.ID)
+			fixtureCheck(t, err)
+			if string(body) != "old bundle" {
+				t.Fatal(string(body))
 			}
-			for _, name := range []string{"publish.json", "previous.zip", "candidate.zip"} {
-				if _, err := f.s.Blobs.Get(ctx, viewKey(p.ID, view.ID, name)); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatalf("temporary object %s is still present: %v", name, err)
-				}
+			restore()
+			f.s.Blobs = objects
+			f.s.storage.objects = objects
+			fixtureCheck(t, f.s.storage.publishView(ctx, child, bundle))
+			got = fixtureViewRow(t, f, p.ID, v.ID)
+			if valueString(got.Data.JobID) != "new-job" || storedJob(t, f, child).Status != "completed" {
+				t.Fatal("publication not atomic", got)
 			}
 		})
 	}
 }
-
+func fixtureViewJob(t *testing.T, f *fixture, pid, vid, parent, snapshot string) string {
+	t.Helper()
+	child := parent + "-child"
+	now := time.Now()
+	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
+		p, err := q.Project(pid)
+		if err != nil {
+			return err
+		}
+		p.WikiRevision = &snapshot
+		if err = q.PutProject(p); err != nil {
+			return err
+		}
+		members, err := q.ProjectMembers(pid)
+		if err != nil {
+			return err
+		}
+		uid := ""
+		for id, role := range members {
+			if role == "owner" {
+				uid = id
+			}
+		}
+		if err = q.PutJob(store.JobRow{ID: parent, Kind: "generate", ProjectID: pid, Status: "running", ChildID: &child, GenerationSnapshot: &snapshot, Data: store.JobData{UserID: uid, ViewGeneration: &store.GenerationData{}, Views: []store.ViewResultData{{ViewID: vid, Slug: "project-map", Status: "running"}}}}); err != nil {
+			return err
+		}
+		j := fixtureJob{ID: child, Kind: "generate-view", ProjectID: pid, Status: "running", UserID: uid, ViewTask: &fixtureViewTask{ParentID: parent, ViewID: vid, Snapshot: snapshot}, Run: &fixtureAgentRun{Phase: model.PhaseFinalizing, PreparedAt: now, Deadline: now.Add(time.Hour)}}
+		return q.PutJob(fixtureRow(j))
+	}))
+	return child
+}
 func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
-	f, _, p := orgProject(t)
+	f, token, p := orgProject(t)
 	ctx := t.Context()
 	setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
-	unlock, err := f.s.lockProject(ctx, p.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unlock()
-	view, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "job-1", "wiki-1", []byte("published")); !ok || err != nil {
-		t.Fatalf("publication = %v, %v", ok, err)
-	}
-	if ok, err := f.s.setViewStatusLocked(ctx, p.ID, view.ID, "running", ""); !ok || err != nil {
-		t.Fatalf("set running = %v, %v", ok, err)
-	}
+	v, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
+	fixtureCheck(t, err)
+	fixtureViewBundle(t, f, p.ID, v.ID, "old-job", "wiki-1", []byte("published"))
+	child := fixtureViewJob(t, f, p.ID, v.ID, "late-job", "wiki-1")
 	prompt := "New prompt"
-	updated, err := f.s.updateViewLocked(ctx, p.ID, view.Slug, nil, &prompt)
-	if err != nil || updated.Prompt != prompt || updated.Status != "running" || updated.JobID != "job-1" {
-		t.Fatalf("updated view = %+v, %v", updated, err)
+	updated, err := f.s.updateViewLocked(ctx, p.ID, v.Slug, nil, &prompt)
+	fixtureCheck(t, err)
+	if updated.Prompt != prompt || updated.JobID != "old-job" {
+		t.Fatal(updated)
 	}
-	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "late-job", "wiki-1", []byte("late")); !ok || err != nil {
-		t.Fatalf("edited publication = %v, %v", ok, err)
-	}
-
+	// A settings edit does not invalidate an already running job.
+	fixtureCheck(t, f.s.storage.publishView(ctx, child, &viewBundle{files: map[string][]byte{"index.html": []byte("late")}}))
 	setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-2")
-	if _, err := f.s.readViewBundleLocked(ctx, p.ID, updated); err == nil {
-		t.Fatal("obsolete bundle was still visible before cleanup")
+	if _, err := f.s.storage.readViewBundle(ctx, p.ID, v.ID); err == nil {
+		t.Fatal("obsolete bundle visible")
 	}
-	faulty := &viewFaultStore{Store: f.s.Blobs, deleteKey: viewKey(p.ID, view.ID, "bundle.zip")}
-	f.s.Blobs = faulty
-	if err := f.s.invalidateViewsLocked(ctx, p.ID); err != nil {
-		t.Fatal(err)
-	}
-	invalidated, err := f.s.viewBySlugLocked(ctx, p.ID, view.Slug)
-	if err != nil || invalidated.GeneratedAt != nil || invalidated.JobID != "" || invalidated.WikiSnapshotID != "" {
-		t.Fatalf("invalidated view metadata = %+v, %v", invalidated, err)
-	}
-	if _, err := faulty.Store.Get(ctx, faulty.deleteKey); err != nil {
-		t.Fatalf("fixture should still have the obsolete physical object: %v", err)
-	}
-
-	if err := f.s.deleteViewLocked(ctx, p.ID, view.Slug); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.seedViewsLocked(ctx, p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.s.viewBySlugLocked(ctx, p.ID, view.Slug); err == nil {
-		t.Fatal("default view reappeared after deletion")
-	}
-	replacement, err := f.s.createViewLocked(ctx, p.ID, view.Slug, "Replacement", prompt)
-	if err != nil || replacement.ID == view.ID {
-		t.Fatalf("replacement view = %+v, %v", replacement, err)
-	}
-	if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "deleted-view-job", "wiki-2", []byte("late")); ok || err != nil {
-		t.Fatalf("deleted view publication = %v, %v", ok, err)
-	}
-	faulty.deleteKey = ""
-	if err := f.s.collectViewsLocked(ctx, p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.s.Blobs.Get(ctx, viewKey(p.ID, view.ID, "bundle.zip")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("orphaned bundle not removed: %v", err)
-	}
-}
-
-func TestViewEditRecoversAcrossSettingsCommit(t *testing.T) {
-	for _, tc := range []struct {
-		suffix  string
-		applied bool
-		commits bool
-	}{
-		{"/index.json", false, false},
-		{"/index.json", true, true},
-		{"/view.json", false, true},
-	} {
-		f, _, p := orgProject(t)
-		ctx := t.Context()
-		setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
-		unlock, err := f.s.lockProject(ctx, p.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer unlock()
-		prior, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ok, err := f.s.setViewStatusLocked(ctx, p.ID, prior.ID, "running", ""); !ok || err != nil {
-			t.Fatalf("set running = %v, %v", ok, err)
-		}
-		f.s.Blobs = &viewFaultStore{Store: f.s.Blobs, putSuffix: tc.suffix, putApplied: tc.applied}
-		prompt := "Updated prompt"
-		if _, err := f.s.updateViewLocked(ctx, p.ID, prior.Slug, nil, &prompt); err == nil {
-			t.Fatal("settings update was not interrupted")
-		}
-		view, err := f.s.viewBySlugLocked(ctx, p.ID, prior.Slug)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tc.commits {
-			if view.Prompt != prompt || view.Status != "running" || view.Version == prior.Version {
-				t.Errorf("committed settings were not recovered: %+v", view)
-			}
-		} else if view.Prompt != prior.Prompt || view.Status != "running" || view.Version != prior.Version {
-			t.Errorf("uncommitted settings leaked: %+v", view)
-		}
-		if _, err := f.s.Blobs.Get(ctx, viewKey(p.ID, prior.ID, "edit.json")); !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("temporary settings record remains: %v", err)
-		}
-	}
-}
-
-func TestWikiViewPatchStorageReadFailurePreservesSettings(t *testing.T) {
-	f, token, p := orgProject(t)
-	api := "/api/projects/" + p.ID + "/views/wiki"
-	var view viewDefinition
-	if code := f.request("PATCH", api, token, map[string]string{"title": "Saved", "prompt": "Saved prompt"}, &view); code != 200 {
+	if code := f.request("DELETE", "/api/projects/"+p.ID+"/views/"+v.Slug, token, nil, nil); code != 204 {
 		t.Fatal(code)
 	}
-	key := viewKey(p.ID, view.ID, "view.json")
-	original, err := f.s.Blobs.Get(t.Context(), key)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := f.s.viewBySlugLocked(ctx, p.ID, v.Slug); err == nil {
+		t.Fatal("deleted default view returned")
 	}
-	store := f.s.Blobs
-	f.s.Blobs = &viewFaultStore{Store: store, getKey: key, getOnce: true}
-	if code := f.request("PATCH", api, token, map[string]string{"title": "Replacement"}, nil); code != 500 {
-		t.Fatalf("PATCH = %d", code)
+	replacement, err := f.s.createViewLocked(ctx, p.ID, v.Slug, "Replacement", prompt)
+	fixtureCheck(t, err)
+	if replacement.ID == v.ID {
+		t.Fatal("reused ID")
 	}
-	saved, err := store.Get(t.Context(), key)
-	if err != nil || string(saved) != string(original) {
-		t.Fatalf("saved settings changed: %q, %v", saved, err)
+	_, err = f.s.storage.collectGarbage(ctx, p.ID)
+	fixtureCheck(t, err)
+	keys, err := f.s.Blobs.List(ctx, "projects/"+p.ID+"/.kioku/views/"+v.ID+"/")
+	fixtureCheck(t, err)
+	if len(keys) != 0 {
+		t.Fatal(keys)
 	}
 }
-
-func TestWikiViewFullPatchDoesNotReadSavedSettings(t *testing.T) {
+func TestViewEditSQLFailurePreservesSettings(t *testing.T) {
+	f, token, p := orgProject(t)
+	api := "/api/projects/" + p.ID + "/views/project-map"
+	var before, after viewDefinition
+	if c := f.request("GET", api, token, nil, &before); c != 200 {
+		t.Fatal(c)
+	}
+	restore := fixtureSQLFault(t, f, "views", "UPDATE", "1")
+	if c := f.request("PATCH", api, token, map[string]string{"title": "Replacement"}, nil); c != 500 {
+		t.Fatal(c)
+	}
+	restore()
+	if c := f.request("GET", api, token, nil, &after); c != 200 || before.Title != after.Title || before.Prompt != after.Prompt {
+		t.Fatal(c, before, after)
+	}
+}
+func TestWikiViewPatchUsesSQLWithoutObjectReads(t *testing.T) {
 	f, token, p := orgProject(t)
 	api := "/api/projects/" + p.ID + "/views/wiki"
-	var view viewDefinition
-	if code := f.request("PATCH", api, token, map[string]string{"title": "Saved", "prompt": "Saved prompt"}, &view); code != 200 {
-		t.Fatal(code)
+	var v viewDefinition
+	if c := f.request("PATCH", api, token, map[string]string{"title": "Saved", "prompt": "Saved prompt"}, &v); c != 200 {
+		t.Fatal(c)
 	}
-	key := viewKey(p.ID, view.ID, "view.json")
-	store := f.s.Blobs
-	f.s.Blobs = &viewFaultStore{Store: store, getKey: key, getOnce: true}
-	if code := f.request("PATCH", api, token, map[string]string{"title": "New", "prompt": "New prompt"}, &view); code != 200 || view.Title != "New" || view.Prompt != "New prompt" {
-		t.Fatalf("PATCH = %d: %+v", code, view)
+	f.s.Blobs = unavailableWikiRead{f.s.Blobs}
+	f.s.storage.objects = f.s.Blobs
+	if c := f.request("PATCH", api, token, map[string]string{"title": "New"}, &v); c != 200 || v.Title != "New" || v.Prompt != "Saved prompt" {
+		t.Fatal(c, v)
+	}
+	restore := fixtureSQLFault(t, f, "views", "UPDATE", "1")
+	if c := f.request("PATCH", api, token, map[string]string{"prompt": "Lost"}, nil); c != 500 {
+		t.Fatal(c)
+	}
+	restore()
+	if c := f.request("GET", api, token, nil, &v); c != 200 || v.Prompt != "Saved prompt" {
+		t.Fatal(c, v)
 	}
 }

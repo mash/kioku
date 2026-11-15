@@ -10,7 +10,7 @@ import (
 
 func TestGeneratedEncryptionKeySurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
-	first, err := loadCipher(dir, "")
+	first, err := loadCipherForStorage(dir, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestGeneratedEncryptionKeySurvivesRestart(t *testing.T) {
 		t.Fatal("generated key must be private", err)
 	}
 	credential := first.Seal("test credential", "provider:user")
-	second, err := loadCipher(dir, "")
+	second, err := loadCipherForStorage(dir, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestGeneratedEncryptionKeySurvivesRestart(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("persisted key changed", err)
 	}
-	other, err := loadCipher(t.TempDir(), "")
+	other, err := loadCipherForStorage(t.TempDir(), "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestGeneratedEncryptionKeySurvivesRestart(t *testing.T) {
 func TestExplicitEncryptionKeyTakesPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
-	explicit, err := loadCipher(dir, key)
+	explicit, err := loadCipherForStorage(dir, key, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,21 +59,21 @@ func TestExplicitEncryptionKeyTakesPrecedence(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("explicit key must not be copied to disk", err)
 	}
-	if _, err := loadCipher(dir, ""); err != nil {
+	if _, err := loadCipherForStorage(dir, "", true); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	override, err := loadCipher(dir, key)
+	override, err := loadCipherForStorage(dir, key, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(explicit.OAuthSecret(), override.OAuthSecret()) {
 		t.Fatal("explicit key did not override generated key")
 	}
-	if _, err := loadCipher(dir, "invalid explicit key"); err == nil {
+	if _, err := loadCipherForStorage(dir, "invalid explicit key", true); err == nil {
 		t.Fatal("invalid explicit key fell back to the key file")
 	}
 	after, err := os.ReadFile(path)
@@ -89,7 +89,7 @@ func TestEncryptionKeyFileFailureDoesNotGenerateReplacement(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadCipher(dir, ""); err == nil {
+		if _, err := loadCipherForStorage(dir, "", true); err == nil {
 			t.Fatal("invalid persisted key accepted")
 		}
 		after, err := os.ReadFile(path)
@@ -101,10 +101,10 @@ func TestEncryptionKeyFileFailureDoesNotGenerateReplacement(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "encryption.key"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadCipher(dir, ""); err == nil {
+	if _, err := loadCipherForStorage(dir, "", true); err == nil {
 		t.Fatal("unreadable key file accepted")
 	}
-	if _, err := loadCipher(filepath.Join(t.TempDir(), "missing"), ""); err == nil {
+	if _, err := loadCipherForStorage(filepath.Join(t.TempDir(), "missing"), "", true); err == nil {
 		t.Fatal("used a generated key that could not be persisted")
 	}
 }

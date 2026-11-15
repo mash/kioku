@@ -1,20 +1,21 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestViewSettingsAuthorizationAndShape(t *testing.T) {
 	f, owner, project := orgProject(t)
 	readMember := f.login("reader@example.com")
 	outsider := f.login("outsider@example.com")
-	if err := f.stateStore.Update(func(st *model.State) error {
-		p := st.Projects[project.ID]
-		p.Members[st.Sessions[auth.Hash(readMember)].UserID] = "member"
-		st.Projects[p.ID] = p
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		p := fixtureProjectsGet(t, st, project.ID)
+		p.Members[fixtureSessionsGet(t, st, auth.Hash(readMember)).UserID] = "member"
+		fixtureProjectsPut(t, st, p.ID, p)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestViewSettingsAuthorizationAndShape(t *testing.T) {
 	if code := f.request("GET", delivery, outsider, nil, nil); code != 404 {
 		t.Errorf("non-member read returned %d", code)
 	}
-	var otherProject model.Project
+	var otherProject fixtureProject
 	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "acme/other-platform"}, &otherProject); code != 201 {
 		t.Fatal(code)
 	}
@@ -100,14 +101,12 @@ func TestViewDetailComparesWithFullyPublishedWiki(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := f.s.publishViewLocked(ctx, p.ID, view.ID, "view-job", "wiki-1", []byte("bundle")); !ok || err != nil {
-			t.Fatalf("publication = %v, %v", ok, err)
-		}
+		fixtureViewBundle(t, f, p.ID, view.ID, "view-job", "wiki-1", []byte("bundle"))
 	}()
-	if err := f.stateStore.Update(func(st *model.State) error {
-		p := st.Projects[p.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		p := fixtureProjectsGet(t, st, p.ID)
 		p.Revision, p.WikiIncomplete = "wiki-2", true
-		st.Projects[p.ID] = p
+		fixtureProjectsPut(t, st, p.ID, p)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

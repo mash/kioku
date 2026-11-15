@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
@@ -18,15 +19,15 @@ import (
 // Each method uses short transactions and keeps the project gate across object
 // selection, IO, and the conditional reference commit.
 type storageOperations struct {
-	db      *store.Database
+	db      catalog
 	objects blob.Store
-	config  Config
+	config  *Config
 	now     func() time.Time
 	id      func() string
 	gates   sync.Map
 }
 
-func newStorageOperations(db *store.Database, objects blob.Store, c Config) *storageOperations {
+func newStorageOperations(db catalog, objects blob.Store, c Config) *storageOperations {
 	if c.MaxWikiBytes == 0 {
 		c.MaxWikiBytes = 64 << 20
 	}
@@ -42,7 +43,7 @@ func newStorageOperations(db *store.Database, objects blob.Store, c Config) *sto
 	if c.AgentMaxSessionCents == 0 {
 		c.AgentMaxSessionCents = 1000
 	}
-	return &storageOperations{db: db, objects: objects, config: c, now: func() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }, id: func() string { return auth.Token()[:20] }}
+	return &storageOperations{db: db, objects: objects, config: &c, now: func() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }, id: func() string { return auth.Token()[:20] }}
 }
 func (o *storageOperations) lock(ctx context.Context, project string) (func(), error) {
 	if err := ctx.Err(); err != nil {
@@ -89,13 +90,20 @@ func wikiBytes(files []store.WikiFileRow) (int64, error) {
 	}
 	return total, nil
 }
-func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, body []byte) error {
+func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, body []byte, commit ...mutationHook) error {
 	unlock, err := o.lock(ctx, item.ProjectID)
 	if err != nil {
 		return err
 	}
 	defer unlock()
 	check := func(q *store.Queries) error {
+		for _, hook := range commit {
+			if hook.check != nil {
+				if err := hook.check(q); err != nil {
+					return err
+				}
+			}
+		}
 		p, err := sqlMember(q, item.ProjectID, item.Data.Submitter)
 		if err != nil {
 			return err
@@ -137,7 +145,7 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 			return err
 		}
 	}
-	return o.db.Write(ctx, func(q *store.Queries) error {
+	err = o.db.Write(ctx, func(q *store.Queries) error {
 		if err := check(q); err != nil {
 			return err
 		}
@@ -150,8 +158,51 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 		}
 		due := o.now().Add(o.config.GenerateDebounce).UnixMilli()
 		p.NextGenerateAt = &due
-		return q.PutProject(p)
+		if err := q.PutProject(p); err != nil {
+			return err
+		}
+		for _, hook := range commit {
+			if hook.audit != nil {
+				if err := hook.audit(q); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
+	var unknown *store.UnknownCommit
+	if !errors.As(err, &unknown) {
+		return err
+	}
+	applied := false
+	var declined error
+	if e := o.db.ResolveCommit(ctx, func(q *store.Queries) error {
+		_, e := q.Inbox(item.ID)
+		if e == nil {
+			applied = true
+			return nil
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		e = check(q)
+		var api apiError
+		if errors.As(e, &api) {
+			declined = e
+			return nil
+		}
+		return e
+	}); e != nil {
+		return e
+	}
+	if applied {
+		return nil
+	}
+	if declined != nil {
+		return declined
+	}
+	return fail(503, "inbox commit was not applied; retry the request")
+
 }
 func (o *storageOperations) readWikiFile(ctx context.Context, project, path string) ([]byte, error) {
 	unlock, err := o.lock(ctx, project)
@@ -220,9 +271,8 @@ func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRo
 		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != id || p.WikiIncomplete || valueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
 			return j, fail(409, "Wiki または生成ジョブが変更されました")
 		}
-		if _, err = q.View(j.ProjectID, j.Data.ViewTask.ViewID); err != nil {
-			return j, err
-		}
 	}
 	return j, nil
 }
+
+type mutationHook struct{ check, audit func(*store.Queries) error }

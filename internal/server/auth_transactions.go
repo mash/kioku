@@ -118,26 +118,34 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	if err != nil {
 		return store.SessionRow{}, "", err
 	}
+	active := 0
 	for _, old := range agents {
-		if old.UserID != v.UserID || old.Expires <= now.UnixMilli() {
+		if old.Status != "active" || old.Expires <= now.UnixMilli() {
 			continue
 		}
 		var a store.AgentSessionData
 		if err = json.Unmarshal(old.Data, &a); err != nil {
 			return store.SessionRow{}, "", err
 		}
-		if a.Name != name || a.RevokedAt != nil {
+		if a.RevokedAt != nil {
 			continue
 		}
-		ms := now.UnixMilli()
-		a.RevokedAt = &ms
-		old.Data, err = json.Marshal(a)
-		if err != nil {
-			return store.SessionRow{}, "", err
+		if old.UserID == v.UserID && a.Name == name {
+			ms := now.UnixMilli()
+			a.RevokedAt = &ms
+			old.Data, err = json.Marshal(a)
+			if err != nil {
+				return store.SessionRow{}, "", err
+			}
+			if err = q.PutSession(old); err != nil {
+				return store.SessionRow{}, "", err
+			}
+		} else {
+			active++
 		}
-		if err = q.PutSession(old); err != nil {
-			return store.SessionRow{}, "", err
-		}
+	}
+	if active >= 100 {
+		return reject(fail(429, "too many active project agents"))
 	}
 	raw := "kioku_agent." + agentID + "." + secret
 	payload, err := json.Marshal(store.AgentSessionData{AgentID: &agentID, Role: data.Role, Name: name})
@@ -146,6 +154,9 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	}
 	issued := store.SessionRow{ID: auth.Hash(raw), Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: &p.ID, Expires: now.Add(24 * time.Hour).UnixMilli(), Created: now.UnixMilli(), Data: payload}
 	if err = q.InsertSession(issued); err != nil {
+		if errors.Is(err, store.ErrSessionCapacity) {
+			return reject(fail(429, "too many agent sessions"))
+		}
 		return store.SessionRow{}, "", err
 	}
 	return issued, resolved, nil
@@ -171,7 +182,7 @@ func sqlMember(q *store.Queries, pid, uid string) (store.ProjectRow, error) {
 		return p, err
 	}
 	if p.Deleting {
-		return p, fail(409, "project is being deleted")
+		return p, fail(409, "project deletion is in progress")
 	}
 	return p, nil
 }

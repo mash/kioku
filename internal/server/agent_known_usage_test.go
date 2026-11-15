@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/store"
 )
 
 type failSecondSessionLookup struct {
@@ -32,8 +32,8 @@ func TestManagedRetainsObservedTerminalUsage(t *testing.T) {
 	if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {
 			t.Error("observed terminal usage was discarded")
 		}
 		return nil

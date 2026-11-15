@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 type viewDetail struct {
@@ -64,9 +65,9 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	}
 	defer unlock()
 	var project model.Project
-	err = s.Store.View(func(st model.State) error {
+	err = s.Store.Read(r.Context(), func(q *store.Queries) error {
 		var err error
-		project, err = member(st, pid, uid)
+		project, err = member(q, pid, uid)
 		return err
 	})
 	if err != nil {

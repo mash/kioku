@@ -26,7 +26,7 @@ func TestManagedOutputArrivingDuringSessionInspectionIsPublished(t *testing.T) {
 	f.runnerConfig.ManagedAgents = c
 	f.setRunners()
 	done := make(chan error, 1)
-	go func() { done <- f.s.reconcileAgentJob(context.Background(), j) }()
+	go func() { done <- f.s.reconcileAgentJob(context.Background(), fixtureRow(j)) }()
 	<-c.entered
 	sendOutput(t, f, ma, j, "Accepted output")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)

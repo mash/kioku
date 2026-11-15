@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
@@ -17,21 +17,21 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 100)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/events", 503)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 503)
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-time.Second)
-		st.Jobs[x.ID] = x
+		fixtureJobsPut(t, st, x.ID, x)
 		return nil
 	})
-	err := f.s.reconcileAgentJob(context.Background(), j)
+	err := f.s.reconcileAgentJob(context.Background(), fixtureRow(j))
 	if err != nil && !errors.Is(err, claudemanaged.ErrTemporary) {
 		t.Fatal(err)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Jobs[j.ID].Status != "running" {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureJobsGet(t, st, j.ID).Status != "running" {
 			t.Error("stopped tracking running session")
 		}
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 0 {
 			t.Error("partial cost recorded")
 		}
 		return nil
@@ -44,8 +44,8 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	if j.Status != "failed" {
 		t.Fatal(j)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 200 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 200 {
 			t.Error("final usage lost")
 		}
 		return nil

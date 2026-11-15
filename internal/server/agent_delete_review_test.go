@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
@@ -12,11 +13,11 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 123)
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Ref.ID = ""
 		x.Run.Phase = model.PhasePreparing
-		st.Jobs[x.ID] = x
+		fixtureJobsPut(t, st, x.ID, x)
 		return nil
 	})
 	path := "/api/projects/" + p.ID

@@ -1,72 +1,81 @@
 package store
 
 import (
+	"encoding/base64"
 	"errors"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/blob"
 )
 
 func TestTransactionRollbackPersistenceAndLock(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	objects := &migrationObjects{values: map[blob.Key][]byte{}}
+	key, err := auth.NewCipher(base64.StdEncoding.EncodeToString(make([]byte, 32)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second, err := Open(dir); err == nil {
-		second.Close()
+	open := func() (*Database, error) {
+		d, _, err := OpenStorage(t.Context(), dir, objects, func(bool) (*auth.Cipher, error) { return key, nil })
+		return d, err
+	}
+	d, err := open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other, err := open(); err == nil {
+		other.Close()
 		t.Fatal("second writer allowed")
 	}
-	if err = s.Update(func(st *model.State) error { st.Users["alice"] = model.User{ID: "alice", Name: "Before"}; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Update(func(st *model.State) error {
-		u := st.Users["alice"]
-		u.Name = "After"
-		st.Users["alice"] = u
+	catalogWrite(t, d, func(q *Queries) error { return q.PutUser(UserRow{ID: "alice", Data: UserData{Name: "Before"}}) })
+	if err = d.Write(t.Context(), func(q *Queries) error {
+		if e := q.PutUser(UserRow{ID: "alice", Data: UserData{Name: "After"}}); e != nil {
+			return e
+		}
 		return errors.New("abort")
 	}); err == nil {
-		t.Fatal("expected abort")
+		t.Fatal("expected rollback")
 	}
-	s.Close()
-	s, err = Open(dir)
+	if err = d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	d, err = open()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	_ = s.View(func(st model.State) error {
-		if st.Users["alice"].Name != "Before" {
-			t.Fatal("rollback or persistence failed")
+	defer d.Close()
+	if err = d.Read(t.Context(), func(q *Queries) error {
+		u, e := q.User("alice")
+		if u.Data.Name != "Before" {
+			t.Fatal(u)
 		}
-		return nil
-	})
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
-
-func TestCountProjects(t *testing.T) {
-	s := &Store{state: model.State{Projects: map[string]model.Project{
-		"active":   {ID: "active"},
-		"deleting": {ID: "deleting", Deleting: true},
-	}}}
-	count, err := s.CountProjects(func(p model.Project) bool { return !p.Deleting })
-	if err != nil || count != 1 {
-		t.Fatalf("count=%d err=%v", count, err)
-	}
-	count, err = s.CountProjects(func(p model.Project) bool { return false })
-	if err != nil || count != 0 {
-		t.Fatalf("count=%d err=%v", count, err)
-	}
-	if allocs := testing.AllocsPerRun(100, func() {
-		_, err := s.CountProjects(func(p model.Project) bool { return true })
-		if err != nil {
-			t.Fatal(err)
+func TestProjectMetricsSQLFailureDoesNotPoison(t *testing.T) {
+	d := newCatalog(t)
+	catalogWrite(t, d, func(q *Queries) error {
+		if e := q.PutProject(ProjectRow{ID: "active", Slug: "active"}); e != nil {
+			return e
 		}
-	}); allocs != 0 {
-		t.Fatalf("allocated %v times", allocs)
+		return q.PutProject(ProjectRow{ID: "deleting", Slug: "deleting", Deleting: true})
+	})
+	if e := d.Read(t.Context(), func(q *Queries) error {
+		n, _, _, _, e := q.Metrics()
+		if n != 2 {
+			t.Fatal(n)
+		}
+		return e
+	}); e != nil {
+		t.Fatal(e)
 	}
-	s.poisoned = errors.New("poisoned")
-	called := false
-	count, err = s.CountProjects(func(p model.Project) bool { called = true; return true })
-	if !errors.Is(err, s.poisoned) || count != 0 || called {
-		t.Fatalf("count=%d err=%v called=%v", count, err, called)
+	if e := d.Write(t.Context(), func(q *Queries) error { _, e := q.exec("SELECT * FROM missing_table"); return e }); e == nil {
+		t.Fatal("failure missing")
+	}
+	if e := d.Read(t.Context(), func(q *Queries) error { return q.Healthy() }); e != nil {
+		t.Fatal(e)
 	}
 }

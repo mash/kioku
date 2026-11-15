@@ -23,7 +23,10 @@ func (d *Database) backup(ctx context.Context, dest string, afterSnapshot func()
 	if _, err := os.Lstat(dest); !os.IsNotExist(err) {
 		return errors.New("backup destination must not exist")
 	}
-	if err := os.MkdirAll(dest, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dest, 0700); err != nil {
 		return err
 	}
 	path := filepath.Join(dest, "catalog.sqlite")

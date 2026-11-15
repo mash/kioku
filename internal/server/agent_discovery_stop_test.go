@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedDiscoveryDefersStopUntilInspectionRecovers(t *testing.T) {
@@ -15,13 +16,13 @@ func TestManagedDiscoveryDefersStopUntilInspectionRecovers(t *testing.T) {
 	id := j.Run.Ref.ID
 	ma.SetStatus(id, "running", "", 123)
 	ma.SetError("GET", "/v1/sessions/"+id, 503)
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Ref.ID = ""
 		x.Run.Phase = model.PhasePreparing
 		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 		x.Run.Deadline = time.Now().Add(-time.Second)
-		st.Jobs[x.ID] = x
+		fixtureJobsPut(t, st, x.ID, x)
 		return nil
 	})
 	for range 2 {
@@ -29,8 +30,10 @@ func TestManagedDiscoveryDefersStopUntilInspectionRecovers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if ma.Session(id).Interrupted {
-		t.Error("inspection error must not supply a RunRef")
+	// E14: save the stop reason before invoking Stop; Stop may discover the session independently.
+	got := storedJob(t, f, j.ID)
+	if got.Run.Ref.ID != "" || got.Run.AbortReason == "" || got.Run.CostCents != nil {
+		t.Fatal(got.Run)
 	}
 	ma.SetError("GET", "/v1/sessions/"+id, 0)
 	if err := f.s.reconcileAgentJobs(context.Background()); err != nil {

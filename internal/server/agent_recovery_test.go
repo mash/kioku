@@ -25,14 +25,14 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
 				sendOutput(t, f, ma, j, "Recovered")
 			}
-			_ = f.stateStore.Update(func(st *model.State) error {
-				x := st.Jobs[j.ID]
+			_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				x := fixtureJobsGet(t, st, j.ID)
 				x.Run.Phase = phase
 				if phase == model.PhasePreparing {
 					x.Run.Ref.ID = ""
 					x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
 				}
-				st.Jobs[j.ID] = x
+				fixtureJobsPut(t, st, j.ID, x)
 				return nil
 			})
 			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
@@ -41,7 +41,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			if err := f.stateStore.Close(); err != nil {
 				t.Fatal(err)
 			}
-			stateStore, err := store.Open(dir)
+			stateStore, err := openFixtureDatabase(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,8 +61,8 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			t.Cleanup(ts.Close)
 			f.url = ts.URL
 			f.client = ts.Client()
-			_ = stateStore.View(func(st model.State) error {
-				got := st.Jobs[j.ID]
+			_ = stateStore.Read(context.Background(), func(st *store.Queries) error {
+				got := fixtureJobsGet(t, st, j.ID)
 				if got.Status != "running" || got.Run.Phase != phase {
 					t.Error("restart changed run", got)
 				}
@@ -77,8 +77,8 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 				t.Fatal(got)
 			}
 			assertAgentCleanup(t, f, ma, got)
-			_ = stateStore.View(func(st model.State) error {
-				if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
+			_ = stateStore.Read(context.Background(), func(st *store.Queries) error {
+				if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {
 					t.Error("restart lost cost")
 				}
 				return nil
@@ -108,9 +108,10 @@ func TestManagedFinalizingPinsOutputHash(t *testing.T) {
 	j = storedJob(t, f, j.ID)
 	b := &pauseOutputRead{Store: f.s.Blobs, key: j.Run.OutputKey, entered: make(chan struct{}), release: make(chan struct{})}
 	f.s.Blobs = b
+	f.s.storage.objects = f.s.Blobs
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	done := make(chan error, 1)
-	go func() { done <- f.s.reconcileAgentJob(context.Background(), j) }()
+	go func() { done <- f.s.reconcileAgentJob(context.Background(), fixtureRow(j)) }()
 	<-b.entered
 	c, body := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "Replacement"}))
 	close(b.release)
@@ -133,10 +134,10 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	if j.Run.Phase != model.PhasePreparing {
 		t.Fatal(j)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
-		st.Jobs[j.ID] = x
+		fixtureJobsPut(t, st, j.ID, x)
 		return nil
 	})
 	if got := reconcileManaged(t, f, j); got.Status != "failed" {
@@ -160,23 +161,23 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.AgentMaxSessions = 2
 	putFile(t, f, token, p.ID, "x.md", "evidence")
-	projects := []model.Project{p}
+	projects := []fixtureProject{p}
 	for _, name := range []string{"other", "third"} {
-		var p model.Project
+		var p fixtureProject
 		if c := f.request("POST", "/api/projects", token, map[string]string{"name": "acme/" + name}, &p); c != 201 {
 			t.Fatal(c)
 		}
 		putFile(t, f, token, p.ID, "x.md", "evidence")
 		projects = append(projects, p)
 	}
-	var first model.Job
+	var first fixtureJob
 	f.request("POST", "/api/projects/"+p.ID+"/generate", token, nil, &first)
 	// Persist an independent queued request to exercise the worker's serialization.
-	_ = f.stateStore.Update(func(st *model.State) error {
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		second := first
 		second.ID = "queued-same-project"
 		second.Created = first.Created.Add(time.Millisecond)
-		st.Jobs[second.ID] = second
+		fixtureJobsPut(t, st, second.ID, second)
 		return nil
 	})
 	for _, p := range projects[1:] {
@@ -203,10 +204,10 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 	// A full worker wake/tick must still leave the third project and second request queued.
 	f.s.notify()
 	time.Sleep(100 * time.Millisecond)
-	_ = f.stateStore.View(func(st model.State) error {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 		running := 0
 		seen := map[string]bool{}
-		for _, j := range st.Jobs {
+		for _, j := range fixtureJobsList(t, st) {
 			if j.Status == "running" && j.Run != nil {
 				running++
 				if seen[j.ProjectID] {
@@ -218,7 +219,7 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 		if running != 2 {
 			t.Error("session limit", running)
 		}
-		if st.Jobs["queued-same-project"].Status != "queued" {
+		if fixtureJobsGet(t, st, "queued-same-project").Status != "queued" {
 			t.Error("same-project request started")
 		}
 		return nil

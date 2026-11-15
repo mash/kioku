@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func putFile(t *testing.T, f *fixture, token, pid, name, body string) model.InboxItem {
@@ -23,8 +25,8 @@ func putFile(t *testing.T, f *fixture, token, pid, name, body string) model.Inbo
 func waitingInboxItem(t *testing.T, f *fixture, pid, url string) model.InboxItem {
 	t.Helper()
 	var result model.InboxItem
-	if err := f.stateStore.View(func(st model.State) error {
-		for _, item := range st.Inbox {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		for _, item := range fixtureInboxList(t, st) {
 			if item.ProjectID == pid && item.SourceURL == url && item.RunID == "" {
 				if result.ID != "" {
 					t.Fatal("duplicate waiting inbox items", pid, url)

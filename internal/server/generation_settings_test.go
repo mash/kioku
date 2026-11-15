@@ -1,13 +1,14 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestServerGenerationBudget(t *testing.T) {
@@ -15,19 +16,19 @@ func TestServerGenerationBudget(t *testing.T) {
 		t.Run(strconv.FormatInt(budget, 10), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
 			putFile(t, f, token, p.ID, "budget.md", "Evidence")
-			var j model.Job
+			var j fixtureJob
 			if code := f.request("POST", "/api/projects/"+p.Namespace+"/generate", token, map[string]any{"budget_cents": budget}, &j); code != 202 {
 				t.Fatal(code)
 			}
-			if err := f.stateStore.Update(func(st *model.State) error {
-				j = st.Jobs[j.ID]
-				j.Status = "running"
-				st.Jobs[j.ID] = j
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				j = fixtureJobsGet(t, st, j.ID)
+				j.Status = "queued"
+				fixtureJobsPut(t, st, j.ID, j)
 				return nil
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.s.startAgentJob(t.Context(), j); err != nil {
+			if err := f.s.startAgentJob(t.Context(), fixtureRow(j)); err != nil {
 				t.Fatal(err)
 			}
 			actual := storedJob(t, f, j.ID)
@@ -51,10 +52,9 @@ func TestServerGenerationBudget(t *testing.T) {
 func TestRemovedRetryEndpointLeavesFailedJobUnchanged(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	j := managedJob(t, f, token, p.ID, true)
-	if err := f.stateStore.Update(func(st *model.State) error {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		j.Status = "failed"
-		j.AnthropicConnectionID = "retired"
-		st.Jobs[j.ID] = j
+		fixtureJobsPut(t, st, j.ID, j)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -103,12 +103,12 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	if resp.StatusCode != 200 || strings.Contains(string(body), "Console") {
 		t.Fatal(resp.StatusCode, string(body))
 	}
-	if err := f.stateStore.View(func(st model.State) error {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 		found := false
-		for _, j := range st.Jobs {
+		for _, j := range fixtureJobsList(t, st) {
 			if j.ProjectID == p.ID && j.Kind == "generate" {
 				found = true
-				if j.AgentBudgetCents != 50 || j.AnthropicConnectionID != "" {
+				if j.AgentBudgetCents != 50 {
 					t.Fatal(j)
 				}
 			}

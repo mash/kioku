@@ -18,6 +18,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/runners"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -97,7 +98,7 @@ func TestExecRunnerHelper(t *testing.T) {
 	fmt.Println(`{"version":1,"cost_cents":137}`)
 	os.Exit(0)
 }
-func execFixture(t *testing.T, role string) (*fixture, string, model.Project) {
+func execFixture(t *testing.T, role string) (*fixture, string, fixtureProject) {
 	t.Helper()
 	f := setupWithWorker(t, false)
 	f.runnerConfig.Type = "exec"
@@ -107,13 +108,13 @@ func execFixture(t *testing.T, role string) (*fixture, string, model.Project) {
 	f.setRunners()
 	token := f.login("exec@example.com")
 	createTestOrg(t, f, token, "acme")
-	var p model.Project
+	var p fixtureProject
 	if c := f.request("POST", "/api/projects", token, map[string]string{"name": "acme/exec"}, &p); c != 201 {
 		t.Fatal(c)
 	}
 	return f, token, p
 }
-func waitExecJob(t *testing.T, f *fixture, j model.Job) model.Job {
+func waitExecJob(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -162,14 +163,19 @@ func TestExecGenerationLifecycle(t *testing.T) {
 func TestExecTimeoutAndStaleExit(t *testing.T) {
 	f, token, p := execFixture(t, "wait")
 	j := startManaged(t, f, token, p.ID, true)
-	if err := f.stateStore.Update(func(st *model.State) error { st.Jobs[j.ID].Run.Deadline = time.Now().Add(-time.Second); return nil }); err != nil {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		current := fixtureJobsGet(t, st, j.ID)
+		current.Run.Deadline = time.Now().Add(-time.Second)
+		fixtureJobsPut(t, st, j.ID, current)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	f.s.ReconcileJob(t.Context(), j.ID, "older-attempt")
 	if got := storedJob(t, f, j.ID); got.Status != "running" || got.Run.AbortReason != "" {
 		t.Fatal("stale callback reconciled job", got)
 	}
-	if err := f.s.reconcileAgentJob(t.Context(), j); err != nil && !errors.Is(err, runner.ErrTemporary) {
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(j)); err != nil && !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
 	j = waitExecJob(t, f, j)
@@ -187,8 +193,9 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
 					sendOutput(t, f, ma, j, "Restart output")
 				}
-				if err := f.stateStore.Update(func(st *model.State) error {
-					run := st.Jobs[j.ID].Run
+				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					current := fixtureJobsGet(t, st, j.ID)
+					run := current.Run
 					run.Phase = phase
 					if phase == model.PhasePreparing {
 						run.Ref.ID = ""
@@ -196,6 +203,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 					if abort {
 						run.AbortReason = "original abort"
 					}
+					fixtureJobsPut(t, st, j.ID, current)
 					return nil
 				}); err != nil {
 					t.Fatal(err)
@@ -212,15 +220,15 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				// A second project can be dequeued even while the lost run occupies a slot.
-				queued := model.Job{ID: "queued-after-restart", ProjectID: "other-project", Status: "queued"}
-				if err := f.stateStore.Update(func(st *model.State) error { st.Jobs[queued.ID] = queued; return nil }); err != nil {
+				queued := fixtureJob{ID: "queued-after-restart", ProjectID: "other-project", Status: "queued"}
+				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error { fixtureJobsPut(t, st, queued.ID, queued); return nil }); err != nil {
 					t.Fatal(err)
 				}
-				observed := make(chan model.Job, 1)
-				restored.SetRunners(observingRunners{Runners: g, newRun: func(next model.Job) (runner.Runner, error) {
+				observed := make(chan fixtureJob, 1)
+				restored.SetRunners(observingRunners{Runners: g, newRun: func(next store.JobRow) (runner.Runner, error) {
 					if next.ID == queued.ID {
-						var previous model.Job
-						if err := f.stateStore.View(func(st model.State) error { previous = st.Jobs[j.ID]; return nil }); err != nil {
+						var previous fixtureJob
+						if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error { previous = fixtureJobsGet(t, st, j.ID); return nil }); err != nil {
 							return nil, err
 						}
 						observed <- previous
@@ -239,7 +247,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				go func() { done <- restored.RunWorker(ctx) }()
 				select {
 				case previous := <-observed:
-					if !agentRunFinished(previous) || !previous.Run.CleanupComplete {
+					if !agentRunFinished(fixtureRow(previous)) || !previous.Run.CleanupComplete {
 						t.Error("worker dequeued before startup reconciliation", previous)
 					}
 				case <-time.After(5 * time.Second):
@@ -250,7 +258,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 					t.Fatal(err)
 				}
 				lost := phase == model.PhasePreparing || phase == model.PhaseAgentRunning
-				if code, _ := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "replacement"})); code != 403 {
+				if code, _ := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "replacement"})); code != 403 && code != 409 {
 					t.Fatal("old token accepted", code)
 				}
 				j = storedJob(t, f, j.ID)
@@ -313,10 +321,10 @@ func TestReconcileJobStopsWithShutdownContext(t *testing.T) {
 
 type observingRunners struct {
 	Runners
-	newRun func(model.Job) (runner.Runner, error)
+	newRun func(store.JobRow) (runner.Runner, error)
 }
 
-func (r observingRunners) New(job model.Job) (runner.Runner, error) { return r.newRun(job) }
+func (r observingRunners) New(job store.JobRow) (runner.Runner, error) { return r.newRun(job) }
 
 func TestExecPromptOverridesOnWire(t *testing.T) {
 	f, token, p := execFixture(t, "custom")

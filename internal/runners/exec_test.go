@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/store"
 )
 
 func execConfig(t *testing.T) Config {
@@ -147,7 +147,7 @@ func TestRunnerOwnsCommandAndClose(t *testing.T) {
 	if g.config.Command[0] != os.Args[0] {
 		t.Fatal("configuration aliases caller's command")
 	}
-	r, err := g.New(model.Job{})
+	r, err := g.New(store.JobRow{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,12 +166,12 @@ func TestNewUsesCurrentRunnerType(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(t.Context())
-	r, err := s.New(model.Job{Run: &model.AgentRun{Ref: runner.RunRef{ID: "previous-run"}}})
+	r, err := s.New(store.JobRow{SessionID: new("previous-run"), Data: store.JobData{Run: &store.RunData{}}})
 	if err != nil || r != s.execRunner {
 		t.Fatal("current exec configuration was not selected", err)
 	}
 	s.config.Type = ""
-	if _, err := s.New(model.Job{Run: &model.AgentRun{Ref: runner.RunRef{ID: "previous-run"}}}); !errors.Is(err, runner.ErrNotConfigured) {
+	if _, err := s.New(store.JobRow{SessionID: new("previous-run"), Data: store.JobData{Run: &store.RunData{}}}); !errors.Is(err, runner.ErrNotConfigured) {
 		t.Fatal("saved run selected a runner without configuration", err)
 	}
 }

@@ -99,7 +99,7 @@ func TestInspectStates(t *testing.T) {
 		t.Run(tc.status+"/"+tc.stop, func(t *testing.T) {
 			f.SetStatus(ref.ID, tc.status, tc.stop, 37)
 			got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
-			if err != nil || got.Run.ID != ref.ID || got.State != tc.state || got.Reason != tc.reason || got.Cost == nil || *got.Cost != 37 {
+			if err != nil || got.Run.ID != ref.ID || got.State != tc.state || got.Reason != tc.reason || got.Usage.CostCents == nil || *got.Usage.CostCents != 37 {
 				t.Fatal(got, err)
 			}
 		})
@@ -109,7 +109,7 @@ func TestInspectStates(t *testing.T) {
 	session.CostAmount = ""
 	f.SetSession(session)
 	got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
-	if err != nil || got.Cost != nil || got.State != runner.StateStopped || got.Reason != "agent gave up after errors" {
+	if err != nil || got.Usage.CostCents != nil || got.State != runner.StateStopped || got.Reason != "agent gave up after errors" {
 		t.Fatal(got, err)
 	}
 	for _, code := range []int{400, 503} {

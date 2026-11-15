@@ -72,7 +72,7 @@ func run() error {
 		return requestOnlineBackup(*adminSocket, *onlineBackup)
 	}
 	if *backup != "" {
-		stateStore, err := store.OpenControl(*dir)
+		stateStore, err := store.OpenBackupDatabase(*dir)
 		if err != nil {
 			return err
 		}
@@ -106,16 +106,14 @@ func run() error {
 		return err
 	}
 
-	stateStore, err := store.OpenWithObjects(*dir, objects)
+	stateStore, cipher, err := store.OpenStorage(context.Background(), *dir, objects, func(create bool) (*auth.Cipher, error) {
+		return loadCipherForStorage(*dir, os.Getenv("KIOKU_ENCRYPTION_KEY"), create)
+	})
 	if err != nil {
 		return err
 	}
 	defer stateStore.Close()
 	// The catalog lock prevents concurrent startups from generating different keys.
-	cipher, err := loadCipher(*dir, config.Env("KIOKU_ENCRYPTION_KEY", ""))
-	if err != nil {
-		return err
-	}
 	providers := map[string]auth.Provider{}
 	for _, name := range registry.Names() {
 		prefix := strings.ToUpper(name)

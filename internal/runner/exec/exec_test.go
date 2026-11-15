@@ -154,9 +154,6 @@ func awaitExit(t *testing.T, r *Runner, ref runner.RunRef) runner.Status {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if (status.Cost == nil) != (status.Usage.CostCents == nil) || status.Cost != nil && *status.Cost != *status.Usage.CostCents {
-		t.Fatal("exec usage did not use the validated stdout result")
-	}
 	if status.Usage.Model != nil || status.Usage.InputTokens != nil || status.Usage.OutputTokens != nil || status.Usage.CacheReadInputTokens != nil || status.Usage.CacheCreationInputTokens != nil {
 		t.Fatal("exec inferred unsupported usage")
 	}
@@ -194,7 +191,7 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 	spec.InputURL, spec.OutputURL = host.URL+"/input", host.URL+"/output"
 	ref := startExec(t, r, spec)
 	status := awaitExit(t, r, ref)
-	if status.State != runner.StateStopped || status.Cost == nil || *status.Cost != 137 {
+	if status.State != runner.StateStopped || status.Usage.CostCents == nil || *status.Usage.CostCents != 137 {
 		t.Fatal(status)
 	}
 	select {
@@ -244,7 +241,7 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, _ = r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
-	if status.State != runner.StateStopped || status.Cost != nil {
+	if status.State != runner.StateStopped || status.Usage.CostCents != nil {
 		t.Fatal(status)
 	}
 }
@@ -264,7 +261,7 @@ func TestExecExitStatusAndLogs(t *testing.T) {
 			r, spec := newRunner(t, tc.role, nil)
 			ref := startExec(t, r, spec)
 			status := awaitExit(t, r, ref)
-			if status.Reason != tc.reason || status.State != tc.state || (status.Cost != nil) != tc.known || (status.Cost != nil && *status.Cost != tc.cost) {
+			if status.Reason != tc.reason || status.State != tc.state || (status.Usage.CostCents != nil) != tc.known || (status.Usage.CostCents != nil && *status.Usage.CostCents != tc.cost) {
 				t.Fatal(status)
 			}
 			if strings.Contains(logs.String(), "stderr-private") || strings.Contains(logs.String(), "reason-private") {
@@ -288,7 +285,7 @@ func TestExecStartDoesNotWaitForStdinOrUseCallerContext(t *testing.T) {
 	}
 	awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
 	status, _ := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
-	if status.State != runner.StateRunning || status.Cost != nil {
+	if status.State != runner.StateRunning || status.Usage.CostCents != nil {
 		t.Fatal(status)
 	}
 	before = time.Now()
@@ -442,7 +439,7 @@ func TestExecReconcileOnlyAndCleanupTimeout(t *testing.T) {
 	key := runner.AttemptKey{JobID: "job", AttemptID: "attempt"}
 	ref := runner.RunRef{ID: "attempt"}
 	status, _ := r.Inspect(t.Context(), runner.Attempt{Key: key, Run: ref})
-	if status.Run.ID != ref.ID || status.State != runner.StateStopped || status.Cost != nil {
+	if status.Run.ID != ref.ID || status.State != runner.StateStopped || status.Usage.CostCents != nil {
 		t.Fatal(status)
 	}
 	if err := r.Cleanup(t.Context(), runner.Attempt{}); err != nil {

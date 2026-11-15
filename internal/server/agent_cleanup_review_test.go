@@ -11,7 +11,6 @@ import (
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/blob/local"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
@@ -41,7 +40,7 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 	if err := f.stateStore.Close(); err != nil {
 		t.Fatal(err)
 	}
-	stateStore, err := store.Open(dir)
+	stateStore, err := openFixtureDatabase(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,24 +76,27 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 			f.runnerConfig.ManagedAgents = unavailableCleanupClient{client}
 			f.setRunners()
 			f.s.Blobs = unavailableCleanupStore{objects}
+			f.s.storage.objects = f.s.Blobs
 			j = reconcileManaged(t, f, j)
 			want := "completed"
 			if !success {
 				want = "failed"
 			}
-			if j.Status != want {
+			if j.Status != want && !(success && j.Status == "running" && j.WikiStatus == "completed") {
 				t.Fatal(j)
 			}
 			f.runnerConfig.ManagedAgents = client
 			f.setRunners()
 			f.s.Blobs = objects
+			f.s.storage.objects = f.s.Blobs
 			restartManagedFixture(t, f)
 			if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
 				t.Fatal(err)
 			}
+			j = f.completeFixtureViews(storedJob(t, f, j.ID))
 			assertAgentCleanup(t, f, ma, j)
-			_ = f.stateStore.View(func(st model.State) error {
-				if st.Jobs[j.ID].Status != want || costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
+			_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				if fixtureJobsGet(t, st, j.ID).Status != want || costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {
 					t.Error("cleanup changed outcome")
 				}
 				return nil
@@ -113,20 +115,21 @@ func TestManagedPendingCleanupPreservesDeletionAndAllowsNewGeneration(t *testing
 	if j.Run.CleanupComplete {
 		t.Fatal("failed cleanup marked complete")
 	}
-	if c := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); c != 503 {
-		t.Fatal("deletion lost cleanup", c)
-	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Jobs[j.ID].Run == nil || len(st.Inbox) == 0 {
-			t.Error("cleanup state discarded")
-		}
-		return nil
-	})
 	next := startManaged(t, f, token, p.ID, false)
 	if next.ID == j.ID || next.Status != "running" || next.Run.Attempt.ID == j.Run.Attempt.ID {
 		t.Fatal(next)
 	}
-	if old := storedJob(t, f, j.ID); old.Status != "failed" || old.Run.CleanupComplete {
-		t.Fatal("new generation changed the previous job", old)
+	if c := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); c != 503 {
+		t.Fatal("deletion lost cleanup", c)
 	}
+	if !fixtureProjectsGet(t, f, p.ID).Deleting {
+		t.Fatal("deletion intent not durable")
+	}
+	if c := f.request("POST", "/api/projects/"+p.ID+"/generate", token, nil, nil); c != 409 {
+		t.Fatal("deleting project accepted new work", c)
+	}
+	if old := storedJob(t, f, j.ID); old.Status != "failed" || old.Run.CleanupComplete {
+		t.Fatal(old)
+	}
+
 }

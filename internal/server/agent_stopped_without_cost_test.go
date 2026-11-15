@@ -1,10 +1,11 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedStoppedWithoutCostCompletesCleanup(t *testing.T) {
@@ -15,10 +16,10 @@ func TestManagedStoppedWithoutCostCompletesCleanup(t *testing.T) {
 	session.Status = "terminated"
 	session.CostAmount = ""
 	ma.SetSession(session)
-	if err := f.stateStore.Update(func(st *model.State) error {
-		current := st.Jobs[j.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		current := fixtureJobsGet(t, st, j.ID)
 		current.Run.Deadline = time.Now().Add(-time.Minute)
-		st.Jobs[j.ID] = current
+		fixtureJobsPut(t, st, j.ID, current)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -30,8 +31,8 @@ func TestManagedStoppedWithoutCostCompletesCleanup(t *testing.T) {
 		t.Fatalf("stopped session retained: status=%s cleanup=%v", j.Status, j.Run.CleanupComplete)
 	}
 	assertAgentCleanup(t, f, ma, j)
-	if err := f.stateStore.View(func(st model.State) error {
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 0 {
 			t.Error("unknown usage recorded a cost")
 		}
 		return nil

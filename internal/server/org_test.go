@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/mash/kioku/internal/model"
 )
 
 func createTestOrg(t *testing.T, f *fixture, token, slug string) string {
@@ -20,12 +18,12 @@ func createTestOrg(t *testing.T, f *fixture, token, slug string) string {
 }
 
 // orgProject creates the organization "acme" and the project "acme/platform".
-func orgProject(t *testing.T) (*fixture, string, model.Project) {
+func orgProject(t *testing.T) (*fixture, string, fixtureProject) {
 	t.Helper()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	createTestOrg(t, f, owner, "acme")
-	var p model.Project
+	var p fixtureProject
 	if c := f.request("POST", "/api/projects", owner, map[string]string{"name": "acme/platform"}, &p); c != 201 {
 		t.Fatal(c)
 	}
@@ -38,7 +36,7 @@ func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testi
 	other := f.login("other@example.com")
 	createTestOrg(t, f, owner, "acme")
 	createTestOrg(t, f, other, "other")
-	var p model.Project
+	var p fixtureProject
 	if c := f.request("POST", "/api/projects", owner, map[string]string{"name": "acme/platform"}, &p); c != 201 {
 		t.Fatal(c)
 	}
@@ -64,7 +62,7 @@ func TestMissingRunnerFailsGeneration(t *testing.T) {
 	f, token, p := orgProject(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")
 	j := managedJob(t, f, token, p.ID, false)
-	if err := f.s.startAgentJob(t.Context(), j); err != nil {
+	if err := f.s.startAgentJob(t.Context(), fixtureRow(j)); err != nil {
 		t.Fatal(err)
 	}
 	j = storedJob(t, f, j.ID)
@@ -84,7 +82,7 @@ func TestManagedBudgetCapsTheSession(t *testing.T) {
 	f.s.Config.AgentMaxSessionCents = 49
 	before := len(ma.Requests())
 	j = managedJob(t, f, token, p.ID, false)
-	if err := f.s.startAgentJob(context.Background(), j); err != nil {
+	if err := f.s.startAgentJob(context.Background(), fixtureRow(j)); err != nil {
 		t.Fatal(err)
 	}
 	j = storedJob(t, f, j.ID)

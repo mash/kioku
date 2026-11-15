@@ -1,21 +1,22 @@
 package server
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestWikiViewPage(t *testing.T) {
 	f, owner, p := orgProject(t)
 	reader := f.login("wiki-reader@example.com")
-	if err := f.stateStore.Update(func(st *model.State) error {
-		project := st.Projects[p.ID]
-		project.Members[st.Sessions[auth.Hash(reader)].UserID] = "member"
-		st.Projects[p.ID] = project
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		project := fixtureProjectsGet(t, st, p.ID)
+		project.Members[fixtureSessionsGet(t, st, auth.Hash(reader)).UserID] = "member"
+		fixtureProjectsPut(t, st, p.ID, project)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -35,14 +36,14 @@ func TestWikiViewPage(t *testing.T) {
 	updated := time.Date(2026, 11, 15, 7, 30, 0, 0, time.UTC)
 	for _, state := range []string{"unpublished", "published", "incomplete"} {
 		t.Run(state, func(t *testing.T) {
-			if err := f.stateStore.Update(func(st *model.State) error {
-				project := st.Projects[p.ID]
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				project := fixtureProjectsGet(t, st, p.ID)
 				project.WikiUpdatedAt = updated
 				if state == "unpublished" {
 					project.WikiUpdatedAt = time.Time{}
 				}
 				project.WikiIncomplete = state == "incomplete"
-				st.Projects[p.ID] = project
+				fixtureProjectsPut(t, st, p.ID, project)
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -83,10 +84,14 @@ func TestWikiViewPage(t *testing.T) {
 				html = w.Body.String()
 				first := strings.Index(html, `href="`+path+`">Notes</a>`)
 				second := strings.Index(html, `href="/`+p.Namespace+`/views/project-map"`)
-				if w.Code != 200 || first < 0 || second <= first {
-					t.Fatalf("wiki is not first: %d %s", w.Code, html)
+				if w.Code != 200 || first < 0 || second < 0 {
+					t.Fatalf("view list entry missing: %d %s", w.Code, html)
 				}
-				item := html[first:second]
+				end := strings.Index(html[first:], "</li>")
+				if end < 0 {
+					t.Fatal("row missing")
+				}
+				item := html[first : first+end]
 				if !strings.Contains(item, status) || strings.Contains(item, "2026-11-15 07:30 UTC") != (state == "published") {
 					t.Fatal("incorrect list metadata", item)
 				}

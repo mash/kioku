@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
@@ -14,14 +13,13 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/blob/local"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 )
 
 func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 	t.Helper()
-	stateStore, err := store.OpenWithObjects(dir, objects)
+	stateStore, err := openFixtureDatabase(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +38,7 @@ func objectFixture(t *testing.T, dir string, objects blob.Store) *fixture {
 	t.Cleanup(func() { ts.Close(); stateStore.Close() })
 	return &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), stateStore: stateStore}
 }
-func runGeneration(t *testing.T, f *fixture, token, pid string) model.Job {
+func runGeneration(t *testing.T, f *fixture, token, pid string) fixtureJob {
 	t.Helper()
 	if f.auto == nil {
 		configureAutoRunner(t, f)
@@ -54,7 +52,7 @@ func runGeneration(t *testing.T, f *fixture, token, pid string) model.Job {
 	return reconcileManaged(t, f, j)
 }
 
-func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
+func TestRestoringSQLiteSelectsBackupContentReferences(t *testing.T) {
 	root, remote := t.TempDir(), t.TempDir()
 	objects := local.Store{Dir: remote}
 	f := objectFixture(t, root, objects)
@@ -62,7 +60,7 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	p := securityProject(t, f, token)
 	base := "/api/projects/" + p.ID
 	putFile(t, f, token, p.ID, "first.md", "First source")
-	var projects []model.ProjectEntry
+	var projects []fixtureProjectEntry
 	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 1 {
 		t.Fatal(c, projects)
 	}
@@ -73,18 +71,18 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	}
 	putFile(t, f, token, p.ID, "second.md", "Newer than SQLite backup")
 	runGeneration(t, f, token, p.ID)
-	waiting := putFile(t, f, token, p.ID, "third.md", "Still waiting")
+	putFile(t, f, token, p.ID, "third.md", "Still waiting")
 	restored := objectFixture(t, backup, objects)
 	all := ""
 	for _, body := range restored.readWiki(base, token) {
 		all += body
 	}
-	if !strings.Contains(all, "Newer than SQLite backup") {
-		t.Fatal("old SQLite backup rolled back wiki")
+	if strings.Contains(all, "Newer than SQLite backup") || !strings.Contains(all, "First source") {
+		t.Fatal("backup references were not restored")
 	}
-	_ = restored.stateStore.View(func(st model.State) error {
-		if len(st.Revisions) != 1 || len(st.Inbox) != 1 || st.Inbox[waiting.ID].Remove {
-			t.Error("project content lost during restore", st.Inbox)
+	_ = restored.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if len(fixtureRevisionsList(t, st)) != 1 || len(fixtureInboxList(t, st)) != 0 {
+			t.Error("project content lost during restore", fixtureInboxList(t, st))
 		}
 		return nil
 	})
@@ -108,51 +106,36 @@ type failCurrentWiki struct {
 }
 
 func (b *failCurrentWiki) Put(ctx context.Context, key blob.Key, body []byte) error {
-	if b.fail && strings.HasSuffix(string(key), "/wiki/log.md") {
+	if b.fail && strings.Contains(string(key), "/.kioku/wiki/") && strings.HasPrefix(string(body), "# Log\n") {
 		return errors.New("temporary S3 upload failure")
 	}
 	return b.Store.Put(ctx, key, body)
 }
-func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
+func TestInterruptedImmutableWikiCanBeRetried(t *testing.T) {
 	objects := &failCurrentWiki{Store: local.Store{Dir: t.TempDir()}, fail: true}
 	f := objectFixture(t, t.TempDir(), objects)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
+	configureAutoRunner(t, f)
 	putFile(t, f, token, p.ID, "note.md", "Durable input")
-	base := "/api/projects/" + p.ID
-	failed := runGeneration(t, f, token, p.ID)
-	if failed.Status != "failed" {
-		t.Fatal(failed)
+	j := startManaged(t, f, token, p.ID, false)
+	sendOutput(t, f, f.auto, j, "Generated")
+	f.auto.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	deferredPublication(t, f, j)
+	if p := fixtureProjectsGet(t, f, p.ID); !p.WikiIncomplete {
+		t.Fatal(p)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		p := st.Projects[p.ID]
-		if !p.WikiIncomplete || len(st.Inbox) != 1 {
-			t.Error("partial wiki marked complete", p)
-		}
-		return nil
-	})
-	if f.readWiki(base, token)["wiki/index.md"] == "" {
+	if f.readWiki("/api/projects/"+p.ID, token)["wiki/index.md"] == "" {
 		t.Fatal("partial progress unavailable")
 	}
 	objects.fail = false
-	done := runGeneration(t, f, token, p.ID)
-	if done.Unchanged {
-		t.Fatal("partial job incorrectly skipped regeneration")
+	if got := reconcileManaged(t, f, j); got.Status != "completed" {
+		t.Fatal(got)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		p := st.Projects[p.ID]
-		if p.WikiIncomplete || len(st.Inbox) != 0 || len(st.Revisions) != 1 {
-			t.Error("retry did not complete current wiki", p)
-		}
-		return nil
-	})
-	raw, err := objects.Get(context.Background(), blob.Key("projects/"+p.ID+"/.kioku/state.json"))
-	if err != nil {
-		t.Fatal(err)
+	if project := fixtureProjectsGet(t, f, p.ID); project.WikiIncomplete || len(fixtureInboxList(t, f)) != 0 {
+		t.Fatal(project)
 	}
-	var content map[string]json.RawMessage
-	json.Unmarshal(raw, &content)
-	if _, ok := content["members"]; ok {
-		t.Error("account membership stored in project content")
+	if _, err := objects.Get(t.Context(), blob.Key("projects/"+p.ID+"/.kioku/state.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("metadata object exists", err)
 	}
 }

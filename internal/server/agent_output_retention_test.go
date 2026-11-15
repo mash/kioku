@@ -9,7 +9,7 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func TestAgentOutputResendsRetainOnlySelectedVersion(t *testing.T) {
+func TestAgentOutputResendsRetainAtMostSelectedAndCandidate(t *testing.T) {
 	f, raw, j, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, j, model.PhaseAgentRunning, "running")
 	for i := range 6 {
@@ -17,11 +17,11 @@ func TestAgentOutputResendsRetainOnlySelectedVersion(t *testing.T) {
 			t.Fatal(c, string(b))
 		}
 	}
-	keys, err := f.s.Blobs.List(context.Background(), agentJobPrefix(j)+"output-")
+	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(j)+"output-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) != 1 {
+	if len(keys) != 2 {
 		t.Fatal("superseded outputs accumulate", len(keys))
 	}
 	current := storedJob(t, f, j.ID)
@@ -43,22 +43,24 @@ func TestAgentOutputCleanupFailureBoundsResends(t *testing.T) {
 	}
 	objects := f.s.Blobs
 	f.s.Blobs = unavailableCleanupStore{objects}
+	f.s.storage.objects = f.s.Blobs
 	if c := upload(2); c != 200 {
 		t.Fatal(c)
 	}
 	if c := upload(3); c != 503 {
 		t.Fatal("cleanup failure permitted unbounded writes", c)
 	}
-	keys, err := objects.List(context.Background(), agentJobPrefix(j)+"output-")
+	keys, err := objects.List(context.Background(), fixtureJobPrefix(j)+"output-")
 	if err != nil || len(keys) != 2 {
 		t.Fatal(keys, err)
 	}
 	f.s.Blobs = objects
+	f.s.storage.objects = f.s.Blobs
 	if c := upload(4); c != 200 {
 		t.Fatal(c)
 	}
-	keys, err = objects.List(context.Background(), agentJobPrefix(j)+"output-")
-	if err != nil || len(keys) != 1 {
+	keys, err = objects.List(context.Background(), fixtureJobPrefix(j)+"output-")
+	if err != nil || len(keys) != 2 {
 		t.Fatal(keys, err)
 	}
 }

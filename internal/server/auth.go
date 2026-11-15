@@ -1,7 +1,9 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,7 +11,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func loopbackRedirect(value string) bool {
@@ -19,6 +21,12 @@ func loopbackRedirect(value string) bool {
 	}
 	port, err := strconv.Atoi(u.Port())
 	return err == nil && port >= 1 && port <= 65535 && u.Host == "127.0.0.1:"+u.Port()
+}
+
+func loopbackExpired(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusGone)
+	return render(w, "CLI login expired", struct{ Message string }{"CLI login expired; run kioku login again"}, messageTemplate)
 }
 
 func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string) error {
@@ -46,21 +54,25 @@ func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string)
 		return fail(400, "invalid state")
 	}
 	id := auth.Token()
-	err := s.Store.Update(func(st *model.State) error {
-		prune(st)
-		if len(st.Devices) >= 10000 {
-			return fail(429, "too many login attempts")
+	data, err := json.Marshal(store.CLILoginData{LoopbackChallenge: &req.Challenge, LoopbackRedirectURI: &req.RedirectURI, LoopbackState: &req.State})
+	if err != nil {
+		return err
+	}
+	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
+		if e := q.PruneSessions(time.Now().UnixMilli()); e != nil {
+			return e
 		}
-		st.Devices[id] = model.Device{LoopbackChallenge: req.Challenge, LoopbackRedirectURI: req.RedirectURI, LoopbackState: req.State, Expires: time.Now().Add(10 * time.Minute)}
-		return nil
+		return q.InsertSession(store.SessionRow{ID: auth.Hash(id), Kind: "cli_login", Status: "pending", Expires: time.Now().Add(10 * time.Minute).UnixMilli(), Data: data})
 	})
+	if errors.Is(err, store.ErrSessionCapacity) {
+		return fail(429, "too many login attempts")
+	}
 	if err != nil {
 		return err
 	}
 	jsonOut(w, 201, map[string]string{"device": id, "url": s.Config.BaseURL + "/auth/" + req.Provider + "/start?device=" + id})
 	return nil
 }
-
 func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string) error {
 	var req *struct {
 		Device   string `json:"device"`
@@ -71,57 +83,64 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 		return fail(400, "invalid request")
 	}
 	token := auth.Token()
-	var problem error
-	var account model.User
+	var account store.UserRow
 	var provider string
-	err := s.Store.Update(func(st *model.State) error {
-		d, ok := st.Devices[req.Device]
-		// Persist consumption even on failure; returning an error here rolls it back.
-		if ok {
-			used := d
-			used.Used = true
-			st.Devices[req.Device] = used
+	err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+		verifier := req.Verifier
+		if !validVerifier(verifier) {
+			verifier = ""
 		}
-		if !ok || d.Used || !d.Expires.After(time.Now()) || d.LoopbackChallenge == "" || d.UserID == "" || d.LoopbackCodeHash == "" || d.LoopbackCodeHash != auth.Hash(req.Code) || !validVerifier(req.Verifier) || auth.Challenge(req.Verifier) != d.LoopbackChallenge {
-			problem = fail(410, "login request expired; run kioku login again")
-			return nil
+		issued, e := exchangeCLILogin(q, req.Device, req.Code, verifier, token, time.Now())
+		if e != nil {
+			return e
 		}
-		account = st.Users[d.UserID]
-		provider = d.IdentityProvider
-		st.Sessions[auth.Hash(token)] = model.Session{Created: time.Now().UTC(), UserID: d.UserID, Expires: time.Now().Add(30 * 24 * time.Hour), IdentityProvider: d.IdentityProvider, IdentityID: d.IdentityID, IdentityCredential: d.IdentityCredential}
-		return nil
+		var data store.IdentitySessionData
+		if e = json.Unmarshal(issued.Data, &data); e != nil {
+			return e
+		}
+		provider = valueString(data.IdentityProvider)
+		account, e = q.User(issued.UserID)
+		return e
 	})
 	if err != nil {
-		return err
+		var api apiError
+		if errors.As(err, &api) && api.status == 410 {
+			return fail(410, "login request expired; run kioku login again")
+		}
+		return s.resolveExchange(r.Context(), err, 410)
 	}
-	if problem != nil {
-		return problem
-	}
-	jsonOut(w, 200, map[string]string{"token": token, "provider": provider, "name": account.Name, "email": account.Email})
+	jsonOut(w, 200, map[string]string{"token": token, "provider": provider, "name": account.Data.Name, "email": account.Email})
 	return nil
 }
-
-// Only an unbound, live loopback request may receive a callback.
-func pendingLoopback(d model.Device) bool {
-	return d.LoopbackChallenge != "" && !d.Used && d.UserID == "" && d.Expires.After(time.Now())
+func pendingLoopback(q *store.Queries, id string) (store.SessionRow, store.CLILoginData, bool, error) {
+	row, err := q.Session(auth.Hash(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return row, store.CLILoginData{}, false, nil
+	}
+	if err != nil {
+		return row, store.CLILoginData{}, false, err
+	}
+	if row.Kind != "cli_login" {
+		return row, store.CLILoginData{}, false, nil
+	}
+	var data store.CLILoginData
+	if err = json.Unmarshal(row.Data, &data); err != nil {
+		return row, data, false, err
+	}
+	return row, data, row.Status == "pending" && row.UserID == "" && row.Expires > time.Now().UnixMilli() && valueString(data.LoopbackChallenge) != "", nil
 }
-
-func loopbackExpired(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusGone)
-	return render(w, "CLI login expired", struct{ Message string }{"CLI login expired; run kioku login again"}, messageTemplate)
-}
-
 func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, reason string) error {
-	var target string
-	err := s.Store.Update(func(st *model.State) error {
-		d := st.Devices[id]
-		if pendingLoopback(d) {
-			target = d.LoopbackRedirectURI + "?" + url.Values{"error": {reason}, "state": {d.LoopbackState}}.Encode()
+	target := ""
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		_, d, ok, e := pendingLoopback(q, id)
+		if e != nil {
+			return e
+		}
+		if ok {
+			target = valueString(d.LoopbackRedirectURI) + "?" + url.Values{"error": {reason}, "state": {valueString(d.LoopbackState)}}.Encode()
 		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 	if target == "" {
@@ -130,7 +149,6 @@ func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, rea
 	http.Redirect(w, r, target, http.StatusFound)
 	return nil
 }
-
 func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) error {
 	provider := r.PathValue("provider")
 	p, ok := s.Config.Providers[provider]
@@ -141,101 +159,106 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) er
 	if err != nil {
 		return err
 	}
-	state, verifier := auth.Token(), auth.Token()
-	pending := model.OAuthState{ReturnPath: returnPath, Provider: provider, Verifier: verifier, Expires: time.Now().Add(10 * time.Minute), Device: r.URL.Query().Get("device")}
-	err = s.Store.Update(func(st *model.State) error {
-		prune(st)
-		if len(st.OAuth) > 10000 {
-			return fail(429, "too many login attempts")
-		}
-		if pending.Device != "" {
-			d, ok := st.Devices[pending.Device]
-			if !ok || !pendingLoopback(d) {
+	payload := auth.OAuthCookie{Provider: provider, Verifier: auth.Token(), ReturnPath: nullableString(returnPath), CLILogin: nullableString(r.URL.Query().Get("device")), Expires: time.Now().Add(10 * time.Minute).UnixMilli()}
+	if payload.CLILogin != nil {
+		if err = s.Store.Read(r.Context(), func(q *store.Queries) error {
+			_, _, ok, e := pendingLoopback(q, *payload.CLILogin)
+			if e != nil {
+				return e
+			}
+			if !ok {
 				return fail(410, "login request expired")
 			}
+			return nil
+		}); err != nil {
+			return err
 		}
-
-		st.OAuth[auth.Hash(state)] = pending
-		return nil
-	})
+	}
+	cookie, err := s.Cipher.SealOAuthCookie(payload)
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: state, Path: "/auth/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 600})
-	http.Redirect(w, r, p.URL(state, verifier), http.StatusFound)
+	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: cookie, Path: "/auth/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	http.Redirect(w, r, p.URL(auth.Hash(cookie), payload.Verifier), http.StatusFound)
 	return nil
 }
+func identityData(cipher *auth.Cipher, credential auth.Credential, uid, provider, id string) store.IdentitySessionData {
+	tokens := cipher.SealIdentityTokens(credential, uid, provider, id)
+	return store.IdentitySessionData{IdentityProvider: &provider, IdentityID: &id, IdentityAccessToken: tokens.AccessToken, IdentityRefreshToken: tokens.RefreshToken, IdentityExpiresAt: tokens.ExpiresAt}
+}
 func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string) error {
-	state := r.URL.Query().Get("state")
 	cookie, err := r.Cookie("kioku_oauth")
-	if err != nil || state == "" || cookie.Value != state {
+	if err != nil {
 		return fail(403, "OAuth state mismatch; restart login")
 	}
-	var pending model.OAuthState
-	err = s.Store.Update(func(st *model.State) error {
-		v, ok := st.OAuth[auth.Hash(state)]
-		if !ok || v.Expires.Before(time.Now()) || v.Provider != r.PathValue("provider") {
-			return fail(403, "OAuth request expired")
-		}
-		pending = v
-		delete(st.OAuth, auth.Hash(state))
-		return nil
-	})
+	pending, err := s.Cipher.OpenOAuthCookie(cookie.Value, r.URL.Query().Get("state"), r.PathValue("provider"), time.Now().UnixMilli())
 	if err != nil {
-		return err
+		return fail(403, "OAuth request expired")
 	}
-	if pending.Device != "" && r.URL.Query().Has("error") {
-		return s.loopbackFailure(w, r, pending.Device, "access_denied")
+	device := valueString(pending.CLILogin)
+	if device != "" && r.URL.Query().Has("error") {
+		return s.loopbackFailure(w, r, device, "access_denied")
 	}
 	p := s.Config.Providers[pending.Provider]
 	credential, identity, err := p.Exchange(r.Context(), r.URL.Query().Get("code"), pending.Verifier)
 	if err != nil {
-		if pending.Device != "" {
-			return s.loopbackFailure(w, r, pending.Device, "server_error")
+		if device != "" {
+			return s.loopbackFailure(w, r, device, "server_error")
 		}
 		return fail(502, "OAuth exchange failed; restart login")
 	}
-	var uid, loopbackURL string
-	token := auth.Token()
-	code := "kioku_loopback." + auth.Token()
-	var expired bool
-	err = s.Store.Update(func(st *model.State) error {
-		if pending.Device != "" && !pendingLoopback(st.Devices[pending.Device]) {
-			expired = true
-			return nil
-		}
-		for id, u := range st.Users {
-			if u.Identities[pending.Provider] == identity.ID {
-				uid = id
-				break
+	token, code := auth.Token(), "kioku_loopback."+auth.Token()
+	loopbackURL := ""
+	expired := false
+	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
+		var login store.SessionRow
+		var loginData store.CLILoginData
+		if device != "" {
+			var ok bool
+			var e error
+			login, loginData, ok, e = pendingLoopback(q, device)
+			if e != nil {
+				return e
+			}
+			if !ok {
+				expired = true
+				return nil
 			}
 		}
-		if uid == "" {
-			// Never merge accounts based on email alone.
-			uid = auth.Token()[:20]
-			st.Users[uid] = model.User{ID: uid, Name: identity.Name, Email: identity.Email, Identities: map[string]string{pending.Provider: identity.ID}}
+		user, e := q.UserByIdentity(pending.Provider, identity.ID)
+		if errors.Is(e, sql.ErrNoRows) {
+			user = store.UserRow{ID: auth.Token()[:20]}
+			if e = q.PutIdentity(user.ID, pending.Provider, identity.ID); e != nil {
+				return e
+			}
+		} else if e != nil {
+			return e
 		}
-		// Refresh displayed profile data on every verified login. Membership is
-		// still keyed by immutable user ID, never merged by email.
-		user := st.Users[uid]
 		user.Email = identity.Email
-		user.Name = identity.Name
-		st.Users[uid] = user
-		credentialJSON, _ := json.Marshal(credential)
-		sealedIdentity := s.Cipher.Seal(string(credentialJSON), identityContext(uid, pending.Provider, identity.ID))
-		if pending.Device != "" {
-			d := st.Devices[pending.Device]
-			d.UserID = uid
-			d.IdentityProvider = pending.Provider
-			d.IdentityID = identity.ID
-			d.IdentityCredential = sealedIdentity
-			d.LoopbackCodeHash = auth.Hash(code)
-			d.Expires = time.Now().Add(time.Minute)
-			st.Devices[pending.Device] = d
-			loopbackURL = d.LoopbackRedirectURI + "?" + url.Values{"code": {code}, "state": {d.LoopbackState}}.Encode()
+		user.Data.Name = identity.Name
+		if e = q.PutUser(user); e != nil {
+			return e
 		}
-		st.Sessions[auth.Hash(token)] = model.Session{Created: time.Now().UTC(), UserID: uid, Expires: time.Now().Add(30 * 24 * time.Hour), IdentityProvider: pending.Provider, IdentityID: identity.ID, IdentityCredential: sealedIdentity}
-		return nil
+		data := identityData(s.Cipher, credential, user.ID, pending.Provider, identity.ID)
+		if device != "" {
+			login.UserID = user.ID
+			login.Expires = time.Now().Add(time.Minute).UnixMilli()
+			loginData.IdentitySessionData = data
+			loginData.LoopbackCodeHash = nullableString(auth.Hash(code))
+			login.Data, e = json.Marshal(loginData)
+			if e != nil {
+				return e
+			}
+			if e = q.PutSession(login); e != nil {
+				return e
+			}
+			loopbackURL = valueString(loginData.LoopbackRedirectURI) + "?" + url.Values{"code": {code}, "state": {valueString(loginData.LoopbackState)}}.Encode()
+		}
+		raw, e := json.Marshal(data)
+		if e != nil {
+			return e
+		}
+		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "web", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw})
 	})
 	if err != nil {
 		return err
@@ -245,81 +268,36 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	}
 	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: token, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
 	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: "", Path: "/auth/", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode})
-	if pending.Device != "" {
+	if device != "" {
 		http.Redirect(w, r, loopbackURL, http.StatusFound)
 		return nil
 	}
-	if pending.ReturnPath != "" {
-		target, err := authorizeReturn(pending.ReturnPath)
+	target := "/"
+	if pending.ReturnPath != nil {
+		target, err = authorizeReturn(*pending.ReturnPath)
 		if err != nil {
 			return err
 		}
-		http.Redirect(w, r, target, http.StatusSeeOther)
-		return nil
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 	return nil
 }
-func prune(st *model.State) {
-	now := time.Now()
-	for k, v := range st.OAuthCodes {
-		if !v.Expires.After(now) {
-			delete(st.OAuthCodes, k)
-		}
-	}
-	// Keep the issuing grant's selection available for a code's full 60s.
-	// An expired access token still cannot authenticate another MCP request.
-	pendingGrants := map[string]bool{}
-	for k, v := range st.LoginCodes {
-		if !v.Expires.After(now) {
-			delete(st.LoginCodes, k)
-		} else {
-			pendingGrants[v.GrantKey] = true
-		}
-	}
-	for k, v := range st.OAuthTokens {
-		if !v.Expires.After(now) && !pendingGrants[k] {
-			delete(st.OAuthTokens, k)
-		}
-	}
-	for k, v := range st.OAuth {
-		if v.Expires.Before(now) {
-			delete(st.OAuth, k)
-		}
-	}
-	for k, v := range st.Devices {
-		if v.Used || !v.Expires.After(now) {
-			delete(st.Devices, k)
-		}
-	}
-	for k, v := range st.Sessions {
-		if v.Expires.Before(now) {
-			delete(st.Sessions, k)
-		}
-	}
-}
-
-func identityContext(uid, provider, id string) string {
-	return "identity:" + uid + ":" + provider + ":" + id
-}
-
-// currentEmail revalidates the identity attached to this exact login session.
-// Old sessions without an encrypted identity proof must sign in again.
 func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
-	key, session := s.session(r)
-	if session.UserID != uid || session.IdentityCredential == "" || session.IdentityProvider == "" || session.IdentityID == "" {
-		return "", fail(401, "sign in again to verify your email before accepting this invitation")
-	}
-	provider, ok := s.Config.Providers[session.IdentityProvider]
-	if !ok {
-		return "", fail(401, "sign in again with an available identity provider")
-	}
-	plain, err := s.Cipher.Open(session.IdentityCredential, identityContext(uid, session.IdentityProvider, session.IdentityID))
+	key, principal, err := s.session(r)
 	if err != nil {
 		return "", err
 	}
-	var credential auth.Credential
-	if err = json.Unmarshal([]byte(plain), &credential); err != nil {
+	saved := principal.Identity
+	providerName, id := valueString(saved.IdentityProvider), valueString(saved.IdentityID)
+	if principal.UserID != uid || saved.IdentityAccessToken == nil || providerName == "" || id == "" {
+		return "", fail(401, "sign in again to verify your email before accepting this invitation")
+	}
+	provider, ok := s.Config.Providers[providerName]
+	if !ok {
+		return "", fail(401, "sign in again with an available identity provider")
+	}
+	credential, err := s.Cipher.OpenIdentityTokens(auth.IdentityTokens{AccessToken: saved.IdentityAccessToken, RefreshToken: saved.IdentityRefreshToken, ExpiresAt: saved.IdentityExpiresAt}, uid, providerName, id)
+	if err != nil {
 		return "", err
 	}
 	fresh, err := provider.Refresh(r.Context(), credential)
@@ -330,25 +308,48 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 	if err != nil {
 		return "", fail(502, "could not verify your current email with the identity provider")
 	}
-	if identity.ID != session.IdentityID || identity.Email == "" {
+	if identity.ID != id || identity.Email == "" {
 		return "", fail(401, "identity no longer matches this session; sign in again")
 	}
-	data, _ := json.Marshal(fresh)
-	err = s.Store.Update(func(st *model.State) error {
-		current, ok := st.Sessions[key]
-		if !ok || current.UserID != uid || current.Expires.Before(time.Now()) || current.IdentityCredential != session.IdentityCredential {
+	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
+		row, e := q.Session(key)
+		if errors.Is(e, sql.ErrNoRows) {
 			return fail(401, "session changed; sign in again")
 		}
-		user := st.Users[uid]
-		if user.Identities[session.IdentityProvider] != identity.ID {
+		if e != nil {
+			return e
+		}
+		var current store.IdentitySessionData
+		if e = json.Unmarshal(row.Data, &current); e != nil {
+			return e
+		}
+		if row.UserID != uid || row.Expires <= time.Now().UnixMilli() || !equalOptional(current.IdentityAccessToken, saved.IdentityAccessToken) || !equalOptional(current.IdentityRefreshToken, saved.IdentityRefreshToken) {
+			return fail(401, "session changed; sign in again")
+		}
+		identities, e := q.Identities(uid)
+		if e != nil {
+			return e
+		}
+		if identities[providerName] != id {
 			return fail(401, "identity no longer linked to this account")
 		}
-		current.IdentityCredential = s.Cipher.Seal(string(data), identityContext(uid, session.IdentityProvider, session.IdentityID))
-		st.Sessions[key] = current
+		next := identityData(s.Cipher, fresh, uid, providerName, id)
+		next.AgentID = current.AgentID
+		next.Role = current.Role
+		row.Data, e = json.Marshal(next)
+		if e != nil {
+			return e
+		}
+		if e = q.PutSession(row); e != nil {
+			return e
+		}
+		user, e := q.User(uid)
+		if e != nil {
+			return e
+		}
 		user.Email = identity.Email
-		user.Name = identity.Name
-		st.Users[uid] = user
-		return nil
+		user.Data.Name = identity.Name
+		return q.PutUser(user)
 	})
 	if err != nil {
 		return "", err

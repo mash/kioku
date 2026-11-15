@@ -8,6 +8,7 @@ import (
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
@@ -15,16 +16,16 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	token := f.login("owner@example.com")
 
 	f.s.Config.MetricsToken = "metrics-secret"
-	var p model.Project
+	var p fixtureProject
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Operations"}, &p)
 	base := "/api/projects/" + p.ID
-	var job model.Job
+	var job fixtureJob
 	input := model.PutRequest{File: &model.FileInput{Name: "one.md", Content: testSourceContent(testSourceURL("one.md", "One source"), "One source")}}
 	if c := f.request("POST", base+"/put", token, input, &job); c != 202 {
 		t.Fatal(c)
 	}
 	f.wait(p.ID, token, f.generate(p.ID, token, false).ID)
-	var second model.Job
+	var second fixtureJob
 	f.request("POST", base+"/put", token, input, &second)
 	f.wait(p.ID, token, f.generate(p.ID, token, true).ID)
 	var wikiBytes int64
@@ -52,8 +53,8 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 		t.Fatal("orphan retained")
 	}
 	var revisions int
-	_ = f.stateStore.View(func(st model.State) error {
-		for _, r := range st.Revisions {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		for _, r := range fixtureRevisionsList(t, st) {
 			if r.ProjectID == p.ID {
 				revisions++
 			}
@@ -73,12 +74,12 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	if c := f.request("GET", "/metrics", "metrics-secret", nil, nil); c != 200 {
 		t.Fatal(c)
 	}
-	var deletion model.Job
+	var deletion fixtureJob
 	if c := f.request("POST", base+"/put", token, model.PutRequest{Remove: true, SourceURL: testSourceURL("one.md", "One source")}, &deletion); c != 202 {
 		t.Fatal(c)
 	}
 	f.s.Config.MaxWikiBytes = 64 << 20
-	var regenerate model.Job
+	var regenerate fixtureJob
 	f.request("POST", base+"/generate", token, nil, &regenerate)
 	f.wait(p.ID, token, regenerate.ID)
 	for _, v := range f.readWiki(base, token) {

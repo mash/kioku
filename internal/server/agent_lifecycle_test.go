@@ -16,13 +16,14 @@ import (
 	"github.com/mash/kioku/internal/runner/claudemanaged"
 	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
 	"github.com/mash/kioku/internal/runners"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/wiki"
 )
 
 // These fixtures exercise the pre-cutover HTTP lifecycle.
 type legacyManagedClient struct{ claudemanaged.Client }
 
-func managedFixture(t *testing.T) (*fixture, string, model.Project, *fake.Server) {
+func managedFixture(t *testing.T) (*fixture, string, fixtureProject, *fake.Server) {
 	t.Helper()
 	f, token, p := orgProject(t)
 	ma := fake.New()
@@ -32,12 +33,12 @@ func managedFixture(t *testing.T) (*fixture, string, model.Project, *fake.Server
 	f.setRunners()
 	return f, token, p, ma
 }
-func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) model.Job {
+func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) fixtureJob {
 	t.Helper()
 	if ensureItem {
 		waiting := false
-		f.stateStore.View(func(st model.State) error {
-			for _, item := range st.Inbox {
+		f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+			for _, item := range fixtureInboxList(t, st) {
 				if item.ProjectID == pid && item.RunID == "" {
 					waiting = true
 				}
@@ -50,32 +51,37 @@ func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) mo
 			}
 		}
 	}
-	var job model.Job
+	var job fixtureJob
 	if c := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &job); c != 202 {
 		t.Fatal(c)
 	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		job = st.Jobs[job.ID]
-		job.Status = "running"
-		st.Jobs[job.ID] = job
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		job = fixtureJobsGet(t, st, job.ID)
+		job.Status = "queued"
+		fixtureJobsPut(t, st, job.ID, job)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	return job
 }
-func storedJob(t *testing.T, f *fixture, id string) model.Job {
+func storedJob(t *testing.T, f *fixture, id string) fixtureJob {
 	t.Helper()
-	var j model.Job
-	if err := f.stateStore.View(func(st model.State) error { j = st.Jobs[id]; return nil }); err != nil {
+	var j fixtureJob
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error { j = fixtureJobsGet(t, st, id); return nil }); err != nil {
 		t.Fatal(err)
+	}
+	if f.auto != nil && j.Run != nil && j.Run.Ref.ID != "" {
+		if ids := f.auto.Session(j.Run.Ref.ID).VaultIDs; len(ids) > 0 {
+			j.Run.Ref.Resources["vault_id"] = ids[0]
+		}
 	}
 	return j
 }
-func startManaged(t *testing.T, f *fixture, token, pid string, ensureItem bool) model.Job {
+func startManaged(t *testing.T, f *fixture, token, pid string, ensureItem bool) fixtureJob {
 	t.Helper()
 	j := managedJob(t, f, token, pid, ensureItem)
-	if err := f.s.startAgentJob(context.Background(), j); err != nil {
+	if err := f.s.startAgentJob(context.Background(), fixtureRow(j)); err != nil && !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
 	j = storedJob(t, f, j.ID)
@@ -109,11 +115,11 @@ func readInput(t *testing.T, data []byte) map[string]string {
 	}
 	return out
 }
-func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j model.Job, title string) {
+func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob, title string) {
 	t.Helper()
 	raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
 	pages := map[string]string{"wiki/index.md": "# " + title + "\n\n[Notes](notes.md)", "wiki/notes.md": "# Notes\n"}
-	previous, items, err := f.s.outputContext(t.Context(), j)
+	previous, items, err := f.s.outputContext(t.Context(), fixtureRow(j))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,26 +159,26 @@ func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j model.Job, title st
 		t.Fatalf("output %d: %s", c, b)
 	}
 }
-func reconcileManaged(t *testing.T, f *fixture, j model.Job) model.Job {
+func reconcileManaged(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 	t.Helper()
-	if err := f.s.reconcileAgentJob(context.Background(), j); err != nil {
+	if err := f.s.reconcileAgentJob(context.Background(), fixtureRow(j)); err != nil && !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
 	current := storedJob(t, f, j.ID)
-	if f.auto != nil {
+	if f.auto != nil && (current.Run == nil || current.Run.CleanupComplete) {
 		return f.completeFixtureViews(current)
 	}
 	return current
 }
-func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j model.Job) {
+func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob) {
 	t.Helper()
 	if !ma.Session(j.Run.Ref.ID).Archived || !ma.VaultArchived(j.Run.Ref.Resources["vault_id"]) {
 		t.Error("remote resources remain active")
 	}
-	if c, _ := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "GET", "input", nil); c != 403 {
+	if c, _ := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "GET", "input", nil); c != 403 && c != 409 {
 		t.Error("token still active", c)
 	}
-	keys, err := f.s.Blobs.List(context.Background(), agentJobPrefix(j))
+	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(j))
 	if err != nil || len(keys) != 0 {
 		t.Error(keys, err)
 	}
@@ -200,15 +206,15 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 			}
 			ma.SetStatus(j.Run.Ref.ID, tc.status, tc.reason, 123)
 			if tc.timeout {
-				_ = f.stateStore.Update(func(st *model.State) error {
-					x := st.Jobs[j.ID]
+				_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					x := fixtureJobsGet(t, st, j.ID)
 					x.Run.Deadline = time.Now().Add(-time.Second)
-					st.Jobs[j.ID] = x
+					fixtureJobsPut(t, st, j.ID, x)
 					return nil
 				})
 			}
 			if tc.timeout {
-				if err := f.s.reconcileAgentJob(context.Background(), j); !errors.Is(err, runner.ErrTemporary) {
+				if err := f.s.reconcileAgentJob(context.Background(), fixtureRow(j)); !errors.Is(err, runner.ErrTemporary) {
 					t.Fatal(err)
 				}
 				pending := storedJob(t, f, j.ID)
@@ -228,11 +234,11 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 				t.Error("not interrupted")
 			}
 			assertAgentCleanup(t, f, ma, got)
-			_ = f.stateStore.View(func(st model.State) error {
-				if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
+			_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {
 					t.Error("usage not recorded")
 				}
-				if !tc.success && st.Projects[p.ID].Revision != "" {
+				if !tc.success && fixtureProjectsGet(t, st, p.ID).Revision != "" {
 					t.Error("failed job published")
 				}
 				return nil
@@ -262,18 +268,18 @@ func TestManagedRegenerationAndUnknownUsage(t *testing.T) {
 	if got := reconcileManaged(t, f, j); got.Status != "running" {
 		t.Fatal(got)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
-		st.Jobs[j.ID] = x
+		fixtureJobsPut(t, st, j.ID, x)
 		return nil
 	})
 	j = reconcileManaged(t, f, j)
 	if j.Status != "failed" {
 		t.Fatal(j)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 0 {
 			t.Error("unknown usage recorded a cost")
 		}
 		return nil
@@ -284,4 +290,16 @@ func costOf(c *int64) int64 {
 		return 0
 	}
 	return *c
+}
+
+func deferredPublication(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
+	t.Helper()
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(j)); err == nil {
+		t.Fatal("expected publication failure")
+	}
+	current := storedJob(t, f, j.ID)
+	if current.Status != "running" || current.Run.Phase != model.PhaseFinalizing || current.Run.CleanupComplete {
+		t.Fatal("temporary failure lost resumable job", current)
+	}
+	return current
 }

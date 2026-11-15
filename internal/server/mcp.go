@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -10,22 +13,42 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/buildinfo"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
-func connectorGrant(st model.State, key string) (model.OAuthGrant, bool) {
-	grant, ok := st.OAuthTokens[key]
-	_, userExists := st.Users[grant.UserID]
-	return grant, ok && grant.Active && userExists && grant.Kind == "access" && len(grant.ProjectIDs) > 0 && grant.Expires.After(time.Now())
+type connectorAccess struct {
+	UserID string
+	store.MCPData
 }
 
-// connectorProject resolves namespace for a connector request. It returns the
-// same "project not found" error for a project outside the grant's ProjectIDs
-// as for a project where the user is not a member. The grant check overrides
-// any error from namespaceProject, such as the 409 for a deleting project, so
-// an ungranted project discloses nothing.
-func connectorProject(st model.State, grantKey, namespace string) (model.Project, string, error) {
-	grant, ok := connectorGrant(st, grantKey)
+func connectorGrant(q *store.Queries, key string) (connectorAccess, bool, error) {
+	row, err := q.Session(key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return connectorAccess{}, false, nil
+	}
+	if err != nil {
+		return connectorAccess{}, false, err
+	}
+	if row.Kind != "mcp" || row.Status != "active" || row.Expires <= time.Now().UnixMilli() {
+		return connectorAccess{}, false, nil
+	}
+	var data store.MCPData
+	if err := json.Unmarshal(row.Data, &data); err != nil {
+		return connectorAccess{}, false, err
+	}
+	if _, err := q.User(row.UserID); errors.Is(err, sql.ErrNoRows) {
+		return connectorAccess{}, false, nil
+	} else if err != nil {
+		return connectorAccess{}, false, err
+	}
+	return connectorAccess{row.UserID, data}, data.Active && data.TokenKind == "access" && len(data.ProjectIDs) > 0, nil
+}
+func connectorProject(q *store.Queries, key, namespace string) (model.Project, string, error) {
+	grant, ok, err := connectorGrant(q, key)
+	if err != nil {
+		return model.Project{}, "", err
+	}
 	if !ok {
 		return model.Project{}, "", fail(401, "connector login required")
 	}
@@ -33,7 +56,7 @@ func connectorProject(st model.State, grantKey, namespace string) (model.Project
 	if len(parts) != 2 {
 		return model.Project{}, "", fail(404, "project not found")
 	}
-	project, err := namespaceProject(st, parts[0], parts[1], grant.UserID)
+	project, err := namespaceProject(q, parts[0], parts[1], grant.UserID)
 	if !slices.Contains(grant.ProjectIDs, project.ID) {
 		return model.Project{}, "", fail(404, "project not found")
 	}
@@ -49,8 +72,8 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	raw, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	key := auth.Hash(raw)
 	valid := false
-	if err := s.Store.View(func(st model.State) error { _, valid = connectorGrant(st, key); return nil }); err != nil {
-		writeError(w, err)
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error { var err error; _, valid, err = connectorGrant(q, key); return err }); err != nil {
+		s.requestError(w, r, err)
 		return
 	}
 	if !bearer || !valid {
@@ -97,7 +120,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			if e, ok := err.(apiError); ok {
 				result = mcpText(e.message, true)
 			} else {
-				writeError(w, err)
+				s.requestError(w, r, err)
 				return
 			}
 			break
@@ -127,17 +150,23 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 	}
 	raw := "kioku_code." + auth.Token()
 	expires := time.Now().UTC().Add(time.Minute)
-	err := s.Store.Update(func(st *model.State) error {
-		prune(st)
-		project, uid, err := connectorProject(*st, grantKey, namespace)
+	err := s.Store.Write(context.Background(), func(q *store.Queries) error {
+		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
+			return err
+		}
+		project, uid, err := connectorProject(q, grantKey, namespace)
 		if err != nil {
 			return err
 		}
-		if len(st.LoginCodes) >= 10000 {
+		data, err := json.Marshal(store.LoginCodeData{GrantKey: grantKey, Role: &role})
+		if err != nil {
+			return err
+		}
+		err = q.InsertSession(store.SessionRow{ID: auth.Hash(raw), Kind: "login_code", Status: "pending", UserID: uid, ProjectID: &project.ID, Expires: expires.UnixMilli(), Created: time.Now().UnixMilli(), Data: data})
+		if errors.Is(err, store.ErrSessionCapacity) {
 			return fail(429, "too many login codes")
 		}
-		st.LoginCodes[auth.Hash(raw)] = model.LoginCode{UserID: uid, ProjectID: project.ID, GrantKey: grantKey, Role: role, Expires: expires}
-		return nil
+		return err
 	})
 	return raw, expires, err
 }
@@ -151,58 +180,25 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	if err := decode(w, r, &req); err != nil {
 		return err
 	}
-	var token model.AgentToken
-	var raw, namespace string
-	var problem error
-	// Returning an error from Update rolls back the deletion. Persist consumption
-	// even when validation or minting fails, and report that failure afterwards.
-	err := s.Store.Update(func(st *model.State) error {
-		prune(st)
-		key := auth.Hash(req.Code)
-		code, ok := st.LoginCodes[key]
-		delete(st.LoginCodes, key)
-		if !ok || !code.Expires.After(time.Now()) {
-			problem = fail(401, "login code expired or already used")
-			return nil
+	id, secret := auth.Token()[:20], auth.Token()
+	raw := "kioku_agent." + id + "." + secret
+	var row store.SessionRow
+	var namespace string
+	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
+			return err
 		}
-		req.Name = strings.TrimSpace(req.Name)
-		if len(req.Name) < 1 || len(req.Name) > 100 {
-			problem = fail(400, "name must contain 1–100 bytes")
-			return nil
-		}
-		grant := st.OAuthTokens[code.GrantKey]
-		if !grant.Active || grant.Kind != "access" || grant.UserID != code.UserID || !slices.Contains(grant.ProjectIDs, code.ProjectID) {
-			problem = fail(404, "project not found")
-			return nil
-		}
-		project, e := member(*st, code.ProjectID, code.UserID)
-		if e != nil {
-			problem = e
-			return nil
-		}
-		if req.Namespace != "" && req.Namespace != project.Namespace {
-			problem = fail(409, "project does not match working directory")
-			return nil
-		}
-		name := "connector:" + req.Name
-		now := time.Now().UTC()
-		for id, old := range st.AgentTokens {
-			if old.UserID == code.UserID && old.ProjectID == code.ProjectID && old.Name == name && old.RevokedAt.IsZero() && old.Expires.After(now) {
-				old.RevokedAt = now
-				st.AgentTokens[id] = old
-			}
-		}
-		raw, token, problem = mintAgent(st, code.UserID, code.ProjectID, name, code.Role, 24*time.Hour)
-		namespace = project.Namespace
-		return nil
-	})
-	if err != nil {
+		var err error
+		row, namespace, err = exchangeAgentLogin(q, req.Code, req.Name, req.Namespace, id, secret, time.Now())
+		return err
+	}); err != nil {
+		return s.resolveExchange(r.Context(), err, 401)
+	}
+	var data store.AgentSessionData
+	if err := json.Unmarshal(row.Data, &data); err != nil {
 		return err
 	}
-	if problem != nil {
-		return problem
-	}
-	jsonOut(w, 200, map[string]any{"id": token.ID, "token": raw, "role": token.Role, "expires": token.Expires, "namespace": namespace})
+	jsonOut(w, 200, map[string]any{"id": id, "token": raw, "role": valueString(data.Role), "expires": storageDate(row.Expires), "namespace": namespace})
 	return nil
 }
 

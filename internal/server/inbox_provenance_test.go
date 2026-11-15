@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
@@ -45,9 +47,9 @@ func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
 			}
 		})
 	}
-	if err := f.stateStore.View(func(st model.State) error {
-		if len(st.Inbox) != 0 || len(st.Jobs) != 0 {
-			t.Fatal("invalid sources changed state", st.Inbox)
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if len(fixtureInboxList(t, st)) != 0 || len(fixtureJobsList(t, st)) != 0 {
+			t.Fatal("invalid sources changed state", fixtureInboxList(t, st))
 		}
 		return nil
 	}); err != nil {

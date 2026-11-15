@@ -3,16 +3,18 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/store"
 )
 
 type responseLog struct {
@@ -78,65 +80,66 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var projects, queued, running, failed int
-	err := s.Store.View(func(st model.State) error {
-		projects = len(st.Projects)
-		for _, j := range st.Jobs {
-			switch j.Status {
-			case "queued":
-				queued++
-			case "running":
-				running++
-			case "failed":
-				failed++
-			}
-		}
-		return nil
+	err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		var err error
+		projects, queued, running, failed, err = q.Metrics()
+		return err
 	})
 	if err != nil {
-		writeError(w, err)
+		s.requestError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	fmt.Fprintf(w, "kioku_http_requests_total %d\nkioku_http_errors_total %d\nkioku_projects %d\nkioku_jobs_queued %d\nkioku_jobs_running %d\nkioku_jobs_failed %d\n", s.requests.Load(), s.failures.Load(), projects, queued, running, failed)
 }
 func (s *Server) usage(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.Store.View(func(st model.State) error {
+	var result map[string]any
+	err := s.Store.Read(r.Context(), func(q *store.Queries) error {
 		pid := r.PathValue("project")
-		if _, err := member(st, pid, uid); err != nil {
+		if _, err := sqlMember(q, pid, uid); err != nil {
 			return err
 		}
-		p := st.Projects[pid]
-		count, jobs := 0, 0
-		for _, item := range st.Inbox {
-			if item.ProjectID == pid {
-				count++
-			}
+		files, err := q.ProjectWiki(pid)
+		if err != nil {
+			return err
 		}
-		for _, j := range st.Jobs {
-			if j.ProjectID == pid && j.ViewTask == nil && (j.Status == "queued" || j.Status == "running") {
-				jobs++
-			}
+		size, err := wikiBytes(files)
+		if err != nil {
+			return err
 		}
-		jsonOut(w, 200, map[string]any{"wiki_bytes": st.Revisions[p.Revision].StoredBytes, "inbox_items": count, "pending_jobs": jobs, "limits": map[string]any{"wiki_bytes": s.Config.MaxWikiBytes, "inbox_items": maxInboxItems, "pending_jobs": s.Config.MaxQueued}})
+		count, pending, err := q.ProjectCounts(pid)
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"wiki_bytes": size, "inbox_items": count, "pending_jobs": pending, "limits": map[string]any{"wiki_bytes": s.Config.MaxWikiBytes, "inbox_items": maxInboxItems, "pending_jobs": s.Config.MaxQueued}}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	jsonOut(w, 200, result)
+	return nil
 }
 func (s *Server) audit(w http.ResponseWriter, r *http.Request, uid string) error {
-	return s.Store.View(func(st model.State) error {
+	out := []model.Audit{}
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
 		pid := r.PathValue("project")
-		if _, err := owner(st, pid, uid); err != nil {
+		if _, err := owner(q, pid, uid); err != nil {
 			return err
 		}
-		out := []model.Audit{}
-		for _, v := range st.Audit {
-			if v.ProjectID == pid {
-				out = append(out, v)
-			}
+		rows, err := q.ProjectAudit(pid)
+		if err != nil {
+			return err
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })
-		jsonOut(w, 200, out)
+		for _, row := range rows {
+			out = append(out, model.Audit{ID: row.ID, ProjectID: pid, UserID: row.Data.UserID, Action: row.Data.Action, Detail: row.Data.Detail, Created: storageDate(row.Created)})
+		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	jsonOut(w, 200, out)
+	return nil
 }
 func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
@@ -152,162 +155,44 @@ func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) err
 	if req.Keep < 0 || req.Keep > 1000 {
 		return fail(400, "legacy keep value must be between 0 and 1000")
 	}
-	unlock, err := s.lockProject(r.Context(), pid)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	err = s.Store.Update(func(st *model.State) error {
-		p, err := owner(*st, pid, uid)
-		if err != nil {
+	removed, err := s.storage.maintenance(r.Context(), pid, func(q *store.Queries) error {
+		if _, err := owner(q, pid, uid); err != nil {
 			return err
 		}
-		for id, current := range st.Revisions {
-			if current.ProjectID == pid && id != p.Revision {
-				delete(st.Revisions, id)
-			}
-		}
-		for id, j := range st.Jobs {
-			if j.ProjectID == pid && j.Status != "running" && j.Status != "queued" && (j.Run == nil || j.Run.CleanupComplete) && time.Since(j.Created) > 30*24*time.Hour {
-				delete(st.Jobs, id)
-			}
-		}
-		for id, a := range st.Audit {
-			if a.ProjectID == pid && time.Since(a.Created) > 90*24*time.Hour {
-				delete(st.Audit, id)
-			}
-		}
-		for id, inv := range st.Invites {
-			if inv.ProjectID == pid && inv.Expires.Before(time.Now()) {
-				delete(st.Invites, id)
-			}
-		}
-		return nil
+		return s.requestMutation(r.Context(), q, pid)
 	})
-	if err != nil {
-		return err
-	}
-	removed, err := s.gc(r, pid)
 	if err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]any{"objects_removed": removed, "history_retained": false})
 	return nil
 }
-func (s *Server) gc(r *http.Request, pid string) (int, error) {
-	live := map[blob.Key]bool{}
-	if err := s.Store.View(func(st model.State) error {
-		for _, item := range st.Inbox {
-			if item.ProjectID == pid && !item.Remove {
-				live[item.BodyKey()] = true
-			}
-		}
-		for _, rev := range st.Revisions {
-			if rev.ProjectID == pid {
-				for _, key := range rev.Files {
-					live[key] = true
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		return 0, err
-	}
-	keys, err := s.Blobs.List(r.Context(), "projects/"+pid+"/")
-	if err != nil {
-		return 0, err
-	}
-	removed := 0
-	for _, key := range keys {
-		if strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/") && !strings.HasPrefix(string(key), "projects/"+pid+"/.kioku/inbox/") {
-			continue
-		}
-		if !live[key] {
-			if err = s.Blobs.Delete(r.Context(), key); err != nil {
-				return removed, err
-			}
-			removed++
-		}
-	}
-	return removed, nil
-}
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
 	if err := s.checkDeleteOwner(pid, uid); err != nil {
 		return err
 	}
-	generationUnlock, err := s.lockProject(r.Context(), "generate:"+pid)
-	if err != nil {
-		return err
-	}
-	defer generationUnlock()
-	if err = s.abortProjectAgentJobs(r.Context(), pid); err != nil {
-		return err
-	}
-	unlock, err := s.lockProject(r.Context(), pid)
+	unlock, err := s.lockProject(r.Context(), "generate:"+pid)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	err = s.Store.Update(func(st *model.State) error {
-		p, ok := st.Projects[pid]
-		if !ok || p.Members[uid] != "owner" {
+	err = s.storage.deleteProject(r.Context(), pid, func(ctx context.Context, j store.JobRow) error {
+		err := s.reconcileAgentJobLocked(ctx, j)
+		if errors.Is(err, runner.ErrTemporary) {
+			return fail(503, "agent shutdown pending; retry deletion")
+		}
+		return err
+	}, func(q *store.Queries) error {
+		role, err := q.ProjectRole(pid, uid)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" {
 			return fail(404, "project not found")
 		}
-		p.Deleting = true
-		st.Projects[pid] = p
-		return nil
+		return err
 	})
 	if err != nil {
 		return err
 	}
-	keys, err := s.Blobs.List(r.Context(), "projects/"+pid+"/")
-	if err != nil {
-		return err
-	}
-	for _, key := range keys {
-		if err = s.Blobs.Delete(r.Context(), key); err != nil {
-			return err
-		}
-	}
-	if manager, ok := s.Blobs.(interface {
-		DeleteProject(context.Context, string) error
-	}); ok {
-		if err = manager.DeleteProject(r.Context(), pid); err != nil {
-			return err
-		}
-	}
-	err = s.Store.Update(func(st *model.State) error {
-		delete(st.Projects, pid)
-		for id, item := range st.Inbox {
-			if item.ProjectID == pid {
-				delete(st.Inbox, id)
-			}
-		}
-		for id, v := range st.Revisions {
-			if v.ProjectID == pid {
-				delete(st.Revisions, id)
-			}
-		}
-		for id, v := range st.Jobs {
-			if v.ProjectID == pid {
-				delete(st.Jobs, id)
-			}
-		}
-		for id, v := range st.Invites {
-			if v.ProjectID == pid {
-				delete(st.Invites, id)
-			}
-		}
-		for id, v := range st.Audit {
-			if v.ProjectID == pid {
-				delete(st.Audit, id)
-			}
-		}
-		return nil
-	})
-	if err == nil {
-		jsonOut(w, 200, map[string]bool{"deleted": true})
-	}
-	return err
+	jsonOut(w, 200, map[string]bool{"deleted": true})
+	return nil
 }

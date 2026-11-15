@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 // The fake supplies model output. This verifies the archive/publication contract,
@@ -27,7 +29,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 		"wiki/source-title-2.md": "---\nsource_url: " + urls[1] + "\n---\n# Title\nSecond",
 		"wiki/log.md":            "# Log\nAdded two sources",
 	}
-	publish := func(j model.Job) {
+	publish := func(j fixtureJob) {
 		t.Helper()
 		raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
 		if c, b := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, pages)); c != 200 {
@@ -54,8 +56,8 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	pages["wiki/source-title.md"] += "\nUpdated from same URL"
 	pages["wiki/log.md"] = "# Log\nUpdated one source"
 	publish(j)
-	if err := f.stateStore.View(func(st model.State) error {
-		r := st.Revisions[st.Projects[p.ID].Revision]
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		r := fixtureRevisionsGet(t, st, fixtureProjectsGet(t, st, p.ID).Revision)
 		count := 0
 		for name, key := range r.Files {
 			if !strings.HasPrefix(name, "wiki/source-") {
@@ -67,8 +69,8 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 				t.Fatalf("published source %s: %q, %v", name, body, err)
 			}
 		}
-		if count != 2 || len(st.Inbox) != 0 {
-			t.Fatal(count, st.Inbox)
+		if count != 2 || len(fixtureInboxList(t, st)) != 0 {
+			t.Fatal(count, fixtureInboxList(t, st))
 		}
 		return nil
 	}); err != nil {

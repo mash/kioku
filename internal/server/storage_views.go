@@ -157,6 +157,27 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			}
 			g.Pending = false
 		}
+		// A completed child must be consumed before checking authorization for
+		// the next one: its immutable cost is retained even after revocation.
+		if authErr := sqlJobAuthorization(q, p, o.now().UnixMilli()); authErr != nil {
+			var api apiError
+			if !errors.As(authErr, &api) {
+				return authErr
+			}
+			for i := g.Next; i < len(p.Data.Views); i++ {
+				if e = setStatus(&p.Data.Views[i], "skipped", authErr.Error()); e != nil {
+					return e
+				}
+			}
+			p.Status = "failed"
+			p.Data.Error = nullableString(authErr.Error())
+			p.GenerationSnapshot = nil
+			p.Data.ViewGeneration = nil
+			if e = q.PutJob(p); e != nil {
+				return e
+			}
+			return q.CompactHistory(p.ProjectID, nil)
+		}
 		for g.Next < len(p.Data.Views) {
 			result := &p.Data.Views[g.Next]
 			reason := ""

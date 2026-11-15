@@ -1,15 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -18,8 +19,11 @@ func refreshForm(client, token string) url.Values {
 }
 func assertConnectorAccess(t *testing.T, f *fixture, token string, want bool) {
 	t.Helper()
-	if err := f.stateStore.View(func(st model.State) error {
-		_, ok := connectorGrant(st, auth.Hash(token))
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		_, ok, err := connectorGrant(st, auth.Hash(token))
+		if err != nil {
+			return err
+		}
 		if ok != want {
 			t.Errorf("access valid = %v, want %v", ok, want)
 		}
@@ -137,20 +141,12 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 	code, form := connectorAuthCode(t, f, client, human, project.ID)
 	// Persist a snapshot to a separate real store, then reopen it and construct
 	// a new server and cipher. Neither provider nor key derivation may rely on RAM.
-	dir := t.TempDir()
-	stateStore, err := store.Open(dir)
-	if err != nil {
+	// E1: copy a consistent SQL snapshot, then open it with a fresh server.
+	dir := filepath.Join(t.TempDir(), "backup")
+	if err := f.stateStore.Backup(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.stateStore.View(func(st model.State) error {
-		return stateStore.Update(func(dst *model.State) error { *dst = st; return nil })
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err = stateStore.Close(); err != nil {
-		t.Fatal(err)
-	}
-	stateStore, err = store.Open(dir)
+	stateStore, err := openFixtureDatabase(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +161,11 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 	f.stateStore = stateStore
 	access, refresh := connectorTokenPair(t, f, form)
 	assertConnectorAccess(t, f, access, true)
-	if err = stateStore.View(func(st model.State) error {
+	if err = stateStore.Read(context.Background(), func(st *store.Queries) error {
 		data, err := json.Marshal(struct {
-			Codes  map[string]model.OAuthCode
-			Tokens map[string]model.OAuthGrant
-		}{st.OAuthCodes, st.OAuthTokens})
+			Codes  map[string]fixtureOAuthCode
+			Tokens map[string]fixtureOAuthGrant
+		}{fixtureOAuthCodesList(t, st), fixtureOAuthTokensList(t, st)})
 		if err != nil {
 			return err
 		}

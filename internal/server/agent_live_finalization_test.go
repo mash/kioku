@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedLiveSessionCannotPublish(t *testing.T) {
@@ -19,11 +21,11 @@ func TestManagedLiveSessionCannotPublish(t *testing.T) {
 			if j.Status != "running" {
 				t.Fatal("live session finalized", j.Status)
 			}
-			_ = f.stateStore.View(func(st model.State) error {
-				if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
+			_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 0 {
 					t.Error("interim cost recorded")
 				}
-				if st.Projects[p.ID].Revision != "" {
+				if fixtureProjectsGet(t, st, p.ID).Revision != "" {
 					t.Error("published before stop")
 				}
 				return nil
@@ -33,8 +35,8 @@ func TestManagedLiveSessionCannotPublish(t *testing.T) {
 			if j.Status != "completed" {
 				t.Fatal(j)
 			}
-			_ = f.stateStore.View(func(st model.State) error {
-				if costOf(st.Jobs[j.ID].Run.CostCents) != 200 {
+			_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 200 {
 					t.Error("final cost not recorded")
 				}
 				return nil

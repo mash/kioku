@@ -1,25 +1,27 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	p := securityProject(t, f, owner)
-	var empty model.Project
+	var empty fixtureProject
 	if c := f.request("POST", "/api/projects", owner, map[string]string{"name": "Empty"}, &empty); c != 201 {
 		t.Fatal(c)
 	}
 	other := f.login("other@example.com")
 	private := securityProject(t, f, other)
-	if err := f.stateStore.Update(func(st *model.State) error {
-		st.Inbox["one"] = model.InboxItem{ID: "one", ProjectID: p.ID, SourceURL: "https://example.com/a", RunID: "pinned", Submitter: "owner"}
-		st.Inbox["two"] = model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Remove: true}
-		st.Inbox["private"] = model.InboxItem{ID: "private", ProjectID: private.ID, SourceURL: "https://example.com/private", Remove: true}
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		fixtureInboxPut(t, st, "one", model.InboxItem{ID: "one", ProjectID: p.ID, SourceURL: "https://example.com/a", RunID: "pinned", Submitter: "owner"})
+		fixtureInboxPut(t, st, "two", model.InboxItem{ID: "two", ProjectID: p.ID, SourceURL: "https://example.com/b", Remove: true})
+		fixtureInboxPut(t, st, "private", model.InboxItem{ID: "private", ProjectID: private.ID, SourceURL: "https://example.com/private", Remove: true})
 		return nil
 	}); err != nil {
 		t.Fatal(err)

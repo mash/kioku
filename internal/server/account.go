@@ -1,12 +1,14 @@
 package server
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 // Administration requires live provider proof from this exact human session.
@@ -14,89 +16,103 @@ func (s *Server) confirmAccount(r *http.Request, uid string) error {
 	_, err := s.currentEmail(r, uid)
 	return err
 }
-func (s *Server) updateAccount(r *http.Request, uid string, fn func(*model.State) error) error {
-	key, principal := s.session(r)
-	return s.Store.Update(func(st *model.State) error {
-		session, ok := st.Sessions[key]
-		if _, exists := st.Users[uid]; !exists || !ok || session.UserID != uid || !time.Now().Before(session.Expires) || principal.AgentID != "" {
+func (s *Server) updateAccount(r *http.Request, uid string, fn func(*store.Queries) error) error {
+	key, principal, err := s.session(r)
+	if err != nil {
+		return err
+	}
+	return s.mutation(r, uid, func(q *store.Queries) error {
+		session, err := q.Session(key)
+		if errors.Is(err, sql.ErrNoRows) {
 			return fail(401, "session changed; sign in again")
 		}
-		return fn(st)
+		if err != nil {
+			return err
+		}
+		if _, err = q.User(uid); errors.Is(err, sql.ErrNoRows) {
+			return fail(401, "session changed; sign in again")
+		}
+		if err != nil {
+			return err
+		}
+		if session.UserID != uid || session.Status != "active" || (session.Kind != "web" && session.Kind != "cli") || session.Expires <= time.Now().UnixMilli() || principal.AgentID != "" {
+			return fail(401, "session changed; sign in again")
+		}
+		return fn(q)
 	})
 }
-
 func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) error {
-	current, _ := s.session(r)
-	err := s.Store.View(func(st model.State) error {
-		u := st.Users[uid]
-		identities := []string{}
-		sessions := []map[string]any{}
-		for provider := range u.Identities {
-			identities = append(identities, provider)
+	current, _, err := s.session(r)
+	if err != nil {
+		return err
+	}
+	var result map[string]any
+	err = s.Store.Read(r.Context(), func(q *store.Queries) error {
+		u, err := q.User(uid)
+		if err != nil {
+			return err
 		}
-		for id, session := range st.Sessions {
-			if session.UserID == uid && session.Expires.After(time.Now()) {
-				sessions = append(sessions, map[string]any{"id": id, "current": id == current, "created": session.Created, "expires": session.Expires, "provider": session.IdentityProvider})
-			}
+		ids, err := q.Identities(uid)
+		if err != nil {
+			return err
+		}
+		identities := []string{}
+		for p := range ids {
+			identities = append(identities, p)
 		}
 		sort.Strings(identities)
+		sessions := []map[string]any{}
+		rows, err := q.UserSessions(uid, "")
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if (row.Kind != "web" && row.Kind != "cli") || row.Status != "active" || row.Expires <= time.Now().UnixMilli() {
+				continue
+			}
+			var data store.IdentitySessionData
+			if err := json.Unmarshal(row.Data, &data); err != nil {
+				return err
+			}
+			sessions = append(sessions, map[string]any{"id": row.ID, "current": row.ID == current, "created": creationDate(row.Created), "expires": storageDate(row.Expires), "provider": valueString(data.IdentityProvider)})
+		}
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i]["id"].(string) < sessions[j]["id"].(string) })
-		jsonOut(w, 200, map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "identities": identities, "sessions": sessions})
+		result = map[string]any{"id": u.ID, "name": u.Data.Name, "email": u.Email, "identities": identities, "sessions": sessions}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	jsonOut(w, 200, result)
+	return nil
 }
 func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request, uid string) error {
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	if err := s.updateAccount(r, uid, func(st *model.State) error {
-		key := r.PathValue("session")
-		session, ok := st.Sessions[key]
-		if !ok || session.UserID != uid {
+	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
+		row, err := q.Session(r.PathValue("session"))
+		if errors.Is(err, sql.ErrNoRows) {
 			return fail(404, "session not found")
 		}
-		delete(st.Sessions, key)
-		return nil
+		if err != nil {
+			return err
+		}
+		if row.UserID != uid || (row.Kind != "web" && row.Kind != "cli") {
+			return fail(404, "session not found")
+		}
+		return q.DeleteSession(row.ID)
 	}); err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]bool{"revoked": true})
 	return nil
 }
-func revokeAccountAccess(st *model.State, uid string) {
-	for id, session := range st.Sessions {
-		if session.UserID == uid {
-			delete(st.Sessions, id)
-		}
-	}
-	for id, device := range st.Devices {
-		if device.UserID == uid {
-			delete(st.Devices, id)
-		}
-	}
-	for key, grant := range st.OAuthTokens {
-		if grant.UserID == uid {
-			delete(st.OAuthTokens, key)
-		}
-	}
-	for key, code := range st.OAuthCodes {
-		if code.UserID == uid {
-			delete(st.OAuthCodes, key)
-		}
-	}
-	for key, code := range st.LoginCodes {
-		if code.UserID == uid {
-			delete(st.LoginCodes, key)
-		}
-	}
-	revokeAgents(st, uid, "")
-}
 func (s *Server) revokeAllSessions(w http.ResponseWriter, r *http.Request, uid string) error {
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	if err := s.updateAccount(r, uid, func(st *model.State) error { revokeAccountAccess(st, uid); return nil }); err != nil {
+	if err := s.updateAccount(r, uid, func(q *store.Queries) error { return q.RevokeUserSessions(uid) }); err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]bool{"revoked": true})
@@ -106,33 +122,47 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	_, principal := s.session(r)
+	_, principal, err := s.session(r)
+	if err != nil {
+		return err
+	}
 	provider := r.PathValue("provider")
-	if err := s.updateAccount(r, uid, func(st *model.State) error {
-		user := st.Users[uid]
-		if _, exists := user.Identities[provider]; !exists {
+	if err = s.updateAccount(r, uid, func(q *store.Queries) error {
+		ids, err := q.Identities(uid)
+		if err != nil {
+			return err
+		}
+		if _, ok := ids[provider]; !ok {
 			return fail(404, "identity not linked")
 		}
-		if len(user.Identities) < 2 {
+		if len(ids) < 2 {
 			return fail(409, "cannot unlink the last login identity")
 		}
-		if principal.IdentityProvider == provider {
+		if valueString(principal.Identity.IdentityProvider) == provider {
 			return fail(409, "sign in with another linked provider before unlinking this identity")
 		}
-		delete(user.Identities, provider)
-		st.Users[uid] = user
-		for id, session := range st.Sessions {
-			if session.UserID == uid && session.IdentityProvider == provider {
-				delete(st.Sessions, id)
+		if err := q.DeleteIdentity(uid, provider); err != nil {
+			return err
+		}
+		rows, err := q.UserSessions(uid, "")
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Kind != "web" && row.Kind != "cli" && row.Kind != "cli_login" {
+				continue
+			}
+			var data store.IdentitySessionData
+			if err := json.Unmarshal(row.Data, &data); err != nil {
+				return err
+			}
+			if valueString(data.IdentityProvider) == provider {
+				if err := q.DeleteSession(row.ID); err != nil {
+					return err
+				}
 			}
 		}
-		for id, device := range st.Devices {
-			if device.UserID == uid && device.IdentityProvider == provider {
-				delete(st.Devices, id)
-			}
-		}
-		revokeAgents(st, uid, "")
-		return nil
+		return revokeAgents(q, uid, "")
 	}); err != nil {
 		return err
 	}
@@ -152,66 +182,70 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	if err := s.updateAccount(r, uid, func(st *model.State) error {
-		for _, p := range st.Projects {
-			if p.Members[uid] == "owner" {
+	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
+		projects, err := q.ProjectsForUser(uid)
+		if err != nil {
+			return err
+		}
+		for _, p := range projects {
+			role, err := q.ProjectRole(p.ID, uid)
+			if err != nil {
+				return err
+			}
+			if role == "owner" {
 				return fail(409, "transfer or delete owned projects before deleting your account")
 			}
 		}
-		for id, org := range st.Organizations {
-			if org.Members[uid] != "owner" {
+		orgs, err := q.OrganizationsForUser(uid)
+		if err != nil {
+			return err
+		}
+		for _, org := range orgs {
+			role, err := q.OrganizationRole(org.ID, uid)
+			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
-			for _, p := range st.Projects {
-				if p.OrgID == id {
-					return fail(409, "transfer organization ownership before deleting your account")
-				}
+			if err != nil {
+				return err
 			}
-			delete(st.Organizations, id) // Empty organizations need no handoff.
-		}
-		for id, p := range st.Projects {
-			if p.Members[uid] != "" {
-				delete(p.Members, uid)
-				st.Projects[id] = p
+			if role != "owner" {
+				continue
 			}
-		}
-		for id, org := range st.Organizations {
-			if org.Members[uid] != "" {
-				delete(org.Members, uid)
-				st.Organizations[id] = org
+			projects, err := q.OrganizationProjects(org.ID)
+			if err != nil {
+				return err
+			}
+			if len(projects) > 0 {
+				return fail(409, "transfer organization ownership before deleting your account")
+			}
+			if err := q.DeleteOrganizationRows(org.ID); err != nil {
+				return err
 			}
 		}
-		for id, invite := range st.Invites {
-			if invite.CreatedBy == uid && invite.UsedBy == "" {
-				delete(st.Invites, id)
-			}
-		}
-		revokeAccountAccess(st, uid)
-		delete(st.Users, uid)
-		return nil
+		return q.DeleteAccountRows(uid)
 	}); err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]bool{"deleted": true})
 	return nil
 }
-func transferTarget(st model.State, target string) (string, error) {
-	if _, exists := st.Users[target]; exists {
-		return target, nil
+func transferTarget(q *store.Queries, target string) (string, error) {
+	if u, err := q.User(target); err == nil {
+		return u.ID, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
 	}
-	id := ""
-	for uid, u := range st.Users {
-		if strings.EqualFold(u.Email, target) {
-			if id != "" {
-				return "", fail(409, "email is ambiguous; use the account ID")
-			}
-			id = uid
-		}
+	users, err := q.UsersByEmail(target)
+	if err != nil {
+		return "", err
 	}
-	if id == "" {
+	if len(users) > 1 {
+		return "", fail(409, "email is ambiguous; use the account ID")
+	}
+	if len(users) == 0 {
 		return "", fail(404, "target account not found")
 	}
-	return id, nil
+	return users[0].ID, nil
 }
 func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid string) error {
 	var req struct {
@@ -223,33 +257,32 @@ func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid str
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	if err := s.updateAccount(r, uid, func(st *model.State) error {
-		p, err := owner(*st, r.PathValue("project"), uid)
+	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
+		p, err := owner(q, r.PathValue("project"), uid)
 		if err != nil {
 			return err
 		}
-		target, err := transferTarget(*st, req.Target)
+		target, err := transferTarget(q, req.Target)
 		if err != nil {
 			return err
 		}
 		if target == uid || p.Members[target] == "" {
 			return fail(409, "new owner must be another current project member")
 		}
-		for member, role := range p.Members {
+		for user, role := range p.Members {
 			if role == "owner" {
-				p.Members[member] = "member"
+				if err := q.PutProjectMember(p.ID, user, "member"); err != nil {
+					return err
+				}
 			}
 		}
-		p.Members[target] = "owner"
-		st.Projects[p.ID] = p
-		return nil
+		return q.PutProjectMember(p.ID, target, "owner")
 	}); err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]bool{"transferred": true})
 	return nil
 }
-
 func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, uid string) error {
 	var req struct {
 		Target string `json:"target"`
@@ -260,32 +293,40 @@ func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, ui
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	if err := s.updateAccount(r, uid, func(st *model.State) error {
-		org, err := orgOwner(*st, r.PathValue("org"), uid)
+	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
+		org, err := orgOwner(q, r.PathValue("org"), uid)
 		if err != nil {
 			return err
 		}
-		target, err := transferTarget(*st, req.Target)
+		target, err := transferTarget(q, req.Target)
 		if err != nil {
 			return err
 		}
 		eligible := org.Members[target] != ""
-		for _, p := range st.Projects {
-			if p.OrgID == org.ID && p.Members[target] != "" {
+		projects, err := q.OrganizationProjects(org.ID)
+		if err != nil {
+			return err
+		}
+		for _, p := range projects {
+			role, err := q.ProjectRole(p.ID, target)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if role != "" {
 				eligible = true
 			}
 		}
 		if target == uid || !eligible {
 			return fail(409, "new owner must already belong to an organization project")
 		}
-		for member, role := range org.Members {
+		for user, role := range org.Members {
 			if role == "owner" {
-				org.Members[member] = "member"
+				if err := q.PutOrganizationMember(org.ID, user, "member"); err != nil {
+					return err
+				}
 			}
 		}
-		org.Members[target] = "owner"
-		st.Organizations[org.ID] = org
-		return nil
+		return q.PutOrganizationMember(org.ID, target, "owner")
 	}); err != nil {
 		return err
 	}

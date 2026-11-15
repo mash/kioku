@@ -1,10 +1,11 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
@@ -28,15 +29,15 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	if second.Run.Ref.ID != "" {
 		t.Fatal(second.Run)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		j := st.Jobs[second.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		j := fixtureJobsGet(t, st, second.ID)
 		j.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
-		st.Jobs[j.ID] = j
+		fixtureJobsPut(t, st, j.ID, j)
 		return nil
 	})
 	reconcileManaged(t, f, second)
-	_ = f.stateStore.View(func(st model.State) error {
-		j := st.Jobs[second.ID]
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		j := fixtureJobsGet(t, st, second.ID)
 		if j.Run.Attempt.ID != second.Run.Attempt.ID || j.Run.Ref.ID == first.Run.Ref.ID || costOf(j.Run.CostCents) != 0 {
 			t.Error("previous attempt's session or cost reached the new job", j.Run)
 		}

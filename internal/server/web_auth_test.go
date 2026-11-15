@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"html"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func browserPage(t *testing.T, f *fixture, path, token string) *httptest.ResponseRecorder {
@@ -31,19 +33,20 @@ func TestWikiBrowserAccess(t *testing.T) {
 	f, owner, p := orgProject(t)
 	outsider := f.login("outsider@example.com")
 	expired := f.login("expired@example.com")
-	key := blob.Key("projects/" + p.ID + "/wiki/index.md")
+	body := "# Private wiki body\n[Topic](secret-topic.md)"
+	key := model.WikiContentKey(p.ID, model.HashContent([]byte(body)))
 	if err := f.s.Blobs.Put(t.Context(), key, []byte("# Private wiki body\n[Topic](secret-topic.md)")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		session := st.Sessions[auth.Hash(expired)]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		session := fixtureSessionsGet(t, st, auth.Hash(expired))
 		session.Expires = time.Now().Add(-time.Hour)
-		st.Sessions[auth.Hash(expired)] = session
-		project := st.Projects[p.ID]
+		fixtureSessionsPut(t, st, auth.Hash(expired), session)
+		project := fixtureProjectsGet(t, st, p.ID)
 		project.Name = "Private project name"
 		project.Revision = "web-revision"
-		st.Projects[p.ID] = project
-		st.Revisions[project.Revision] = model.Revision{ID: project.Revision, ProjectID: p.ID, Files: map[string]blob.Key{"wiki/index.md": key, "wiki/secret-topic.md": key}}
+		fixtureProjectsPut(t, st, p.ID, project)
+		fixtureRevisionsPut(t, st, project.Revision, fixtureRevision{ID: project.Revision, ProjectID: p.ID, Files: map[string]blob.Key{"wiki/index.md": key, "wiki/secret-topic.md": key}, FileBytes: map[string]int64{"wiki/index.md": int64(len(body)), "wiki/secret-topic.md": int64(len(body))}})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -179,15 +182,17 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 	}
 	// The callback must revalidate persisted state too.
 	req = startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + start})
-	if err := f.stateStore.Update(func(st *model.State) error {
-		for key, pending := range st.OAuth {
-			pending.ReturnPath = "//evil.test/path"
-			st.OAuth[key] = pending
-		}
-		return nil
-	}); err != nil {
+	// E23: the callback validates the sealed cookie, without a state row.
+	badReturn := "//evil.test/path"
+	sealed, err := f.s.Cipher.SealOAuthCookie(auth.OAuthCookie{Provider: "google", Verifier: auth.Token(), ReturnPath: &badReturn, Expires: time.Now().Add(time.Minute).UnixMilli()})
+	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Del("Cookie")
+	req.AddCookie(&http.Cookie{Name: "kioku_oauth", Value: sealed})
+	query := req.URL.Query()
+	query.Set("state", auth.Hash(sealed))
+	req.URL.RawQuery = query.Encode()
 	resp = finishLoopbackOAuth(t, f, req)
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 400 || resp.Header.Get("Location") != "" {
@@ -199,7 +204,7 @@ func TestOAuthNamespaceLoginReturn(t *testing.T) {
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	createTestOrg(t, f, owner, "oauth")
-	var p model.Project
+	var p fixtureProject
 	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "oauth/wiki"}, &p); code != 201 {
 		t.Fatal(code)
 	}

@@ -106,7 +106,7 @@ func TestUserOverrideKeepsJOBMetadata(t *testing.T) {
 	if !found {
 		t.Fatal("session not created")
 	}
-	data, err := f.s.Blobs.Get(t.Context(), agentJobKey(j, "input.tar.gz"))
+	data, err := f.s.Blobs.Get(t.Context(), fixtureJobKey(j, "input.tar.gz"))
 	if err != nil {
 		t.Fatal(err)
 	}

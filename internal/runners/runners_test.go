@@ -1,11 +1,11 @@
 package runners
 
 import (
-	"encoding/json"
 	"errors"
-	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/runner"
 	"testing"
+
+	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestNewWithoutOperatorConfiguration(t *testing.T) {
@@ -13,22 +13,11 @@ func TestNewWithoutOperatorConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.New(model.Job{})
+	r, err := s.New(store.JobRow{})
 	if r != nil || !errors.Is(err, runner.ErrNotConfigured) {
 		t.Fatal(r, err)
 	}
 }
 
-func TestRetiredBYOKJobCannotUseServerRunner(t *testing.T) {
-	var job model.Job
-	if err := json.Unmarshal([]byte(`{"id":"old","anthropic_connection_id":"retired"}`), &job); err != nil {
-		t.Fatal(err)
-	}
-	for _, selection := range []string{"", "claudemanaged", "exec", "openai"} {
-		s := &Set{config: Config{Type: selection}}
-		r, err := s.New(job)
-		if r != nil || err == nil || errors.Is(err, runner.ErrNotConfigured) {
-			t.Fatalf("%s: retired job must fail before selecting any runner: %v %v", selection, r, err)
-		}
-	}
-}
+// E10: retired BYOK metadata is rejected or discarded by stopped migration,
+// not decoded by runtime runner selection (covered in store migration tests).

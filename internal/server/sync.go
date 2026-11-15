@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/wiki"
 )
 
@@ -17,13 +19,13 @@ func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision
 		return model.Revision{}, nil, err
 	}
 	var rev model.Revision
-	err = s.Store.View(func(st model.State) error {
-		p, err := member(st, pid, uid)
+	err = s.Store.Read(ctx, func(q *store.Queries) error {
+		p, err := sqlMember(q, pid, uid)
 		if err != nil {
 			return err
 		}
-		rev = st.Revisions[p.Revision]
-		return nil
+		rev, err = wikiProjection(q, p)
+		return err
 	})
 	if err != nil {
 		unlock()
@@ -38,6 +40,9 @@ func (s *Server) wikiFile(ctx context.Context, rev model.Revision, name string) 
 		return "", fail(404, "wiki file not found")
 	}
 	b, err := s.Blobs.Get(ctx, key)
+	if err == nil && (auth.Hash(string(b)) != rev.FileHashes[name] || int64(len(b)) != rev.FileBytes[name]) {
+		return "", errors.New("wiki content integrity check failed")
+	}
 	return string(b), err
 }
 
@@ -64,19 +69,12 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request, uid string) er
 		return fail(400, "specify manifest=1 or file")
 	}
 	files := map[string]model.SyncFile{}
-	for name, key := range rev.Files {
+	for name := range rev.Files {
 		if !wiki.ValidFile(name) {
 			continue
 		}
 		hash, size := rev.FileHashes[name], rev.FileBytes[name]
-		if hash == "" {
-			b, err := s.Blobs.Get(r.Context(), key)
-			if err != nil {
-				return err
-			}
-			hash = auth.Hash(string(b))
-			size = int64(len(b))
-		}
+
 		files[name] = model.SyncFile{Hash: hash, Bytes: size}
 	}
 	b, _ := json.Marshal(files)

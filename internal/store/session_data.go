@@ -149,3 +149,17 @@ func (q *Queries) PruneSessions(now int64) error {
 	}
 	return nil
 }
+
+func (d CLILoginData) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		IdentityProvider     *string `json:"identity_provider"`
+		IdentityID           *string `json:"identity_id"`
+		IdentityAccessToken  *string `json:"identity_access_token"`
+		IdentityRefreshToken *string `json:"identity_refresh_token"`
+		IdentityExpiresAt    *int64  `json:"identity_expires_at"`
+		LoopbackChallenge    *string `json:"loopback_challenge"`
+		LoopbackRedirectURI  *string `json:"loopback_redirect_uri"`
+		LoopbackState        *string `json:"loopback_state"`
+		LoopbackCodeHash     *string `json:"loopback_code_hash"`
+	}{d.IdentityProvider, d.IdentityID, d.IdentityAccessToken, d.IdentityRefreshToken, d.IdentityExpiresAt, d.LoopbackChallenge, d.LoopbackRedirectURI, d.LoopbackState, d.LoopbackCodeHash})
+}

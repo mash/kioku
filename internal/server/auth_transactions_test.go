@@ -54,7 +54,7 @@ func sqlJSON(t *testing.T, v any) json.RawMessage {
 	}
 	return b
 }
-func sqlWrite(t *testing.T, d *store.Database, fn func(*store.Queries) error) {
+func sqlWrite(t *testing.T, d catalog, fn func(*store.Queries) error) {
 	t.Helper()
 	if err := d.Write(t.Context(), fn); err != nil {
 		t.Fatal(err)

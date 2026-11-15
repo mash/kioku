@@ -3,13 +3,9 @@ package server
 import (
 	"context"
 	"errors"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 
@@ -66,8 +62,8 @@ func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 			if tc.output {
 				sendOutput(t, f, ma, j, "Output")
 			}
-			_ = f.stateStore.Update(func(st *model.State) error {
-				x := st.Jobs[j.ID]
+			_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				x := fixtureJobsGet(t, st, j.ID)
 				if tc.phase != "" {
 					x.Run.Phase = tc.phase
 				}
@@ -87,7 +83,7 @@ func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 					x.Run.Ref = runner.RunRef{}
 					x.Run.Phase = model.PhasePreparing
 				}
-				st.Jobs[x.ID] = x
+				fixtureJobsPut(t, st, x.ID, x)
 				return nil
 			})
 			inspections, stops, cleanups := 0, 0, 0
@@ -95,13 +91,13 @@ func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 			r := &testRunner{
 				inspect: func(_ context.Context, a runner.Attempt) (runner.Status, error) {
 					inspections++
-					return runner.Status{Run: runner.RunRef{ID: j.Run.Ref.ID}, State: tc.state, Reason: "agent failed", Cost: &cents}, tc.inspectErr
+					return runner.Status{Run: runner.RunRef{ID: j.Run.Ref.ID}, State: tc.state, Reason: "agent failed", Usage: runner.UsageSample{CostCents: &cents}}, tc.inspectErr
 				},
 				stop:    func(context.Context, runner.Attempt) error { stops++; return nil },
 				cleanup: func(context.Context, runner.Attempt) error { cleanups++; return nil },
 			}
 			f.s.SetRunners(testRunners{Runners: f.s.runners, run: r})
-			err := f.s.reconcileAgentJob(t.Context(), j)
+			err := f.s.reconcileAgentJob(t.Context(), fixtureRow(j))
 			if err != nil && !errors.Is(err, runner.ErrTemporary) {
 				t.Fatal(err)
 			}
@@ -137,10 +133,10 @@ func TestReconcileUnavailableRunner(t *testing.T) {
 	if j.Status != "running" {
 		t.Fatal(j)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
-		x.Run.Deadline = time.Now().Add(-time.Minute)
-		st.Jobs[j.ID] = x
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
+		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
+		fixtureJobsPut(t, st, j.ID, x)
 		return nil
 	})
 	j = reconcileManaged(t, f, j)
@@ -156,16 +152,16 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 	f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{inspect: func(context.Context, runner.Attempt) (runner.Status, error) {
 		inspections++
 		c := int64(999)
-		return runner.Status{State: runner.StateStopped, Cost: &c}, errors.New("permanent failure")
+		return runner.Status{State: runner.StateStopped, Usage: runner.UsageSample{CostCents: &c}}, errors.New("permanent failure")
 	}, stop: func(context.Context, runner.Attempt) error { stops++; return nil }, cleanup: func(context.Context, runner.Attempt) error { t.Fatal("unknown run must not be cleaned"); return nil }}})
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-time.Minute)
-		st.Jobs[j.ID] = x
+		fixtureJobsPut(t, st, j.ID, x)
 		return nil
 	})
 	for range 2 {
-		if err := f.s.reconcileAgentJob(t.Context(), j); !errors.Is(err, runner.ErrTemporary) {
+		if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(j)); !errors.Is(err, runner.ErrTemporary) {
 			t.Fatal(err)
 		}
 	}
@@ -175,10 +171,10 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 	if c, _ := agentRequest(t, f, j, raw, "PUT", "output", nil); c != 403 {
 		t.Fatal(c)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
-		st.Jobs[j.ID] = x
+		fixtureJobsPut(t, st, j.ID, x)
 		return nil
 	})
 	j = reconcileManaged(t, f, j)
@@ -187,42 +183,25 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 	}
 }
 
-type rejectRunRefStore struct {
-	blob.Store
-	reject bool
-}
-
-func (b *rejectRunRefStore) Put(ctx context.Context, key blob.Key, body []byte) error {
-	if b.reject && strings.HasSuffix(string(key), "/.kioku/state.json") {
-		return errors.New("simulated RunRef persistence failure")
-	}
-	return b.Store.Put(ctx, key, body)
-}
 func TestRunRefSaveFailureRecoversByKey(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
-	objects := &rejectRunRefStore{Store: f.s.Blobs}
-	if err := f.stateStore.Close(); err != nil {
-		t.Fatal(err)
-	}
-	stateStore, err := store.OpenWithObjects(filepath.Dir(f.s.Blobs.(local.Store).Dir), objects)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.stateStore, f.s.Store = stateStore, stateStore
-	t.Cleanup(func() { _ = stateStore.Close() })
+	var restore func()
 	j := managedJob(t, f, token, p.ID, true)
-	real, err := f.s.runners.New(j)
+	real, err := f.s.runners.New(fixtureRow(j))
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{start: func(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 		ref, err := real.Start(ctx, spec)
-		objects.reject = err == nil
+		if err == nil {
+			restore = fixtureSQLFault(t, f, "jobs", "UPDATE", "NEW.session_id IS NOT NULL")
+		}
 		return ref, err
 	}}})
-	if err := f.s.startAgentJob(t.Context(), j); err != nil {
-		t.Fatal(err)
+	if err := f.s.startAgentJob(t.Context(), fixtureRow(j)); err == nil {
+		t.Fatal("expected SQL save failure")
 	}
+	restore()
 	restartManagedFixture(t, f)
 	j = storedJob(t, f, j.ID)
 	if j.Run.Ref.ID != "" || j.Run.Phase != model.PhasePreparing {
@@ -244,11 +223,11 @@ func TestStoppedFailurePreservesCostAfterTokenExpiry(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	ma.SetStatus(j.Run.Ref.ID, "terminated", "", 137)
-	if err := f.stateStore.Update(func(st *model.State) error {
-		v := st.Jobs[j.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		v := fixtureJobsGet(t, st, j.ID)
 		v.Run.Deadline = time.Now().Add(-11 * time.Minute)
 		v.Run.AbortReason = "generation deadline exceeded"
-		st.Jobs[v.ID] = v
+		fixtureJobsPut(t, st, v.ID, v)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -264,4 +243,4 @@ type testRunners struct {
 	run runner.Runner
 }
 
-func (g testRunners) New(model.Job) (runner.Runner, error) { return g.run, nil }
+func (g testRunners) New(store.JobRow) (runner.Runner, error) { return g.run, nil }

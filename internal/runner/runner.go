@@ -68,7 +68,6 @@ type Status struct {
 	State  State
 	Reason string
 	Failed bool
-	Cost   *int64
 	TurnID string
 }
 

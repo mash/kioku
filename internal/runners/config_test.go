@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -77,7 +77,7 @@ func TestExecModelOptionsWarnOnce(t *testing.T) {
 			}
 			defer set.Close(t.Context())
 			for range 2 {
-				if _, err := set.New(model.Job{}); err != nil {
+				if _, err := set.New(store.JobRow{}); err != nil {
 					t.Fatal(err)
 				}
 			}

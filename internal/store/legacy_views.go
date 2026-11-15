@@ -113,7 +113,7 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			}
 		}
 		created := now.UnixMilli()
-		p.views = append(p.views, wikiRow, ViewRow{ProjectID: project.ID, ID: "vw_" + auth.Hash(project.ID + "/project-map")[:20], Slug: "project-map", CreatedAt: &created, Data: ViewData{Title: migrationString("Project map"), Prompt: migrationString("Wiki をもとに、プロジェクトの現在地、日程、次のマイルストーン、直近の判断、根拠を示す。"), Status: migrationString("pending")}})
+		p.views = append(p.views, ViewRow{ProjectID: project.ID, ID: "vw_" + auth.Hash(project.ID + "/project-map")[:20], Slug: "project-map", CreatedAt: &created, Data: ViewData{Title: migrationString("Project map"), Prompt: migrationString("Wiki をもとに、プロジェクトの現在地、日程、次のマイルストーン、直近の判断、根拠を示す。"), Status: migrationString("pending")}})
 		return nil
 	}
 	var index legacyViewIndex
@@ -215,7 +215,9 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 		}
 		p.views = append(p.views, row)
 	}
-	p.views = append(p.views, wikiRow)
+	if _, exists := index.Views["wiki"]; exists {
+		p.views = append(p.views, wikiRow)
+	}
 	return nil
 }
 func valueMigrationString(v *string) string {

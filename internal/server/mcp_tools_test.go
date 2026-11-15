@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func connectorTool(t *testing.T, f *fixture, token, name string, args, value any) string {
@@ -209,10 +212,10 @@ func TestConnectorWikiArgumentsAndMembership(t *testing.T) {
 			t.Fatal("argument error", tc.name, tc.args, msg)
 		}
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		p := st.Projects[project.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		p := fixtureProjectsGet(t, st, project.ID)
 		p.Deleting = true
-		st.Projects[p.ID] = p
+		fixtureProjectsPut(t, st, p.ID, p)
 		return nil
 	})
 	if msg := connectorTool(t, f, access, "projects_list", nil, &projects); msg != "" || len(projects.Projects) != 0 {
@@ -255,11 +258,11 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			if msg := connectorTool(t, f, access, "wiki_read", map[string]any{"project": project.Namespace}, &read); msg != "" || read.Content == "" {
 				t.Fatal("member read", msg)
 			}
-			var before model.Project
+			var before fixtureProject
 			var jobsBefore int
-			if err := f.stateStore.View(func(st model.State) error {
-				before = st.Projects[project.ID]
-				jobsBefore = len(st.Jobs)
+			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				before = fixtureProjectsGet(t, st, project.ID)
+				jobsBefore = len(fixtureJobsList(t, st))
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -275,9 +278,9 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 				t.Fatal("stored status", item)
 			}
 			var submitter string
-			if err := f.stateStore.View(func(st model.State) error {
-				submitter = st.Inbox[item.ID].Submitter
-				if st.Projects[project.ID].Revision != before.Revision || len(st.Jobs) != jobsBefore || submitter != st.Sessions[auth.Hash(caller)].UserID {
+			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+				submitter = fixtureInboxGet(t, st, item.ID).Submitter
+				if fixtureProjectsGet(t, st, project.ID).Revision != before.Revision || len(fixtureJobsList(t, st)) != jobsBefore || submitter != fixtureSessionsGet(t, st, auth.Hash(caller)).UserID {
 					t.Error("inbox acceptance changed generation or submitter")
 				}
 				return nil
@@ -324,8 +327,8 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 			t.Fatal("source validation", msg)
 		}
 	}
-	if err := f.stateStore.View(func(st model.State) error {
-		if len(st.Jobs) != 0 || len(st.Inbox) != 0 || len(st.Audit) != 0 {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if len(fixtureJobsList(t, st)) != 0 || len(fixtureInboxList(t, st)) != 0 || len(fixtureAuditList(t, st)) != 0 {
 			t.Error("rejected source changed state")
 		}
 		return nil
@@ -342,15 +345,15 @@ func TestSourcePutSetsDeadline(t *testing.T) {
 		{"project": p.Namespace, "name": "record.md", "content": testSourceContent("https://example.com/record", "Body")},
 		{"project": p.Namespace, "source_url": "https://example.com/record", "remove": true},
 	} {
-		before := time.Now().UTC()
+		before := time.Now().UTC().Truncate(time.Millisecond)
 		var result map[string]any
 		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
 			t.Fatal(msg, result)
 		}
-		st := generationState(t, f)
-		deadline := st.Projects[p.ID].NextGenerateAt
-		if deadline.Before(before.Add(10*time.Second)) || deadline.After(time.Now().UTC().Add(10*time.Second)) || len(st.Jobs) != 0 {
-			t.Fatal(deadline, st.Jobs)
+		st := f
+		deadline := fixtureProjectsGet(t, st, p.ID).NextGenerateAt
+		if deadline.Before(before.Add(10*time.Second)) || deadline.After(time.Now().UTC().Add(10*time.Second)) || len(fixtureJobsList(t, st)) != 0 {
+			t.Fatal(deadline, fixtureJobsList(t, st))
 		}
 	}
 }
@@ -364,14 +367,14 @@ func TestConnectorWikiView(t *testing.T) {
 	updated := time.Date(2026, 11, 15, 7, 30, 0, 0, time.UTC)
 	for _, state := range []string{"unpublished", "published", "incomplete"} {
 		t.Run(state, func(t *testing.T) {
-			if err := f.stateStore.Update(func(st *model.State) error {
-				project := st.Projects[p.ID]
+			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+				project := fixtureProjectsGet(t, st, p.ID)
 				project.WikiUpdatedAt = updated
 				if state == "unpublished" {
 					project.WikiUpdatedAt = time.Time{}
 				}
 				project.WikiIncomplete = state == "incomplete"
-				st.Projects[p.ID] = project
+				fixtureProjectsPut(t, st, p.ID, project)
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -390,6 +393,7 @@ func TestConnectorWikiView(t *testing.T) {
 				want[0]["status"] = "completed"
 				want[0]["generated_at"] = updated.Format(time.RFC3339)
 			}
+			sort.Slice(want, func(i, j int) bool { return want[i]["view_id"].(string) < want[j]["view_id"].(string) })
 			if !reflect.DeepEqual(list.Views, want) {
 				t.Fatalf("views = %#v, want %#v", list.Views, want)
 			}

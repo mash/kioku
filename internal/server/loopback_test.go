@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/authtest"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func setupLoopback(t *testing.T) *fixture {
@@ -105,13 +106,38 @@ func finishLoopbackOAuth(t *testing.T, f *fixture, req *http.Request) *http.Resp
 	return resp
 }
 
-func loopbackSnapshot(t *testing.T, f *fixture) model.State {
+func loopbackSnapshot(t *testing.T, f *fixture) string {
 	t.Helper()
-	var state model.State
-	if err := f.stateStore.View(func(st model.State) error { state = st; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	return state
+	var result string
+	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		users, err := q.Users()
+		if err != nil {
+			return err
+		}
+		parts := []string{string(fixtureJSON(t, users))}
+		for _, kind := range []string{"web", "cli", "cli_login"} {
+			rows, err := q.KindSessions(kind)
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				parts = append(parts, string(fixtureJSON(t, struct {
+					ID, Kind, Status, User string
+					Expires, Created       int64
+					Data                   json.RawMessage
+				}{row.ID, row.Kind, row.Status, row.UserID, row.Expires, row.Created, row.Data})))
+			}
+		}
+		result = auth.Hash(strings.Join(parts, "\n"))
+		return nil
+	}))
+	return result
+}
+func loopbackCount(t *testing.T, f *fixture) int {
+	t.Helper()
+	n := 0
+	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error { rows, err := q.KindSessions("cli_login"); n = len(rows); return err }))
+	return n
 }
 
 func TestLoopbackStartValidation(t *testing.T) {
@@ -148,7 +174,7 @@ func TestLoopbackStartValidation(t *testing.T) {
 			if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 400 {
 				t.Fatal(status)
 			}
-			if len(loopbackSnapshot(t, f).Devices) != 0 {
+			if loopbackCount(t, f) != 0 {
 				t.Fatal("invalid request created a device")
 			}
 		})
@@ -187,25 +213,27 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 			case "invalid verifier":
 				req["code_verifier"] = strings.Repeat("+", 43)
 			case "expired", "non-loopback":
-				if err := f.stateStore.Update(func(st *model.State) error {
-					d := st.Devices[a.device]
+				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					d := fixtureDevicesGet(t, st, a.device)
 					if failure == "expired" {
 						d.Expires = time.Now().Add(-time.Second)
 					} else {
 						d.LoopbackChallenge = ""
 					}
-					st.Devices[a.device] = d
+					fixtureDevicesPut(t, st, a.device, d)
 					return nil
 				}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			before := loopbackSnapshot(t, f)
+			before := fixtureSessionsList(t, f)
 			if status := f.request("POST", "/api/auth/loopback/token", "", req, nil); status != 410 {
 				t.Fatal(status)
 			}
-			after := loopbackSnapshot(t, f)
-			if !after.Devices[a.device].Used || !reflect.DeepEqual(before.Sessions, after.Sessions) {
+			after := fixtureSessionsList(t, f)
+			// E14: expired rows may be pruned; an unexpired mismatch is active/consumed.
+			d := fixtureDevicesGet(t, f, a.device)
+			if (!d.Used && failure != "expired") || !reflect.DeepEqual(before, after) {
 				t.Fatal("failed exchange was not consumed or issued a session")
 			}
 			req["code"], req["code_verifier"] = code, a.verifier
@@ -234,8 +262,8 @@ func TestLoopbackCallbackFailure(t *testing.T) {
 					q.Set("code", reason)
 				}
 				req.URL.RawQuery = q.Encode()
-				if err := f.stateStore.Update(func(st *model.State) error {
-					d := st.Devices[a.device]
+				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					d := fixtureDevicesGet(t, st, a.device)
 					switch unusable {
 					case "expired":
 						d.Expires = time.Now().Add(-time.Second)
@@ -244,10 +272,10 @@ func TestLoopbackCallbackFailure(t *testing.T) {
 					case "bound":
 						d.UserID = "other"
 					case "missing":
-						delete(st.Devices, a.device)
+						fixtureDevicesDelete(t, st, a.device)
 						return nil
 					}
-					st.Devices[a.device] = d
+					fixtureDevicesPut(t, st, a.device, d)
 					return nil
 				}); err != nil {
 					t.Fatal(err)
@@ -263,11 +291,16 @@ func TestLoopbackCallbackFailure(t *testing.T) {
 					t.Fatalf("stale failure callback: %d %v", resp.StatusCode, resp.Header)
 				}
 				after := loopbackSnapshot(t, f)
-				if !reflect.DeepEqual(before.Devices, after.Devices) || !reflect.DeepEqual(before.Users, after.Users) || !reflect.DeepEqual(before.Sessions, after.Sessions) {
+				if before != after {
 					t.Fatal("failure changed login state")
 				}
-				if resp := finishLoopbackOAuth(t, f, req); resp.StatusCode != 403 {
-					t.Fatal("OAuth state reused", resp.StatusCode)
+				wantReplay := 302
+				if unusable != "" {
+					wantReplay = 410
+				}
+				// E23: a sealed cookie is not a one-time SQL state row.
+				if resp := finishLoopbackOAuth(t, f, req); resp.StatusCode != wantReplay {
+					t.Fatal("wrong replay response", resp.StatusCode)
 				}
 			})
 		}
@@ -286,8 +319,8 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 				t.Fatalf("callback: %d %v", resp.StatusCode, err)
 			}
 			before := loopbackSnapshot(t, f)
-			d := before.Devices[a.device]
-			if d.LoopbackCodeHash != auth.Hash(u.Query().Get("code")) || d.SecretHash != "" || d.UserID == "" || d.IdentityCredential == "" || time.Until(d.Expires) <= 0 || time.Until(d.Expires) > time.Minute {
+			d := fixtureDevicesGet(t, f, a.device)
+			if d.LoopbackCodeHash != auth.Hash(u.Query().Get("code")) || d.SecretHash != auth.Hash(a.device) || d.UserID == "" || d.IdentityAccessToken == "" || time.Until(d.Expires) <= 0 || time.Until(d.Expires) > time.Minute {
 				t.Fatal("invalid issued device")
 			}
 			q := second.URL.Query()
@@ -297,7 +330,7 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 				t.Fatal(resp.StatusCode)
 			}
 			after := loopbackSnapshot(t, f)
-			if !reflect.DeepEqual(before.Devices, after.Devices) || !reflect.DeepEqual(before.Users, after.Users) || !reflect.DeepEqual(before.Sessions, after.Sessions) {
+			if before != after {
 				t.Fatal("duplicate callback changed account or device")
 			}
 			want := 200
@@ -323,10 +356,10 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 func TestLoopbackExpiredRequest(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
-	if err := f.stateStore.Update(func(st *model.State) error {
-		d := st.Devices[a.device]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		d := fixtureDevicesGet(t, st, a.device)
 		d.Expires = time.Now().Add(-time.Second)
-		st.Devices[a.device] = d
+		fixtureDevicesPut(t, st, a.device, d)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -344,12 +377,12 @@ func TestLoopbackExpiredRequest(t *testing.T) {
 func TestLoopbackLimitsAndPruning(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
-	if err := f.stateStore.Update(func(st *model.State) error {
-		d := st.Devices[a.device]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		d := fixtureDevicesGet(t, st, a.device)
 		for i := range 10000 {
-			st.Devices[strconv.Itoa(i)] = d
+			fixtureDevicesPut(t, st, strconv.Itoa(i), d)
 		}
-		delete(st.Devices, a.device)
+		fixtureDevicesDelete(t, st, a.device)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -358,13 +391,18 @@ func TestLoopbackLimitsAndPruning(t *testing.T) {
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
 		t.Fatal(status)
 	}
-	if err := f.stateStore.Update(func(st *model.State) error { d := st.Devices["0"]; d.Used = true; st.Devices["0"] = d; return nil }); err != nil {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		d := fixtureDevicesGet(t, st, "0")
+		d.Used = true
+		fixtureDevicesPut(t, st, "0", d)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 201 {
 		t.Fatal(status)
 	}
-	if len(loopbackSnapshot(t, f).Devices) != 10000 {
+	if loopbackCount(t, f) != 10000 {
 		t.Fatal("capacity not enforced")
 	}
 	s := &Server{Config: Config{RatePerMinute: 100}}
@@ -408,7 +446,7 @@ func TestLoopbackConcurrentExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := loopbackSnapshot(t, f)
+	before := sessionKindCount(t, f, "cli")
 	body, err := json.Marshal(map[string]string{"device": a.device, "code": u.Query().Get("code"), "code_verifier": a.verifier})
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +468,7 @@ func TestLoopbackConcurrentExchange(t *testing.T) {
 	if !(first == 200 && second == 410 || first == 410 && second == 200) {
 		t.Fatal(first, second)
 	}
-	if len(loopbackSnapshot(t, f).Sessions) != len(before.Sessions)+1 {
+	if sessionKindCount(t, f, "cli") != before+1 {
 		t.Fatal("concurrent exchange issued extra sessions")
 	}
 }

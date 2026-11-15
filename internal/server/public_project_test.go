@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,14 +10,14 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 	f, token, p := orgProject(t)
 	const jobID = "public-job"
-	if err := f.stateStore.Update(func(st *model.State) error {
-		st.Jobs[jobID] = model.Job{ID: jobID, ProjectID: p.ID, UserID: "owner", Status: "failed", Kind: "generate", Created: time.Now(), Error: "storage projects/" + p.ID + "/failed"}
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		fixtureJobsPut(t, st, jobID, fixtureJob{ID: jobID, ProjectID: p.ID, UserID: "owner", Status: "failed", Kind: "generate", Created: time.Now(), Error: "storage projects/" + p.ID + "/failed"})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -55,8 +56,8 @@ func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 		t.Fatal(options)
 	}
 	// Persistence retains the ID; only the public representation changes.
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Projects[p.ID].ID != p.ID {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureProjectsGet(t, st, p.ID).ID != p.ID {
 			t.Fatal("internal ID lost")
 		}
 		return nil

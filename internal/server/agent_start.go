@@ -3,294 +3,170 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
-	"log/slog"
-	"sort"
-	"time"
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
-func validateGeneration(st model.State, job model.Job) error {
-	if _, err := member(st, job.ProjectID, job.UserID); err != nil {
-		return err
-	}
-	if err := checkJobAgent(st, job); err != nil {
-		return err
-	}
-	current, ok := st.Jobs[job.ID]
-	if !ok || current.Status != "running" || !sameManagedRun(current, job) {
-		return fail(409, "generation job was canceled")
-	}
-	return nil
-}
-
 var errAgentBudgetTooSmall = errors.New("managed agent budget is below 50 cents")
 
-func sameManagedRun(a, b model.Job) bool {
-	if a.ID != b.ID {
-		return false
-	}
-	if b.Run == nil {
-		return a.Run == nil
-	}
-	return a.Run != nil && a.Run.Attempt.ID == b.Run.Attempt.ID
+func (s *Server) loadJob(ctx context.Context, id string) (store.JobRow, error) {
+	var j store.JobRow
+	err := s.Store.Read(ctx, func(q *store.Queries) error { var err error; j, err = q.Job(id); return err })
+	return j, err
 }
-func (s *Server) startAgentJob(ctx context.Context, job model.Job) error {
+func (s *Server) startAgentJob(ctx context.Context, job store.JobRow) error {
 	unlock, err := s.lockProject(ctx, "generate:"+job.ProjectID)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if err = s.startAgentJobLocked(ctx, job); err == nil {
-		return nil
-	}
-	if errors.Is(err, context.Canceled) {
-		return err
-	}
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	// The generation lock prevents a new attempt from appearing during setup.
-	if viewErr := s.Store.View(func(st model.State) error { job = st.Jobs[job.ID]; return nil }); viewErr != nil {
-		return viewErr
-	}
-	var status *runner.Status
-	if job.Run != nil && job.Run.Ref.UsesProviderFiles &&
-		job.Run.Ref.Resources["upload_started"] != "true" {
-		// The attempt was rejected before any provider writes.
-		status = &runner.Status{State: runner.StateStopped}
-	}
-	return s.failAgentJobLocked(cleanupCtx, job, err.Error(), status)
-}
-func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	if s.runners == nil {
-		return runner.ErrNotConfigured
+		return s.failUnstartedJob(ctx, job.ID, runner.ErrNotConfigured)
 	}
 	r, err := s.runners.New(job)
 	if err != nil {
-		return err
+		return s.failUnstartedJob(ctx, job.ID, err)
 	}
 	files, offline := r.(runner.FileRunner)
-	var items []model.InboxItem
-	var published model.Revision
-	var incomplete bool
-	var namespace string
-	var raw string
-	var viewPrompt string
-	var views []model.ViewJobResult
-	unlock, err := s.lockProject(ctx, job.ProjectID)
-	if err != nil {
-		return err
+	provider := ""
+	if offline {
+		provider = files.Provider()
 	}
-	if job.ViewTask != nil {
-		view, err := s.viewByIDLocked(ctx, job.ProjectID, job.ViewTask.ViewID)
-		if isNotFoundView(err) {
-			unlock()
-			return s.finishViewTask(job, "skipped", viewDeleted, nil)
-		}
-		if err != nil {
-			unlock()
-			return err
-		}
-		viewPrompt = view.Prompt
-	} else if job.WikiStatus != "" {
-		views, err = s.captureViewSettings(ctx, job.ProjectID)
-		if err != nil {
-			slog.Warn("view settings capture deferred", "project", job.ProjectID, "error", err)
-		}
-	}
-	err = s.Store.Update(func(st *model.State) error {
-		if err := validateGeneration(*st, job); err != nil {
-			return err
-		}
-		p := st.Projects[job.ProjectID]
-		namespace = p.Namespace
-		published = st.Revisions[p.Revision]
-		incomplete = p.WikiIncomplete
-		job = st.Jobs[job.ID]
-		if task := job.ViewTask; task != nil {
-			parent := st.Jobs[task.ParentID]
-			if parent.Status != "running" || parent.ViewGeneration == nil ||
-				parent.ViewGeneration.ChildID != job.ID || incomplete || published.ID != task.Snapshot {
-				return fail(409, "Wiki または生成ジョブが変更されました")
-			}
-		}
-		if job.ViewTask == nil {
-			over := completedWikiBytes(published) > s.Config.MaxWikiBytes
-			for _, item := range st.Inbox {
-				if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Remove) {
-					items = append(items, item)
-				}
-			}
-			sort.Slice(items, func(i, j int) bool {
-				if items[i].Created.Equal(items[j].Created) {
-					return items[i].ID < items[j].ID
-				}
-				return items[i].Created.Before(items[j].Created)
-			})
-		}
-		if job.ViewTask == nil && len(items) == 0 {
-			job.Status = "completed"
-			job.Unchanged = true
-			job.Revision = p.Revision
-			if job.WikiStatus != "" {
-				startViewGeneration(&job, p, published, s.generationBudget(job), views)
-			}
-			st.Jobs[job.ID] = job
-			return nil
-		}
-		budget := s.generationBudget(job)
-		if budget < 50 {
-			return errAgentBudgetTooSmall
-		}
-		now := time.Now().UTC()
-		run := &model.AgentRun{Phase: model.PhasePreparing, PreparedAt: now, Deadline: now.Add(s.Config.AgentJobTimeout), Attempt: model.Attempt{ID: auth.Token()[:20]}, BudgetCents: budget, BaseRevision: p.Revision}
-		for i, item := range items {
-			item.RunID = run.Attempt.ID
-			items[i] = item
-			st.Inbox[item.ID] = item
-			run.InboxIDs = append(run.InboxIDs, item.ID)
-		}
-		if offline {
-			run.Ref.UsesProviderFiles = true
-			run.Ref.Resources = map[string]string{"provider": files.Provider()}
-		} else {
-			var token model.AgentToken
-			raw, token = issueJobToken(st, job, run.Deadline.Add(10*time.Minute))
-			run.TokenID = token.ID
-		}
-		job.Run = run
-		st.Jobs[job.ID] = job
-		return nil
-	})
-	unlock()
-	if err != nil || job.Run == nil {
-		return err
-	}
-	spec := agentgen.InputSpec{JobID: job.ID, Namespace: namespace}
-	if job.ViewTask != nil {
-		spec.ViewPrompt = &viewPrompt
-	}
-	if !offline {
-		base := s.Config.BaseURL + "/api/projects/" + namespace + "/jobs/" + job.ID + "/agent/"
-		spec.InputURL, spec.OutputURL = base+"input", base+"output"
-	}
-	if job.ViewTask == nil {
-		unlock, err := s.lockProject(ctx, job.ProjectID)
-		if err != nil {
-			return err
-		}
-		record, err := s.readWikiViewLocked(ctx, job.ProjectID)
-		unlock()
-		if err != nil {
-			return err
-		}
-		prompt := record.Prompt
-		if prompt == "" {
-			prompt = s.defaultWikiPrompt()
-		}
-		spec.WikiPrompt = &prompt
-	}
-	for _, item := range items {
-		in := agentgen.InboxText{Item: item}
-		if !item.Remove {
-			b, err := s.Blobs.Get(ctx, item.BodyKey())
+	var archive []byte
+	var spec agentgen.InputSpec
+	job, err = s.storage.prepareInput(ctx, job.ID, offline, provider, func(ctx context.Context, in storageInput) ([]byte, error) {
+		spec = agentgen.InputSpec{JobID: in.Job.ID}
+		if err := s.Store.Read(ctx, func(q *store.Queries) error {
+			org, err := q.Organization(in.Project.OrgID)
 			if err != nil {
 				return err
 			}
-			in.Text = string(b)
+			spec.Namespace = org.Slug + "/" + in.Project.Slug
+			if in.View != nil {
+				prompt := valueString(in.View.Data.Prompt)
+				spec.ViewPrompt = &prompt
+			} else {
+				v, err := q.ViewBySlug(in.Project.ID, wikiViewSlug)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+				prompt := valueString(v.Data.Prompt)
+				if prompt == "" {
+					prompt = s.defaultWikiPrompt()
+				}
+				spec.WikiPrompt = &prompt
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		spec.Inbox = append(spec.Inbox, in)
+		if !offline {
+			base := s.Config.BaseURL + "/api/projects/" + spec.Namespace + "/jobs/" + in.Job.ID + "/agent/"
+			spec.InputURL, spec.OutputURL = base+"input", base+"output"
+		}
+		for _, item := range in.Inbox {
+			input := agentgen.InboxText{Item: inboxProjection(item)}
+			if !item.Remove {
+				body, err := s.Blobs.Get(ctx, sqlInboxKey(item))
+				if err != nil {
+					return nil, err
+				}
+				input.Text = string(body)
+			}
+			spec.Inbox = append(spec.Inbox, input)
+		}
+		spec.Wiki = map[string]string{}
+		for _, f := range in.Wiki {
+			if !agentgen.AgentPage(f.Path) {
+				continue
+			}
+			body, err := s.Blobs.Get(ctx, model.WikiContentKey(in.Project.ID, model.ContentHash(f.Hash)))
+			if err != nil {
+				return nil, err
+			}
+			if string(model.HashContent(body)) != f.Hash || int64(len(body)) != f.Data.Bytes {
+				return nil, errors.New("wiki content integrity check failed")
+			}
+			spec.Wiki[f.Path] = string(body)
+		}
+		var buf bytes.Buffer
+		if err := agentgen.BuildInput(spec, &buf); err != nil {
+			return nil, err
+		}
+		archive = buf.Bytes()
+		return archive, nil
+	})
+	if err != nil {
+		current, readErr := s.loadJob(ctx, job.ID)
+		if readErr == nil && current.Status == "failed" && current.Data.Run == nil {
+			return nil
+		}
+		return err
 	}
-	spec.Wiki, err = s.generationWiki(ctx, published, incomplete)
+	job, err = s.loadJob(ctx, job.ID)
 	if err != nil {
 		return err
 	}
-	var archive bytes.Buffer
-	if err = agentgen.BuildInput(spec, &archive); err != nil {
-		return err
+	if job.Data.Run == nil {
+		s.notify()
+		return nil
 	}
-	if err = s.Blobs.Put(ctx, agentJobKey(job, "input.tar.gz"), archive.Bytes()); err != nil {
-		return err
+	raw := ""
+	if !offline {
+		raw, err = s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Attempt: job.ID, Expires: job.Data.Run.Deadline + 600000})
+		if err != nil {
+			return s.failAgentJobLocked(ctx, job, err.Error(), nil)
+		}
 	}
-	runSpec := runner.RunSpec{Key: attempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL,
-		Token: runner.Secret(raw), BudgetCents: job.Run.BudgetCents, Deadline: job.Run.Deadline}
+	runSpec := runner.RunSpec{Key: sqlAttempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), BudgetCents: job.Data.Run.BudgetCents, Deadline: storageDate(job.Data.Run.Deadline)}
 	vars := prompts.JobVariables{JobID: spec.JobID, Namespace: spec.Namespace, InputURL: spec.InputURL, OutputURL: spec.OutputURL}
 	if offline {
 		vars.InputURL, vars.OutputURL = files.FilePaths()
-		runSpec.InputArchive = archive.Bytes()
+		runSpec.InputArchive = archive
 		runSpec.FirstMessage = s.Config.Prompts.FileUser(vars)
-		runSpec.SaveRef = func(ref runner.RunRef) error {
-			return s.Store.Update(func(st *model.State) error {
-				if err := validateGeneration(*st, job); err != nil {
-					return err
-				}
-				current := st.Jobs[job.ID]
-				current.Run.Ref = ref
-				st.Jobs[job.ID] = current
-				return nil
-			})
-		}
+		runSpec.SaveRef = func(ref runner.RunRef) error { return s.storage.saveRunRef(ctx, job.ID, ref) }
 	} else {
 		runSpec.FirstMessage = s.Config.Prompts.User(vars)
 	}
-	if job.ViewTask != nil {
+	if job.ParentID != nil {
 		runSpec.System = viewRunnerSystem
 		runSpec.FirstMessage = viewRunnerMessage(vars.InputURL, vars.OutputURL, offline)
 	}
 	ref, err := r.Start(ctx, runSpec)
 	if errors.Is(err, runner.ErrTemporary) {
-		return nil
-	}
-	if err != nil {
 		return err
 	}
-	err = s.Store.Update(func(st *model.State) error {
-		j := st.Jobs[job.ID]
-		if !sameManagedRun(j, job) || j.Status != "running" {
-			return nil
-		}
-		j.Run.Ref = ref
-		if j.Run.Phase == model.PhasePreparing {
-			j.Run.Phase = model.PhaseAgentRunning
-		}
-		st.Jobs[j.ID] = j
-		return nil
-	})
 	if err != nil {
-		slog.Warn("agent run save failed; reconciliation will locate it", "job", job.ID, "error", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		current, e := s.loadJob(ctx, job.ID)
+		if e != nil {
+			return e
+		}
+		var status *runner.Status
+		if current.Data.Run.UsesProviderFiles && !current.Data.Run.UploadStarted {
+			status = &runner.Status{State: runner.StateStopped}
+		}
+		return s.failAgentJobLocked(ctx, current, err.Error(), status)
 	}
-	return nil
+	return s.storage.saveRunRef(ctx, job.ID, ref)
+}
+func inboxProjection(row store.InboxRow) model.InboxItem {
+	return model.InboxItem{ID: row.ID, ProjectID: row.ProjectID, SourceURL: row.SourceURL, Remove: row.Remove, Submitter: row.Data.Submitter, Created: storageDate(row.Created), RunID: valueString(row.RunID)}
 }
 
-// releaseInbox makes failed attempts retryable. A later waiting put takes
-// precedence over a failed older item for the same exact URL.
-func releaseInbox(st *model.State, job model.Job) {
-	if job.Run == nil {
-		return
+func (s *Server) failUnstartedJob(ctx context.Context, id string, cause error) error {
+	err := s.storage.failPreparation(ctx, id, cause)
+	if err == cause {
+		return nil
 	}
-	for id, item := range st.Inbox {
-		if item.ProjectID != job.ProjectID || item.RunID != job.Run.Attempt.ID {
-			continue
-		}
-		replaced := false
-		for _, newer := range st.Inbox {
-			// All waiting items were pinned when this attempt began. A waiting
-			// replacement was accepted later, regardless of wall-clock changes.
-			if newer.ProjectID == item.ProjectID && newer.RunID == "" && newer.SourceURL == item.SourceURL {
-				replaced = true
-				break
-			}
-		}
-		if replaced {
-			delete(st.Inbox, id)
-		} else {
-			item.RunID = ""
-			st.Inbox[id] = item
-		}
-	}
+	return err
 }

@@ -1,15 +1,18 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/usd"
 )
 
@@ -41,21 +44,28 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 			return fail(400, "unexpected trailing JSON")
 		}
 	}
-	_, principal := s.session(r)
+	_, principal, err := s.session(r)
+	if err != nil {
+		return err
+	}
 	var job model.Job
-	err := s.Store.Update(func(st *model.State) error {
-		p, err := member(*st, r.PathValue("project"), uid)
+	err = s.mutation(r, uid, func(q *store.Queries) error {
+		p, err := sqlMember(q, r.PathValue("project"), uid)
 		if err != nil {
 			return err
 		}
 		if req.BudgetCents != 0 && (req.BudgetCents < 50 || req.BudgetCents > s.Config.AgentMaxSessionCents) {
 			return fail(400, "budget is outside the allowed range")
 		}
-		job, err = s.queueGeneration(st, p, uid, principal.AgentID, false, time.Now().UTC())
-		if err == nil && req.BudgetCents != 0 {
-			job.AgentBudgetCents = req.BudgetCents
-			st.Jobs[job.ID] = job
+		row, err := s.queueGeneration(q, p, uid, principal.AgentID, false, time.Now())
+		if err != nil {
+			return err
 		}
+		row.Data.AgentBudgetCents = req.BudgetCents
+		if err = q.PutJob(row); err != nil {
+			return err
+		}
+		job, err = jobProjection(q, row)
 		return err
 	})
 	if err != nil {
@@ -69,126 +79,91 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 	return nil
 }
 
-func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID string, automatic bool, now time.Time) (model.Job, error) {
-	job := model.Job{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, UserID: uid, AgentID: agentID, Status: "queued", Created: now, Automatic: automatic, WikiStatus: "pending"}
+func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agentID string, automatic bool, now time.Time) (store.JobRow, error) {
+	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: nullableString(agentID), Automatic: automatic, WikiStatus: nullableString("pending"), Views: []store.ViewResultData{}}}
+	rows, err := q.ProjectJobs(p.ID)
+	if err != nil {
+		return job, err
+	}
 	pending := 0
-	for _, j := range st.Jobs {
-		if j.ProjectID != p.ID || j.ViewTask != nil || (j.Status != "queued" && j.Status != "running") {
-			continue
+	for _, j := range rows {
+		if j.ParentID == nil && (j.Status == "queued" || j.Status == "running") {
+			pending++
 		}
-		pending++
 	}
 	if pending >= s.Config.MaxQueued {
 		return job, fail(429, "project generation queue is full")
 	}
-	st.Jobs[job.ID] = job
-	return job, nil
+	return job, q.PutJob(job)
 }
-
-type deadlineResult uint8
-
-const (
-	deadlineSkip deadlineResult = iota
-	deadlineDue
-	deadlineWait
-	deadlineClear
-	deadlineClearAndQueue
-)
-
-func deadlineStage(p model.Project, now time.Time) deadlineResult {
-	if p.Deleting || p.NextGenerateAt.IsZero() || now.Before(p.NextGenerateAt) {
-		return deadlineSkip
-	}
-	return deadlineDue
-}
-
-func deadlineAction(hasJob, hasEligible bool, ownerUID string) deadlineResult {
-	if hasJob {
-		return deadlineWait
-	}
-	if !hasEligible || ownerUID == "" {
-		return deadlineClear
-	}
-	return deadlineClearAndQueue
-}
-
-// Only saved puts create deadlines; a due deadline is consumed once no job remains.
 func (s *Server) scheduleGenerations(now time.Time) error {
-	count, err := s.Store.CountProjects(func(p model.Project) bool {
-		return deadlineStage(p, now) == deadlineDue
-	})
-	if err != nil || count == 0 {
-		return err
-	}
-	type queuedGeneration struct {
-		namespace string
-		deadline  time.Time
-	}
-	var queued []queuedGeneration
-	var cleared []string
-	err = s.Store.Update(func(st *model.State) error {
-		for id, p := range st.Projects {
-			if deadlineStage(p, now) != deadlineDue {
+	queued := false
+	err := s.Store.Write(context.Background(), func(q *store.Queries) error {
+		projects, err := q.DueProjects(now.UnixMilli())
+		if err != nil {
+			return err
+		}
+		for _, p := range projects {
+			jobs, err := q.ProjectJobs(p.ID)
+			if err != nil {
+				return err
+			}
+			busy := false
+			for _, j := range jobs {
+				if j.Kind == "generate" && (j.Status == "queued" || j.Status == "running") {
+					busy = true
+				}
+			}
+			if busy {
 				continue
 			}
-			hasEligible := false
-			over := completedWikiBytes(st.Revisions[p.Revision]) > s.Config.MaxWikiBytes
-			for _, item := range st.Inbox {
-				if item.ProjectID == id && item.RunID == "" && (!over || item.Remove) {
-					hasEligible = true
-				}
+			files, err := q.ProjectWiki(p.ID)
+			if err != nil {
+				return err
 			}
-			hasJob := false
-			for _, j := range st.Jobs {
-				if j.ProjectID == id && j.Kind == "generate" && (j.Status == "queued" || j.Status == "running") {
-					hasJob = true
-				}
+			size, err := wikiBytes(files)
+			if err != nil {
+				return err
 			}
-			ownerUID := ""
-			for member, role := range p.Members {
+			if p.Data.WikiCompleteBytes != nil {
+				size = *p.Data.WikiCompleteBytes
+			}
+			items, err := q.AvailableInbox(p.ID, size > s.Config.MaxWikiBytes)
+			if err != nil {
+				return err
+			}
+			members, err := q.ProjectMembers(p.ID)
+			if err != nil {
+				return err
+			}
+			owner := ""
+			for uid, role := range members {
 				if role == "owner" {
-					ownerUID = member
+					owner = uid
 					break
 				}
 			}
-			action := deadlineAction(hasJob, hasEligible, ownerUID)
-			if action == deadlineWait {
-				continue
-			}
-			deadline := p.NextGenerateAt
-			p.NextGenerateAt = time.Time{}
-			st.Projects[id] = p
-			if action == deadlineClear {
-				cleared = append(cleared, p.Namespace)
-				continue
-			}
-			if _, err := s.queueGeneration(st, p, ownerUID, "", true, now); err != nil {
+			p.NextGenerateAt = nil
+			if err = q.PutProject(p); err != nil {
 				return err
 			}
-			queued = append(queued, queuedGeneration{p.Namespace, deadline})
+			if len(items) == 0 || owner == "" {
+				continue
+			}
+			if _, err = q.User(owner); errors.Is(err, sql.ErrNoRows) {
+				continue
+			} else if err != nil {
+				return err
+			}
+			if _, err = s.queueGeneration(q, p, owner, "", true, now); err != nil {
+				return err
+			}
+			queued = true
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	for _, namespace := range cleared {
-		slog.Info("automatic generation deadline cleared", "project", namespace)
-	}
-	for _, q := range queued {
-		slog.Info("automatic generation queued", "project", q.namespace, "deadline", q.deadline)
-	}
-	if len(queued) > 0 {
+	if err == nil && queued {
 		s.notify()
 	}
-	return nil
-}
-
-// Partial writes must not change which waiting items can rebuild the wiki.
-// The removal-only rule takes effect after a completed publication.
-func completedWikiBytes(rev model.Revision) int64 {
-	if rev.CompleteBytes != nil {
-		return *rev.CompleteBytes
-	}
-	return rev.StoredBytes
+	return err
 }

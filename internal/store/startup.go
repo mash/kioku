@@ -85,6 +85,31 @@ func OpenStorage(ctx context.Context, dir string, objects blob.Store, loadKey fu
 	if err != nil {
 		return nil, nil, err
 	}
+	if registry, ok := objects.(interface{ RegisterProjectBucket(string, string) }); ok {
+		var projects []ProjectRow
+		if err = db.Read(ctx, func(q *Queries) error {
+			ids, e := q.ProjectIDs()
+			if e != nil {
+				return e
+			}
+			for _, id := range ids {
+				p, e := q.Project(id)
+				if e != nil {
+					return e
+				}
+				projects = append(projects, p)
+			}
+			return nil
+		}); err != nil {
+			db.Close()
+			return nil, nil, err
+		}
+		for _, p := range projects {
+			if p.Data.StorageBucket != nil {
+				registry.RegisterProjectBucket(p.ID, *p.Data.StorageBucket)
+			}
+		}
+	}
 	db.lock = lock
 	owned = true
 	return db, cipher, nil

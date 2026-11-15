@@ -31,14 +31,14 @@ type fixture struct {
 	s            *Server
 	url          string
 	client       *http.Client
-	stateStore   *store.Store
+	stateStore   *store.Database
 }
 
 func setup(t *testing.T) *fixture { return setupWithWorker(t, true) }
 func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	t.Helper()
 	dir := t.TempDir()
-	stateStore, err := store.Open(dir)
+	stateStore, err := openFixtureDatabase(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	s.Config.Providers["google"] = auth.Provider{Name: "google", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		uid := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var u model.User
-		_ = stateStore.View(func(st model.State) error { u = st.Users[uid]; return nil })
+		_ = stateStore.Read(context.Background(), func(st *store.Queries) error { u = fixtureUsersGet(t, st, uid); return nil })
 		body, _ := json.Marshal(map[string]any{"sub": uid, "name": u.Name, "email": u.Email, "email_verified": true})
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
@@ -84,6 +84,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	return f
 }
 func (f *fixture) request(method, path, token string, in, out any) int {
+	t := f.t
 	f.t.Helper()
 	// Test callers use internal IDs to arrange state. Public requests use names.
 	path = f.publicPath(path)
@@ -112,17 +113,17 @@ func (f *fixture) request(method, path, token string, in, out any) int {
 		}
 	}
 	if resp.StatusCode < 300 {
-		_ = f.stateStore.View(func(st model.State) error {
+		_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 			switch v := out.(type) {
-			case *model.Project:
-				for _, p := range st.Projects {
+			case *fixtureProject:
+				for _, p := range fixtureProjectsList(t, st) {
 					if p.Namespace == v.Namespace {
 						*v = p
 						break
 					}
 				}
-			case *model.Job:
-				if j, ok := st.Jobs[v.ID]; ok {
+			case *fixtureJob:
+				if j, ok := fixtureJobsFind(t, st, v.ID); ok {
 					*v = j
 				}
 			}
@@ -132,11 +133,12 @@ func (f *fixture) request(method, path, token string, in, out any) int {
 	return resp.StatusCode
 }
 func (f *fixture) login(email string) string {
+	t := f.t
 	f.t.Helper()
 	token := auth.Token()
-	if err := f.stateStore.Update(func(st *model.State) error {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		uid := ""
-		for id, u := range st.Users {
+		for id, u := range fixtureUsersList(t, st) {
 			if u.Email == email {
 				uid = id
 				break
@@ -144,11 +146,10 @@ func (f *fixture) login(email string) string {
 		}
 		if uid == "" {
 			uid = auth.Token()[:20]
-			st.Users[uid] = model.User{ID: uid, Name: strings.Split(email, "@")[0], Email: email, Identities: map[string]string{"google": uid}}
+			fixtureUsersPut(t, st, uid, model.User{ID: uid, Name: strings.Split(email, "@")[0], Email: email, Identities: map[string]string{"google": uid}})
 		}
-		data, _ := json.Marshal(auth.Credential{AccessToken: uid})
-		proof := f.s.Cipher.Seal(string(data), identityContext(uid, "google", uid))
-		st.Sessions[auth.Hash(token)] = model.Session{UserID: uid, Expires: time.Now().Add(time.Hour), IdentityProvider: "google", IdentityID: uid, IdentityCredential: proof}
+		access := f.s.Cipher.SealIdentityTokens(auth.Credential{AccessToken: uid}, uid, "google", uid)
+		fixtureSessionsPut(t, st, auth.Hash(token), fixtureSession{UserID: uid, Expires: time.Now().Add(time.Hour), IdentityProvider: "google", IdentityID: uid, IdentityAccessToken: valueString(access.AccessToken)})
 		return nil
 	}); err != nil {
 		f.t.Fatal(err)
@@ -156,11 +157,11 @@ func (f *fixture) login(email string) string {
 	return token
 }
 
-func (f *fixture) wait(pid, token, id string) model.Job {
+func (f *fixture) wait(pid, token, id string) fixtureJob {
 	f.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		var j model.Job
+		var j fixtureJob
 		if code := f.request("GET", "/api/projects/"+pid+"/jobs/"+id, token, nil, &j); code != 200 {
 			f.t.Fatalf("job status %d", code)
 		}
@@ -168,7 +169,7 @@ func (f *fixture) wait(pid, token, id string) model.Job {
 			current := storedJob(f.t, f, id)
 			if current.ViewGeneration != nil {
 				f.driveViewGeneration(current)
-			} else if !agentRunFinished(current) && current.Run != nil && current.Run.Ref.ID != "" {
+			} else if !agentRunFinished(fixtureRow(current)) && current.Run != nil && current.Run.Ref.ID != "" {
 				if current.Run.OutputHash == "" {
 					sendOutput(f.t, f, f.auto, current, "Generated")
 				}
@@ -185,14 +186,15 @@ func (f *fixture) wait(pid, token, id string) model.Job {
 		time.Sleep(10 * time.Millisecond)
 	}
 	f.t.Fatal("job timed out")
-	return model.Job{}
+	return fixtureJob{}
 }
 
 // Run one synthetic View attempt for tests that focus on the Wiki stage.
-func (f *fixture) driveViewGeneration(parent model.Job) {
+func (f *fixture) driveViewGeneration(parent fixtureJob) {
+	t := f.t
 	f.t.Helper()
 	ctx := f.t.Context()
-	if err := f.s.advanceViewGeneration(ctx, parent); err != nil {
+	if err := f.s.storage.advanceViews(ctx, parent.ID); err != nil {
 		f.t.Fatal(err)
 	}
 	parent = storedJob(f.t, f, parent.ID)
@@ -201,14 +203,14 @@ func (f *fixture) driveViewGeneration(parent model.Job) {
 	}
 	child := storedJob(f.t, f, parent.ViewGeneration.ChildID)
 	if !f.worker && child.Status == "queued" {
-		child.Status = "running"
-		if err := f.stateStore.Update(func(st *model.State) error {
-			st.Jobs[child.ID] = child
+		child.Status = "queued"
+		if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+			fixtureJobsPut(t, st, child.ID, child)
 			return nil
 		}); err != nil {
 			f.t.Fatal(err)
 		}
-		if err := f.s.startAgentJob(ctx, child); err != nil {
+		if err := f.s.startAgentJob(ctx, fixtureRow(child)); err != nil {
 			f.t.Fatal(err)
 		}
 		child = storedJob(f.t, f, child.ID)
@@ -224,12 +226,12 @@ func (f *fixture) driveViewGeneration(parent model.Job) {
 		}
 	}
 	f.auto.SetStatus(child.Run.Ref.ID, "idle", "end_turn", 1)
-	if err := f.s.reconcileAgentJob(ctx, child); err != nil {
+	if err := f.s.reconcileAgentJob(ctx, fixtureRow(child)); err != nil {
 		f.t.Fatal(err)
 	}
 }
 
-func (f *fixture) completeFixtureViews(parent model.Job) model.Job {
+func (f *fixture) completeFixtureViews(parent fixtureJob) fixtureJob {
 	f.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for parent.ViewGeneration != nil && time.Now().Before(deadline) {
@@ -246,9 +248,9 @@ func (f *fixture) completeFixtureViews(parent model.Job) model.Job {
 }
 
 // generate queues wiki generation explicitly for waiting inbox items.
-func (f *fixture) generate(pid, token string, _ bool) model.Job {
+func (f *fixture) generate(pid, token string, _ bool) fixtureJob {
 	f.t.Helper()
-	var job model.Job
+	var job fixtureJob
 	if code := f.request("POST", "/api/projects/"+pid+"/generate", token, nil, &job); code != 202 {
 		f.t.Fatalf("generate: %d", code)
 	}
@@ -258,7 +260,7 @@ func (f *fixture) generate(pid, token string, _ bool) model.Job {
 func TestProjectSharingPutAndIsolation(t *testing.T) {
 	f := setup(t)
 	alice, bob, eve := f.login("alice@example.com"), f.login("bob@example.com"), f.login("eve@example.com")
-	var p model.Project
+	var p fixtureProject
 	if code := f.request("POST", "/api/projects", alice, map[string]string{"name": "Shared context"}, &p); code != 201 {
 		t.Fatal(code)
 	}
@@ -297,7 +299,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if !strings.Contains(wiki[sourcePage(first.ID)], "Go and S3") {
 		t.Fatal("source not in wiki")
 	}
-	var projects []model.ProjectEntry
+	var projects []fixtureProjectEntry
 	if code := f.request("GET", "/api/projects", eve, nil, &projects); code != 200 || len(projects) != 0 {
 		t.Fatalf("project and inbox isolation: %d %+v", code, projects)
 	}
@@ -333,7 +335,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 	f := setup(t)
 	token := f.login("owner@example.com")
-	var p model.Project
+	var p fixtureProject
 	f.request("POST", "/api/projects", token, map[string]string{"name": "Concurrent"}, &p)
 	base := "/api/projects/" + p.ID
 	items := make(chan model.InboxItem, 8)
@@ -381,7 +383,7 @@ func TestCSRFAndOAuthState(t *testing.T) {
 		t.Fatalf("OAuth state check: %d", code)
 	}
 	var secrets string
-	_ = f.stateStore.View(func(st model.State) error { b, _ := json.Marshal(st); secrets = string(b); return nil })
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error { b, _ := json.Marshal(st); secrets = string(b); return nil })
 	if strings.Contains(secrets, token) {
 		t.Fatal("session token stored in plaintext")
 	}
@@ -429,8 +431,9 @@ func sourcePage(id string) string {
 
 // publicPath resolves internal fixture references before sending a real request.
 func (f *fixture) publicPath(path string) string {
-	_ = f.stateStore.View(func(st model.State) error {
-		for id, p := range st.Projects {
+	t := f.t
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		for id, p := range fixtureProjectsList(t, st) {
 			path = strings.ReplaceAll(path, "/api/projects/"+id+"/", "/api/projects/"+p.Namespace+"/")
 			if path == "/api/projects/"+id {
 				path = "/api/projects/" + p.Namespace

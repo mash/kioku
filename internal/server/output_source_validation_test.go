@@ -2,10 +2,12 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
@@ -25,25 +27,24 @@ func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
 				pages["wiki/source-a.md"] = page
 			}
 			if rule == "c" || rule == "e" {
-				f.stateStore.Update(func(st *model.State) error {
-					job := st.Jobs[j.ID]
-					job.Run.Attempt.ID = "attempt"
+				f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					job := fixtureJobsGet(t, st, j.ID)
 					job.Run.InboxIDs = []string{"item"}
-					st.Jobs[j.ID] = job
-					st.Inbox["item"] = model.InboxItem{ID: "item", ProjectID: j.ProjectID, RunID: "attempt", Remove: rule == "c", SourceURL: "https://example.com/a"}
+					fixtureJobsPut(t, st, j.ID, job)
+					fixtureInboxPut(t, st, "item", model.InboxItem{ID: "item", ProjectID: j.ProjectID, RunID: j.ID, Remove: rule == "c", SourceURL: "https://example.com/a"})
 					return nil
 				})
 			}
 			if rule == "d" {
-				key := blob.Key("projects/" + j.ProjectID + "/wiki/source-a.md")
+				key := model.WikiContentKey(j.ProjectID, model.HashContent([]byte(page)))
 				if err := f.s.Blobs.Put(t.Context(), key, []byte(page)); err != nil {
 					t.Fatal(err)
 				}
-				f.stateStore.Update(func(st *model.State) error {
-					p := st.Projects[j.ProjectID]
+				f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+					p := fixtureProjectsGet(t, st, j.ProjectID)
 					p.Revision = "previous"
-					st.Projects[p.ID] = p
-					st.Revisions[p.Revision] = model.Revision{ID: p.Revision, ProjectID: p.ID, Files: map[string]blob.Key{"wiki/source-a.md": key}}
+					fixtureProjectsPut(t, st, p.ID, p)
+					fixtureRevisionsPut(t, st, p.Revision, fixtureRevision{ID: p.Revision, ProjectID: p.ID, Files: map[string]blob.Key{"wiki/source-a.md": key}, FileBytes: map[string]int64{"wiki/source-a.md": int64(len(page))}})
 					return nil
 				})
 			}

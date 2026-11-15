@@ -10,30 +10,37 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
-func jobTokenFixture(t *testing.T) (*fixture, string, model.Job, model.AgentToken, string) {
+func jobTokenFixture(t *testing.T) (*fixture, string, fixtureJob, fixtureAgentToken, string) {
 	t.Helper()
 	f := setupWithWorker(t, false)
 	human := f.login("job-owner@example.com")
 	p := securityProject(t, f, human)
-	var job model.Job
-	var token model.AgentToken
-	var raw string
-	if err := f.stateStore.Update(func(st *model.State) error {
-		job = model.Job{ID: "job", ProjectID: p.ID, UserID: st.Sessions[auth.Hash(human)].UserID, Kind: "generate", Status: "running", Created: time.Now().UTC()}
-		st.Jobs[job.ID] = job
-		raw, token = issueJobToken(st, job, time.Now().Add(time.Hour))
+	var job fixtureJob
+	token := fixtureAgentToken{}
+	now := time.Now().UTC()
+	if err := f.stateStore.Write(t.Context(), func(q *store.Queries) error {
+		uid := fixtureSessionsGet(t, q, auth.Hash(human)).UserID
+		job = fixtureJob{ID: "job", ProjectID: p.ID, UserID: uid, Kind: "generate", Status: "running", Created: now, Run: &fixtureAgentRun{Phase: model.PhasePreparing, PreparedAt: now, Deadline: now.Add(time.Hour), Attempt: fixtureAttempt{ID: "job"}}}
+		fixtureJobsPut(t, q, job.ID, job)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+	raw, err := f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Attempt: job.ID, Expires: now.Add(time.Hour + 10*time.Minute).UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	return f, raw, job, token, human
 }
 func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
-	f, raw, job, token, human := jobTokenFixture(t)
-	if token.TokenHash != auth.Hash(raw) || token.TokenHash == raw || token.Name != "job:"+job.ID {
-		t.Fatal("bad token metadata")
+	f, raw, job, _, human := jobTokenFixture(t)
+	// E24: job credentials are sealed values, never sessions rows.
+	if n := sessionKindCount(t, f, "agent"); n != 0 {
+		t.Fatal(n)
 	}
 	for _, pattern := range []string{agentInputRoute, agentOutputRoute} {
 		for _, tc := range []struct {
@@ -65,30 +72,38 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 		req.SetPathValue("job", job.ID)
 		req.Header.Set("Authorization", "Bearer "+other)
 		req.Header.Set("Kioku-Client-Version", "dev")
-		_, p := f.s.session(req)
+		_, p, err := f.s.session(req)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := f.s.authorizeAgent(req, p); err == nil {
 			t.Fatal("accepted", role)
 		}
 	}
 	for _, expired := range []bool{true, false} {
-		_ = f.stateStore.Update(func(st *model.State) error {
-			x := st.AgentTokens[token.ID]
-			if expired {
-				x.Expires = time.Now().Add(-time.Second)
-			} else {
-				x.Expires = time.Now().Add(time.Hour)
-				st.AgentTokens[token.ID] = x
-				revokeJobToken(st, job.ID)
-				return nil
+		denied := raw
+		if expired {
+			var err error
+			denied, err = f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Attempt: job.ID, Expires: time.Now().Add(-time.Second).UnixMilli()})
+			if err != nil {
+				t.Fatal(err)
 			}
-			st.AgentTokens[token.ID] = x
-			return nil
-		})
+		} else {
+			fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
+				j, e := q.Job(job.ID)
+				if e != nil {
+					return e
+				}
+				j.Data.Run.AbortReason = nullableString("revoked")
+				return q.PutJob(j)
+			}))
+		}
+
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Pattern = agentInputRoute
 		req.SetPathValue("project", job.ProjectID)
 		req.SetPathValue("job", job.ID)
-		req.Header.Set("Authorization", "Bearer "+raw)
+		req.Header.Set("Authorization", "Bearer "+denied)
 		req.Header.Set("Kioku-Client-Version", "dev")
 		w := httptest.NewRecorder()
 		f.s.wrap(func(http.ResponseWriter, *http.Request, string) error {

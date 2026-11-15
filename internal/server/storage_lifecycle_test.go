@@ -247,7 +247,7 @@ func TestFileOutputWaitSurvivesRestart(t *testing.T) {
 	if _, expired, e := o.beginFileWait(t.Context(), "j"); e != nil || expired {
 		t.Fatal(expired, e)
 	}
-	resumed := newStorageOperations(o.db, o.objects, o.config)
+	resumed := newStorageOperations(o.db, o.objects, *o.config)
 	resumed.now = func() time.Time { return time.UnixMilli(91000) }
 	j, expired, e := resumed.beginFileWait(t.Context(), "j")
 	if e != nil || !expired || *j.Data.Run.OutputWaitSince != 1000 {
@@ -286,7 +286,7 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 		t.Fatal(got)
 	}
 	// A new instance sees the stored usage and ignores a later known value.
-	resumed := newStorageOperations(o.db, b, o.config)
+	resumed := newStorageOperations(o.db, b, *o.config)
 	resumed.now = o.now
 	b.del = nil
 	late := int64(88)

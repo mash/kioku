@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"slices"
@@ -10,11 +11,12 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
-func consentProject(t *testing.T, f *fixture, human, name string) model.Project {
+func consentProject(t *testing.T, f *fixture, human, name string) fixtureProject {
 	t.Helper()
-	var p model.Project
+	var p fixtureProject
 	if status := f.request("POST", "/api/projects", human, map[string]string{"name": name}, &p); status != 201 {
 		t.Fatal("create project", status)
 	}
@@ -130,11 +132,11 @@ func TestConnectorCodeExchangeRechecksProject(t *testing.T) {
 	codeA := connectorCode(t, f, access, a.Namespace)
 	codeB := connectorCode(t, f, access, b.Namespace)
 	// The user still belongs to A; only the issuing grant has lost that selection.
-	if err := f.stateStore.Update(func(st *model.State) error {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		key := auth.Hash(access)
-		grant := st.OAuthTokens[key]
+		grant := fixtureOAuthTokensGet(t, st, key)
 		grant.ProjectIDs = []string{b.ID}
-		st.OAuthTokens[key] = grant
+		fixtureOAuthTokensPut(t, st, key, grant)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -161,12 +163,12 @@ func TestConnectorCodeKeepsItsLifetimeAcrossAccessExpiry(t *testing.T) {
 	p := securityProject(t, f, human)
 	access := connectorAccessToken(t, f, human, p.ID)
 	code := connectorCode(t, f, access, p.Namespace)
-	if err := f.stateStore.Update(func(st *model.State) error {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		key := auth.Hash(access)
-		grant := st.OAuthTokens[key]
+		grant := fixtureOAuthTokensGet(t, st, key)
 		grant.Expires = time.Now().Add(-time.Second)
-		st.OAuthTokens[key] = grant
-		prune(st)
+		fixtureOAuthTokensPut(t, st, key, grant)
+		fixtureCheck(t, st.PruneSessions(time.Now().UnixMilli()))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -189,19 +191,19 @@ func TestConnectorCredentialsWithoutProjectSelectionRequireConsent(t *testing.T)
 	code := connectorCode(t, f, access, p.Namespace)
 	pending, pendingForm := connectorAuthCode(t, f, client, human, p.ID)
 	// These are the records written before project consent existed.
-	if err := f.stateStore.Update(func(st *model.State) error {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		for _, raw := range []string{access, refresh} {
 			key := auth.Hash(raw)
-			grant := st.OAuthTokens[key]
+			grant := fixtureOAuthTokensGet(t, st, key)
 			grant.ProjectIDs = nil
-			st.OAuthTokens[key] = grant
+			fixtureOAuthTokensPut(t, st, key, grant)
 		}
-		authCode := st.OAuthCodes[auth.Hash(pending)]
+		authCode := fixtureOAuthCodesGet(t, st, auth.Hash(pending))
 		authCode.ProjectIDs = nil
-		st.OAuthCodes[auth.Hash(pending)] = authCode
-		login := st.LoginCodes[auth.Hash(code)]
+		fixtureOAuthCodesPut(t, st, auth.Hash(pending), authCode)
+		login := fixtureLoginCodesGet(t, st, auth.Hash(code))
 		login.GrantKey = ""
-		st.LoginCodes[auth.Hash(code)] = login
+		fixtureLoginCodesPut(t, st, auth.Hash(code), login)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -230,10 +232,10 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 	if status := f.request("POST", "/api/projects/"+shared.ID+"/put", owner, model.PutRequest{File: &model.FileInput{Name: "secret.md", Content: testSourceContent(testSourceURL("secret.md", "ungranted text"), "ungranted text")}}, nil); status != 202 {
 		t.Fatal("prepare ungranted source", status)
 	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		p := st.Projects[deleting.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		p := fixtureProjectsGet(t, st, deleting.ID)
 		p.Deleting = true
-		st.Projects[p.ID] = p
+		fixtureProjectsPut(t, st, p.ID, p)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -246,7 +248,7 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 		t.Fatal("projects_list showed an ungranted project", msg, projects)
 	}
 	var sourcesBefore int
-	if err := f.stateStore.View(func(st model.State) error { sourcesBefore = len(st.Inbox); return nil }); err != nil {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error { sourcesBefore = len(fixtureInboxList(t, st)); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	// The user is a member of both, so only the grant can deny them. A deleting
@@ -266,8 +268,8 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 			}
 		}
 	}
-	if err := f.stateStore.View(func(st model.State) error {
-		if len(st.Inbox) != sourcesBefore || len(st.LoginCodes) != 0 {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if len(fixtureInboxList(t, st)) != sourcesBefore || len(fixtureLoginCodesList(t, st)) != 0 {
 			t.Error("a rejected tool call changed state")
 		}
 		return nil

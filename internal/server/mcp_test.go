@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func connectorRPC(t *testing.T, f *fixture, token, method string, params any) json.RawMessage {
@@ -132,10 +134,10 @@ func TestConnectorCodeExpiryMembershipAndRevocation(t *testing.T) {
 		t.Fatal("non-member received login code", err)
 	}
 	code := connectorCode(t, f, access, project.Namespace)
-	if err := f.stateStore.Update(func(st *model.State) error {
-		value := st.LoginCodes[auth.Hash(code)]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		value := fixtureLoginCodesGet(t, st, auth.Hash(code))
 		value.Expires = time.Now().Add(-time.Second)
-		st.LoginCodes[auth.Hash(code)] = value
+		fixtureLoginCodesPut(t, st, auth.Hash(code), value)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedStoredOutputHashRejectsReplacement(t *testing.T) {
@@ -22,8 +23,8 @@ func TestManagedStoredOutputHashRejectsReplacement(t *testing.T) {
 	if j.Status != "failed" || j.Error != "agent output hash mismatch" {
 		t.Fatal("tampered output accepted", j.Status, j.Error)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Projects[p.ID].Revision != "" {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureProjectsGet(t, st, p.ID).Revision != "" {
 			t.Error("tampered output published")
 		}
 		return nil
@@ -36,7 +37,7 @@ func TestManagedOldFailureCannotStopNewAttempt(t *testing.T) {
 	ma.SetStatus(old.Run.Ref.ID, "idle", "retries_exhausted", 100)
 	reconcileManaged(t, f, old)
 	next := startManaged(t, f, token, p.ID, false)
-	if err := f.s.failAgentJobLocked(context.Background(), old, "late failure", nil); err != nil {
+	if err := f.s.failAgentJobLocked(context.Background(), fixtureRow(old), "late failure", nil); err != nil {
 		t.Fatal(err)
 	}
 	got := storedJob(t, f, next.ID)
@@ -63,10 +64,10 @@ func TestManagedPreparingGracePreservesUnknownCreation(t *testing.T) {
 	if c, _ := agentRequest(t, f, j, ma.Credential("vault_1"), "GET", "input", nil); c != 200 {
 		t.Fatal("credential expired during grace", c)
 	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)
-		st.Jobs[j.ID] = x
+		fixtureJobsPut(t, st, j.ID, x)
 		return nil
 	})
 	if got := reconcileManaged(t, f, j); got.Status != "failed" {

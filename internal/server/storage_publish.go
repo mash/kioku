@@ -23,6 +23,10 @@ func (o *storageOperations) publishWiki(ctx context.Context, id string, files ma
 		return "", err
 	}
 	defer unlockGeneration()
+	return o.publishWikiLocked(ctx, initial, files)
+}
+func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store.JobRow, files map[string]string) (string, error) {
+	id := initial.ID
 	unlock, err := o.lock(ctx, initial.ProjectID)
 	if err != nil {
 		return "", err

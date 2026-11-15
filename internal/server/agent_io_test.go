@@ -12,6 +12,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func outputArchive(t *testing.T, pages map[string]string) []byte {
@@ -41,7 +42,7 @@ func outputArchive(t *testing.T, pages map[string]string) []byte {
 	}
 	return b.Bytes()
 }
-func agentRequest(t *testing.T, f *fixture, job model.Job, raw, method, suffix string, body []byte) (int, []byte) {
+func agentRequest(t *testing.T, f *fixture, job fixtureJob, raw, method, suffix string, body []byte) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequest(method, f.url+f.publicPath("/api/projects/"+job.ProjectID+"/jobs/"+job.ID+"/agent/"+suffix), bytes.NewReader(body))
 	if err != nil {
@@ -61,16 +62,16 @@ func agentRequest(t *testing.T, f *fixture, job model.Job, raw, method, suffix s
 	}
 	return resp.StatusCode, b
 }
-func setManagedPhase(t *testing.T, f *fixture, job model.Job, phase model.ManagedPhase, status string) {
+func setManagedPhase(t *testing.T, f *fixture, job fixtureJob, phase model.ManagedPhase, status string) {
 	t.Helper()
-	if err := f.stateStore.Update(func(st *model.State) error {
-		j := st.Jobs[job.ID]
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		j := fixtureJobsGet(t, st, job.ID)
 		if j.Run == nil {
-			j.Run = &model.AgentRun{}
+			j.Run = &fixtureAgentRun{}
 		}
 		j.Run.Phase = phase
 		j.Status = status
-		st.Jobs[j.ID] = j
+		fixtureJobsPut(t, st, j.ID, j)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -79,7 +80,7 @@ func setManagedPhase(t *testing.T, f *fixture, job model.Job, phase model.Manage
 func TestAgentIOPhasesAndResend(t *testing.T) {
 	f, raw, job, _, human := jobTokenFixture(t)
 	input := []byte("saved input archive")
-	if err := f.s.Blobs.Put(context.Background(), agentJobKey(job, "input.tar.gz"), input); err != nil {
+	if err := f.s.Blobs.Put(context.Background(), fixtureJobKey(job, "input.tar.gz"), input); err != nil {
 		t.Fatal(err)
 	}
 	for _, phase := range []model.ManagedPhase{model.PhasePreparing, model.PhaseAgentRunning, model.PhaseOutputReceived} {
@@ -91,16 +92,16 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 		if code, b := agentRequest(t, f, job, raw, "PUT", "output", body); code != 200 {
 			t.Fatal(code, string(b))
 		}
-		_ = f.stateStore.View(func(st model.State) error {
-			j := st.Jobs[job.ID]
+		_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+			j := fixtureJobsGet(t, st, job.ID)
 			if j.Run.Phase != model.PhaseOutputReceived || j.Run.OutputHash != auth.Hash(string(body)) {
 				t.Error(j.Run)
 			}
 			return nil
 		})
 	}
-	keys, err := f.s.Blobs.List(context.Background(), agentJobPrefix(job))
-	if err != nil || len(keys) != 2 {
+	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(job))
+	if err != nil || len(keys) != 3 {
 		t.Fatal(keys, err)
 	}
 	for _, status := range []string{"running", "completed", "failed"} {
@@ -110,7 +111,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 			if method == "PUT" {
 				suffix = "output"
 			}
-			if code, b := agentRequest(t, f, job, raw, method, suffix, outputArchive(t, map[string]string{"wiki/index.md": "x"})); code != 409 {
+			if code, b := agentRequest(t, f, job, raw, method, suffix, outputArchive(t, map[string]string{"wiki/index.md": "x"})); code != map[string]int{"running": 409, "completed": 403, "failed": 403}[status] {
 				t.Fatal(status, method, code, string(b))
 			}
 		}
@@ -121,7 +122,14 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 			t.Fatal(c)
 		}
 	}
-	if err := f.stateStore.Update(func(st *model.State) error { revokeJobToken(st, job.ID); return nil }); err != nil {
+	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		j, err := st.Job(job.ID)
+		if err != nil {
+			return err
+		}
+		j.Data.Run.AbortReason = nullableString("revoked")
+		return st.PutJob(j)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if c, _ := agentRequest(t, f, job, raw, "GET", "input", nil); c != 403 {
@@ -140,12 +148,12 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 	if code, b := agentRequest(t, f, job, raw, "PUT", "output", make([]byte, 8193)); code != 400 {
 		t.Fatal(code, string(b))
 	}
-	keys, err := f.s.Blobs.List(context.Background(), agentJobPrefix(job))
+	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(job))
 	if err != nil || len(keys) != 0 {
 		t.Fatal(keys, err)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Jobs[job.ID].Run.Phase != model.PhasePreparing {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureJobsGet(t, st, job.ID).Run.Phase != model.PhasePreparing {
 			t.Error("invalid output advanced phase")
 		}
 		return nil
@@ -159,7 +167,7 @@ func TestAgentOutputExpandedSizeLimit(t *testing.T) {
 	if code != 400 || !bytes.Contains(b, []byte(`"problems"`)) {
 		t.Fatal(code, string(b))
 	}
-	keys, err := f.s.Blobs.List(t.Context(), agentJobPrefix(job))
+	keys, err := f.s.Blobs.List(t.Context(), fixtureJobPrefix(job))
 	if err != nil || len(keys) != 0 {
 		t.Fatal(keys, err)
 	}
@@ -171,7 +179,7 @@ func TestAgentIORejectsTerminalStatusIndependently(t *testing.T) {
 			f, raw, job, _, _ := jobTokenFixture(t)
 			setManagedPhase(t, f, job, model.PhaseOutputReceived, status)
 			body := outputArchive(t, map[string]string{"wiki/index.md": "# Late replacement"})
-			if code, b := agentRequest(t, f, job, raw, "PUT", "output", body); code != 409 {
+			if code, b := agentRequest(t, f, job, raw, "PUT", "output", body); code != 403 {
 				t.Fatalf("status=%s: got %d: %s", status, code, b)
 			}
 		})

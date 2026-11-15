@@ -1,105 +1,72 @@
 package store
 
 import (
-	"encoding/json"
+	"path/filepath"
 	"testing"
-
-	"github.com/mash/kioku/internal/model"
 )
 
 func TestInboxSurvivesReopen(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
+	path := filepath.Join(t.TempDir(), "catalog.sqlite")
+	d, err := OpenDatabase(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Update(func(st *model.State) error {
-		st.Projects["p"] = model.Project{ID: "p"}
-		st.Inbox["i"] = model.InboxItem{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", RunID: "attempt"}
-		return nil
-	}); err != nil {
+	catalogWrite(t, d, func(q *Queries) error {
+		return q.PutInbox(InboxRow{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", RunID: pointer("job"), Remove: true, Data: InboxData{Submitter: "u"}})
+	})
+	if err = d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
-	s, err = Open(dir)
+	d, err = OpenDatabase(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	if err = s.View(func(st model.State) error {
-		if len(st.Inbox) != 1 || st.Inbox["i"].RunID != "attempt" {
-			t.Fatal(st.Inbox)
+	defer d.Close()
+	if err = d.Read(t.Context(), func(q *Queries) error {
+		rows, e := q.ProjectInbox("p")
+		if len(rows) != 1 || rows[0].RunID == nil || *rows[0].RunID != "job" || !rows[0].Remove || rows[0].Data.Submitter != "u" {
+			t.Fatal(rows)
 		}
-		return nil
+		return e
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
-
-func TestLoadInboxRemoveFlag(t *testing.T) {
-	for _, tc := range []struct {
-		name, fields string
-		remove       bool
-	}{
-		{"fetched", `"status":"fetched"`, false},
-		{"removed", `"status":"removed"`, true},
-		{"file", `"remove":false`, false},
-		{"remove", `"remove":true`, true},
-		{"omitted", `"submitter":"u"`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			s, err := Open(dir)
-			if err != nil {
-				t.Fatal(err)
+func TestInboxReplacementKeepsAssignedAttempt(t *testing.T) {
+	d := newCatalog(t)
+	catalogWrite(t, d, func(q *Queries) error {
+		for _, id := range []string{"running", "waiting"} {
+			row := InboxRow{ID: id, ProjectID: "p", SourceURL: "https://example.com/a"}
+			if id == "running" {
+				row.RunID = pointer("job")
 			}
-			if err := s.Update(func(st *model.State) error {
-				st.Projects["p"] = model.Project{ID: "p"}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
+			if e := q.PutInbox(row); e != nil {
+				return e
 			}
-			objects := s.objects
-			if err := s.Close(); err != nil {
-				t.Fatal(err)
-			}
-			body := []byte(`{"schema":2,"project_id":"p","inbox":{"i":{"id":"i","project_id":"p","source_url":"https://example.com/a","run_id":"attempt",` + tc.fields + `}}}`)
-			if err := objects.Put(t.Context(), contentKey("p"), body); err != nil {
-				t.Fatal(err)
-			}
-			s, err = Open(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			if err := s.Update(func(st *model.State) error {
-				item := st.Inbox["i"]
-				if item.Remove != tc.remove || item.SourceURL != "https://example.com/a" || item.RunID != "attempt" {
-					t.Fatal(item)
-				}
-				item.Submitter = "updated"
-				st.Inbox["i"] = item
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			body, err = objects.Get(t.Context(), contentKey("p"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var saved struct {
-				Inbox map[string]map[string]any `json:"inbox"`
-			}
-			if err := json.Unmarshal(body, &saved); err != nil {
-				t.Fatal(err)
-			}
-			item := saved.Inbox["i"]
-			if _, ok := item["status"]; ok {
-				t.Fatal("wrote legacy status", string(body))
-			}
-			if value, ok := item["remove"]; ok != tc.remove || ok && value != true {
-				t.Fatal("incorrect remove flag", string(body))
-			}
-		})
+		}
+		return q.ReplaceInbox(InboxRow{ID: "replacement", ProjectID: "p", SourceURL: "https://example.com/a", Remove: true})
+	})
+	if e := d.Read(t.Context(), func(q *Queries) error {
+		rows, e := q.ProjectInbox("p")
+		if len(rows) != 2 {
+			t.Fatal(rows)
+		}
+		row, e := q.Inbox("replacement")
+		if !row.Remove || row.RunID != nil {
+			t.Fatal(row)
+		}
+		return e
+	}); e != nil {
+		t.Fatal(e)
+	}
+	catalogWrite(t, d, func(q *Queries) error { return q.ReleaseInbox("p", "job") })
+	if e := d.Read(t.Context(), func(q *Queries) error {
+		rows, e := q.ProjectInbox("p")
+		if len(rows) != 1 || rows[0].ID != "replacement" {
+			t.Fatal(rows)
+		}
+		return e
+	}); e != nil {
+		t.Fatal(e)
 	}
 }

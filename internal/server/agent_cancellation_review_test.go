@@ -8,6 +8,7 @@ import (
 
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 type cancelOutputRead struct {
@@ -34,9 +35,10 @@ func TestManagedCancellationPreservesFinalizingForRestart(t *testing.T) {
 	objects := f.s.Blobs
 	paused := &cancelOutputRead{Store: objects, key: j.Run.OutputKey, entered: make(chan struct{})}
 	f.s.Blobs = paused
+	f.s.storage.objects = f.s.Blobs
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- f.s.reconcileAgentJob(ctx, j) }()
+	go func() { done <- f.s.reconcileAgentJob(ctx, fixtureRow(j)) }()
 	<-paused.entered
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -46,13 +48,14 @@ func TestManagedCancellationPreservesFinalizingForRestart(t *testing.T) {
 		t.Error("shutdown failed durable job", got.Status)
 	}
 	f.s.Blobs = objects
+	f.s.storage.objects = f.s.Blobs
 	restartManagedFixture(t, f)
 	j = reconcileManaged(t, f, j)
 	if j.Status != "completed" {
 		t.Fatal("restart did not finish output", j.Status, j.Error)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 123 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {
 			t.Error("shutdown lost cost")
 		}
 		return nil
@@ -65,14 +68,14 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Finish publication")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-	_ = f.stateStore.Update(func(st *model.State) error {
-		x := st.Jobs[j.ID]
+	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
+		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Phase = model.PhaseFinalizing
 		x.Run.Deadline = time.Now().Add(-time.Minute)
-		st.Jobs[x.ID] = x
-		p := st.Projects[p.ID]
+		fixtureJobsPut(t, st, x.ID, x)
+		p := fixtureProjectsGet(t, st, p.ID)
 		p.WikiIncomplete = true
-		st.Projects[p.ID] = p
+		fixtureProjectsPut(t, st, p.ID, p)
 		return nil
 	})
 	restartManagedFixture(t, f)
@@ -80,8 +83,8 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal("expired execution deadline prevented publication recovery", j.Status, j.Error)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if st.Projects[p.ID].WikiIncomplete {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if fixtureProjectsGet(t, st, p.ID).WikiIncomplete {
 			t.Error("publication left incomplete")
 		}
 		return nil

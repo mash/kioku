@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 func TestManagedSuccessfulZeroCostCompletes(t *testing.T) {
@@ -17,14 +17,14 @@ func TestManagedSuccessfulZeroCostCompletes(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal(j)
 	}
-	_ = f.stateStore.View(func(st model.State) error {
-		if costOf(st.Jobs[j.ID].Run.CostCents) != 0 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 0 {
 			t.Error("zero usage changed")
 		}
 		return nil
 	})
 	next := managedJob(t, f, token, p.ID, true)
-	if err := f.s.startAgentJob(context.Background(), next); err != nil {
+	if err := f.s.startAgentJob(context.Background(), fixtureRow(next)); err != nil {
 		t.Fatal(err)
 	}
 	if got := storedJob(t, f, next.ID); got.Status != "running" || got.Run == nil {

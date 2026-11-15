@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 // The Kioku settings script runs in the parent page. Generated content is
@@ -133,10 +134,17 @@ iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8
 func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) error {
 	ctx := r.Context()
 	resolve := func() (p model.Project, rev model.Revision, err error) {
-		err = s.Store.View(func(st model.State) error {
+		err = s.Store.Read(ctx, func(q *store.Queries) error {
 			var err error
-			p, err = namespaceProject(st, r.PathValue("org"), r.PathValue("slug"), uid)
-			rev = st.Revisions[p.Revision]
+			p, err = namespaceProject(q, r.PathValue("org"), r.PathValue("slug"), uid)
+			if err != nil {
+				return err
+			}
+			row, err := q.Project(p.ID)
+			if err != nil {
+				return err
+			}
+			rev, err = wikiProjection(q, row)
 			return err
 		})
 		return p, rev, err

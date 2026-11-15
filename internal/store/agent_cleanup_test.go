@@ -1,30 +1,47 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
-	"time"
-
-	"github.com/mash/kioku/internal/model"
 )
 
-func TestPendingAgentCleanupRemainsInHotIndex(t *testing.T) {
-	st := model.NewState()
-	st.Projects["p"] = model.Project{ID: "p"}
-	st.Jobs["pending"] = model.Job{ID: "pending", ProjectID: "p", Status: "completed", Run: &model.AgentRun{}}
-	for i := range hotRecords + 1 {
-		id := fmt.Sprintf("recent-%d", i)
-		st.Jobs[id] = model.Job{ID: id, ProjectID: "p", Status: "completed", Created: time.Now()}
-	}
-	compactContent(&st)
-	if st.Jobs["pending"].Run == nil {
-		t.Fatal("pending cleanup evicted")
-	}
-	j := st.Jobs["pending"]
-	j.Run.CleanupComplete = true
-	st.Jobs[j.ID] = j
-	compactContent(&st)
-	if _, ok := st.Jobs["pending"]; ok {
-		t.Fatal("completed cleanup retained forever")
+func TestPendingAgentCleanupRemainsUntilEligibleForHistory(t *testing.T) {
+	d := newCatalog(t)
+	catalogWrite(t, d, func(q *Queries) error {
+		j := testJob("pending", "p", "completed", 0)
+		j.Data.Run = &RunData{}
+		j.Phase = pointer("finalizing")
+		j.CleanupComplete = pointer(false)
+		if e := q.PutJob(j); e != nil {
+			return e
+		}
+		for i := range 257 {
+			if e := q.PutJob(testJob(fmt.Sprintf("recent-%03d", i), "p", "completed", 1)); e != nil {
+				return e
+			}
+		}
+		return q.CompactHistory("p", nil)
+	})
+	catalogWrite(t, d, func(q *Queries) error {
+		j, e := q.Job("pending")
+		if e != nil {
+			return e
+		}
+		j.CleanupComplete = pointer(true)
+		if e = q.PutJob(j); e != nil {
+			return e
+		}
+		return q.CompactHistory("p", nil)
+	})
+	if e := d.Read(t.Context(), func(q *Queries) error {
+		_, e := q.Job("pending")
+		if !errors.Is(e, sql.ErrNoRows) {
+			t.Fatal("eligible old job retained", e)
+		}
+		return nil
+	}); e != nil {
+		t.Fatal(e)
 	}
 }

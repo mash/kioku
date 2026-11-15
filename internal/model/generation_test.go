@@ -5,14 +5,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/mash/kioku/internal/runner"
 )
 
 func TestJobRunJSON(t *testing.T) {
 	zero, cents := int64(0), int64(137)
 	for _, cost := range []*int64{nil, &zero, &cents} {
-		job := Job{ID: "job", Run: &AgentRun{Ref: runner.RunRef{ID: "session", Resources: map[string]string{"vault_id": "vault"}}, Attempt: Attempt{ID: "attempt"}, CostCents: cost}}
+		job := Job{ID: "job", Run: &AgentRun{CostCents: cost}}
 		b, err := json.Marshal(job)
 		if err != nil {
 			t.Fatal(err)
@@ -29,7 +27,7 @@ func TestJobRunJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"run":{"ref":{"id":"s"}},"managed":{"session_id":"legacy"}}`), &job); err != nil {
 		t.Fatal(err)
 	}
-	if job.Run.Ref.ID != "s" {
+	if b, err := json.Marshal(job); err != nil || strings.Contains(string(b), "legacy") || strings.Contains(string(b), "ref") {
 		t.Fatal("unexpected compatibility behavior", job.Run)
 	}
 }

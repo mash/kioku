@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/store"
 )
 
 var webhookTestSecret = []byte("only-a-local-test-secret-32-bytes")
@@ -44,7 +44,7 @@ func signedAgentWebhook(t *testing.T, f *fixture, body []byte, at time.Time, key
 	io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode
 }
-func webhookBody(j model.Job) []byte {
+func webhookBody(j fixtureJob) []byte {
 	return []byte(fmt.Sprintf(`{"id":"event_test","type":"event","data":{"type":"session.status_idled","id":%q}}`, j.Run.Ref.ID))
 }
 func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
@@ -112,8 +112,8 @@ func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 		t.Fatal(got)
 	}
 	assertAgentCleanup(t, f, ma, j)
-	_ = f.stateStore.View(func(st model.State) error {
-		if cost := costOf(st.Jobs[j.ID].Run.CostCents); cost != 123 {
+	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		if cost := costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents); cost != 123 {
 			t.Error("cost", cost)
 		}
 		return nil

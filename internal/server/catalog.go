@@ -18,6 +18,11 @@ type catalog interface {
 
 // resolveExchange never regenerates or returns a secret after an ambiguous commit.
 func (s *Server) resolveExchange(ctx context.Context, err error, status int) error {
+	var fatal *store.FatalDatabaseError
+	if errors.As(err, &fatal) {
+		s.reportFatal(err)
+		return err
+	}
 	var unknown *store.UnknownCommit
 	if !errors.As(err, &unknown) {
 		return err
@@ -35,6 +40,11 @@ func (s *Server) reportFatal(err error) {
 	}
 }
 func (s *Server) databaseError(ctx context.Context, err error) error {
+	var fatal *store.FatalDatabaseError
+	if errors.As(err, &fatal) {
+		s.reportFatal(err)
+		return err
+	}
 	var unknown *store.UnknownCommit
 	if errors.As(err, &unknown) {
 		if e := s.Store.ResolveCommit(ctx, func(q *store.Queries) error { return q.Healthy() }); e != nil {

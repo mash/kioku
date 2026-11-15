@@ -188,8 +188,13 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"views"`
 	}
+	// E2/K0: public creation times are milliseconds; ties use the view ID.
+	firstSlug, secondSlug := "wiki", "project-map"
+	if projectMap.CreatedAt.Before(p.Created) || projectMap.CreatedAt.Equal(p.Created) && projectMap.ID < newWikiViewRecord(p.ID).ID {
+		firstSlug, secondSlug = secondSlug, firstSlug
+	}
 	if msg := connectorTool(t, f, access, "view_list", map[string]string{"project": p.Namespace}, &list); msg != "" ||
-		len(list.Views) != 3 || list.Views[0].Slug != "wiki" || list.Views[1].Slug != "project-map" ||
+		len(list.Views) != 3 || list.Views[0].Slug != firstSlug || list.Views[1].Slug != secondSlug ||
 		list.Views[2].Slug != "delivery" || list.Views[2].Status != "completed" {
 		t.Fatalf("view_list: %s %+v", msg, list)
 	}

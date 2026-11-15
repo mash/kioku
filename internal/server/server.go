@@ -108,11 +108,11 @@ const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fatal := s.fatalError.Load(); fatal != nil {
-			status := 503
 			if r.URL.Path == "/healthz" {
-				status = 500
+				writeError(w, fatal)
+			} else {
+				writeError(w, fail(503, "storage recovery failed"))
 			}
-			writeError(w, fail(status, "storage recovery failed"))
 			return
 		}
 		if err := s.Prepare(); err != nil {

@@ -45,40 +45,53 @@ func (s *Server) RunWorker(ctx context.Context) error {
 		case <-s.wake:
 		case <-ticker.C:
 		}
-		for ctx.Err() == nil {
-			if err := s.advanceViewGenerations(ctx); err != nil {
-				s.reportFatal(s.databaseError(ctx, err))
-				slog.Error("view generation deferred", "error", err)
-				break
-			}
-			var job store.JobRow
-			err := s.Store.Read(ctx, func(q *store.Queries) error {
-				var err error
-				job, err = q.NextQueued(s.Config.AgentMaxSessions)
-				return err
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				break
-			}
-			if err != nil {
-				s.reportFatal(s.databaseError(ctx, err))
-				slog.Error("queue selection deferred", "error", err)
-				break
-			}
-			jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			err = s.startAgentJob(jobCtx, job)
-			cancel()
-			if ctx.Err() != nil {
-				return nil
-			}
-			if err != nil {
-				s.reportFatal(s.databaseError(ctx, err))
-				slog.Warn("agent start deferred", "job", job.ID, "error", err)
-				break
-			}
+		if err := s.runQueuedJobs(ctx); err != nil {
+			s.reportFatal(s.databaseError(ctx, err))
+			slog.Error("generation work deferred", "error", err)
 		}
 	}
 }
+
+// One wakeup drains eligible work, but never retries a failed job in the same
+// pass. Notifications received during that pass coalesce into its failure.
+func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			select {
+			case <-s.wake:
+			default:
+			}
+		}
+	}()
+	for ctx.Err() == nil {
+		if err = s.advanceViewGenerations(ctx); err != nil {
+			return err
+		}
+		var job store.JobRow
+		err = s.Store.Read(ctx, func(q *store.Queries) error {
+			var e error
+			job, e = q.NextQueued(s.Config.AgentMaxSessions)
+			return e
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		err = s.startAgentJob(jobCtx, job)
+		cancel()
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) runMaintenance(ctx context.Context) {
 	var lastReconcile, lastGC time.Time
 	ticker := time.NewTicker(2 * time.Second)

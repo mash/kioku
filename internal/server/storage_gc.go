@@ -193,6 +193,11 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 	}
 	defer unlock()
 	if err = o.db.Write(ctx, func(q *store.Queries) error {
+		for _, fn := range authorize {
+			if err := fn(q); err != nil {
+				return err
+			}
+		}
 		jobs, e := q.ProjectJobs(project)
 		if e != nil {
 			return e
@@ -221,5 +226,12 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 			return err
 		}
 	}
-	return o.db.Write(ctx, func(q *store.Queries) error { return q.DeleteProjectRows(project) })
+	return o.db.Write(ctx, func(q *store.Queries) error {
+		for _, fn := range authorize {
+			if err := fn(q); err != nil {
+				return err
+			}
+		}
+		return q.DeleteProjectRows(project)
+	})
 }

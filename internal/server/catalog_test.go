@@ -105,8 +105,9 @@ func TestInboxUnknownCommitResolvesWithoutRepeatingMutation(t *testing.T) {
 				if err := f.s.RunWorker(t.Context()); err == nil {
 					t.Fatal("worker continued after fatal reconnect")
 				}
-				if c := f.request("GET", "/healthz", "", nil, nil); c != 500 {
-					t.Fatal("fatal catalog kept serving", c)
+				var health map[string]string
+				if c := f.request("GET", "/healthz", "", nil, &health); c != 500 || health["error"] != "internal server error" {
+					t.Fatal("fatal catalog health contract", c, health)
 				}
 			}
 		})

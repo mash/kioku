@@ -27,10 +27,22 @@ func (e *UnknownCommit) Error() string { return "SQLite commit outcome unknown" 
 func (e *UnknownCommit) Unwrap() error { return e.Cause }
 
 func (d *Database) Read(ctx context.Context, fn func(*Queries) error) error {
-	return transact(ctx, d.reader, false, nil, fn)
+	return classifyDatabaseError(transact(ctx, d.reader, false, nil, fn))
 }
 func (d *Database) Write(ctx context.Context, fn func(*Queries) error) error {
-	return transact(ctx, d.writer, true, d.commit, fn)
+	return classifyDatabaseError(transact(ctx, d.writer, true, d.commit, fn))
+}
+
+func classifyDatabaseError(err error) error {
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		// SQLite extended codes retain the primary result in their low byte.
+		switch coded.Code() & 255 {
+		case 11, 26: // SQLITE_CORRUPT, SQLITE_NOTADB
+			return &FatalDatabaseError{Cause: err}
+		}
+	}
+	return err
 }
 func transact(ctx context.Context, db *sql.DB, write bool, commit func(*sql.Tx) error, fn func(*Queries) error) error {
 	tx, err := db.BeginTx(ctx, nil)

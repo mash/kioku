@@ -184,6 +184,9 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 		}
 		return err
 	}, func(q *store.Queries) error {
+		if err := s.checkMutation(q, r, uid, ""); err != nil {
+			return err
+		}
 		role, err := q.ProjectRole(pid, uid)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" {
 			return fail(404, "project not found")

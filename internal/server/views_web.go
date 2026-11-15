@@ -101,7 +101,9 @@ iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8
 <p><a href="/{{.Namespace}}">Wiki</a></p>
 <h1>{{.View.Title}}</h1>
 <p>{{.View.Status}}{{if .View.Error}} · {{.View.Error}}{{end}}</p>
-{{if .Document}}
+{{if .IsWiki}}
+  {{if .View.GeneratedAt}}<p><small>最終更新 {{.View.GeneratedAt.Format "2006-01-02 15:04 UTC"}}</small></p>{{end}}
+{{else if .Document}}
   <p><small>最終成功 {{.View.GeneratedAt.Format "2006-01-02 15:04 UTC"}} · {{if .WikiUpdated}}生成後に Wiki が更新されました{{else}}生成後の Wiki 更新なし{{end}}</small></p>
   <iframe class="view-content" title="{{.View.Title}}" sandbox srcdoc="{{.Document}}"></iframe>
   {{if .Citations}}<h2>Wiki の出典</h2><ul>{{range .Citations}}<li><a href="/{{$.Namespace}}?file={{.Path}}">{{.Label}}</a></li>{{end}}</ul>{{end}}
@@ -117,10 +119,12 @@ iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8
     </fieldset>
     <p role="alert"></p>
   </form>
+  {{if not .IsWiki}}
   <form method="post" action="{{.API}}" data-view-action="DELETE" data-success="/{{.Namespace}}">
     <button>View を削除</button>
     <p role="alert"></p>
   </form>
+  {{end}}
 </details>
 ` + viewSettingsScriptTag + `
 {{end}}
@@ -153,36 +157,46 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	if current.ID != p.ID {
 		return fail(404, "project not found")
 	}
-	v, err := s.viewBySlugLocked(ctx, p.ID, r.PathValue("view"))
+	isWiki := r.PathValue("view") == wikiViewSlug
+	var v viewDefinition
+	if isWiki {
+		var record wikiViewRecord
+		record, err = s.readWikiViewLocked(ctx, p.ID)
+		v = s.wikiViewDefinition(record, current)
+	} else {
+		v, err = s.viewBySlugLocked(ctx, p.ID, r.PathValue("view"))
+	}
 	if err != nil {
 		return err
 	}
 	data := struct {
-		Namespace, API, Document      string
-		View                          viewPageItem
-		CanEdit, WikiUpdated, Pending bool
-		Citations                     []viewCitation
+		Namespace, API, Document              string
+		View                                  viewPageItem
+		CanEdit, WikiUpdated, Pending, IsWiki bool
+		Citations                             []viewCitation
 	}{
 		Namespace: p.Namespace, API: "/api/projects/" + p.Namespace + "/views/" + v.Slug,
 		View: makeViewPageItem(v), CanEdit: current.Members[uid] == "owner",
-		Pending: v.Status == "pending",
+		Pending: v.Status == "pending", IsWiki: isWiki,
 	}
-	body, err := s.readViewBundleLocked(ctx, p.ID, v)
-	if err != nil && !isNotFoundView(err) {
-		return err
-	}
-	if err == nil {
-		bundle, err := readViewBundle(body)
-		if err != nil {
+	if !isWiki {
+		body, err := s.readViewBundleLocked(ctx, p.ID, v)
+		if err != nil && !isNotFoundView(err) {
 			return err
 		}
-		data.Document = bundle.Document()
-		if updated := viewHasNewWiki(v, current); updated != nil {
-			data.WikiUpdated = *updated
-		}
-		for _, citation := range bundle.Citations() {
-			if _, exists := rev.Files[citation.Path]; exists {
-				data.Citations = append(data.Citations, citation)
+		if err == nil {
+			bundle, err := readViewBundle(body)
+			if err != nil {
+				return err
+			}
+			data.Document = bundle.Document()
+			if updated := viewHasNewWiki(v, current); updated != nil {
+				data.WikiUpdated = *updated
+			}
+			for _, citation := range bundle.Citations() {
+				if _, exists := rev.Files[citation.Path]; exists {
+					data.Citations = append(data.Citations, citation)
+				}
 			}
 		}
 	}

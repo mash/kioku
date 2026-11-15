@@ -281,6 +281,9 @@ func (s *Server) mcpViewRead(ctx context.Context, key, namespace, slug, name str
 		return nil, err
 	}
 	defer unlock()
+	if slug == wikiViewSlug {
+		return nil, fail(400, "the wiki view has no bundle; read it with wiki_read or wiki_search")
+	}
 	if !slices.Contains(viewTextPaths, name) {
 		return nil, fail(400, "invalid View path")
 	}

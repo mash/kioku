@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -350,6 +351,54 @@ func TestSourcePutSetsDeadline(t *testing.T) {
 		deadline := st.Projects[p.ID].NextGenerateAt
 		if deadline.Before(before.Add(10*time.Second)) || deadline.After(time.Now().UTC().Add(10*time.Second)) || len(st.Jobs) != 0 {
 			t.Fatal(deadline, st.Jobs)
+		}
+	}
+}
+
+func TestConnectorWikiView(t *testing.T) {
+	f, owner, p := orgProject(t)
+	access := connectorAccessToken(t, f, owner, p.ID)
+	if code := f.request("PATCH", "/api/projects/"+p.Namespace+"/views/wiki", owner, map[string]string{"prompt": "決定事項は decisions ページに日付の新しい順で並べる。"}, nil); code != 200 {
+		t.Fatal(code)
+	}
+	updated := time.Date(2026, 11, 15, 7, 30, 0, 0, time.UTC)
+	for _, state := range []string{"unpublished", "published", "incomplete"} {
+		t.Run(state, func(t *testing.T) {
+			if err := f.stateStore.Update(func(st *model.State) error {
+				project := st.Projects[p.ID]
+				project.WikiUpdatedAt = updated
+				if state == "unpublished" {
+					project.WikiUpdatedAt = time.Time{}
+				}
+				project.WikiIncomplete = state == "incomplete"
+				st.Projects[p.ID] = project
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var list struct {
+				Views []map[string]any `json:"views"`
+			}
+			if msg := connectorTool(t, f, access, "view_list", map[string]string{"project": p.Namespace}, &list); msg != "" {
+				t.Fatal(msg)
+			}
+			want := []map[string]any{
+				{"view_id": newWikiViewRecord(p.ID).ID, "slug": "wiki", "title": "Wiki", "generated_at": nil, "status": "pending"},
+				{"view_id": "vw_" + auth.Hash(p.ID + "/project-map")[:20], "slug": "project-map", "title": "Project map", "generated_at": nil, "status": "pending"},
+			}
+			if state == "published" {
+				want[0]["status"] = "completed"
+				want[0]["generated_at"] = updated.Format(time.RFC3339)
+			}
+			if !reflect.DeepEqual(list.Views, want) {
+				t.Fatalf("views = %#v, want %#v", list.Views, want)
+			}
+		})
+	}
+	for _, path := range []string{"summary.md", "invalid.md"} {
+		args := map[string]string{"project": p.Namespace, "view": "wiki", "path": path}
+		if msg := connectorTool(t, f, access, "view_read", args, nil); msg != "the wiki view has no bundle; read it with wiki_read or wiki_search" {
+			t.Fatalf("wiki read %s: %q", path, msg)
 		}
 	}
 }

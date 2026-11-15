@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/mash/kioku/internal/buildinfo"
@@ -30,15 +31,25 @@ func remainingViewBudget(budget int64, cost *int64) int64 {
 	return max(0, budget-*cost)
 }
 
-func (s *Server) advanceViewGenerations(ctx context.Context) error {
+func (s *Server) advanceViewGenerations(ctx context.Context, deferred map[string]bool) error {
 	var jobs []store.JobRow
 	if err := s.Store.Read(ctx, func(q *store.Queries) error { var err error; jobs, err = q.GenerationJobs(); return err }); err != nil {
 		return err
 	}
+	var errs []error
 	for _, j := range jobs {
+		if deferred[j.ID] {
+			continue
+		}
 		if err := s.storage.advanceViews(ctx, j.ID); err != nil {
-			return err
+			errs = append(errs, err)
+			deferred[j.ID] = true
+			var fatal *store.FatalDatabaseError
+			var unknown *store.UnknownCommit
+			if errors.As(err, &fatal) || errors.As(err, &unknown) || ctx.Err() != nil {
+				break
+			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

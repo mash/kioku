@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -17,7 +18,7 @@ func (q *Queries) GenerationJobs() ([]JobRow, error) {
 func (q *Queries) JobsBySession(id string) ([]JobRow, error) {
 	return q.listJob("WHERE session_id=? ORDER BY id", id)
 }
-func (q *Queries) NextQueued(maxSessions int) (JobRow, error) {
+func (q *Queries) NextQueued(maxSessions int, deferred ...string) (JobRow, error) {
 	var active int
 	if err := q.row("SELECT count(*) FROM jobs WHERE status='running' AND generation_snapshot IS NULL").Scan(&active); err != nil {
 		return JobRow{}, err
@@ -25,7 +26,17 @@ func (q *Queries) NextQueued(maxSessions int) (JobRow, error) {
 	if active >= maxSessions {
 		return JobRow{}, sql.ErrNoRows
 	}
-	rows, err := q.listJob(`INDEXED BY jobs_queue WHERE status='queued' AND (parent_id IS NOT NULL OR NOT EXISTS(SELECT 1 FROM jobs AS active WHERE active.project_id=jobs.project_id AND active.status='running' AND active.parent_id IS NULL)) ORDER BY created,id LIMIT 1`)
+	exclusion := ""
+	var args []any
+	if len(deferred) != 0 {
+		ids, err := json.Marshal(deferred)
+		if err != nil {
+			return JobRow{}, err
+		}
+		exclusion = " AND id NOT IN (SELECT value FROM json_each(?))"
+		args = append(args, string(ids))
+	}
+	rows, err := q.listJob(`INDEXED BY jobs_queue WHERE status='queued' AND (parent_id IS NOT NULL OR NOT EXISTS(SELECT 1 FROM jobs AS active WHERE active.project_id=jobs.project_id AND active.status='running' AND active.parent_id IS NULL))`+exclusion+` ORDER BY created,id LIMIT 1`, args...)
 	if err != nil {
 		return JobRow{}, err
 	}

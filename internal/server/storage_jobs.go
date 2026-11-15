@@ -19,7 +19,7 @@ type storageInput struct {
 	View    *store.ViewRow
 }
 
-func (o *storageOperations) prepareInput(ctx context.Context, id string, file bool, provider string, build func(context.Context, storageInput) ([]byte, error)) (store.JobRow, error) {
+func (o *storageOperations) prepareInput(ctx context.Context, id string, file bool, provider string, build func(context.Context, storageInput) ([]byte, error), deferred ...string) (store.JobRow, error) {
 	var input storageInput
 	if err := o.db.Read(ctx, func(q *store.Queries) error { var err error; input.Job, err = q.Job(id); return err }); err != nil {
 		return store.JobRow{}, err
@@ -40,7 +40,7 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		if err = sqlJobAuthorization(q, j, o.now().UnixMilli()); err != nil {
 			return err
 		}
-		next, err := q.NextQueued(o.config.AgentMaxSessions)
+		next, err := q.NextQueued(o.config.AgentMaxSessions, deferred...)
 		if err != nil {
 			return err
 		}

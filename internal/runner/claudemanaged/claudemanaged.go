@@ -107,6 +107,9 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	if err != nil {
 		return err
 	}
+	if err = confirmCleanupStopped(ctx, client, a, ids, false); err != nil {
+		return err
+	}
 	for _, id := range ids {
 		err := client.ArchiveSession(ctx, id)
 		if !isNotFound(err) {

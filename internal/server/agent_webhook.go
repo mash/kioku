@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,12 +32,16 @@ func (s *Server) anthropicWebhook(w http.ResponseWriter, r *http.Request) {
 			for _, job := range jobs {
 				if job.Data.Run != nil {
 					if e := s.reconcileAgentJob(r.Context(), job); e != nil {
-						err = e
+						err = errors.Join(err, s.databaseError(r.Context(), e))
+						if s.fatalError.Load() != nil {
+							break
+						}
 					}
 				}
 			}
 		}
 		if err != nil {
+			err = s.databaseError(r.Context(), err)
 			slog.Error("agent webhook reconciliation deferred", "session", id, "error", err)
 		}
 	}

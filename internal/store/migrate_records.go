@@ -25,6 +25,9 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if v.ID != r.id {
 				return errors.New("organization identity mismatch")
 			}
+			if v.Members == nil {
+				return errors.New("missing legacy organization membership")
+			}
 			p.organizations = append(p.organizations, OrganizationRow{ID: v.ID, Slug: v.Slug, Data: OrganizationData{Name: v.Name, Created: migrationCreated(v.Created)}})
 			for user, role := range v.Members {
 				p.organizationMembers = append(p.organizationMembers, [3]string{v.ID, user, role})
@@ -48,6 +51,9 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			}
 			if v.ID != r.id || !validID(v.ID) {
 				return errors.New("project identity mismatch")
+			}
+			if v.Members == nil {
+				return errors.New("missing legacy project membership")
 			}
 			if v.Deleting {
 				return errors.New("finish deleting projects with v2 before migration")

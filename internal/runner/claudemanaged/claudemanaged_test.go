@@ -171,6 +171,7 @@ func TestClientResolvedOnEveryOperation(t *testing.T) {
 func TestCleanupJoinsFailures(t *testing.T) {
 	r, f, spec := fixture(t)
 	ref := start(t, r, spec)
+	f.SetStatus(ref.ID, "idle", "end_turn", 0)
 	f.SetError("POST", "/v1/sessions/"+ref.ID+"/archive", 503)
 	f.SetError("POST", "/v1/vaults/"+ref.Resources["vault_id"]+"/archive", 503)
 	err := r.Cleanup(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
@@ -203,6 +204,7 @@ func TestVaultContainsOnlyJobTokenWithHeaderDestination(t *testing.T) {
 	if count != 1 {
 		t.Fatal(count)
 	}
+	f.SetStatus(ref.ID, "idle", "end_turn", 0)
 	if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec.Key, Run: ref}); err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 
@@ -61,6 +62,20 @@ func discoverSessions(ctx context.Context, client Client, a runner.Attempt) ([]s
 	sort.Strings(out)
 	return out, nil
 }
+
+// Cleanup discovers again after usage was recorded. Any newly visible session
+// must stop before its resources disappear and reconciliation loses its ID.
+func confirmCleanupStopped(ctx context.Context, client Client, a runner.Attempt, ids []string, file bool) error {
+	status, err := inspectSessions(ctx, client, a, ids, file)
+	if err != nil {
+		return err
+	}
+	if status.State != runner.StateStopped && status.State != runner.StateNone {
+		return fmt.Errorf("%w: Claude cleanup is waiting for all sessions to stop", runner.ErrTemporary)
+	}
+	return nil
+}
+
 func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids []string, file bool) (runner.Status, error) {
 	out := runner.Status{Run: a.Run, State: runner.StateNone}
 	if len(ids) == 0 {

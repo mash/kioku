@@ -2,9 +2,12 @@ package claudemanaged
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/mash/kioku/internal/runner"
@@ -79,5 +82,46 @@ func TestClaudeDiscoveryRejectsEmptySessionID(t *testing.T) {
 	a := NewAPI(srv.URL, "key", srv.Client())
 	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}); err == nil {
 		t.Fatal("empty session ID silently omitted", ids)
+	}
+}
+
+func TestCleanupWaitsForSessionsDiscoveredAfterInspection(t *testing.T) {
+	for _, file := range []bool{false, true} {
+		for _, state := range []string{"running", "unknown"} {
+			t.Run(fmt.Sprintf("file=%t/%s", file, state), func(t *testing.T) {
+				r, f, spec := fixture(t)
+				ref := start(t, r, spec)
+				ref.UsesProviderFiles = file
+				var provider runner.Runner = r
+				if file {
+					provider = r.WithFiles(NewAPI(f.URL(), "key", nil), "")
+				}
+				a := runner.Attempt{Key: spec.Key, Run: ref}
+				f.SetStatus(ref.ID, "idle", "end_turn", 40)
+				status, err := provider.Inspect(t.Context(), a)
+				if err != nil || status.State != runner.StateStopped {
+					t.Fatal(status, err)
+				}
+				late := f.Session(ref.ID)
+				late.ID, late.Status = "late", state
+				f.SetSession(late)
+				before := len(f.Requests())
+				if err := provider.Cleanup(t.Context(), a); !errors.Is(err, runner.ErrTemporary) {
+					t.Fatal("cleanup accepted an unconfirmed stop", err)
+				}
+				for _, request := range f.Requests()[before:] {
+					if request.Method == "DELETE" || strings.HasSuffix(request.Path, "/archive") {
+						t.Fatal("cleanup destroyed resources before all sessions stopped", request)
+					}
+				}
+				if err := provider.Stop(t.Context(), a); err != nil {
+					t.Fatal(err)
+				}
+				f.SetStatus(late.ID, "idle", "end_turn", 60)
+				if err := provider.Cleanup(t.Context(), a); err != nil {
+					t.Fatal("cleanup did not resume after stop", err)
+				}
+			})
+		}
 	}
 }

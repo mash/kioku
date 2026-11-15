@@ -55,7 +55,9 @@ func (s *Server) RunWorker(ctx context.Context) error {
 // One wakeup drains eligible work, but never retries a failed job in the same
 // pass. Notifications received during that pass coalesce into its failure.
 func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
+	var errs []error
 	defer func() {
+		err = errors.Join(append(errs, err)...)
 		if err != nil {
 			select {
 			case <-s.wake:
@@ -63,14 +65,21 @@ func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
 			}
 		}
 	}()
+	deferredViews := map[string]bool{}
+	var deferredStarts []string
 	for ctx.Err() == nil {
-		if err = s.advanceViewGenerations(ctx); err != nil {
-			return err
+		if err = s.advanceViewGenerations(ctx, deferredViews); err != nil {
+			var fatal *store.FatalDatabaseError
+			var unknown *store.UnknownCommit
+			if errors.As(err, &fatal) || errors.As(err, &unknown) {
+				return err
+			}
+			errs = append(errs, err)
 		}
 		var job store.JobRow
 		err = s.Store.Read(ctx, func(q *store.Queries) error {
 			var e error
-			job, e = q.NextQueued(s.Config.AgentMaxSessions)
+			job, e = q.NextQueued(s.Config.AgentMaxSessions, deferredStarts...)
 			return e
 		})
 		if errors.Is(err, sql.ErrNoRows) {
@@ -80,13 +89,19 @@ func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
 			return err
 		}
 		jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err = s.startAgentJob(jobCtx, job)
+		err = s.startAgentJob(jobCtx, job, deferredStarts...)
 		cancel()
 		if ctx.Err() != nil {
 			return nil
 		}
 		if err != nil {
-			return err
+			var fatal *store.FatalDatabaseError
+			var unknown *store.UnknownCommit
+			if errors.As(err, &fatal) || errors.As(err, &unknown) {
+				return err
+			}
+			errs = append(errs, err)
+			deferredStarts = append(deferredStarts, job.ID)
 		}
 	}
 	return nil

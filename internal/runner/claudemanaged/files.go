@@ -107,6 +107,9 @@ func (r *FileRunner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	if err != nil {
 		return err
 	}
+	if err = confirmCleanupStopped(ctx, r.files, a, ids, true); err != nil {
+		return err
+	}
 	for _, id := range ids {
 		if err := r.files.DeleteSession(ctx, id); err != nil {
 			return fmt.Errorf("delete Claude session: %w", err)

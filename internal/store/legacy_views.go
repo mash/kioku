@@ -120,6 +120,9 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 	if e := decodeLegacyJSON(raw, &index); e != nil {
 		return e
 	}
+	if index.Views == nil {
+		return errors.New("missing legacy View index entries")
+	}
 	for _, slug := range slices.Sorted(maps.Keys(index.Views)) {
 		entry := index.Views[slug]
 		if !validID(entry.ID) || !validID(slug) {

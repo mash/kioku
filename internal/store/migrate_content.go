@@ -35,6 +35,9 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 	if content.Schema != 2 || content.ProjectID != old.ID {
 		return errors.New("invalid legacy project content identity or schema")
 	}
+	if content.Inbox == nil || content.Jobs == nil || content.Audit == nil {
+		return errors.New("missing legacy project content collection")
+	}
 	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), WikiIncomplete: content.Incomplete, NextGenerateAt: migrationTime(content.NextGenerateAt), ViewEpoch: migrationString(content.ViewEpoch), Data: ProjectData{Name: old.Name, StorageBucket: migrationString(old.StorageBucket), WikiCompleteRevision: migrationString(content.WikiCompleteRevision), WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
 	if content.NextGenerateAt.After(time.Time{}) && !content.NextGenerateAt.IsZero() {
 		return errors.New("complete scheduled generation before migration")
@@ -58,6 +61,9 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		p.inbox = append(p.inbox, InboxRow{ID: id, ProjectID: old.ID, SourceURL: item.SourceURL, Remove: item.Remove, Created: migrationCreated(item.Created), RunID: migrationString(item.RunID), Data: InboxData{Submitter: item.Submitter}})
 	}
 	if w := content.Wiki; w != nil {
+		if w.Files == nil {
+			return errors.New("missing legacy Wiki files")
+		}
 		if w.ProjectID != old.ID || !validID(w.ID) {
 			return errors.New("legacy Wiki identity mismatch")
 		}

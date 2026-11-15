@@ -116,6 +116,9 @@ func (o *storageOperations) maintenance(ctx context.Context, project string, com
 		if err := q.PruneInvites(project, now); err != nil {
 			return err
 		}
+		if err := q.PruneSessions(now); err != nil {
+			return err
+		}
 		for _, fn := range commit {
 			if err := fn(q); err != nil {
 				return err

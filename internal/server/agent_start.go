@@ -21,7 +21,7 @@ func (s *Server) loadJob(ctx context.Context, id string) (store.JobRow, error) {
 	err := s.Store.Read(ctx, func(q *store.Queries) error { var err error; j, err = q.Job(id); return err })
 	return j, err
 }
-func (s *Server) startAgentJob(ctx context.Context, job store.JobRow) error {
+func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred ...string) error {
 	unlock, err := s.lockProject(ctx, "generate:"+job.ProjectID)
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow) error {
 		}
 		archive = buf.Bytes()
 		return archive, nil
-	})
+	}, deferred...)
 	if err != nil {
 		current, readErr := s.loadJob(ctx, job.ID)
 		if readErr == nil && current.Status == "failed" && current.Data.Run == nil {

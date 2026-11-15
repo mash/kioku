@@ -106,7 +106,11 @@ func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := storedJob(t, f, j.ID)
-			if got.Status != tc.want || inspections != 1 || stops != tc.stops || cleanups != tc.cleanups {
+			status := got.Status
+			if got.WikiStatus == "completed" {
+				status = got.WikiStatus
+			}
+			if status != tc.want || inspections != 1 || stops != tc.stops || cleanups != tc.cleanups {
 				t.Fatalf("job=%+v calls=%d/%d/%d err=%v", got, inspections, stops, cleanups, err)
 			}
 			if tc.lost && (got.Run.Ref.ID != j.Run.Ref.ID || got.Run.Phase != model.PhaseAgentRunning) {

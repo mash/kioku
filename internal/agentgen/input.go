@@ -28,6 +28,7 @@ type InputSpec struct {
 	JobID, Namespace, InputURL, OutputURL string
 	Inbox                                 []InboxText
 	Wiki                                  map[string]string
+	ViewPrompt                            *string
 }
 
 func AgentPage(name string) bool { return wiki.ValidFile(name) && strings.HasPrefix(name, "wiki/") }
@@ -37,6 +38,9 @@ var inboxID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 func BuildInput(spec InputSpec, w io.Writer) error { return buildInput(spec, w, MaxInputBytes) }
 func buildInput(spec InputSpec, w io.Writer, limit int64) error {
 	files := map[string]string{"JOB.md": JobMetadata(spec)}
+	if spec.ViewPrompt != nil {
+		files["VIEW.md"] = *spec.ViewPrompt
+	}
 	for _, in := range spec.Inbox {
 		if !inboxID.MatchString(in.Item.ID) {
 			return errors.New("invalid inbox ID")

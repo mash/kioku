@@ -178,6 +178,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/orgs", s.wrap(s.createOrganization, true))
 	s.mux.HandleFunc("GET /api/orgs", s.wrap(s.organizations, true))
 	s.mux.HandleFunc("GET /{org}/{slug}", s.web(s.namespacePage, true))
+	s.mux.HandleFunc("GET /{org}/{slug}/views/{view}", s.web(s.viewPage, true))
 
 	s.mux.HandleFunc("GET /metrics", s.metrics)
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/usage", s.wrap(s.usage, true))
@@ -206,8 +207,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}/members/{member}", s.wrap(s.removeMember, true))
 	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/put", s.wrap(s.put, true))
 	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/generate", s.wrap(s.generate, true))
+	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/views", s.wrap(s.createView, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/views/{view}", s.wrap(s.getView, true))
+	s.mux.HandleFunc("PATCH /api/projects/{org}/{slug}/views/{view}", s.wrap(s.updateView, true))
+	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}/views/{view}", s.wrap(s.deleteView, true))
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/jobs/{job}", s.wrap(s.job, true))
-	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/jobs/{job}/retry", s.wrap(s.retry, true))
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/snapshot", s.wrap(s.snapshot, true))
 	s.mux.HandleFunc("GET /", s.web(s.home, false))
 	s.mux.HandleFunc("GET /invite/{invite}", s.web(s.invitePage, false))
@@ -462,6 +466,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 		if err := manager.EnsureProject(r.Context(), p.ID); err != nil {
 			return err
 		}
+	}
+	if err := s.seedViewsLocked(r.Context(), p.ID); err != nil {
+		return err
 	}
 	if err := s.Store.Update(func(st *model.State) error {
 		for _, existing := range st.Projects {

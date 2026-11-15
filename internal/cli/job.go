@@ -11,7 +11,7 @@ func (a *App) job(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("usage: kioku job status|wait JOB_ID | kioku job retry [--wait] JOB_ID")
+		return errors.New("usage: kioku job status|wait JOB_ID")
 	}
 	f := flag.NewFlagSet("job "+args[0], flag.ContinueOnError)
 	f.SetOutput(a.Err)
@@ -20,15 +20,13 @@ func (a *App) job(args []string) error {
 		return err
 	}
 	if f.NArg() != 1 || !safeID(f.Arg(0)) {
-		return errors.New("usage: kioku job status|wait JOB_ID | kioku job retry [--wait] JOB_ID")
+		return errors.New("usage: kioku job status|wait JOB_ID")
 	}
 	switch args[0] {
 	case "status":
 		return a.jobStatus(p+"/jobs/"+f.Arg(0), *wait)
 	case "wait":
 		return a.jobWait(p + "/jobs/" + f.Arg(0))
-	case "retry":
-		return a.jobRetry(p+"/jobs/"+f.Arg(0), *wait)
 	default:
 		return errors.New("unknown job command")
 	}

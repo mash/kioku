@@ -70,10 +70,10 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 }
 
 func (s *Server) queueGeneration(st *model.State, p model.Project, uid, agentID string, automatic bool, now time.Time) (model.Job, error) {
-	job := model.Job{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, UserID: uid, AgentID: agentID, Status: "queued", Created: now, Automatic: automatic}
+	job := model.Job{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, UserID: uid, AgentID: agentID, Status: "queued", Created: now, Automatic: automatic, WikiStatus: "pending"}
 	pending := 0
 	for _, j := range st.Jobs {
-		if j.ProjectID != p.ID || (j.Status != "queued" && j.Status != "running") {
+		if j.ProjectID != p.ID || j.ViewTask != nil || (j.Status != "queued" && j.Status != "running") {
 			continue
 		}
 		pending++

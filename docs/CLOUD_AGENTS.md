@@ -14,13 +14,15 @@ The consent page asks you to trust the destination to read and search the wikis,
 
 The connector sees only the projects that you chose at consent. Every tool applies the same check: the project must be in the grant and you must still be a member. For a project outside the grant, the tools return the same `project not found` text as for a project where you are not a member. To give the connector another project, reconnect and select it again.
 
-The MCP endpoint exposes five tools:
+The MCP endpoint exposes seven tools:
 
 - `cli_login_code`: issue a one-time code for CLI login to a known `organization/project` namespace.
 - `projects_list`: list the projects that you chose at consent and where you are still a member.
-- `wiki_read`: read a current wiki or map file; follow `next_offset` to read long files.
-- `wiki_search`: find a case-insensitive substring in the current wiki and maps.
+- `wiki_read`: read a current Wiki page and follow `next_offset` to read long files.
+- `wiki_search`: find a case-insensitive substring in the current Wiki pages.
 - `source_put`: accept one UTF-8 text file or one removal and return `{}` after acceptance.
+- `view_list`: list a selected project's Views and their generation status.
+- `view_read`: read `index.html`, `summary.md`, or `data.json` from the last successful View result. Follow `next_offset` to read long files.
 
 `source_put` accepts exactly one of these shapes (with the selected `project`):
 
@@ -38,7 +40,7 @@ user ──> claude.ai chat ──(skill kioku loads from the plugin)
               ▼
          kiokud POST /mcp
               ├─ projects_list            → granted projects where the user is a member
-              ├─ wiki_read / wiki_search  → current wiki/ and maps/ files (read-only)
+              ├─ wiki_read / wiki_search  → current Wiki pages (read-only)
               ├─ source_put               → stores one inbox item (remove true for removals)
               └─ cli_login_code           → one-time code for kioku agent login
 ```
@@ -73,8 +75,8 @@ Manage issued agent credentials with `kioku agent list` and `kioku agent revoke 
 
 | Credential | Allowed |
 | --- | --- |
-| Read | Its own identity metadata; only its selected project in project listings; that project's published wiki/maps, inbox metadata, jobs, and technical usage; logout of itself |
-| Write | Everything above, plus file/removal puts, explicit generation and retrying jobs in the same project |
+| Read | Its own identity metadata, its selected project, the project's Wiki pages, View settings, inbox metadata, jobs, and technical usage, and its own logout |
+| Write | Everything above, plus file/removal puts and explicit generation in the same project |
 
 Both roles are denied account administration, organization enumeration/creation, project creation/deletion, membership changes, ownership changes and issuing credentials. Write agents submit source text. The user's Claude retrieves GitHub, Google Docs, public Web and other sources before submission. Kioku holds no source-access credentials. See the sharing policy in [account administration](ACCOUNT_ADMIN.md#project-source-authorization-policy).
 
@@ -84,7 +86,7 @@ Expiry, revocation, issuer removal from the project, account deletion and accoun
 
 Request authentication retains the original restricted principal for the entire request. A concurrent revocation never turns an agent request into the issuer's unrestricted account identity.
 
-The server has one mutable wiki/maps tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. Pull and MCP expose only published wiki/maps. Before generation, inbox metadata is available through the CLI status or each entry of GET /api/projects (inbox_count and inbox, containing source_url and remove true only for removals). Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
+The server has one mutable Wiki tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. Pull and the MCP Wiki tools expose published Wiki pages. Before generation, inbox metadata is available through the CLI status or each entry of GET /api/projects (inbox_count and inbox, containing source_url and remove true only for removals). Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
 
 ## Internal runner credential
 
@@ -116,5 +118,5 @@ The kioku skill in [`plugin/skills/kioku`](../plugin/skills/kioku/SKILL.md) foll
 
 1. Choose the project cwd (or `-C`) and set `KIOKU_SERVER`. Read the expected namespace from the repository or skill. If `.kioku/config` already exists, require its server and namespace to match.
 2. Run `kioku whoami` in that cwd, and choose a credential in this order. When a human credential works, use it. When no human credential exists and an agent credential for the selected project works, use the agent credential. When no credential works in a Claude Code cloud session, use connector login; the cloud session sets `CLAUDE_CODE_REMOTE_SESSION_ID`. When no credential works on a local machine, ask the human to run the login with `!` and wait. Show the exact command with absolute paths expanded, such as `! /abs/path/to/kioku -C /abs/path/to/project login`. Without the plugin, use `! kioku login`. Claude never runs `kioku login`, because login needs a browser. Where `!` is unavailable, as in Claude Desktop and Cowork, use connector login. If the human asks for connector login while a human credential exists, explain that connector login needs `kioku logout`, which ends the human session; run `logout` only after the human agrees. If `agent login` fails with `a human login exists; run kioku logout first to use connector login` and `kioku whoami` fails with an authentication error, run `kioku logout` once and start this order again. For connector login, call `cli_login_code` for the expected namespace, then run `kioku agent login CODE` immediately. Request `write` only for uploads or generation.
-3. Run ordinary `kioku pull`, then grep the local `wiki/` and `maps/`. An expired or consumed code requires a new tool call; an expired agent requires a new code exchange.
+3. Run ordinary `kioku pull`, then grep the local `wiki/`. An expired or consumed code requires a new tool call; an expired agent requires a new code exchange.
 4. When the CLI cannot run or reach `https://kioku.magicians.ee`, use remote mode through the kioku MCP server. Read with `wiki_read` and `wiki_search`; save sources with `source_put`. Use the namespace from the conversation or user message. Otherwise, call `projects_list`; ask the user when more than one project could match. Read `wiki/index.md` first. If the chosen project uses another server, report the local error and stop. Authentication and membership errors do not trigger remote mode. Keep the chosen mode for the conversation.

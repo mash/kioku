@@ -103,7 +103,7 @@ func TestWikiBrowserAccess(t *testing.T) {
 		token string
 		code  int
 	}{{"", 401}, {outsider, 404}} {
-		out := browserPage(t, f, "/api/projects/"+p.ID+"/snapshot", tc.token)
+		out := browserPage(t, f, "/api/projects/"+p.ID+"/snapshot?manifest=1", tc.token)
 		if out.Code != tc.code || out.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 			t.Fatal("API changed", out.Code, out.Body)
 		}

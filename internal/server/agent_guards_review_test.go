@@ -35,7 +35,7 @@ func TestManagedOldFailureCannotStopNewAttempt(t *testing.T) {
 	old := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(old.Run.Ref.ID, "idle", "retries_exhausted", 100)
 	reconcileManaged(t, f, old)
-	next := retryManagedJob(t, f, token, old)
+	next := startManaged(t, f, token, p.ID, false)
 	if err := f.s.failAgentJobLocked(context.Background(), old, "late failure", nil); err != nil {
 		t.Fatal(err)
 	}

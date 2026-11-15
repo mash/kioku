@@ -13,7 +13,7 @@ func TestNamespaceStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"", "wiki", "maps", ".kioku"} {
+	for _, name := range []string{"", "wiki", ".kioku"} {
 		info, err := os.Lstat(filepath.Join(a.Dir, name))
 		if err != nil || !info.IsDir() {
 			t.Fatal("expected real directory", name, err)
@@ -21,6 +21,9 @@ func TestNamespaceStorage(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(a.Dir, "inbox")); !os.IsNotExist(err) {
 		t.Fatal("created local inbox", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir, "maps")); !os.IsNotExist(err) {
+		t.Fatal("created obsolete maps directory", err)
 	}
 }
 

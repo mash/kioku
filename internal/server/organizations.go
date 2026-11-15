@@ -219,7 +219,7 @@ func (s *Server) Prepare() error {
 		}
 		s.prepareErr = s.Store.Update(func(st *model.State) error {
 			for id, job := range st.Jobs {
-				if job.Status == "running" && job.Run == nil {
+				if job.Status == "running" && job.Run == nil && job.ViewGeneration == nil {
 					job.Status = "queued"
 					st.Jobs[id] = job
 				}

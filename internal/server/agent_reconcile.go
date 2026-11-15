@@ -15,14 +15,13 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
-	"github.com/mash/kioku/internal/wiki"
 )
 
 func (s *Server) reconcileAgentJobs(ctx context.Context) error {
 	var jobs []model.Job
 	if err := s.Store.View(func(st model.State) error {
 		for _, j := range st.Jobs {
-			if j.Run != nil && (j.Status == "running" || ((j.Status == "completed" || j.Status == "failed") && !j.Run.CleanupComplete)) {
+			if j.Run != nil && (j.Status == "running" && j.ViewGeneration == nil || agentRunFinished(j) && !j.Run.CleanupComplete) {
 				jobs = append(jobs, j)
 			}
 		}
@@ -54,18 +53,21 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 	if current.Run == nil || !sameManagedRun(current, job) {
 		return nil
 	}
-	if current.Status != "running" && ((current.Status != "completed" && current.Status != "failed") || current.Run.CleanupComplete) {
+	if agentRunFinished(current) && current.Run.CleanupComplete || current.Status != "running" && !agentRunFinished(current) {
 		return nil
 	}
 	job = current
 	r, err := s.runners.New(job)
 	if err != nil {
-		if job.Status == "running" && time.Now().After(job.Run.Deadline) {
+		if !agentRunFinished(job) && time.Now().After(job.Run.Deadline) {
 			return s.Store.Update(func(st *model.State) error {
 				j := st.Jobs[job.ID]
 				if j.Status == "running" && sameManagedRun(j, job) {
 					revokeJobToken(st, j.ID)
 					j.Status, j.Error = "failed", "managed agents unavailable; job timed out"
+					if j.WikiStatus != "" {
+						j.WikiStatus = "failed"
+					}
 					releaseInbox(st, j)
 					j.Run.CostCents = nil
 					st.Jobs[j.ID] = j
@@ -99,7 +101,7 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 		}
 		slog.Info("agent run located by key", "job", job.ID)
 	}
-	if job.Status == "completed" || job.Status == "failed" {
+	if agentRunFinished(job) {
 		return s.cleanupAgentJob(ctx, job, &status)
 	}
 	if job.Run.AbortReason != "" {
@@ -108,8 +110,12 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 	switch status.State {
 	case runner.StateStopped:
 		files := job.Run.Ref.UsesProviderFiles
-		if files && status.Reason != "" {
-			return s.failAgentJobLocked(ctx, job, status.Reason, &status)
+		if (files || (job.ViewTask != nil && status.Failed && job.Run.OutputKey != "")) && status.Reason != "" {
+			reason := status.Reason
+			if job.ViewTask != nil {
+				reason = "View の生成処理に失敗しました"
+			}
+			return s.failAgentJobLocked(ctx, job, reason, &status)
 		}
 		if job.Run.Phase == model.PhaseOutputReceived || job.Run.Phase == model.PhaseFinalizing {
 			return s.finalizeAgentJobLocked(ctx, job, status)
@@ -118,6 +124,9 @@ func (s *Server) reconcileAgentJob(ctx context.Context, job model.Job) error {
 			return s.collectAgentOutput(ctx, r, job, status)
 		}
 		reason := status.Reason
+		if job.ViewTask != nil && reason != "" {
+			reason = "View の生成処理に失敗しました"
+		}
 		if reason == "" {
 			reason = "agent stopped without uploading output"
 		}
@@ -166,7 +175,7 @@ func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job mo
 	if !now.Before(job.Run.Deadline) || now.Sub(*job.Run.OutputWaitSince) >= 90*time.Second {
 		return s.failAgentJobLocked(ctx, job, "managed agent output did not become available before the deadline", &status)
 	}
-	body, err := files.CollectOutput(ctx, attempt(job), status, s.outputLimits().MaxCompressed)
+	body, err := files.CollectOutput(ctx, attempt(job), status, s.agentOutputLimit(job))
 	if errors.Is(err, runner.ErrOutputPending) || errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}
@@ -216,25 +225,32 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 	if auth.Hash(string(body)) != job.Run.OutputHash {
 		return failJob("agent output hash mismatch")
 	}
+	if job.ViewTask != nil {
+		if err := s.publishViewTask(ctx, job, body, status); err != nil {
+			return err
+		}
+		return s.cleanupAgentJob(ctx, job, &status)
+	}
 	pages, err := agentgen.ReadAcceptedOutput(bytes.NewReader(body))
 	if err != nil {
 		return failJob("stored agent output is invalid")
-	}
-	files, err := wiki.Assemble(pages)
-	if err != nil {
-		return failJob(err.Error())
 	}
 	var project model.Project
 	if err = s.Store.View(func(st model.State) error { project = st.Projects[job.ProjectID]; return nil }); err != nil {
 		return err
 	}
-	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Files: files, Validate: func(st model.State) error { return validateGeneration(st, job) }, Finish: func(st *model.State, now time.Time) error {
+	_, err = s.publishWiki(ctx, publishInput{Job: job, Project: project, Files: pages, Validate: func(st model.State) error { return validateGeneration(st, job) }, Finish: func(st *model.State, now time.Time) error {
 		revokeJobToken(st, job.ID)
+		p := st.Projects[job.ProjectID]
 		for _, id := range job.Run.InboxIDs {
 			if item, ok := st.Inbox[id]; ok && item.RunID == job.Run.Attempt.ID {
+				if item.Remove {
+					p.ViewEpoch = p.Revision
+				}
 				delete(st.Inbox, id)
 			}
 		}
+		st.Projects[p.ID] = p
 		j := st.Jobs[job.ID]
 		j.Run.CostCents = status.Cost
 		st.Jobs[j.ID] = j
@@ -243,10 +259,14 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job model.Job, stat
 	if err != nil {
 		return failJob(err.Error())
 	}
+	s.notify()
 	request, _ := http.NewRequestWithContext(ctx, "POST", "/", nil)
 	unlock, gcErr := s.lockProject(ctx, job.ProjectID)
 	if gcErr == nil {
 		_, gcErr = s.gc(request, job.ProjectID)
+		if viewErr := s.collectViewsLocked(ctx, job.ProjectID); viewErr != nil {
+			slog.Warn("view invalidation cleanup deferred", "project", job.ProjectID, "error", viewErr)
+		}
 		unlock()
 	}
 	if gcErr != nil {
@@ -269,7 +289,8 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job model.Job, 
 			return nil
 		}
 		// Commit failure atomically with the output handler's phase transition.
-		if onlyWithoutOutput && j.Run.AbortReason == "" && (j.Run.Phase == model.PhaseOutputReceived || j.Run.Phase == model.PhaseFinalizing) {
+		if onlyWithoutOutput && j.Run.AbortReason == "" && (j.ViewTask == nil || !status.Failed) &&
+			(j.Run.Phase == model.PhaseOutputReceived || j.Run.Phase == model.PhaseFinalizing) {
 			job, outputArrived = j, true
 			return nil
 		}
@@ -282,7 +303,13 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job model.Job, 
 			}
 			waiting = true
 		} else {
+			if onlyWithoutOutput && j.ViewTask != nil && j.Run.OutputRejection != "" {
+				reason = j.Run.OutputRejection
+			}
 			j.Status, j.Error = "failed", reason
+			if j.WikiStatus != "" {
+				j.WikiStatus = "failed"
+			}
 			releaseInbox(st, j)
 			if j.Run != nil {
 				if j.Run.AbortReason != "" {
@@ -302,6 +329,9 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job model.Job, 
 	}
 	if outputArrived {
 		return s.finalizeAgentJobLocked(ctx, job, *status)
+	}
+	if changed && !waiting {
+		s.notify()
 	}
 	if !changed || job.Run == nil {
 		return nil
@@ -336,7 +366,7 @@ func (s *Server) abortProjectAgentJobs(ctx context.Context, pid string) error {
 	var jobs []model.Job
 	if err := s.Store.View(func(st model.State) error {
 		for _, j := range st.Jobs {
-			if j.ProjectID == pid && j.Run != nil && (j.Status == "running" || !j.Run.CleanupComplete) {
+			if j.ProjectID == pid && j.Run != nil && (!agentRunFinished(j) || !j.Run.CleanupComplete) {
 				jobs = append(jobs, j)
 			}
 		}
@@ -345,7 +375,7 @@ func (s *Server) abortProjectAgentJobs(ctx context.Context, pid string) error {
 		return err
 	}
 	for _, j := range jobs {
-		if j.Status == "running" {
+		if j.Status == "running" && !agentRunFinished(j) {
 			return s.abortAgentJob(ctx, j)
 		}
 		if _, err := s.runners.New(j); err != nil {
@@ -376,7 +406,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 	if err := s.Store.View(func(st model.State) error { current = st.Jobs[job.ID]; return nil }); err != nil {
 		return err
 	}
-	if !sameManagedRun(current, job) || current.Run == nil || current.Run.CleanupComplete || current.Status != "completed" && current.Status != "failed" {
+	if !sameManagedRun(current, job) || current.Run == nil || current.Run.CleanupComplete || !agentRunFinished(current) {
 		return nil
 	}
 	job = current
@@ -412,7 +442,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 	if complete {
 		return s.Store.Update(func(st *model.State) error {
 			j := st.Jobs[job.ID]
-			if sameManagedRun(j, job) && (j.Status == "completed" || j.Status == "failed") {
+			if sameManagedRun(j, job) && agentRunFinished(j) {
 				j.Run.CleanupComplete = true
 				st.Jobs[j.ID] = j
 			}
@@ -420,4 +450,8 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job model.Job, status *run
 		})
 	}
 	return nil
+}
+
+func agentRunFinished(job model.Job) bool {
+	return job.ViewGeneration != nil || job.Status == "completed" || job.Status == "failed" || job.Status == "skipped"
 }

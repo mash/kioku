@@ -36,6 +36,10 @@ func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.Run
 	if err = r.files.CheckOfflineEnvironment(ctx, r.environmentID); err != nil {
 		return runner.RunRef{}, err
 	}
+	system := spec.System
+	if system == "" {
+		system = r.system
+	}
 	return runner.StartFileSession(ctx, spec, r.Provider(), r.files.UploadInput,
 		func(ctx context.Context, id string, _ func(string) error) (string, error) {
 			if !spec.Deadline.IsZero() && time.Now().After(spec.Deadline) {
@@ -45,7 +49,7 @@ func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.Run
 				return "", err
 			}
 			return r.files.CreateSession(ctx, SessionInput{
-				System: r.system, Model: r.model, MAAgentID: r.agentID, MAAgentVersion: version,
+				System: system, Model: r.model, MAAgentID: r.agentID, MAAgentVersion: version,
 				EnvironmentID: r.environmentID, InputFileID: id, BudgetCents: spec.BudgetCents,
 				Title: "Kioku wiki " + spec.Key.JobID, FirstMessage: spec.FirstMessage,
 				Metadata: map[string]string{"kioku_job_id": spec.Key.JobID, "kioku_attempt_id": spec.Key.AttemptID},

@@ -101,7 +101,11 @@ func (r *Runner) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, e
 	c.pgid = cmd.Process.Pid
 	r.children[ref.ID] = c
 	// The private wire value is written only to stdin, never formatted or logged.
-	wire := input{Version: 1, JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, InputURL: spec.InputURL, OutputURL: spec.OutputURL, JobToken: string(spec.Token), Model: r.config.Model.ID, FirstMessage: spec.FirstMessage, Prompt: r.config.Prompt, BudgetCents: spec.BudgetCents, Deadline: spec.Deadline}
+	system := spec.System
+	if system == "" {
+		system = r.config.Prompt
+	}
+	wire := input{Version: 1, JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, InputURL: spec.InputURL, OutputURL: spec.OutputURL, JobToken: string(spec.Token), Model: r.config.Model.ID, FirstMessage: spec.FirstMessage, Prompt: system, BudgetCents: spec.BudgetCents, Deadline: spec.Deadline}
 	go func() {
 		defer close(c.stdinDone)
 		defer stdin.Close()
@@ -134,6 +138,7 @@ func (r *Runner) wait(c *child) {
 		slog.Debug("invalid result line", "job", c.key.JobID)
 	}
 	if !successful || !valid {
+		status.Failed = true
 		status.Reason = result.Reason[:min(len(result.Reason), 512)]
 		if status.Reason == "" {
 			status.Reason = "agent failed"

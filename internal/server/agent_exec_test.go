@@ -38,11 +38,14 @@ func TestExecRunnerHelper(t *testing.T) {
 	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
 		os.Exit(90)
 	}
-	if role == "custom" {
+	view := in.Prompt == viewRunnerSystem
+	switch {
+	case view:
+	case role == "custom":
 		if in.Prompt != "Custom system" || in.Model != "custom-model" || in.FirstMessage != "Fetch "+in.InputURL+" then upload "+in.OutputURL {
 			os.Exit(97)
 		}
-	} else {
+	default:
 		rendered, err := prompts.Load("", prompts.Variables{ClientVersion: MinimumClientVersion, MaxOutputBytes: 128 << 20}, MCPToolNames())
 		if err != nil || in.Prompt != rendered.System() {
 			os.Exit(96)
@@ -68,8 +71,12 @@ func TestExecRunnerHelper(t *testing.T) {
 	if len(readInput(t, data)) == 0 {
 		os.Exit(93)
 	}
-	if role == "success" || role == "upload-failure" || role == "custom" {
-		output := outputArchive(t, map[string]string{"wiki/index.md": "# Exec wiki\n"})
+	if role == "success" || role == "upload-failure" || role == "custom" || role == "view-failure" {
+		pages := map[string]string{"wiki/index.md": "# Exec wiki\n"}
+		if view {
+			pages = map[string]string{"index.html": "<h1>Project map</h1>"}
+		}
+		output := outputArchive(t, pages)
 		req, _ = http.NewRequest("PUT", in.OutputURL, bytes.NewReader(output))
 		req.Header.Set("Authorization", "Bearer "+in.Token)
 		req.Header.Set("Kioku-Client-Version", "dev")
@@ -82,7 +89,7 @@ func TestExecRunnerHelper(t *testing.T) {
 			os.Exit(95)
 		}
 	}
-	if role == "failure" || role == "upload-failure" {
+	if role == "failure" || role == "upload-failure" && !view || role == "view-failure" && view {
 		fmt.Fprint(os.Stderr, "stderr-private")
 		fmt.Println(`{"version":1,"cost_cents":23,"reason":"reason-private"}`)
 		os.Exit(7)
@@ -111,6 +118,9 @@ func waitExecJob(t *testing.T, f *fixture, j model.Job) model.Job {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		j = storedJob(t, f, j.ID)
+		if j.ViewGeneration != nil {
+			f.driveViewGeneration(j)
+		}
 		if j.Status != "running" && j.Run.CleanupComplete {
 			return j
 		}
@@ -120,13 +130,13 @@ func waitExecJob(t *testing.T, f *fixture, j model.Job) model.Job {
 	return j
 }
 func TestExecGenerationLifecycle(t *testing.T) {
-	for _, role := range []string{"success", "failure", "upload-failure"} {
+	for _, role := range []string{"success", "failure", "upload-failure", "view-failure"} {
 		t.Run(role, func(t *testing.T) {
 			f, token, p := execFixture(t, role)
 			j := startManaged(t, f, token, p.ID, true)
 			j = waitExecJob(t, f, j)
 			want, cost := "failed", int64(23)
-			if role == "success" {
+			if role == "success" || role == "view-failure" {
 				want, cost = "completed", 137
 			} else if role == "upload-failure" {
 				want = "completed"
@@ -136,6 +146,9 @@ func TestExecGenerationLifecycle(t *testing.T) {
 			}
 			if role == "failure" && j.Error != "reason-private" {
 				t.Fatal(j.Error)
+			}
+			if role == "view-failure" && (len(j.Views) != 1 || j.Views[0].Status != "failed" || j.Views[0].Error != "View の生成処理に失敗しました") {
+				t.Fatalf("exec View failure escaped public handling: %+v", j.Views)
 			}
 			if strings.Contains(j.Error, "stderr-private") {
 				t.Fatal(j.Error)
@@ -226,7 +239,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				go func() { done <- restored.RunWorker(ctx) }()
 				select {
 				case previous := <-observed:
-					if previous.Status == "running" || !previous.Run.CleanupComplete {
+					if !agentRunFinished(previous) || !previous.Run.CleanupComplete {
 						t.Error("worker dequeued before startup reconciliation", previous)
 					}
 				case <-time.After(5 * time.Second):
@@ -245,7 +258,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 				if lost || abort {
 					want = "failed"
 				}
-				if j.Status != want || !j.Run.CleanupComplete || j.Run.CostCents != nil {
+				if j.WikiStatus != want || !j.Run.CleanupComplete || j.Run.CostCents != nil {
 					t.Fatal(j)
 				}
 				if abort && j.Error != "original abort" {

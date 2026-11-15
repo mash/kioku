@@ -34,7 +34,7 @@ func TestManagedOutputArrivingDuringSessionInspectionIsPublished(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got := storedJob(t, f, j.ID); got.Status != "completed" {
+	if got := storedJob(t, f, j.ID); got.WikiStatus != "completed" {
 		t.Fatal("accepted output lost", got.Status, got.Error)
 	}
 }

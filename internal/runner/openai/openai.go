@@ -160,8 +160,12 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 		}
 	}
 	var session resource
+	system := spec.System
+	if system == "" {
+		system = r.config.Prompt
+	}
 	err = r.request(ctx, "POST", "/agents/sessions", map[string]any{
-		"agent":       map[string]any{"model": r.config.Model, "instructions": r.config.Prompt, "multi_agent": map[string]bool{"enabled": false}, "tools": []any{}},
+		"agent":       map[string]any{"model": r.config.Model, "instructions": system, "multi_agent": map[string]bool{"enabled": false}, "tools": []any{}},
 		"environment": map[string]any{"type": "openai_hosted", "container_size": "small"},
 		"metadata":    metadata(spec.Key), "vault_ids": []string{vault.ID}, "input": spec.FirstMessage, "spend_control": map[string]int64{"limit": spec.BudgetCents}, "stream": false,
 	}, &session)

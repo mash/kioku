@@ -19,6 +19,9 @@ func (a *App) wait(j model.Job) error {
 	defer ticker.Stop()
 	for {
 		if j.Status == "completed" {
+			if j.WikiStatus == "unavailable" {
+				return a.print(j)
+			}
 			if j.Unchanged {
 				fmt.Fprintln(a.Out, "No waiting inbox items; wiki is up to date.")
 			}
@@ -28,7 +31,7 @@ func (a *App) wait(j model.Job) error {
 			return a.pull()
 		}
 		if j.Status == "failed" {
-			return fmt.Errorf("job failed: %s; retry with kioku job retry %s", j.Error, j.ID)
+			return fmt.Errorf("job failed: %s; rerun with kioku generate --wait", j.Error)
 		}
 		select {
 		case <-a.ctx.Done():

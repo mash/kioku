@@ -37,7 +37,7 @@ create は `-n` を必須とし、pull と create は namespace の位置引数�
 `project join INVITE_URL` は cwd または `-C DIR` へ紐づけ、`-n` を受け付けない。
 CLI は親ディレクトリを探索しない。
 
-`wiki/`・`maps/` は保存先の直下、CLI のメタデータは `.kioku/` 内に置く。
+`wiki/` は保存先の直下、CLI のメタデータは `.kioku/` 内に置く。
 CLI はユーザー共通領域で接続先別に認証を管理する。スキルは認証情報を読まない。
 
 ## 原資料の送信

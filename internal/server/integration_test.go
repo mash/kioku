@@ -25,6 +25,7 @@ import (
 
 type fixture struct {
 	auto         *fake.Server
+	worker       bool
 	runnerConfig runners.Config
 	t            *testing.T
 	s            *Server
@@ -61,7 +62,7 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	})}}
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
-	f := &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), stateStore: stateStore}
+	f := &fixture{t: t, s: s, url: ts.URL, client: ts.Client(), stateStore: stateStore, worker: startWorker}
 	if startWorker {
 		configureAutoRunner(t, f)
 	}
@@ -163,12 +164,17 @@ func (f *fixture) wait(pid, token, id string) model.Job {
 		if code := f.request("GET", "/api/projects/"+pid+"/jobs/"+id, token, nil, &j); code != 200 {
 			f.t.Fatalf("job status %d", code)
 		}
-		if f.auto != nil && j.Status == "running" && j.Run != nil && j.Run.Ref.ID != "" {
-			if j.Run.OutputHash == "" {
-				sendOutput(f.t, f, f.auto, j, "Generated")
+		if f.auto != nil && j.Status == "running" {
+			current := storedJob(f.t, f, id)
+			if current.ViewGeneration != nil {
+				f.driveViewGeneration(current)
+			} else if !agentRunFinished(current) && current.Run != nil && current.Run.Ref.ID != "" {
+				if current.Run.OutputHash == "" {
+					sendOutput(f.t, f, f.auto, current, "Generated")
+				}
+				f.auto.SetStatus(current.Run.Ref.ID, "idle", "end_turn", 1)
+				f.s.ReconcileJob(context.Background(), current.ID, current.Run.Attempt.ID)
 			}
-			f.auto.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
-			f.s.ReconcileJob(context.Background(), j.ID, j.Run.Attempt.ID)
 		}
 		if j.Status == "failed" {
 			f.t.Fatal(j.Error)
@@ -180,6 +186,63 @@ func (f *fixture) wait(pid, token, id string) model.Job {
 	}
 	f.t.Fatal("job timed out")
 	return model.Job{}
+}
+
+// Run one synthetic View attempt for tests that focus on the Wiki stage.
+func (f *fixture) driveViewGeneration(parent model.Job) {
+	f.t.Helper()
+	ctx := f.t.Context()
+	if err := f.s.advanceViewGeneration(ctx, parent); err != nil {
+		f.t.Fatal(err)
+	}
+	parent = storedJob(f.t, f, parent.ID)
+	if parent.ViewGeneration == nil || parent.ViewGeneration.ChildID == "" {
+		return
+	}
+	child := storedJob(f.t, f, parent.ViewGeneration.ChildID)
+	if !f.worker && child.Status == "queued" {
+		child.Status = "running"
+		if err := f.stateStore.Update(func(st *model.State) error {
+			st.Jobs[child.ID] = child
+			return nil
+		}); err != nil {
+			f.t.Fatal(err)
+		}
+		if err := f.s.startAgentJob(ctx, child); err != nil {
+			f.t.Fatal(err)
+		}
+		child = storedJob(f.t, f, child.ID)
+	}
+	if f.auto == nil || child.Status != "running" || child.Run == nil || child.Run.Ref.ID == "" {
+		return
+	}
+	if child.Run.OutputHash == "" {
+		body := outputArchive(f.t, map[string]string{"index.html": "<h1>Project map</h1>"})
+		token := f.auto.Credential(child.Run.Ref.Resources["vault_id"])
+		if status, response := agentRequest(f.t, f, child, token, "PUT", "output", body); status != http.StatusOK {
+			f.t.Fatalf("View output: HTTP %d: %s", status, response)
+		}
+	}
+	f.auto.SetStatus(child.Run.Ref.ID, "idle", "end_turn", 1)
+	if err := f.s.reconcileAgentJob(ctx, child); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) completeFixtureViews(parent model.Job) model.Job {
+	f.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for parent.ViewGeneration != nil && time.Now().Before(deadline) {
+		f.driveViewGeneration(parent)
+		parent = storedJob(f.t, f, parent.ID)
+		if parent.ViewGeneration != nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if parent.ViewGeneration != nil {
+		f.t.Fatal("View generation did not finish")
+	}
+	return parent
 }
 
 // generate queues wiki generation explicitly for waiting inbox items.
@@ -230,15 +293,9 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	}
 	first := waitingInboxItem(t, f, p.ID, testSourceURL("decisions.md", "# Decision\nWe use Go and S3."))
 	f.wait(p.ID, bob, f.generate(p.ID, bob, false).ID)
-	var snap model.Snapshot
-	if code := f.request("GET", base+"/snapshot", alice, nil, &snap); code != 200 {
-		t.Fatal(code)
-	}
-	if !strings.Contains(snap.Files[sourcePage(first.ID)], "Go and S3") {
+	wiki := f.readWiki(base, alice)
+	if !strings.Contains(wiki[sourcePage(first.ID)], "Go and S3") {
 		t.Fatal("source not in wiki")
-	}
-	if !strings.Contains(snap.Files["maps/graph.json"], "links-to") {
-		t.Fatal("map missing edges")
 	}
 	var projects []model.ProjectEntry
 	if code := f.request("GET", "/api/projects", eve, nil, &projects); code != 200 || len(projects) != 0 {
@@ -255,7 +312,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if code := f.request("DELETE", base+"/members/bob@example.com", alice, nil, nil); code != 200 {
 		t.Fatal(code)
 	}
-	if code := f.request("GET", base+"/snapshot", bob, nil, nil); code != 404 {
+	if code := f.request("GET", base+"/snapshot?manifest=1", bob, nil, nil); code != 404 {
 		t.Fatalf("revocation: %d", code)
 	}
 	if code := f.request("DELETE", base+"/members/alice@example.com", alice, nil, nil); code != 400 {
@@ -269,11 +326,8 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	if second.ID == first.ID {
 		t.Fatal("put reused an inbox ID")
 	}
-	if code := f.request("GET", base+"/snapshot?revision="+snap.Revision, alice, nil, nil); code != 404 {
-		t.Fatal("old snapshots should not be retained", code)
-	}
-	if code := f.request("GET", base+"/snapshot", alice, nil, &snap); code != 200 {
-		t.Fatal(code)
+	if !strings.Contains(f.readWiki(base, alice)[sourcePage(first.ID)], "Go and S3") {
+		t.Fatal("updated source not in wiki")
 	}
 }
 func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
@@ -299,10 +353,8 @@ func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 		}
 	}
 	f.wait(p.ID, token, f.generate(p.ID, token, false).ID)
-	var snap model.Snapshot
-	f.request("GET", base+"/snapshot", token, nil, &snap)
 	count := 0
-	for name := range snap.Files {
+	for name := range f.readWiki(base, token) {
 		if strings.HasPrefix(name, "wiki/source-") {
 			count++
 		}

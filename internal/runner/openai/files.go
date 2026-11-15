@@ -29,10 +29,14 @@ func (s resource) offline() bool {
 }
 
 func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
+	system := spec.System
+	if system == "" {
+		system = r.config.Prompt
+	}
 	if len(spec.InputArchive) > 50<<20 {
 		return runner.RunRef{}, errors.New("OpenAI input archive exceeds the 50 MiB attachment limit")
 	}
-	if spec.BudgetCents < 1 || r.config.APIKey == "" || r.config.Model == "" || strings.TrimSpace(r.config.Prompt) == "" {
+	if spec.BudgetCents < 1 || r.config.APIKey == "" || r.config.Model == "" || strings.TrimSpace(system) == "" {
 		return runner.RunRef{}, errors.New("invalid OpenAI runner configuration or job")
 	}
 	return runner.StartFileSession(ctx, spec, r.Provider(), r.uploadInput,
@@ -43,7 +47,7 @@ func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.Run
 			var session resource
 			input, _ := r.FilePaths()
 			err := r.request(ctx, "POST", "/agents/sessions", map[string]any{
-				"agent": map[string]any{"model": r.config.Model, "instructions": r.config.Prompt,
+				"agent": map[string]any{"model": r.config.Model, "instructions": system,
 					"multi_agent": map[string]bool{"enabled": false}, "tools": []any{}},
 				"environment": map[string]any{"type": "openai_hosted", "container_size": "small",
 					"network": map[string]string{"access": "disabled"},

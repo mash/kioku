@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-
 	"sort"
 	"time"
 
@@ -81,6 +80,30 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 	var incomplete bool
 	var namespace string
 	var raw string
+	var viewPrompt string
+	var views map[string]viewIndexEntry
+	unlock, err := s.lockProject(ctx, job.ProjectID)
+	if err != nil {
+		return err
+	}
+	if job.ViewTask != nil {
+		view, err := s.viewByIDLocked(ctx, job.ProjectID, job.ViewTask.ViewID)
+		if isNotFoundView(err) || err == nil && view.Version != job.ViewTask.Version {
+			unlock()
+			reason := viewSettingsChanged
+			if err != nil {
+				reason = viewDeleted
+			}
+			return s.finishViewTask(job, "skipped", reason, nil)
+		}
+		if err != nil {
+			unlock()
+			return err
+		}
+		viewPrompt = view.Prompt
+	} else if job.WikiStatus != "" {
+		views = s.captureViewSettings(ctx, job.ProjectID)
+	}
 	err = s.Store.Update(func(st *model.State) error {
 		if err := validateGeneration(*st, job); err != nil {
 			return err
@@ -89,30 +112,39 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		namespace = p.Namespace
 		published = st.Revisions[p.Revision]
 		incomplete = p.WikiIncomplete
-		over := completedWikiBytes(published) > s.Config.MaxWikiBytes
-		for _, item := range st.Inbox {
-			if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Remove) {
-				items = append(items, item)
+		job = st.Jobs[job.ID]
+		if task := job.ViewTask; task != nil {
+			parent := st.Jobs[task.ParentID]
+			if parent.Status != "running" || parent.ViewGeneration == nil ||
+				parent.ViewGeneration.ChildID != job.ID || incomplete || published.ID != task.Snapshot {
+				return fail(409, "Wiki または生成ジョブが変更されました")
 			}
 		}
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].Created.Equal(items[j].Created) {
-				return items[i].ID < items[j].ID
+		if job.ViewTask == nil {
+			over := completedWikiBytes(published) > s.Config.MaxWikiBytes
+			for _, item := range st.Inbox {
+				if item.ProjectID == p.ID && item.RunID == "" && (!over || item.Remove) {
+					items = append(items, item)
+				}
 			}
-			return items[i].Created.Before(items[j].Created)
-		})
-		job = st.Jobs[job.ID]
-		if len(items) == 0 {
+			sort.Slice(items, func(i, j int) bool {
+				if items[i].Created.Equal(items[j].Created) {
+					return items[i].ID < items[j].ID
+				}
+				return items[i].Created.Before(items[j].Created)
+			})
+		}
+		if job.ViewTask == nil && len(items) == 0 {
 			job.Status = "completed"
 			job.Unchanged = true
 			job.Revision = p.Revision
+			if job.WikiStatus != "" {
+				startViewGeneration(&job, p, published, s.generationBudget(job), views)
+			}
 			st.Jobs[job.ID] = job
 			return nil
 		}
-		budget := s.Config.AgentMaxSessionCents
-		if job.AgentBudgetCents > 0 && job.AgentBudgetCents < budget {
-			budget = job.AgentBudgetCents
-		}
+		budget := s.generationBudget(job)
 		if budget < 50 {
 			return errAgentBudgetTooSmall
 		}
@@ -136,10 +168,14 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		st.Jobs[job.ID] = job
 		return nil
 	})
+	unlock()
 	if err != nil || job.Run == nil {
 		return err
 	}
 	spec := agentgen.InputSpec{JobID: job.ID, Namespace: namespace}
+	if job.ViewTask != nil {
+		spec.ViewPrompt = &viewPrompt
+	}
 	if !offline {
 		base := s.Config.BaseURL + "/api/projects/" + namespace + "/jobs/" + job.ID + "/agent/"
 		spec.InputURL, spec.OutputURL = base+"input", base+"output"
@@ -186,6 +222,10 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		}
 	} else {
 		runSpec.FirstMessage = s.Config.Prompts.User(vars)
+	}
+	if job.ViewTask != nil {
+		runSpec.System = viewRunnerSystem
+		runSpec.FirstMessage = viewRunnerMessage(vars.InputURL, vars.OutputURL, offline)
 	}
 	ref, err := r.Start(ctx, runSpec)
 	if errors.Is(err, runner.ErrTemporary) {

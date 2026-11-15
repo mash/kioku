@@ -69,10 +69,11 @@ func TestConnectorLoginEndToEnd(t *testing.T) {
 			Name string `json:"name"`
 		} `json:"tools"`
 	}
-	if err := json.Unmarshal(connectorRPC(t, f, access, "tools/list", map[string]any{}), &list); err != nil || len(list.Tools) != 5 {
+	wantTools := []string{"cli_login_code", "projects_list", "wiki_read", "wiki_search", "source_put", "view_list", "view_read"}
+	if err := json.Unmarshal(connectorRPC(t, f, access, "tools/list", map[string]any{}), &list); err != nil || len(list.Tools) != len(wantTools) {
 		t.Fatal("tool list", err, list)
 	}
-	for i, name := range []string{"cli_login_code", "projects_list", "wiki_read", "wiki_search", "source_put"} {
+	for i, name := range wantTools {
 		if list.Tools[i].Name != name {
 			t.Fatal("tool order", list)
 		}
@@ -91,8 +92,8 @@ func TestConnectorLoginEndToEnd(t *testing.T) {
 	if issued.ID == "" || issued.Token == "" || issued.Namespace != project.Namespace || issued.Role != "read" || time.Until(issued.Expires) < 23*time.Hour || time.Until(issued.Expires) > 24*time.Hour {
 		t.Fatal("incorrect credential metadata")
 	}
-	var snapshot model.Snapshot
-	if status := f.request("GET", "/api/projects/"+project.ID+"/snapshot", issued.Token, nil, &snapshot); status != 200 || len(snapshot.Files) == 0 {
+	var snapshot model.SyncManifest
+	if status := f.request("GET", "/api/projects/"+project.ID+"/snapshot?manifest=1", issued.Token, nil, &snapshot); status != 200 || len(snapshot.Files) == 0 {
 		t.Fatal("agent snapshot", status)
 	}
 	if status := f.request("POST", "/mcp", issued.Token, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "ping"}, nil); status != 401 {

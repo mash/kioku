@@ -27,6 +27,16 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	var second model.Job
 	f.request("POST", base+"/put", token, input, &second)
 	f.wait(p.ID, token, f.generate(p.ID, token, true).ID)
+	var wikiBytes int64
+	for _, page := range f.readWiki(base, token) {
+		wikiBytes += int64(len(page))
+	}
+	var usage struct {
+		WikiBytes int64 `json:"wiki_bytes"`
+	}
+	if c := f.request("GET", base+"/usage", token, nil, &usage); c != 200 || wikiBytes == 0 || usage.WikiBytes != wikiBytes {
+		t.Fatal("published Wiki usage", c, usage.WikiBytes, wikiBytes)
+	}
 	f.s.Config.MaxWikiBytes = 1
 	input.File.Name = "two.md"
 	if c := f.request("POST", base+"/put", token, input, nil); c != 413 {
@@ -71,9 +81,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	var regenerate model.Job
 	f.request("POST", base+"/generate", token, nil, &regenerate)
 	f.wait(p.ID, token, regenerate.ID)
-	var snap model.Snapshot
-	f.request("GET", base+"/snapshot", token, nil, &snap)
-	for _, v := range snap.Files {
+	for _, v := range f.readWiki(base, token) {
 		if strings.Contains(v, "One source") {
 			t.Fatal("deleted source retained in wiki")
 		}
@@ -81,7 +89,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	if c := f.request("DELETE", base, token, nil, nil); c != 200 {
 		t.Fatal(c)
 	}
-	if c := f.request("GET", base+"/snapshot", token, nil, nil); c != 404 {
+	if c := f.request("GET", base+"/snapshot?manifest=1", token, nil, nil); c != 404 {
 		t.Fatal(c)
 	}
 	keys, err := f.s.Blobs.List(context.Background(), "projects/"+p.ID+"/")
@@ -104,13 +112,9 @@ func TestRateLimit(t *testing.T) {
 		}
 	}
 }
-func TestRenderedMarkdownAndGraphAreSafe(t *testing.T) {
+func TestRenderedMarkdownIsSafe(t *testing.T) {
 	body := markdownView("# Heading\n[Link](topic.md)\n<script>alert(1)</script>\n[bad](javascript:alert(2))", "wiki/index.md", []string{"wiki/topic.md"})
 	if strings.Contains(string(body), "<script>") || strings.Contains(string(body), "javascript:") || !strings.Contains(string(body), "?file=wiki%2Ftopic.md") {
 		t.Fatal(body)
-	}
-	graph := graphView(`{"nodes":[{"id":"wiki/index.md","title":"<script>alert(1)</script>"}],"edges":[]}`, "")
-	if strings.Contains(string(graph), "<script>") || !strings.Contains(string(graph), "<svg") {
-		t.Fatal(graph)
 	}
 }

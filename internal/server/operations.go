@@ -113,7 +113,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request, uid string) error
 			}
 		}
 		for _, j := range st.Jobs {
-			if j.ProjectID == pid && (j.Status == "queued" || j.Status == "running") {
+			if j.ProjectID == pid && j.ViewTask == nil && (j.Status == "queued" || j.Status == "running") {
 				jobs++
 			}
 		}

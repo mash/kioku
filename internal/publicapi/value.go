@@ -45,6 +45,14 @@ func Value(v any) any {
 		if x.Run != nil {
 			out["run"] = map[string]any{"phase": x.Run.Phase, "cost_cents": x.Run.CostCents, "budget_cents": x.Run.BudgetCents, "prepared_at": x.Run.PreparedAt, "deadline": x.Run.Deadline, "cleanup_complete": x.Run.CleanupComplete}
 		}
+		if x.WikiStatus != "" {
+			out["wiki_status"] = x.WikiStatus
+			views := x.Views
+			if views == nil {
+				views = []model.ViewJobResult{}
+			}
+			out["views"] = views
+		}
 		return out
 	case model.Audit:
 		return map[string]any{"id": x.ID, "user_id": x.UserID, "action": x.Action, "detail": x.Detail, "created": x.Created}

@@ -32,6 +32,7 @@ type AgentRun struct {
 	OutputKey       blob.Key      `json:"output_key,omitempty"`
 	OutputWaitSince *time.Time    `json:"output_wait_since,omitempty"`
 	OutputHash      string        `json:"output_hash,omitempty"`
+	OutputRejection string        `json:"output_rejection,omitempty"`
 }
 
 // Attempt identifies one run and its resources during recovery.

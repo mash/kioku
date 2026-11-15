@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -116,6 +117,59 @@ func TestSyncDeltaOverwriteDeleteAndPartialFailure(t *testing.T) {
 		t.Fatal(r, err)
 	}
 }
+
+func TestPullRemovesOnlyLegacyGeneratedMaps(t *testing.T) {
+	a, files, hits, _ := syncFixture(t)
+	if _, err := a.syncWiki(); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(a.localDir(), "maps")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"graph.json", "graph.mmd", "my-map.md"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("local data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	(*files)["maps/graph.json"] = "old remote JSON"
+	(*files)["maps/graph.mmd"] = "old remote Mermaid"
+	result, err := a.syncWiki()
+	if err != nil || !slices.Equal(result.Deleted, []string{"maps/graph.json", "maps/graph.mmd"}) {
+		t.Fatal(result, err)
+	}
+	for _, name := range result.Deleted {
+		if (*hits)[name] != 0 {
+			t.Fatal("obsolete file fetched", name)
+		}
+		if _, err := os.Lstat(filepath.Join(a.localDir(), name)); !os.IsNotExist(err) {
+			t.Fatal("obsolete file retained", name, err)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "my-map.md"))
+	if err != nil || string(b) != "local data" {
+		t.Fatal("user file changed", string(b), err)
+	}
+	moved := filepath.Join(t.TempDir(), "maps")
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	oldFile := filepath.Join(moved, "graph.json")
+	if err := os.WriteFile(oldFile, []byte("outside data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, dir); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := a.syncWiki(); err != nil || result.changed() {
+		t.Fatal(result, err)
+	}
+	b, err = os.ReadFile(oldFile)
+	if err != nil || string(b) != "outside data" {
+		t.Fatal("outside file changed", string(b), err)
+	}
+}
+
 func TestSyncRejectsSymlinkAndRetainsWikiOnRevocation(t *testing.T) {
 	a, _, _, status := syncFixture(t)
 	if _, err := a.syncWiki(); err != nil {

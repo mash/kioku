@@ -48,6 +48,9 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		if err != nil {
 			return err
 		}
+		if !p.WikiIncomplete && p.WikiCompleteRevision == "" && published.Files["wiki/index.md"] != "" {
+			p.WikiCompleteRevision = published.ID
+		}
 		p.WikiIncomplete = true
 		st.Projects[p.ID] = p
 		return nil
@@ -164,6 +167,10 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 			}
 		}
 	}
+	var views map[string]viewIndexEntry
+	if job.WikiStatus != "" {
+		views = s.captureViewSettings(ctx, job.ProjectID)
+	}
 	err = s.Store.Update(func(st *model.State) error {
 		if err := validate(*st); err != nil {
 			return err
@@ -179,6 +186,7 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		}
 		st.Revisions[rev.ID] = rev
 		p.Revision = rev.ID
+		p.WikiCompleteRevision = rev.ID
 		p.WikiUpdatedAt = time.Now().UTC()
 		p.WikiIncomplete = false
 		st.Projects[p.ID] = p
@@ -190,6 +198,9 @@ func (s *Server) publishWiki(ctx context.Context, in publishInput) (string, erro
 		j := st.Jobs[job.ID]
 		j.Status = "completed"
 		j.Revision = rev.ID
+		if j.WikiStatus != "" {
+			startViewGeneration(&j, p, rev, remainingViewBudget(j.Run.BudgetCents, j.Run.CostCents), views)
+		}
 		st.Jobs[job.ID] = j
 		return nil
 	})

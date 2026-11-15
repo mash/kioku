@@ -52,7 +52,7 @@ func (a *App) ensureProject() error {
 	if !validNamespace(a.Config.Namespace) {
 		return errors.New("no project configured; run kioku -n organization/project pull")
 	}
-	for _, dir := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps")} {
+	for _, dir := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki")} {
 		if err := ensureDirectory(dir); err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func (a *App) preflightProjectStorage() error {
 	if err := a.checkUnboundMirror(); err != nil {
 		return err
 	}
-	for _, path := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki"), filepath.Join(a.Dir, "maps")} {
+	for _, path := range []string{a.metadataDir(), filepath.Join(a.Dir, "wiki")} {
 		if err := ensureDirectory(path); err != nil {
 			return err
 		}
@@ -102,9 +102,8 @@ func (a *App) preflightProjectStorage() error {
 	return os.Remove(name)
 }
 
-// Call under localLock before binding or mutating remote membership. A saved
-// config declares wiki/maps to be mirrors; without one, existing content is owned
-// by the user and must not be adopted by a failed or retried command.
+// Call under localLock before binding or mutating remote membership. Without a
+// saved config, existing mirror content belongs to the user.
 func (a *App) checkUnboundMirror() error {
 	current, err := a.readProjectConfig()
 	if err != nil {
@@ -130,7 +129,7 @@ func (a *App) checkUnboundMirror() error {
 			return err
 		}
 		if len(entries) != 0 {
-			return errors.New("refusing to bind non-empty wiki/maps without .kioku/config")
+			return errors.New("refusing to bind a non-empty mirror directory without .kioku/config")
 		}
 	}
 	return nil

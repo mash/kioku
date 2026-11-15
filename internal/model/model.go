@@ -68,21 +68,23 @@ type User struct {
 	Identities map[string]string `json:"identities,omitempty"`
 }
 type Project struct {
-	StorageBucket  string            `json:"storage_bucket,omitempty"`
-	StorageRoot    string            `json:"storage_root,omitempty"`
-	JobsValidAfter time.Time         `json:"jobs_valid_after,omitempty"`
-	WikiIncomplete bool              `json:"wiki_incomplete,omitempty"`
-	WikiUpdatedAt  time.Time         `json:"wiki_updated_at,omitempty"`
-	NextGenerateAt time.Time         `json:"next_generate_at,omitempty"`
-	OrgID          string            `json:"org_id"`
-	Slug           string            `json:"slug"`
-	Namespace      string            `json:"namespace"`
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Members        map[string]string `json:"members"`
-	Revision       string            `json:"revision"`
-	Created        time.Time         `json:"created"`
-	Deleting       bool              `json:"deleting,omitempty"`
+	StorageBucket        string            `json:"storage_bucket,omitempty"`
+	StorageRoot          string            `json:"storage_root,omitempty"`
+	JobsValidAfter       time.Time         `json:"jobs_valid_after,omitempty"`
+	WikiIncomplete       bool              `json:"wiki_incomplete,omitempty"`
+	WikiCompleteRevision string            `json:"wiki_complete_revision,omitempty"`
+	ViewEpoch            string            `json:"view_epoch,omitempty"`
+	WikiUpdatedAt        time.Time         `json:"wiki_updated_at,omitempty"`
+	NextGenerateAt       time.Time         `json:"next_generate_at,omitempty"`
+	OrgID                string            `json:"org_id"`
+	Slug                 string            `json:"slug"`
+	Namespace            string            `json:"namespace"`
+	ID                   string            `json:"id"`
+	Name                 string            `json:"name"`
+	Members              map[string]string `json:"members"`
+	Revision             string            `json:"revision"`
+	Created              time.Time         `json:"created"`
+	Deleting             bool              `json:"deleting,omitempty"`
 }
 
 // ProjectEntry adds current inbox state to a project listing without persisting it.
@@ -151,21 +153,49 @@ type Revision struct {
 	Files         map[string]blob.Key `json:"files"` // relative filename -> current object key
 }
 type Job struct {
-	// Retained only to reject execution/retry of retired BYOK jobs.
-	AnthropicConnectionID string    `json:"anthropic_connection_id,omitempty"`
-	AgentBudgetCents      int64     `json:"agent_budget_cents,omitempty"`
-	Run                   *AgentRun `json:"run,omitempty"`
-	Unchanged             bool      `json:"unchanged,omitempty"`
-	Kind                  string    `json:"kind,omitempty"`
-	Automatic             bool      `json:"automatic,omitempty"`
-	AgentID               string    `json:"agent_id,omitempty"`
-	ID                    string    `json:"id"`
-	ProjectID             string    `json:"project_id"`
-	UserID                string    `json:"user_id"`
-	Status                string    `json:"status"`
-	Error                 string    `json:"error,omitempty"`
-	Revision              string    `json:"revision,omitempty"`
-	Created               time.Time `json:"created"`
+	// Retained only to reject execution of retired BYOK jobs.
+	AnthropicConnectionID string          `json:"anthropic_connection_id,omitempty"`
+	AgentBudgetCents      int64           `json:"agent_budget_cents,omitempty"`
+	Run                   *AgentRun       `json:"run,omitempty"`
+	Unchanged             bool            `json:"unchanged,omitempty"`
+	Kind                  string          `json:"kind,omitempty"`
+	Automatic             bool            `json:"automatic,omitempty"`
+	AgentID               string          `json:"agent_id,omitempty"`
+	ID                    string          `json:"id"`
+	ProjectID             string          `json:"project_id"`
+	UserID                string          `json:"user_id"`
+	Status                string          `json:"status"`
+	Error                 string          `json:"error,omitempty"`
+	Revision              string          `json:"revision,omitempty"`
+	Created               time.Time       `json:"created"`
+	WikiStatus            string          `json:"wiki_status,omitempty"`
+	Views                 []ViewJobResult `json:"views,omitempty"`
+	ViewGeneration        *ViewGeneration `json:"view_generation,omitempty"`
+	ViewTask              *ViewTask       `json:"view_task,omitempty"`
+}
+
+type ViewJobResult struct {
+	ViewID string `json:"view_id"`
+	Slug   string `json:"slug"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// ViewGeneration is the private checkpoint of the parent generation job.
+type ViewGeneration struct {
+	Snapshot  string   `json:"snapshot"`
+	Versions  []string `json:"versions,omitempty"`
+	Remaining int64    `json:"remaining"`
+	Next      int      `json:"next"`
+	ChildID   string   `json:"child_id,omitempty"`
+}
+
+// ViewTask distinguishes a runner attempt from a user-visible generation job.
+type ViewTask struct {
+	ParentID string `json:"parent_id"`
+	ViewID   string `json:"view_id"`
+	Version  string `json:"version"`
+	Snapshot string `json:"snapshot"`
 }
 type State struct {
 	Inbox         map[string]InboxItem    `json:"inbox"`
@@ -220,11 +250,6 @@ type InboxItem struct {
 
 func (i InboxItem) BodyKey() blob.Key {
 	return blob.Key("projects/" + i.ProjectID + "/.kioku/inbox/" + i.ID + ".md")
-}
-
-type Snapshot struct {
-	Revision string            `json:"revision"`
-	Files    map[string]string `json:"files"`
 }
 
 // SyncManifest describes the current published tree, including partial publication.

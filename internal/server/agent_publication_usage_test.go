@@ -10,10 +10,10 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-type failGraphPublication struct{ blob.Store }
+type failWikiPublication struct{ blob.Store }
 
-func (b failGraphPublication) Put(ctx context.Context, key blob.Key, body []byte) error {
-	if strings.HasSuffix(string(key), "/maps/graph.json") {
+func (b failWikiPublication) Put(ctx context.Context, key blob.Key, body []byte) error {
+	if strings.HasSuffix(string(key), "/wiki/index.md") {
 		return errors.New("publication unavailable")
 	}
 	return b.Store.Put(ctx, key, body)
@@ -27,7 +27,7 @@ func TestManagedPublicationFailurePreservesFinalUsage(t *testing.T) {
 	client, objects := f.runnerConfig.ManagedAgents, f.s.Blobs
 	f.runnerConfig.ManagedAgents = &failSecondSessionLookup{Client: client}
 	f.setRunners()
-	f.s.Blobs = failGraphPublication{objects}
+	f.s.Blobs = failWikiPublication{objects}
 	if err := f.s.reconcileAgentJob(context.Background(), j); err != nil {
 		t.Fatal(err)
 	}

@@ -75,12 +75,8 @@ func TestRestoringSQLiteDoesNotRollBackProjectContent(t *testing.T) {
 	runGeneration(t, f, token, p.ID)
 	waiting := putFile(t, f, token, p.ID, "third.md", "Still waiting")
 	restored := objectFixture(t, backup, objects)
-	var snapshot model.Snapshot
-	if c := restored.request("GET", base+"/snapshot", token, nil, &snapshot); c != 200 {
-		t.Fatal(c)
-	}
 	all := ""
-	for _, body := range snapshot.Files {
+	for _, body := range restored.readWiki(base, token) {
 		all += body
 	}
 	if !strings.Contains(all, "Newer than SQLite backup") {
@@ -112,7 +108,7 @@ type failCurrentWiki struct {
 }
 
 func (b *failCurrentWiki) Put(ctx context.Context, key blob.Key, body []byte) error {
-	if b.fail && strings.HasSuffix(string(key), "/wiki/index.md") {
+	if b.fail && strings.HasSuffix(string(key), "/wiki/log.md") {
 		return errors.New("temporary S3 upload failure")
 	}
 	return b.Store.Put(ctx, key, body)
@@ -135,9 +131,8 @@ func TestInterruptedMutableWikiCanBeRetried(t *testing.T) {
 		}
 		return nil
 	})
-	var partial model.Snapshot
-	if c := f.request("GET", base+"/snapshot", token, nil, &partial); c != 200 || partial.Files["maps/graph.json"] == "" {
-		t.Fatal("partial progress unavailable", c)
+	if f.readWiki(base, token)["wiki/index.md"] == "" {
+		t.Fatal("partial progress unavailable")
 	}
 	objects.fail = false
 	done := runGeneration(t, f, token, p.ID)

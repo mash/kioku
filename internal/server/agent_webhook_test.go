@@ -108,8 +108,8 @@ func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	if storedJob(t, f, j.ID).Status != "completed" {
-		t.Fatal(storedJob(t, f, j.ID))
+	if got := storedJob(t, f, j.ID); got.WikiStatus != "completed" {
+		t.Fatal(got)
 	}
 	assertAgentCleanup(t, f, ma, j)
 	_ = f.stateStore.View(func(st model.State) error {

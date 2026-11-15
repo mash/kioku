@@ -79,10 +79,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	}
 	put := waitingInboxItem(t, f, project.ID, testSourceURL("evidence.md", content))
 	f.wait(project.ID, human, f.generate(project.ID, human, false).ID)
-	var snapshot model.Snapshot
-	if code := f.request("GET", base+"/snapshot", human, nil, &snapshot); code != 200 {
-		t.Fatal("snapshot", code)
-	}
+	snapshot := f.readWiki(base, human)
 	var projects struct {
 		Projects []struct{ Namespace, Name, Role string } `json:"projects"`
 	}
@@ -93,7 +90,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 		t.Fatal("project metadata", p)
 	}
 	var index connectorReadResult
-	if msg := connectorTool(t, f, access, "wiki_read", args, &index); msg != "" || index.Project != project.Namespace || index.Path != "wiki/index.md" || index.Content != snapshot.Files[index.Path] || index.FileBytes != len(index.Content) || index.Offset != 0 || index.NextOffset != nil {
+	if msg := connectorTool(t, f, access, "wiki_read", args, &index); msg != "" || index.Project != project.Namespace || index.Path != "wiki/index.md" || index.Content != snapshot[index.Path] || index.FileBytes != len(index.Content) || index.Offset != 0 || index.NextOffset != nil {
 		t.Fatal("index read", msg, index)
 	}
 	name := sourcePage(put.ID)
@@ -102,11 +99,11 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	if msg := connectorTool(t, f, access, "wiki_read", args, &first); msg != "" || first.NextOffset == nil || len(first.Content) > 32768 || !utf8.ValidString(first.Content) || first.Offset != 0 {
 		t.Fatal("first chunk", msg)
 	}
-	if *first.NextOffset != len(first.Content) || first.FileBytes != len(snapshot.Files[name]) {
+	if *first.NextOffset != len(first.Content) || first.FileBytes != len(snapshot[name]) {
 		t.Fatal("chunk metadata", first.NextOffset, first.FileBytes)
 	}
 	args["offset"] = *first.NextOffset
-	if msg := connectorTool(t, f, access, "wiki_read", args, &second); msg != "" || second.NextOffset != nil || second.Offset != *first.NextOffset || second.FileBytes != first.FileBytes || len(second.Content) > 32768 || !utf8.ValidString(second.Content) || first.Content+second.Content != snapshot.Files[name] {
+	if msg := connectorTool(t, f, access, "wiki_read", args, &second); msg != "" || second.NextOffset != nil || second.Offset != *first.NextOffset || second.FileBytes != first.FileBytes || len(second.Content) > 32768 || !utf8.ValidString(second.Content) || first.Content+second.Content != snapshot[name] {
 		t.Fatal("second chunk", msg)
 	}
 	args["offset"] = first.FileBytes
@@ -123,7 +120,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 	for _, tc := range []struct{ path, message string }{
 		{"../x.md", "invalid wiki path"},
 		{"sources/x", "invalid wiki path"},
-		{"wiki/missing.md", "wiki file not found; read maps/graph.json for the page list"},
+		{"wiki/missing.md", "wiki file not found; start at wiki/index.md"},
 	} {
 		if msg := connectorTool(t, f, access, "wiki_read", map[string]any{"project": project.Namespace, "path": tc.path}, nil); msg != tc.message {
 			t.Fatal("path error", tc.path, msg)
@@ -134,7 +131,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 		t.Fatal("mixed case search", msg, search)
 	}
 	match := search.Results[0]
-	if match.Path != name || match.Text != "MixedCaseNeedle" || strings.Split(snapshot.Files[name], "\n")[match.Line-1] != match.Text {
+	if match.Path != name || match.Text != "MixedCaseNeedle" || strings.Split(snapshot[name], "\n")[match.Line-1] != match.Text {
 		t.Fatal("search location", match)
 	}
 	searchArgs["query"] = "floodneedle"

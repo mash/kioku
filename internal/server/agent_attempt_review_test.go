@@ -1,32 +1,12 @@
 package server
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/mash/kioku/internal/model"
 )
 
-func retryManagedJob(t *testing.T, f *fixture, token string, j model.Job) model.Job {
-	t.Helper()
-	var next model.Job
-	if c := f.request("POST", "/api/projects/"+j.ProjectID+"/jobs/"+j.ID+"/retry", token, nil, &next); c != 202 {
-		t.Fatal(c)
-	}
-	if err := f.stateStore.Update(func(st *model.State) error {
-		next = st.Jobs[j.ID]
-		next.Status = "running"
-		st.Jobs[j.ID] = next
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.startAgentJob(context.Background(), next); err != nil {
-		t.Fatal(err)
-	}
-	return storedJob(t, f, j.ID)
-}
 func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
@@ -41,7 +21,7 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 		t.Fatal("first attempt cost lost", got)
 	}
 	ma.SetError("POST", "/v1/sessions", 503)
-	second := retryManagedJob(t, f, token, first)
+	second := startManaged(t, f, token, p.ID, false)
 	// A stale list entry from a previous attempt must remain harmless even
 	// after the prior attempt's cleanup was acknowledged.
 	ma.SetSession(oldSession)
@@ -58,7 +38,7 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	_ = f.stateStore.View(func(st model.State) error {
 		j := st.Jobs[second.ID]
 		if j.Run.Attempt.ID != second.Run.Attempt.ID || j.Run.Ref.ID == first.Run.Ref.ID || costOf(j.Run.CostCents) != 0 {
-			t.Error("previous attempt's session or cost reached the retry", j.Run)
+			t.Error("previous attempt's session or cost reached the new job", j.Run)
 		}
 		return nil
 	})

@@ -13,14 +13,12 @@ projects/<project-id>/
   wiki/log.md
   wiki/source-<slug>.md
   wiki/*.md
-  maps/graph.json
-  maps/graph.mmd
   .kioku/state.json
   .kioku/jobs/<job-id>.json
   .kioku/audit/<event-id>.json
 ```
 
-Content schema 2 stores inbox metadata, job state, scheduling deadlines and current wiki metadata. Each inbox item has an ID, source_url, optional remove flag, submitter and optional run ID. Items with remove true have no body. The server writes submitted bodies before committing the inbox state; a crash in between leaves an unreferenced object for GC. The state contains no provider tokens. Recent job/audit indexes are bounded to 256 entries; unfinished jobs and pending cleanup remain indexed. Archived generation jobs remain queryable/retryable through the authorized API.
+Content schema 2 stores inbox metadata, job state, scheduling deadlines and current wiki metadata. Each inbox item has an ID, source_url, optional remove flag, submitter and optional run ID. Items with remove true have no body. The server writes submitted bodies before committing the inbox state; a crash in between leaves an unreferenced object for GC. The state contains no provider tokens. Recent job/audit indexes are bounded to 256 entries; unfinished jobs and pending cleanup remain indexed. Archived generation jobs remain queryable through the authorized API.
 
 Updates confined to content do not write SQLite. Changes spanning configuration and content use a configuration-only SQLite redo intent referring to external content transaction objects. Recovery completes that intent before serving. A failed/ambiguous storage commit fails closed until restart; missing or corrupt project state is never replaced by an empty wiki.
 
@@ -41,7 +39,7 @@ The server reads provenance only from the file. It rejects `file.source_url` and
 
 `kioku put FILE...` requires at least one file or directory path and sends one request per file. It prints `accepted <path>` for each successful request and never deletes source files. Each file needs the same frontmatter. There is no `--source-url` flag. `kioku delete URL` submits a removal. MCP `source_put` takes `name` and `content` for a file. It takes `remove: true` and `source_url` for a removal. Do not send the `source_url` argument with `content`. These operations do not start a runner.
 
-`GET /api/projects` includes inbox_count and an inbox list (source_url and remove true only for removals) in each project entry. The list includes pinned items. Empty inboxes return 0 and []. `kioku status` prints these fields. Pull and MCP read only the published wiki/maps.
+`GET /api/projects` includes inbox_count and an inbox list (source_url and remove true only for removals) in each project entry. The list includes pinned items. Empty inboxes return 0 and []. `kioku status` prints these fields. Pull and the MCP Wiki tools read published Wiki pages.
 
 Each put request is at most 1 MiB including JSON overhead (413 on excess). Each project has at most 200 inbox items, including pinned items (429 on excess). A new put replaces waiting items with the same exact source_url, including a removal canceling a submitted body. Pinned items stay in their current run; new submissions wait for a later run. Replaced/consumed bodies are unreferenced and GC may delete them. No source history or intake journal is retained outside the published wiki.
 
@@ -53,15 +51,15 @@ The runner uses the remove flag to process submitted bodies and removal requests
 
 At output PUT, the server checks archive paths/types, duplicates, UTF-8, index.md, compressed/expanded size and source invariants: (a) source_url is a nonempty YAML string, (b) source URLs are unique, (c) removed URLs are absent, (d) old sources survive unless removed, (e) every item without remove true has a source page. A 400 response contains a problems list and permits repair/re-upload. No per-page byte limit or page-count limit remains. Finalization checks the accepted output hash, reads its pages without repeating the validator and derives maps from their links. It does not synthesize or rewrite source pages.
 
-There is one current wiki/maps tree, updated in place. File hashes avoid unchanged writes and omitted files are deleted. Readers can observe partial updates. `wiki_incomplete` is set before writes and cleared only when publication completes. Publication rechecks membership and the requesting agent's validity. Inbox items are consumed only in the successful final state update; new items arriving during the run stay waiting. Failure releases pinned items, except when a newer waiting item has already superseded the same URL. A partial publication retains the items and incomplete flag for recovery.
+There is one current Wiki tree, updated in place. File hashes avoid unchanged writes and omitted files are deleted. Readers can observe partial updates. `wiki_incomplete` is set before writes and cleared only when publication completes. Publication rechecks membership and the requesting agent's validity. Inbox items are consumed only in the successful final state update; new items arriving during the run stay waiting. Failure releases pinned items, except when a newer waiting item has already superseded the same URL. A partial publication retains the items and incomplete flag for recovery.
 
-`--max-wiki-bytes` defaults to 64 MiB and measures published `Revision.StoredBytes`, including derived maps. Publication may exceed it. While over limit, file puts return 413, removal puts remain allowed, and generation pins only removals. Without removals, it makes no model call. Generation uses the last completed publication's size, retained in `Revision.CompleteBytes` while the tree is incomplete. Partial writes crossing the limit therefore cannot block retry of the retained inbox; a wiki already over limit before the attempt still permits only removals during recovery. New file puts remain limited by the current `StoredBytes` during recovery. Compressed and expanded output archives each have a hard limit of twice the configured value (400). That hard bound applies to the submitted wiki archive; generated maps still count in the published total.
+`--max-wiki-bytes` defaults to 64 MiB and measures published Wiki bytes in `Revision.StoredBytes`. Publication may exceed it. While over limit, file puts return 413, removal puts remain allowed, and generation pins only removals. Without removals, the Wiki stage makes no model call. Generation uses the last completed publication's size, retained in `Revision.CompleteBytes` while the tree is incomplete. Partial writes crossing the limit cannot block a later generation of the retained inbox. A Wiki already over limit before the attempt still permits only removals during recovery. New file puts remain limited by the current `StoredBytes` during recovery. Compressed and expanded Wiki output archives each have a hard limit of twice the configured value (400).
 
 ## Scheduling and freshness
 
 The debounce period (`--generate-debounce`, default 10s) restarts at each saved put. When it ends and no job is queued or running, kiokud queues an automatic generation for waiting inbox items. kiokud does not retry a failed automatic generation. With a debounce period of 0, kiokud generates at the next check.
 
-`kioku generate` requests a run; `generate --wait` waits and pulls. An empty inbox completes unchanged without starting a model. Missing runner configuration fails a generation job, including an empty one. `job wait ID` pulls a completed generation; `job retry ID` waits for prior cleanup and pins the items waiting at retry time. There is no full/incremental mode, fingerprint, source version or intake dependency list. Status reports inbox items, wiki_updated_at and wiki_incomplete.
+`kioku generate` requests a run; `generate --wait` waits and pulls. An empty inbox completes unchanged without starting a model. Missing runner configuration fails a generation job, including an empty one. `job wait ID` pulls a completed generation; Run `kioku generate --wait` again after a failure. The new job pins the items waiting when it starts. There is no full/incremental mode, fingerprint, source version or intake dependency list. Status reports inbox items, wiki_updated_at and wiki_incomplete.
 
 ## Generation runner type
 
@@ -71,6 +69,10 @@ Generation uses the operator's runner configuration. Personal generation keys re
 
 Each attempt persists its ID, pinned inbox, phase, budget and deadline before it creates external resources. Managed attempts also persist their provider, transport, and resource IDs. Exec persists its job token identity. Recovery uses the saved provider and attempt metadata.
 
+Project generation gives the Wiki the full requested budget first, then generates the project's Views in slug order. After each attempt the server subtracts its reported cost from the remaining budget. If the runner cannot report a settled cost, that attempt leaves the remaining allowance unchanged. OpenAI does not currently report a settled per-session cost through this integration, so the total bill can exceed the generation request's amount.
+
+The Wiki and each View run in separate runner sessions under one project generation job. Each View session receives the complete Wiki and its saved prompt in `VIEW.md`. It returns a gzip-compressed tar archive with `index.html` at the root and optional images and CSS under `assets/`, plus optional `summary.md` and `data.json`. Kioku validates those files before writing the View ZIP.
+
 ## Prompt configuration
 
 `KIOKU_PROMPTS_DIR` optionally replaces `wiki-agent.system.md`, `wiki-agent.user.md`, and the description fields in `mcp-server.yaml`. The server reads and validates these once before constructing runners or accepting HTTP requests. Missing files use embedded defaults; unknown visible filenames, invalid templates/YAML, and unknown keys stop startup. See [the configuration reference](../README.md#生成プロンプトと-mcp-の説明の差し替え) for variables, model handling, and examples.
@@ -79,7 +81,7 @@ Startup logs record `source=default|override` and `sha256` for each file without
 
 MA sessions always receive `agent_with_overrides`: rendered system, model when present, the fixed Go tool list, and empty non-nil `mcp_servers` and `skills`. `KIOKU_MA_AGENT_VERSION` still pins the referenced agent version. The MA system limit is 100,000 Unicode runes, checked at startup, including when MA is selected implicitly. Agent resources carry the placeholder documented in README; environment resources must be separate for each deployment. OpenAI uses the rendered system with `KIOKU_OPENAI_MODEL`. Exec receives the rendered system and user message on stdin.
 
-Existing MA/OpenAI sessions retain their original prompts across restart. Discovery of an uncertain start resumes that session without creating another one; retry starts a new attempt with current prompts. Exec stops on restart. MA session-create 4xx errors log `session create rejected status=... type=...`; 429 remains temporary, while other 4xx fail the attempt. Error conversion retains only the HTTP status and SDK error type, never the provider message or request.
+Existing MA/OpenAI sessions retain their original prompts across restart. Discovery of an uncertain start resumes that session without creating another one; a new generation uses current prompts. Exec stops on restart. MA session-create 4xx errors log `session create rejected status=... type=...`; 429 remains temporary, while other 4xx fail the attempt. Error conversion retains only the HTTP status and SDK error type, never the provider message or request.
 
 ## Job credential and network policy
 
@@ -115,7 +117,7 @@ Generation phases are `preparing`, `agent_running`, `output_received`, and `fina
 
 For a missing run handle, `Inspect` searches by job and attempt metadata and saves any recovered handle before continuing. A None result waits until five minutes after preparation, then fails with `session creation did not finish`. A recovered running run continues normally. A file-based run must finish successfully. Kioku then waits up to 90 seconds, bounded by the job deadline, for its session or turn to publish the expected output. Ambiguous or invalid outputs fail the attempt. For the existing HTTP contract, accepted output can be published after the run stops unless it was aborted. Unknown or Running waits until the deadline, then failure handling revokes the token, records `AbortReason` and requests `Stop`. A later pass confirms the stop and records the final cost; unknown cost is omitted (`cost_cents` is absent), not recorded as zero. Persistent inspection or stop failures keep the job running until its token deadline (job deadline plus ten minutes), after which it fails with unknown cost. Unavailable runner type configuration fails a running job at its job deadline and defers cleanup until configuration is restored.
 
-Completed/failed jobs retain a cleanup marker and remain in the hot index until resource cleanup and tar removal finish. A late-discovered running run is stopped before cleanup. Retry waits for cleanup and creates a new attempt; discovery matches that attempt ID, so previous attempts cannot supply its run or cost. Stop confirmation and publication can take until the next pass (up to 30 seconds).
+Completed/failed jobs retain a cleanup marker and remain in the hot index until resource cleanup and tar removal finish. A late-discovered running run is stopped before cleanup. Each generation has a new job and attempt ID. Discovery matches both IDs, so a previous generation cannot supply its run or cost. Stop confirmation and publication can take until the next pass (up to 30 seconds).
 
 Project deletion interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. If reconciliation has not confirmed stop/cleanup, deletion returns 503 and preserves the data needed to retry. URL removal instead queues an item with remove true and does not cancel a running generation. New puts remain independent of a running agent. `--max-jobs 20` bounds queued jobs per project; the separate inbox limit is 200.
 
@@ -156,7 +158,7 @@ The command receives one JSON object on stdin, followed by EOF:
 }
 ```
 
-`prompt` is the rendered body of `prompts/wiki-agent.system.md` (or its `KIOKU_PROMPTS_DIR` override); `model` is its required frontmatter model ID as a hint. A model map uses only `id`; `effort`, `speed`, and `inference_geo` are ignored with one startup warning. `first_message` is `wiki-agent.user.md` rendered for this attempt and can include operator instructions as well as metadata. The input archive's `JOB.md` always contains the fixed four metadata lines. There is no mode field and no source credential in this contract. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. The server validates the output and never executes its contents.
+For Wiki generation, `prompt` and `first_message` are rendered from `prompts/wiki-agent.system.md` and `prompts/wiki-agent.user.md` or their `KIOKU_PROMPTS_DIR` overrides. For View generation those fields describe the View archive contract and point to the saved prompt in `VIEW.md`. The configured Wiki model ID is passed as a hint in `model`. A model map uses only `id`, with a startup warning when other keys are set. The input archive's `JOB.md` contains the job metadata. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. Kioku validates the archive before publication.
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 
@@ -180,7 +182,7 @@ Stopping sends SIGTERM to the process group and returns immediately. After ten s
 
 On normal shutdown, kiokud cancels exit-triggered reconciliation, stops its children, and waits up to fifteen seconds before closing the store. On Linux, the direct child also receives SIGKILL if its creating OS thread dies; this does not cover descendants. A crash may leave descendants, and on other operating systems direct children, running. External resources can survive SIGKILL or a crash. Only one kiokud may own a deployment; fence the old instance before starting another against the same project storage.
 
-Before dequeuing new jobs after restart, the worker runs reconciliation once. The exec runner reports lost attempts as stopped with `exec run lost on restart`; jobs without output fail and lose their job tokens. `output_received` and `finalizing` resume publication from accepted output, with unknown cost omitted. Existing abort reasons always take precedence. Retry waits for cleanup and starts a new attempt.
+Before dequeuing new jobs after restart, the worker runs reconciliation once. The exec runner reports lost attempts as stopped with `exec run lost on restart`; jobs without output fail and lose their job tokens. `output_received` and `finalizing` resume publication from accepted output, with unknown cost omitted. Existing abort reasons always take precedence.
 
 An exec run cannot be rediscovered after restart. Keep the same runner configuration to reconcile it and remove its leftover working directory under the same data directory.
 

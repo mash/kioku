@@ -48,7 +48,7 @@ func TestServerGenerationBudget(t *testing.T) {
 	}
 }
 
-func TestRetiredBYOKJobCannotRetry(t *testing.T) {
+func TestRemovedRetryEndpointLeavesFailedJobUnchanged(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	j := managedJob(t, f, token, p.ID, true)
 	if err := f.stateStore.Update(func(st *model.State) error {
@@ -59,7 +59,7 @@ func TestRetiredBYOKJobCannotRetry(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if code := f.request("POST", "/api/projects/"+p.Namespace+"/jobs/"+j.ID+"/retry", token, nil, nil); code != 409 {
+	if code := f.request("POST", "/api/projects/"+p.Namespace+"/jobs/"+j.ID+"/retry", token, nil, nil); code != http.StatusMethodNotAllowed {
 		t.Fatal(code)
 	}
 	if got := storedJob(t, f, j.ID); got.Status != "failed" {

@@ -33,7 +33,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   project usage | project audit
   project maintenance                          Collect unreferenced project objects
   project delete --yes                         Delete project and cloud objects
-  job status|wait JOB_ID | job retry [--wait] JOB_ID
+  job status|wait JOB_ID
 
 put accepts one inbox item per request. The server generates a project 10 seconds after its last put by default.
 Use generate --wait to generate immediately and pull the completed wiki.
@@ -44,7 +44,7 @@ The CLI maintains ~/.config/kioku/projects.json; --description updates its entry
 A different existing path stays in projects.json; the CLI prints it to stderr.
 First authentication to a non-default server requires approval in a terminal.
 Default server: https://kioku.magicians.ee
-wiki/ and maps/ live in the selected directory; transfer metadata lives in .kioku/.
+wiki/ lives in the selected directory; transfer metadata lives in .kioku/.
 Credentials are stored per server in ~/.config/kioku/auth.
 Connector agent credentials are stored per project in ~/.config/kioku/agents.
 With CLAUDE_CODE_SESSION_ID, successful pull/create/join remember selection in

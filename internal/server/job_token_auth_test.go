@@ -125,6 +125,7 @@ func TestJobTokenRouteAudit(t *testing.T) {
 		"POST /api/orgs",
 		"GET /api/orgs",
 		"GET /{org}/{slug}",
+		"GET /{org}/{slug}/views/{view}",
 		"GET /api/projects/{org}/{slug}/usage",
 		"GET /api/projects/{org}/{slug}/audit",
 		"POST /api/projects/{org}/{slug}/maintenance",
@@ -143,8 +144,11 @@ func TestJobTokenRouteAudit(t *testing.T) {
 		"DELETE /api/projects/{org}/{slug}/members/{member}",
 		"POST /api/projects/{org}/{slug}/put",
 		"POST /api/projects/{org}/{slug}/generate",
+		"POST /api/projects/{org}/{slug}/views",
+		"GET /api/projects/{org}/{slug}/views/{view}",
+		"PATCH /api/projects/{org}/{slug}/views/{view}",
+		"DELETE /api/projects/{org}/{slug}/views/{view}",
 		"GET /api/projects/{org}/{slug}/jobs/{job}",
-		"POST /api/projects/{org}/{slug}/jobs/{job}/retry",
 		"GET /api/projects/{org}/{slug}/snapshot",
 		"GET /",
 		"GET /invite/{invite}",
@@ -164,7 +168,7 @@ func TestJobTokenRouteAudit(t *testing.T) {
 	if n := strings.Count(string(source), "s.mux.HandleFunc("); n != len(routes)+len(exceptions)+len(allowed) {
 		t.Fatalf("route audit table stale: routes %d, audited %d", n, len(routes)+len(exceptions)+len(allowed))
 	}
-	replace := strings.NewReplacer("{project}", job.ProjectID, "{job}", job.ID, "{org}", "org", "{slug}", "slug", "{session}", "session", "{provider}", "google", "{agent}", "agent", "{source}", "source", "{format}", "text", "{member}", "member", "{invite}", "invite")
+	replace := strings.NewReplacer("{project}", job.ProjectID, "{job}", job.ID, "{org}", "org", "{slug}", "slug", "{session}", "session", "{provider}", "google", "{agent}", "agent", "{source}", "source", "{view}", "test-view", "{format}", "text", "{member}", "member", "{invite}", "invite")
 	for _, route := range routes {
 		t.Run(route, func(t *testing.T) {
 			parts := strings.SplitN(route, " ", 2)

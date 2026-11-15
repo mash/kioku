@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/model"
@@ -103,6 +104,29 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 			return nil, invalid
 		}
 		return s.mcpWikiSearch(ctx, key, *args.Project, *args.Query)
+	case "view_list":
+		var args struct {
+			Project *string `json:"project"`
+		}
+		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil {
+			return nil, invalid
+		}
+		return s.mcpViewList(ctx, key, *args.Project)
+	case "view_read":
+		var args struct {
+			Project *string `json:"project"`
+			View    *string `json:"view"`
+			Path    *string `json:"path"`
+			Offset  *int    `json:"offset"`
+		}
+		if !decodeMCPArguments(params.Arguments, &args) || args.Project == nil || args.View == nil || args.Path == nil {
+			return nil, invalid
+		}
+		offset := 0
+		if args.Offset != nil {
+			offset = *args.Offset
+		}
+		return s.mcpViewRead(ctx, key, *args.Project, *args.View, *args.Path, offset)
 	case "source_put":
 		var args struct {
 			Project   *string `json:"project"`
@@ -173,17 +197,21 @@ func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, o
 		case rev.ID == "":
 			return nil, fail(404, "project has no wiki yet")
 		default:
-			return nil, fail(404, "wiki file not found; read maps/graph.json for the page list")
+			return nil, fail(404, "wiki file not found; start at wiki/index.md")
 		}
 	}
 	body, err := s.wikiFile(ctx, rev, name)
 	if err != nil {
 		return nil, err
 	}
+	return mcpTextPage(namespace, name, body, offset)
+}
+
+func mcpTextPage(namespace, name, body string, offset int) (map[string]any, error) {
 	if offset < 0 || offset > len(body) || (offset < len(body) && !utf8.RuneStart(body[offset])) {
 		return nil, fail(400, "invalid offset")
 	}
-	end := min(offset+32768, len(body))
+	end := offset + min(32768, len(body)-offset)
 	for end < len(body) && !utf8.RuneStart(body[end]) {
 		end--
 	}
@@ -192,6 +220,83 @@ func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, o
 		next = &end
 	}
 	return map[string]any{"project": namespace, "path": name, "file_bytes": len(body), "offset": offset, "next_offset": next, "content": body[offset:end]}, nil
+}
+
+func (s *Server) lockConnectorProject(ctx context.Context, key, namespace string) (model.Project, func(), error) {
+	resolve := func() (p model.Project, err error) {
+		err = s.Store.View(func(st model.State) error {
+			var err error
+			p, _, err = connectorProject(st, key, namespace)
+			return err
+		})
+		return p, err
+	}
+	p, err := resolve()
+	if err != nil {
+		return model.Project{}, nil, err
+	}
+	unlock, err := s.lockProject(ctx, p.ID)
+	if err != nil {
+		return model.Project{}, nil, err
+	}
+	current, err := resolve()
+	if err == nil && current.ID != p.ID {
+		err = fail(404, "project not found")
+	}
+	if err != nil {
+		unlock()
+		return model.Project{}, nil, err
+	}
+	return current, unlock, nil
+}
+
+func (s *Server) mcpViewList(ctx context.Context, key, namespace string) (any, error) {
+	p, unlock, err := s.lockConnectorProject(ctx, key, namespace)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	views, err := s.listViewsLocked(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	type listItem struct {
+		ID          string     `json:"view_id"`
+		Slug        string     `json:"slug"`
+		Title       string     `json:"title"`
+		GeneratedAt *time.Time `json:"generated_at"`
+		Status      string     `json:"status"`
+		Error       string     `json:"error,omitempty"`
+	}
+	items := make([]listItem, 0, len(views))
+	for _, view := range views {
+		items = append(items, listItem{view.ID, view.Slug, view.Title, view.GeneratedAt, view.Status, view.Error})
+	}
+	return map[string]any{"views": items}, nil
+}
+
+func (s *Server) mcpViewRead(ctx context.Context, key, namespace, slug, name string, offset int) (any, error) {
+	p, unlock, err := s.lockConnectorProject(ctx, key, namespace)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if !slices.Contains(viewTextPaths, name) {
+		return nil, fail(400, "invalid View path")
+	}
+	view, err := s.viewBySlugLocked(ctx, p.ID, slug)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := s.readViewBundleLocked(ctx, p.ID, view)
+	if err != nil {
+		return nil, err
+	}
+	body, err := readPublishedViewText(archive, name)
+	if err != nil {
+		return nil, err
+	}
+	return mcpTextPage(namespace, name, body, offset)
 }
 
 func (s *Server) mcpWikiSearch(ctx context.Context, key, namespace, query string) (any, error) {

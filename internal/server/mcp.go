@@ -244,6 +244,19 @@ func mcpToolSchemas() []any {
 				map[string]any{"required": []string{"remove", "source_url"}, "properties": map[string]any{"remove": map[string]any{"const": true}}, "not": map[string]any{"anyOf": []any{map[string]any{"required": []string{"name"}}, map[string]any{"required": []string{"content"}}}}},
 			},
 		},
+	}, map[string]any{
+		"name": "view_list",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+			"project": map[string]any{"type": "string"},
+		}, "required": []string{"project"}, "additionalProperties": false},
+	}, map[string]any{
+		"name": "view_read",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+			"project": map[string]any{"type": "string"},
+			"view":    map[string]any{"type": "string"},
+			"path":    map[string]any{"type": "string", "enum": viewTextPaths},
+			"offset":  map[string]any{"type": "integer", "minimum": 0, "default": 0},
+		}, "required": []string{"project", "view", "path"}, "additionalProperties": false},
 	}}
 }
 

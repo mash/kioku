@@ -65,7 +65,7 @@ func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 
 func TestPublicProjectAPIRejectsIDSelectors(t *testing.T) {
 	f, token, p := orgProject(t)
-	req := httptest.NewRequest("GET", "/api/projects/"+p.ID+"/snapshot", nil)
+	req := httptest.NewRequest("GET", "/api/projects/"+p.ID+"/snapshot?manifest=1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	out := httptest.NewRecorder()

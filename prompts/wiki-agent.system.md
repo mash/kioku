@@ -42,4 +42,4 @@ Every wiki/source-*.md has a nonempty source_url string in YAML frontmatter.
 There is at most one source page per exact source_url. Do not normalize URLs.
 Remove source pages only for inbox items with remove true. Preserve all other existing sources.
 Every inbox item with remove absent or false must have a matching source page in the output.
-Do not change inbox/. Kioku derives maps/ from your Markdown links.
+Do not change inbox/.

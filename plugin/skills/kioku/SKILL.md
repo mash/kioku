@@ -110,7 +110,7 @@ Claude Code では、親がプロンプトの URL と自分で開いた URL・�
 その他の環境では、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送信する。
 操作や要約の「記録」を別途 put しない。
 複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。
-「今どこ？」には保存済みマップを根拠に答える。
+「今どこ？」には保存済みの Wiki と原本を根拠に答える。
 
 ## 共通の境界
 
@@ -120,18 +120,18 @@ Claude Code では、親がプロンプトの URL と自分で開いた URL・�
   connector 認証では `kioku -n "$NAMESPACE" agent login CODE` が設定を作る。
 - local mode: `P` は CLI が選んだプロジェクトの保存先の絶対パス。CLI が projects.json の `path` に記録する。
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
-  maps は `P/maps/` に置く。CLI は操作対象のディレクトリの設定を使う。
+  CLI は操作対象のディレクトリの設定を使う。
   Claude Code のフックだけが、候補を探すために cwd からファイルシステムのルートまでの設定を読む。
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに最後の書き込みから30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
-- `wiki/` と `maps/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
+- `wiki/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
   source ページの `source_url` から原本を確認する。
 - 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。
 - local mode: `put` の成功は Kioku がファイルを受け付けたことを示す。ユーザーに受付を伝える。Wiki の生成を待たない。
   Wiki は最後の put の約 10 秒後の自動生成か `generate --wait` で更新する。`generate --wait` は生成完了後に pull する。
   `status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。
-- local mode: 読み取り専用の認証では `put`、`delete`、`generate`、`job retry` を実行しない。
+- local mode: 読み取り専用の認証では `put`、`delete`、`generate` を実行しない。
   即時生成の依頼も認証の権限を増やさない。
 - 426 は CLI 更新が必要なエラー。別の認証や remote mode で回避せず、plugin／CLI の更新を案内する。
 - 原資料の自動送信と対象の自動選択は、他の外部送信・本番変更・承認待ちの解除を許可しない。

@@ -120,10 +120,9 @@ func TestManagedFinalizingPinsOutputHash(t *testing.T) {
 	if c != 409 {
 		t.Fatal(c, string(body))
 	}
-	var snap model.Snapshot
-	f.request("GET", "/api/projects/"+p.ID+"/snapshot", token, nil, &snap)
-	if !strings.Contains(snap.Files["wiki/index.md"], "Selected version") || strings.Contains(snap.Files["wiki/index.md"], "Replacement") {
-		t.Fatal(snap)
+	index := f.readWiki("/api/projects/"+p.ID, token)["wiki/index.md"]
+	if !strings.Contains(index, "Selected version") || strings.Contains(index, "Replacement") {
+		t.Fatal(index)
 	}
 }
 func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
@@ -148,10 +147,9 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	sendOutput(t, f, ma, j, "Wiki")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	reconcileManaged(t, f, j)
-	n := len(ma.Requests())
 	j = startManaged(t, f, token, p.ID, false)
-	if !j.Unchanged || j.Status != "completed" || len(ma.Requests()) != n {
-		t.Fatal("unchanged invoked agent", j)
+	if !j.Unchanged || j.Status != "completed" || j.Run != nil {
+		t.Fatal("unchanged job invoked a Wiki runner", j)
 	}
 	j = startManaged(t, f, token, p.ID, true)
 	if j.Unchanged || j.Run == nil {

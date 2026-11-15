@@ -68,12 +68,12 @@ MIT. See [LICENSE](LICENSE).
 
 # 詳細
 
-チームが原資料を投入し、クラウドでWikiとプロジェクトマップを生成・共有するGo製CLI／サーバです。アプリ本体・CLI・マップ表示はGoで実装しています。
+チームが原資料を投入し、クラウドで Wiki を生成・共有する Go 製の CLI とサーバーです。
 
 ```text
 メンバーの inbox / Google Docs / GitHub / 公開Artifacts・Sites
                       ↓ put（1要求につき1項目）
-   inbox → 1回のエージェント実行（取得・編集）→ Wiki・リンクマップ
+   inbox → 1回のエージェント実行（取得・編集）→ Wiki
                       ↓ 変更ファイルを順次更新
    プロジェクト専用領域（inbox・Wiki・ジョブ） + 管理用SQLite
                       ↓ pull
@@ -135,7 +135,6 @@ kioku -n "$NAMESPACE" put ./payment-api-design.md  # Artifactから抽出し、c
 kioku -n "$NAMESPACE" generate --wait         # Generate now and pull the wiki
 kioku -n "$NAMESPACE" job status <job-id>
 kioku -n "$NAMESPACE" job wait <job-id>
-kioku -n "$NAMESPACE" job retry <job-id>
 kioku project join <invite-url>
 kioku project list
 kioku -n "$NAMESPACE" pull
@@ -208,7 +207,7 @@ delete は `remove: true` の項目を保存し、CLI は成功した依頼ご�
 
 待機中の同じ source_url の項目は、新しい put で置き換えます。削除の依頼も待機中の本文を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
 
-## Wikiとマップ
+## Wiki
 
 Wiki 生成には Runner の設定が必要です。Anthropic Managed Agents を使う場合は次を設定します。3 変数は一緒に設定し、一部だけなら起動時にエラーになります。
 
@@ -221,11 +220,13 @@ export KIOKU_MA_AGENT_VERSION=0
 export ANTHROPIC_WEBHOOK_SIGNING_KEY=...
 ```
 
-kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付の入力ファイルを読み、ローカルに出力ファイルを書きます。指示と出力規則はシステムプロンプトにあります。Runner が本文と削除の依頼を処理して Wiki を編集し、全ページを返します。空の inbox はモデルを呼ばず変化なしで終わります。ただし Runner 未設定の生成は失敗します。`generate --full` はありません。
+kiokud は待機中の inbox を実行に固定し、`JOB.md`、`inbox/<id>.md`、既存の `wiki/` 全体を入力 tar に入れます。`JOB.md` には job ID とプロジェクトの namespace が入ります。自前の exec runner には、入力と出力の URL も渡します。managed runner は添付の入力ファイルを読み、ローカルに出力ファイルを書きます。Runner が本文と削除の依頼を処理して Wiki を編集し、全ページを返します。inbox が空なら Wiki は前回の公開結果を使います。Runner 未設定の生成は失敗します。
+
+完全な Wiki があれば、同じジョブで登録済みの View を順に生成します。各 View は独立した runner セッションで Wiki と保存済みプロンプトを読み、検査に通った結果で前回の表示を上書きします。プロジェクト画面の右サイドバーから View を開けます。オーナーは「＋」で View を作り、各 View の設定でタイトルとプロンプトを変更できます。[生成と予算](docs/WORKERS.md#generation-runner-type)
 
 Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。概念・エンティティ・分析・概要ページから source ページを引用します。`wiki/index.md` は種類ごとの目録で、source ページを載せません。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
-出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開して `maps/graph.json` と `maps/graph.mmd` を作ります。原資料ページをサーバーが後から付け足す処理はありません。
+出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開します。原資料ページをサーバーが後から付け足す処理はありません。
 
 公開に成功した実行の項目だけを inbox から消します。失敗した実行の項目は待機に戻します。公開の途中で停止した場合は `wiki_incomplete` と項目を残します。新しい put が同じ URL の待機項目を作っていた場合は、失敗した古い項目を戻さず新しい項目を優先します。
 
@@ -253,7 +254,7 @@ KIOKU_DATA/
   objects/projects/    # KIOKU_STORAGE=local の場合のみ
 ```
 
-inbox・Wiki・マップ・ジョブ・生成進捗はプロジェクトの保存先に置きます。SQLiteには本文、ファイル一覧、生成チェックポイントを保存しません。プロジェクト専用SQLiteは不要になりました。
+inbox・Wiki・ジョブ・生成進捗はプロジェクトの保存先に置きます。SQLiteには本文、ファイル一覧、生成チェックポイントを保存しません。プロジェクト専用SQLiteは不要になりました。
 
 ```bash
 export KIOKU_STORAGE=s3
@@ -275,13 +276,12 @@ export S3_SECRET_ACCESS_KEY=...
   wiki/*.md
   wiki/source-<slug>.md
   wiki/log.md
-  maps/graph.{json,mmd}
   .kioku/state.json                    # inbox・現在ファイル・進捗
   .kioku/jobs/<job-id>.json
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの wiki/maps だけを取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
+Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの Wiki Markdown を取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
@@ -395,10 +395,10 @@ CLI が認証を `~/.config/kioku/auth/<server-hash>.json` に接続先別で保
 
 スキルは `mktemp -d` を単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使います。シェル変数や `$(...)` は使いません。一時ディレクトリに原資料の Markdown を書き、`kioku -n "$NAMESPACE" put FILE` に実際のファイルパスを指定して送信します。
 
-- `wiki/` と `maps/`: 保存先直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
+- `wiki/`: 保存先直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
 - `.kioku/`: config、ファイル更新ロック。config は server と namespace のみを保存し、Git で共有できます。
 
-設定の初回作成では、既存の非空 wiki/maps があれば紐付けを拒否します。config がある場合、wiki/maps は管理対象のミラーとして扱うため、独自資料は置かないでください。管理対象の symlink も拒否します。公開・取得ともページ単位の順次反映なので、新旧混在を許容します。部分失敗でも成功したページは残ります。復旧後の pull は実ファイルとサーバーの一覧を比較して再同期します。前回の取得 revision や同期未完了状態はローカルに保存せず、status にも表示しません。
+設定の初回作成では、既存の管理対象ディレクトリにファイルがあれば紐付けを拒否します。config がある場合、`wiki/` は管理対象のミラーとして扱うため、独自資料は置かないでください。管理対象の symlink も拒否します。公開・取得ともページ単位の順次反映なので、新旧混在を許容します。部分失敗でも成功したページは残ります。復旧後の pull は実ファイルとサーバーの一覧を比較して再同期します。前回の取得 revision や同期未完了状態はローカルに保存せず、status にも表示しません。
 
 ### 取得結果
 
@@ -459,7 +459,7 @@ CLI は `kioku --server https://kioku.example.com login` で接続し、
 
 BYOK 対応版から更新する場合は、先に旧版で新規投入を止め、接続解除で既存ジョブの
 停止・session/vault cleanup・保存キー削除を完了させてください。未完了のまま更新しません。
-旧 BYOK ジョブは更新後に実行・再試行できません。生成が必要なら新規ジョブを作成します。
+旧 BYOK ジョブの処理が必要なら、新規生成ジョブを作成します。
 既存バックアップからのキー消去やプロバイダー側のキー失効は自動では行いません。
 従来 BYOK 接続によって停止していた project も、次の put か保存済みの期限で対象になるため、再開前に対象と予算を確認します。
 
@@ -504,7 +504,7 @@ MA は指定された model を送信し、省略時は Agent 側の model を�
 
 起動ログは3ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
 
-起動済みの MA・OpenAI セッションは作成時の文を使い続け、retry の新しい attempt は新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
+起動済みの MA・OpenAI セッションは作成時の文を使い続け、新しい生成ジョブは新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
 
 MA がセッション作成を4xxで拒否すると `session create rejected status=... type=...` を記録します。429 は既存の一時エラー扱いを維持し、それ以外の4xxは attempt を失敗させます。プロバイダーのエラー本文はログに出しません。
 

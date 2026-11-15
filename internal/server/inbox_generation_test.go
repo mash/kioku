@@ -52,7 +52,7 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 	}
 }
 
-func TestInboxFailureReleasesAndRetryUsesCurrentWaitingItems(t *testing.T) {
+func TestInboxFailureReleasesForNewGeneration(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	first := putFile(t, f, token, p.ID, "a.md", "First body")
 	j := startManaged(t, f, token, p.ID, false)
@@ -75,22 +75,12 @@ func TestInboxFailureReleasesAndRetryUsesCurrentWaitingItems(t *testing.T) {
 		}
 		return nil
 	})
-	var retry model.Job
-	if c := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, &retry); c != 202 {
-		t.Fatal(c)
+	next := startManaged(t, f, token, p.ID, false)
+	if next.ID == j.ID || len(next.Run.InboxIDs) != 1 || next.Run.InboxIDs[0] != replacement.ID || next.Run.Attempt.ID == j.Run.Attempt.ID {
+		t.Fatal(next)
 	}
-	f.stateStore.Update(func(st *model.State) error {
-		retry = st.Jobs[j.ID]
-		retry.Status = "running"
-		st.Jobs[j.ID] = retry
-		return nil
-	})
-	if err := f.s.startAgentJob(t.Context(), retry); err != nil {
-		t.Fatal(err)
-	}
-	retry = storedJob(t, f, j.ID)
-	if len(retry.Run.InboxIDs) != 1 || retry.Run.InboxIDs[0] != replacement.ID || retry.Run.Attempt.ID == j.Run.Attempt.ID {
-		t.Fatal(retry)
+	if failed := storedJob(t, f, j.ID); failed.Status != "failed" {
+		t.Fatal("the previous job lost its failure record", failed)
 	}
 }
 
@@ -101,7 +91,7 @@ func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
 	if err := f.s.startAgentJob(t.Context(), j); err != nil {
 		t.Fatal(err)
 	}
-	j = storedJob(t, f, j.ID)
+	j = f.completeFixtureViews(storedJob(t, f, j.ID))
 	if !j.Unchanged || j.Status != "completed" || len(ma.Requests()) != before {
 		t.Fatal(j)
 	}
@@ -598,7 +588,7 @@ func TestDebounceChangeAppliesFromNextPut(t *testing.T) {
 }
 
 func TestDeadlineQueuesOnceAndClears(t *testing.T) {
-	f, token, p, _ := managedFixture(t)
+	f, token, p, ma := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	putFile(t, f, token, p.ID, "a.md", "Body")
 	deadline := generationState(t, f).Projects[p.ID].NextGenerateAt
@@ -615,8 +605,16 @@ func TestDeadlineQueuesOnceAndClears(t *testing.T) {
 		t.Fatal(st.Projects[p.ID], st.Jobs)
 	}
 	for _, j := range st.Jobs {
-		if !j.Automatic || j.Status != "queued" || p.Members[j.UserID] != "owner" || !j.Created.Equal(deadline) {
+		if !j.Automatic || j.Status != "queued" || j.WikiStatus != "pending" || p.Members[j.UserID] != "owner" || !j.Created.Equal(deadline) {
 			t.Fatal(j)
+		}
+		job := startTestGeneration(t, f, j.ID)
+		sendOutput(t, f, ma, job, "Scheduled Wiki")
+		ma.SetStatus(job.Run.Ref.ID, "idle", "end_turn", 1)
+		job = reconcileManaged(t, f, job)
+		if job.Status != "completed" || job.WikiStatus != "completed" || len(job.Views) != 1 ||
+			job.Views[0].Slug != "project-map" || job.Views[0].Status != "completed" {
+			t.Fatalf("scheduled job did not publish its View: %+v", job)
 		}
 	}
 }

@@ -103,7 +103,7 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
+func TestManagedPendingCleanupPreservesDeletionAndAllowsNewGeneration(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -112,9 +112,6 @@ func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 	j = reconcileManaged(t, f, j)
 	if j.Run.CleanupComplete {
 		t.Fatal("failed cleanup marked complete")
-	}
-	if c := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, nil); c != 503 {
-		t.Fatal("retry lost cleanup", c)
 	}
 	if c := f.request("DELETE", "/api/projects/"+p.ID, token, nil, nil); c != 503 {
 		t.Fatal("deletion lost cleanup", c)
@@ -125,10 +122,11 @@ func TestManagedPendingCleanupRetainsRetryAndDeletion(t *testing.T) {
 		}
 		return nil
 	})
-	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 0)
-	reconcileManaged(t, f, j)
-	next := retryManagedJob(t, f, token, j)
-	if next.Status != "running" || next.Run.Attempt.ID == j.Run.Attempt.ID {
+	next := startManaged(t, f, token, p.ID, false)
+	if next.ID == j.ID || next.Status != "running" || next.Run.Attempt.ID == j.Run.Attempt.ID {
 		t.Fatal(next)
+	}
+	if old := storedJob(t, f, j.ID); old.Status != "failed" || old.Run.CleanupComplete {
+		t.Fatal("new generation changed the previous job", old)
 	}
 }

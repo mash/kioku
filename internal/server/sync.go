@@ -41,9 +41,9 @@ func (s *Server) wikiFile(ctx context.Context, rev model.Revision, name string) 
 	return string(b), err
 }
 
-// syncSnapshot exposes the current mutable tree, not historical revisions.
+// snapshot serves the file listing and individual pages of the current Wiki.
 // Publication and deletion use this same project lock for each file write.
-func (s *Server) syncSnapshot(w http.ResponseWriter, r *http.Request, uid string) error {
+func (s *Server) snapshot(w http.ResponseWriter, r *http.Request, uid string) error {
 	rev, unlock, err := s.wikiFiles(r.Context(), uid, r.PathValue("project"))
 	if err != nil {
 		return err
@@ -60,8 +60,14 @@ func (s *Server) syncSnapshot(w http.ResponseWriter, r *http.Request, uid string
 		jsonOut(w, 200, model.SnapshotFile{Body: body, Hash: auth.Hash(body)})
 		return nil
 	}
+	if r.URL.Query().Get("manifest") != "1" {
+		return fail(400, "specify manifest=1 or file")
+	}
 	files := map[string]model.SyncFile{}
 	for name, key := range rev.Files {
+		if !wiki.ValidFile(name) {
+			continue
+		}
 		hash, size := rev.FileHashes[name], rev.FileBytes[name]
 		if hash == "" {
 			b, err := s.Blobs.Get(r.Context(), key)

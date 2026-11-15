@@ -54,6 +54,7 @@ type RunSpec struct {
 	InputURL, OutputURL string
 	Token               Secret
 	FirstMessage        string
+	System              string
 	BudgetCents         int64
 	Deadline            time.Time
 	InputArchive        []byte `json:"-"`
@@ -65,6 +66,7 @@ type Status struct {
 	Run    RunRef
 	State  State
 	Reason string
+	Failed bool
 	Cost   *int64
 	TurnID string
 }

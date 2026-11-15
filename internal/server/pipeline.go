@@ -47,6 +47,9 @@ func (s *Server) RunWorker(ctx context.Context) error {
 		case <-ticker.C:
 		}
 		for ctx.Err() == nil {
+			if err := s.advanceViewGenerations(ctx); err != nil {
+				slog.Error("view generation deferred", "error", err)
+			}
 			var job model.Job
 			err := s.Store.Update(func(st *model.State) error {
 				pending := []model.Job{}
@@ -55,14 +58,14 @@ func (s *Server) RunWorker(ctx context.Context) error {
 				for _, j := range st.Jobs {
 					if j.Status == "running" {
 						running[j.ProjectID] = true
-						if j.Run != nil {
+						if j.ViewGeneration == nil {
 							sessions++
 						}
 					}
 				}
 				for _, j := range st.Jobs {
 					if j.Status == "queued" {
-						if running[j.ProjectID] || sessions >= s.Config.AgentMaxSessions {
+						if sessions >= s.Config.AgentMaxSessions || (running[j.ProjectID] && j.ViewTask == nil) {
 							continue
 						}
 						pending = append(pending, j)
@@ -79,6 +82,9 @@ func (s *Server) RunWorker(ctx context.Context) error {
 				})
 				job = pending[0]
 				job.Status = "running"
+				if job.WikiStatus != "" {
+					job.WikiStatus = "running"
+				}
 				st.Jobs[job.ID] = job
 				return nil
 			})
@@ -99,7 +105,6 @@ func (s *Server) RunWorker(ctx context.Context) error {
 			} else if err != nil {
 				return err
 			}
-
 		}
 	}
 }
@@ -159,122 +164,9 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request, uid string) error {
 			return fail(404, "job not found")
 		}
 	}
-	if j.ProjectID != pid || j.Created.Before(validAfter) {
+	if j.ProjectID != pid || j.ViewTask != nil || j.Created.Before(validAfter) {
 		return fail(404, "job not found")
 	}
 	jsonOut(w, 200, j)
-	return nil
-}
-func (s *Server) retry(w http.ResponseWriter, r *http.Request, uid string) error {
-	pid, id := r.PathValue("project"), r.PathValue("job")
-	if err := s.check(pid, uid); err != nil {
-		return err
-	}
-	var archived model.Job
-	var found bool
-	var cutoff time.Time
-	if err := s.Store.View(func(st model.State) error {
-		_, found = st.Jobs[id]
-		cutoff = st.Projects[pid].JobsValidAfter
-		return nil
-	}); err != nil {
-		return err
-	}
-	if !found {
-		var err error
-		archived, err = s.Store.ArchivedJob(r.Context(), pid, id)
-		if err != nil || archived.Created.Before(cutoff) {
-			return fail(404, "job not found")
-		}
-	}
-	_, principal := s.session(r)
-	var job model.Job
-	err := s.Store.Update(func(st *model.State) error {
-		pid := r.PathValue("project")
-		if _, err := member(*st, pid, uid); err != nil {
-			return err
-		}
-		j, ok := st.Jobs[r.PathValue("job")]
-		if !ok && archived.ID != "" {
-			j = archived
-			ok = true
-		}
-		if !ok || j.ProjectID != pid || j.Created.Before(st.Projects[pid].JobsValidAfter) {
-			return fail(404, "job not found")
-		}
-		if j.AnthropicConnectionID != "" {
-			return fail(409, "BYOK has been removed; create a new generation job")
-		}
-		if j.Status != "failed" {
-			return fail(409, "only failed jobs can be retried")
-		}
-		if j.Run != nil && !j.Run.CleanupComplete {
-			return fail(503, "agent cleanup pending; retry after reconciliation")
-		}
-
-		queued := 0
-		for _, v := range st.Jobs {
-			if v.ProjectID == pid && (v.Status == "queued" || v.Status == "running") {
-				queued++
-			}
-		}
-		if queued >= s.Config.MaxQueued {
-			return fail(429, "project job queue is full")
-		}
-		j.Status = "queued"
-		j.Run = nil
-		j.Unchanged = false
-		j.Error = ""
-		j.UserID = uid
-		j.AgentID = principal.AgentID
-		st.Jobs[j.ID] = j
-		job = j
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	s.notify()
-	jsonOut(w, 202, job)
-	return nil
-}
-func (s *Server) snapshot(w http.ResponseWriter, r *http.Request, uid string) error {
-	if r.URL.Query().Get("manifest") == "1" || r.URL.Query().Get("file") != "" {
-		return s.syncSnapshot(w, r, uid)
-	}
-	var rev model.Revision
-	err := s.Store.View(func(st model.State) error {
-		pid := r.PathValue("project")
-		p, err := member(st, pid, uid)
-		if err != nil {
-			return err
-		}
-		rid := p.Revision
-
-		if rid == "" {
-			return fail(409, "project has no wiki yet")
-		}
-		var ok bool
-		rev, ok = st.Revisions[rid]
-		if !ok || rev.ProjectID != pid {
-			return fail(404, "revision not found")
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	files := map[string]string{}
-	for name, key := range rev.Files {
-		b, err := s.Blobs.Get(r.Context(), key)
-		if err != nil {
-			return err
-		}
-		files[name] = string(b)
-	}
-	if requested := r.URL.Query().Get("revision"); requested != "" && requested != snapshotToken(files) {
-		return fail(404, "wiki history is not retained")
-	}
-	jsonOut(w, 200, model.Snapshot{Revision: snapshotToken(files), Files: files})
 	return nil
 }

@@ -130,7 +130,7 @@ func TestClaudeFileGenerationRecoversAndValidatesSessionOutput(t *testing.T) {
 			}
 			available.Store(true)
 			j = reconcileManaged(t, f, j)
-			if j.Status != tc.want || !j.Run.CleanupComplete || cleanup.Load() != 2 {
+			if j.WikiStatus != tc.want || !j.Run.CleanupComplete || cleanup.Load() != 2 {
 				t.Fatal(j, cleanup.Load())
 			}
 			if (j.Revision != "") != (tc.want == "completed") || (downloads.Load() == 1) != (tc.want == "completed") {

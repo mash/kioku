@@ -27,6 +27,7 @@ func managedFixture(t *testing.T) (*fixture, string, model.Project, *fake.Server
 	f, token, p := orgProject(t)
 	ma := fake.New()
 	t.Cleanup(ma.Close)
+	f.auto = ma
 	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: legacyManagedClient{claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client())}, BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 	return f, token, p, ma
@@ -81,7 +82,7 @@ func startManaged(t *testing.T, f *fixture, token, pid string, ensureItem bool) 
 	if j.Status == "failed" {
 		t.Fatal(j.Error)
 	}
-	return j
+	return f.completeFixtureViews(j)
 }
 func readInput(t *testing.T, data []byte) map[string]string {
 	t.Helper()
@@ -157,7 +158,11 @@ func reconcileManaged(t *testing.T, f *fixture, j model.Job) model.Job {
 	if err := f.s.reconcileAgentJob(context.Background(), j); err != nil {
 		t.Fatal(err)
 	}
-	return storedJob(t, f, j.ID)
+	current := storedJob(t, f, j.ID)
+	if f.auto != nil {
+		return f.completeFixtureViews(current)
+	}
+	return current
 }
 func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j model.Job) {
 	t.Helper()
@@ -235,7 +240,7 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 		})
 	}
 }
-func TestManagedRetryAndUnknownUsage(t *testing.T) {
+func TestManagedRegenerationAndUnknownUsage(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -245,28 +250,12 @@ func TestManagedRetryAndUnknownUsage(t *testing.T) {
 	if costOf(j.Run.CostCents) != 123 {
 		t.Fatal("lost first cost", costOf(j.Run.CostCents))
 	}
-	var retried model.Job
-	if c := f.request("POST", "/api/projects/"+p.ID+"/jobs/"+j.ID+"/retry", token, nil, &retried); c != 202 {
-		t.Fatal(c)
-	}
-	if retried.Run != nil {
-		t.Fatal("retry retained run")
-	}
-	_ = f.stateStore.Update(func(st *model.State) error {
-		retried = st.Jobs[j.ID]
-		retried.Status = "running"
-		st.Jobs[j.ID] = retried
-		return nil
-	})
-	if err := f.s.startAgentJob(context.Background(), retried); err != nil {
-		t.Fatal(err)
-	}
-	j = storedJob(t, f, j.ID)
+	j = startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Retry")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	j = reconcileManaged(t, f, j)
 	if j.Status != "completed" || costOf(j.Run.CostCents) != 123 || j.Run.Attempt.ID == oldAttempt {
-		t.Error("retry did not finish as a new attempt", j.Status, costOf(j.Run.CostCents))
+		t.Error("new generation did not finish as a new attempt", j.Status, costOf(j.Run.CostCents))
 	}
 	j = startManaged(t, f, token, p.ID, true)
 	ma.SetError("GET", "/v1/sessions/"+j.Run.Ref.ID, 503)

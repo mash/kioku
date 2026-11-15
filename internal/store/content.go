@@ -99,21 +99,25 @@ func controlJSON(st model.State) ([]byte, error) {
 
 // projectContent contains no account configuration, membership or credentials.
 type projectContent struct {
-	Inbox          map[string]model.InboxItem `json:"inbox"`
-	JobsValidAfter time.Time                  `json:"jobs_valid_after,omitempty"`
-	Schema         int                        `json:"schema"`
-	ProjectID      string                     `json:"project_id"`
-	WikiUpdatedAt  time.Time                  `json:"wiki_updated_at"`
-	NextGenerateAt time.Time                  `json:"next_generate_at"`
-	Incomplete     bool                       `json:"incomplete"`
-	Wiki           *model.Revision            `json:"wiki,omitempty"`
-	Jobs           map[string]model.Job       `json:"jobs"`
-	Audit          map[string]model.Audit     `json:"audit"`
+	Inbox                map[string]model.InboxItem `json:"inbox"`
+	JobsValidAfter       time.Time                  `json:"jobs_valid_after,omitempty"`
+	Schema               int                        `json:"schema"`
+	ProjectID            string                     `json:"project_id"`
+	WikiUpdatedAt        time.Time                  `json:"wiki_updated_at"`
+	NextGenerateAt       time.Time                  `json:"next_generate_at"`
+	Incomplete           bool                       `json:"incomplete"`
+	WikiCompleteRevision string                     `json:"wiki_complete_revision,omitempty"`
+	ViewEpoch            string                     `json:"view_epoch,omitempty"`
+	Wiki                 *model.Revision            `json:"wiki,omitempty"`
+	Jobs                 map[string]model.Job       `json:"jobs"`
+	Audit                map[string]model.Audit     `json:"audit"`
 }
 
 func contentFor(st model.State, pid string) projectContent {
 	p := st.Projects[pid]
 	c := projectContent{Inbox: map[string]model.InboxItem{}, JobsValidAfter: p.JobsValidAfter, Schema: 2, ProjectID: pid, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: p.NextGenerateAt, Incomplete: p.WikiIncomplete, Jobs: map[string]model.Job{}, Audit: map[string]model.Audit{}}
+	c.WikiCompleteRevision = p.WikiCompleteRevision
+	c.ViewEpoch = p.ViewEpoch
 	if current, ok := st.Revisions[p.Revision]; ok {
 		c.Wiki = &current
 	}
@@ -211,6 +215,8 @@ func (s *Store) loadContent(pid string) error {
 		p.Revision = c.Wiki.ID
 	}
 	p.WikiIncomplete = c.Incomplete
+	p.WikiCompleteRevision = c.WikiCompleteRevision
+	p.ViewEpoch = c.ViewEpoch
 	s.state.Projects[pid] = p
 	if c.Wiki != nil {
 		s.state.Revisions[c.Wiki.ID] = *c.Wiki

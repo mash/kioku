@@ -29,7 +29,12 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 			}
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/jobs/"):
 			polls++
-			json.NewEncoder(w).Encode(model.Job{ID: "job", Kind: jobKind, Status: "completed", Revision: "revision"})
+			job := model.Job{ID: "job", Kind: jobKind, Status: "completed", WikiStatus: "completed", Revision: "revision"}
+			if polls == 1 {
+				job.Status = "running"
+				job.Views = []model.ViewJobResult{{Slug: "project-map", Status: "running"}}
+			}
+			json.NewEncoder(w).Encode(job)
 		default:
 			writes++
 			jobKind = "generate"
@@ -54,7 +59,6 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 		func() error {
 			return a.deleteSources([]string{"https://example.com/source", "https://example.com/another"})
 		},
-		func() error { return a.job([]string{"retry", "job"}) },
 		func() error { return a.generate(nil) },
 	}
 	for i, operation := range operations {
@@ -86,7 +90,7 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	if err := a.generate([]string{"--wait"}); err != nil {
 		t.Fatal(err)
 	}
-	if polls != 1 || snapshots != 1 {
+	if polls != 2 || snapshots != 1 {
 		t.Fatal("generate --wait did not pull", polls, snapshots)
 	}
 	body, err := os.ReadFile(filepath.Join(a.localDir(), "wiki", "index.md"))
@@ -96,14 +100,18 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	if err := a.job([]string{"wait", "job"}); err != nil {
 		t.Fatal(err)
 	}
-	if polls != 2 || snapshots != 2 {
+	if polls != 3 || snapshots != 2 {
 		t.Fatal("job wait did not pull completed job", polls, snapshots)
 	}
-	if err := a.job([]string{"retry", "--wait", "job"}); err != nil {
-		t.Fatal(err)
+	if err := a.job([]string{"retry", "--wait", "job"}); err == nil {
+		t.Fatal("removed retry command was accepted")
 	}
-	if polls != 3 || snapshots != 3 {
-		t.Fatal("retry --wait did not wait and pull", polls, snapshots)
+	if polls != 3 || snapshots != 2 || writes != len(operations)+2 {
+		t.Fatal("removed retry command made a request", polls, snapshots, writes)
+	}
+	if err := a.wait(model.Job{ID: "job", Kind: "generate", Status: "failed", Error: "generation failed"}); err == nil ||
+		!strings.Contains(err.Error(), "kioku generate --wait") {
+		t.Fatal("missing regeneration advice", err)
 	}
 }
 
@@ -115,6 +123,16 @@ func TestWaitingForUnchangedEmptyProjectDoesNotPull(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "No waiting inbox items") {
 		t.Fatal("missing unchanged result", out.String())
+	}
+	out.Reset()
+	job := model.Job{ID: "job", Kind: "generate", Status: "completed", Unchanged: true, Revision: "partial", WikiStatus: "unavailable", Views: []model.ViewJobResult{{Slug: "project-map", Status: "skipped"}}}
+	if err := a.wait(job); err != nil {
+		t.Fatal(err)
+	}
+	var result model.Job
+	_, line, _ := strings.Cut(out.String(), "\n")
+	if err := json.Unmarshal([]byte(line), &result); err != nil || result.WikiStatus != "unavailable" || len(result.Views) != 1 {
+		t.Fatalf("unavailable Wiki wait should return its job: %s", out.String())
 	}
 }
 

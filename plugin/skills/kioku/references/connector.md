@@ -37,7 +37,7 @@ namespace はユーザー、作業ディレクトリの `.kioku/config`、projec
 
    CLI が projects.json に項目を足す。スキルはその `path` を保存先の絶対パス P として読む。
    description がなければ selection.md の「説明の確認と新規作成」に従う。
-   `P/wiki/index.md`、関連ページ、`P/maps/` を grep とファイルツールで読む。
+   `P/wiki/index.md` と関連ページを grep とファイルツールで読む。
    この pull は会話の初回取得を兼ねる。対象選択の手順に戻って重ねて pull しない。
 
 ## 失効・利用できない場合

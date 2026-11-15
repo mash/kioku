@@ -1,0 +1,155 @@
+{
+  "spec_sha256": "c560dda26fec38e92dd9a17da171dfde51188e872c89f544274f9408142978ad",
+  "examples": [
+    {
+      "id": "1",
+      "input": "[e1] E1：POST /api/projects/o/demo/put {\"file\":{\"name\":\"a.md\",\"content\":\"A\"}}。本文PUT直後に停止。W1",
+      "before": "202未応答。再起動後のinboxに新itemなし",
+      "after": "同じ。GET /api/projectsのinbox_countも不変。GCが未参照本文を消す"
+    },
+    {
+      "id": "2",
+      "input": "[e2] E2：Wiki a.mdをhash=AからBへ。W2 旧完成容量1024 byte。",
+      "before": "AのパスをBで上書き",
+      "after": "開始SQLでwiki_incomplete=1、旧完成容量1024を保持。BのPUT後に停止ならAを表示し、Wiki Viewはpending。最終SQLで0へ戻りcompleted。未参照側をGCが消す"
+    },
+    {
+      "id": "3",
+      "input": "[e3] E3：j1の入力PUT後に停止。W3",
+      "before": "GET /api/projects/o/demo/jobs/j1は200、status=running。Runあり",
+      "after": "同GETは200、status=queued。token・割当なしで再準備。Run commit後ならrunning。同じ要求の入力が0件なら後続なしはcompleted、ViewありはRunなしの親running"
+    },
+    {
+      "id": "4",
+      "input": "[e4] E4：出力B受理中、SQL失敗。W4",
+      "before": "persist失敗でpoisoned",
+      "after": "旧output_hash=A。要求500、BはGC対象。他projectは操作を継続"
+    },
+    {
+      "id": "5",
+      "input": "[e5] E5：View v1の新ZIPをPUT後に停止。W6",
+      "before": "publish.jsonで回復",
+      "after": "旧結果を表示。SQL commit後なら新結果と子completedを共に読む"
+    },
+    {
+      "id": "6",
+      "input": "[e6] E6：p1に終了j001〜j257と監査a001〜a257、p2に終了k1。K17",
+      "before": "古いj001をR2から取得可能",
+      "after": "同じトランザクションでj001/a001をDELETE。j001は404、usageのj001は残る。p2のk1も残す。"
+    },
+    {
+      "id": "7",
+      "input": "[e7] E7：remaining=100、子cost=NULL/0/40。H2",
+      "before": "Run費用で計算",
+      "after": "100/100/60。同じ子の再照合でも一度だけ引く"
+    },
+    {
+      "id": "8",
+      "input": "[e8] E8：Wiki設定なし、titleだけTeamへPATCH。A2",
+      "before": "初回だけindexを書く",
+      "after": "初回だけviews行を作る。data.prompt=null、応答は既定prompt。2回目は行を作り直さない"
+    },
+    {
+      "id": "9",
+      "input": "[e9] E9：wiki_incomplete=0、wiki_updated_at=1794712365000。U5",
+      "before": "completed、2026-11-15T03:12:45Z",
+      "after": "形と状態は同じ。旧03:12:45.123456789Zは1794712365123、APIは03:12:45.123Z。同一ミリ秒の順はidで決める"
+    },
+    {
+      "id": "10",
+      "input": "[e10] E10：移行でindex参照先view.jsonが欠損。C3",
+      "before": "そのViewの読取時に失敗",
+      "after": "終了1、削除0件。修復の代わりに検証済みbackupへ戻し、移行をやり直す"
+    },
+    {
+      "id": "11",
+      "input": "[e11] E11：子j2実行中にpromptを編集。U6",
+      "before": "旧入力のpromptで完了",
+      "after": "同じ。View削除ならskippedで次のViewへ進む"
+    },
+    {
+      "id": "12",
+      "input": "[e12] E12：Claudeが2セッション、費用412+88。H2",
+      "before": "既知IDがあれば1件だけ照合。不明なら全候補を探索",
+      "after": "公開前は全停止後failed。usage.data.cost_cents=500。88が不明ならNULL"
+    },
+    {
+      "id": "13",
+      "input": "[e13] E13：10:00準備、10:04/10:05ともセッション0件。H2",
+      "before": "個別の回復判定",
+      "after": "10:04は保留、10:05はfailed（session creation did not finish）。usageの数値はNULL"
+    },
+    {
+      "id": "14",
+      "input": "[e14] E14：usage=412保存後、cleanup完了保存前に停止。H2",
+      "before": "usageなし",
+      "after": "412を保ちcleanupを再試行。追加実行を止めるがusageを上書きしない"
+    },
+    {
+      "id": "15",
+      "input": "[e15] E15：File停止、初回回収10:00:00、deadline=10:02:00。",
+      "before": "90秒まで回収を待つ",
+      "after": "10:01:29は再照合、10:01:30でfailed。deadline=10:00:45なら10:00:45でfailed。待機日時を再起動後も保つ"
+    },
+    {
+      "id": "16",
+      "input": "[e16] E16：Wiki本文abc、旧hash/bytesなし。C3",
+      "before": "同期時に本文から補完",
+      "after": "hash=SHA-256(abc)、bytes=3を保存。旧bytes=4なら終了1・削除0件"
+    },
+    {
+      "id": "17",
+      "input": "[e17] E17：j1の入力PUT失敗／実行中に認可喪失／deadline=12:00で停止未確認。U7",
+      "before": "失敗と停止確認でstatusを更新",
+      "after": "Run commit前の失敗はfailed、Run/usageなし。認可喪失は停止確認後failed、権限を失った利用者のGETは404。期限超過後も停止待ちはrunning、12:10:01でfailed・inbox解放。usageは停止確認待ち。新generateは別IDを作る"
+    },
+    {
+      "id": "18",
+      "input": "[e18] E18：kiokud --online-backup /tmp/b1。C5",
+      "before": "成功は終了0、stdoutに{\"status\":\"completed\",\"destination\":\"/tmp/b1\"}と改行。schema=2",
+      "after": "同じ出力、schema=3。既存DIRは管理API 500、stderrと終了1。同時実行は409、終了1"
+    },
+    {
+      "id": "19",
+      "input": "[e19] E19：移行commit後、旧state.jsonのDELETEが失敗。C3",
+      "before": "移行契約なし",
+      "after": "ready=false、受付なし、終了1。検証済みDB/R2/鍵へ復元してやり直す"
+    },
+    {
+      "id": "20",
+      "input": "[e20] E20：device=d1、code不一致。A20",
+      "before": "410、d1.used=true",
+      "after": "sessions(id=Hash(d1),kind=cli_login)のpending→activeをcommitして410。SQL失敗なら500でpendingを保つ。正しいcodeでも再交換は410"
+    },
+    {
+      "id": "21",
+      "input": "[e21] E21：usage=40保存後、外部cleanup失敗。H2",
+      "before": "外部cleanupを再試行",
+      "after": "usage=40と公開結果を保持。cleanup_complete=0、親は子結果消費待ち。成功後に一度だけ予算を減らす。project削除はcleanup待ち503、同じDELETE再試行で200、usageは残る"
+    },
+    {
+      "id": "22",
+      "input": "[e22] E22：OAuth cookie C、state=Hash(C)、期限12:10。callbackを12:01に2回。J80",
+      "before": "初回にOAuth行を削除し、再送は403",
+      "after": "行なし。初回だけ成功。通常ログインの再送は502、CLIは本人確定済みなので410。12:10以後は403"
+    },
+    {
+      "id": "23",
+      "input": "[e23] E23：oauth_code c1の同時交換2件。K7",
+      "before": "Store.Updateが1件ずつ消費する",
+      "after": "codeの変更行数は1と0。refresh同時交換も1件だけ成功。後続はOAuthエラーでfamily失効をcommitする"
+    },
+    {
+      "id": "24",
+      "input": "[e24] E24：job=j1、attempt=j1、期限12:10。J81",
+      "before": "AgentTokens行で照合する",
+      "after": "running・試行一致なら入出力可。completed・別attempt・期限切れは403。停止理由ありも拒否する"
+    },
+    {
+      "id": "25",
+      "input": "[e25] E25：利用者u1がrevoke-all。web/cli/mcp/agentと3種のpendingあり。A30",
+      "before": "各mapの削除とagent失効を繰り返す",
+      "after": "DELETE FROM sessions WHERE user_id='u1'で全7種を削除。他人の行は残る"
+    }
+  ]
+}

@@ -41,6 +41,7 @@ user ──> claude.ai chat ──(skill kioku loads from the plugin)
          kiokud POST /mcp
               ├─ projects_list            → granted projects where the user is a member
               ├─ wiki_read / wiki_search  → current Wiki pages (read-only)
+              ├─ view_list / view_read    → View status and last successful output (read-only)
               ├─ source_put               → stores one inbox item (remove true for removals)
               └─ cli_login_code           → one-time code for kioku agent login
 ```

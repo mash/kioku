@@ -46,8 +46,6 @@ func (a *App) syncRequest(path string, out any) (int, error) {
 	return status, err
 }
 
-var legacyGraphFiles = [...]string{"maps/graph.json", "maps/graph.mmd"}
-
 func mirrorPath(root, name string) (string, error) {
 	if !wiki.ValidFile(name) {
 		return "", errors.New("invalid mirror filename")
@@ -108,11 +106,12 @@ func (a *App) syncWiki() (syncResult, error) {
 	if remote.Files == nil || !safeID(remote.Revision) {
 		return result, errors.New("invalid sync manifest")
 	}
-	for _, name := range legacyGraphFiles {
-		delete(remote.Files, name)
-	}
 	var total int64
 	for name, f := range remote.Files {
+		if !strings.HasPrefix(name, "wiki/") {
+			delete(remote.Files, name)
+			continue
+		}
 		if !wiki.ValidFile(name) || f.Bytes < 0 || f.Bytes > 64<<20 || len(f.Hash) != 64 {
 			return result, errors.New("invalid sync file")
 		}
@@ -148,9 +147,6 @@ func (a *App) syncWiki() (syncResult, error) {
 		return result, err
 	}
 	var failures []error
-	if err := removeLegacyGraphFiles(root, &result); err != nil {
-		failures = append(failures, err)
-	}
 	for _, name := range sortedKeys(local) {
 		if _, ok := remote.Files[name]; ok {
 			continue
@@ -197,54 +193,6 @@ func (a *App) syncWiki() (syncResult, error) {
 		}
 	}
 	return result, errors.Join(failures...)
-}
-
-func removeLegacyGraphFiles(root string, result *syncResult) error {
-	dir := filepath.Join(root, "maps")
-	maps, err := os.Lstat(dir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !maps.IsDir() {
-		return nil
-	}
-	mapsDir, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer mapsDir.Close()
-	// Check that the directory did not change between Lstat and OpenRoot.
-	opened, err := mapsDir.Stat(".")
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(maps, opened) {
-		return nil
-	}
-	var failures []error
-	for _, name := range legacyGraphFiles {
-		base := filepath.Base(name)
-		info, err := mapsDir.Lstat(base)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		if err := mapsDir.Remove(base); err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		result.Deleted = append(result.Deleted, name)
-	}
-	return errors.Join(failures...)
 }
 
 var errSyncForbidden = errors.New("project access lost")

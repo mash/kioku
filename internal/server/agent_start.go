@@ -179,6 +179,22 @@ func (s *Server) startAgentJobLocked(ctx context.Context, job model.Job) error {
 		base := s.Config.BaseURL + "/api/projects/" + namespace + "/jobs/" + job.ID + "/agent/"
 		spec.InputURL, spec.OutputURL = base+"input", base+"output"
 	}
+	if job.ViewTask == nil {
+		unlock, err := s.lockProject(ctx, job.ProjectID)
+		if err != nil {
+			return err
+		}
+		record, err := s.readWikiViewLocked(ctx, job.ProjectID)
+		unlock()
+		if err != nil {
+			return err
+		}
+		prompt := record.Prompt
+		if prompt == "" {
+			prompt = s.defaultWikiPrompt()
+		}
+		spec.WikiPrompt = &prompt
+	}
 	for _, item := range items {
 		in := agentgen.InboxText{Item: item}
 		if !item.Remove {

@@ -137,17 +137,20 @@ func (s *Server) loadWikiViewLocked(ctx context.Context, pid string, index viewI
 	return record, nil
 }
 
+func (s *Server) defaultWikiPrompt() string {
+	if s.Config.Prompts != nil {
+		return s.Config.Prompts.WikiDefaultPrompt()
+	}
+	return prompts.DefaultWikiPrompt()
+}
+
 func (s *Server) wikiViewDefinition(record wikiViewRecord, project model.Project) viewDefinition {
 	view := viewDefinition{ID: record.ID, Slug: wikiViewSlug, Title: record.Title, Prompt: record.Prompt, CreatedAt: &project.Created, Status: "pending"}
 	if view.Title == "" {
 		view.Title = "Wiki"
 	}
 	if view.Prompt == "" {
-		if s.Config.Prompts != nil {
-			view.Prompt = s.Config.Prompts.WikiDefaultPrompt()
-		} else {
-			view.Prompt = prompts.DefaultWikiPrompt()
-		}
+		view.Prompt = s.defaultWikiPrompt()
 	}
 	if !project.WikiIncomplete && !project.WikiUpdatedAt.IsZero() {
 		view.Status, view.GeneratedAt = "completed", &project.WikiUpdatedAt

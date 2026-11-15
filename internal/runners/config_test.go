@@ -31,7 +31,7 @@ func TestManagedConfigRequiresCompleteSettings(t *testing.T) {
 
 func TestPromptValidationForSelectedRunner(t *testing.T) {
 	sample := loadPrompts(t, map[string]string{prompts.SystemFile: "a"})
-	overhead := utf8.RuneCountInString(sample.FileSystem()) - utf8.RuneCountInString(sample.System())
+	overhead := utf8.RuneCountInString(sample.FileSystem()) - 1
 	for _, count := range []int{100000, 100001} {
 		rendered := loadPrompts(t, map[string]string{prompts.SystemFile: strings.Repeat("あ", count-overhead)})
 		for _, kind := range []string{"", "claudemanaged", "exec", "openai"} {
@@ -89,5 +89,30 @@ func TestExecModelOptionsWarnOnce(t *testing.T) {
 				t.Fatal(log.String())
 			}
 		})
+	}
+}
+
+func TestPromptLimitCountsWikiInstructionsParagraph(t *testing.T) {
+	sample := loadPrompts(t, map[string]string{prompts.SystemFile: "a"})
+	paragraphRunes := utf8.RuneCountInString("\n\n" + prompts.WikiInstructionsParagraph)
+	oldOverhead := utf8.RuneCountInString(sample.FileSystem()) - 1 - paragraphRunes
+	rendered := loadPrompts(t, map[string]string{
+		prompts.SystemFile: strings.Repeat("あ", 100000-oldOverhead-paragraphRunes/2),
+	})
+	count := utf8.RuneCountInString(rendered.FileSystem())
+	if count <= 100000 || count-paragraphRunes > 100000 {
+		t.Fatalf("fixture must cross limit only with paragraph: %d", count)
+	}
+	c := execConfig(t)
+	c.Type, c.Prompts = "claudemanaged", rendered
+	c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "env", "key"
+	c.BaseURL = "https://kioku.test"
+	set, err := Load(c, nil)
+	if err == nil {
+		set.Close(t.Context())
+		t.Fatal("expected startup failure")
+	}
+	if want := "prompts: wiki-agent.system.md: too long (line 1)"; err.Error() != want {
+		t.Fatalf("want %q, got %v", want, err)
 	}
 }

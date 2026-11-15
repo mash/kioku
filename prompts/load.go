@@ -18,10 +18,14 @@ import (
 )
 
 const (
-	SystemFile = "wiki-agent.system.md"
-	UserFile   = "wiki-agent.user.md"
-	MCPFile    = "mcp-server.yaml"
+	DefaultPromptFile = "wiki-agent.default-prompt.md"
+	SystemFile        = "wiki-agent.system.md"
+	UserFile          = "wiki-agent.user.md"
+	MCPFile           = "mcp-server.yaml"
 )
+
+// WikiInstructionsParagraph applies owner instructions within the system rules.
+const WikiInstructionsParagraph = "WIKI.md in the input holds the project owner's instructions for organizing this wiki. Follow them when you choose, split and structure pages and wiki/index.md. When they conflict with the rules above, follow the rules above."
 
 type Variables struct {
 	BaseURL, ClientVersion string
@@ -33,19 +37,21 @@ type Source struct{ File, Source, SHA256 string }
 
 // Rendered owns a startup snapshot. No job or caller can mutate its templates.
 type Rendered struct {
-	system     string
-	fileSystem string
-	model      Model
-	user       textTemplate
-	vars       map[string]string
-	mcp        MCP
-	sources    []Source
+	defaultPrompt string
+	system        string
+	fileSystem    string
+	model         Model
+	user          textTemplate
+	vars          map[string]string
+	mcp           MCP
+	sources       []Source
 }
 
-func (r *Rendered) System() string     { return r.system }
-func (r *Rendered) FileSystem() string { return r.fileSystem }
-func (r *Rendered) Model() Model       { return r.model }
-func (r *Rendered) Sources() []Source  { return slices.Clone(r.sources) }
+func (r *Rendered) WikiDefaultPrompt() string { return r.defaultPrompt }
+func (r *Rendered) System() string            { return r.system }
+func (r *Rendered) FileSystem() string        { return r.fileSystem }
+func (r *Rendered) Model() Model              { return r.model }
+func (r *Rendered) Sources() []Source         { return slices.Clone(r.sources) }
 func (r *Rendered) Log() {
 	for _, s := range r.sources {
 		slog.Info("prompt loaded", "file", s.File, "source", s.Source, "sha256", s.SHA256)
@@ -96,11 +102,11 @@ func readFile(dir, name string) (file, error) {
 	return file{strings.TrimPrefix(string(b), "\ufeff"), origin}, nil
 }
 
-// Load reads only the three documented files. Missing files use embedded defaults.
+// Load reads only the four documented files. Missing files use embedded defaults.
 // Servers pass their tool/property names; callers without an MCP server may pass nil.
 func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered, error) {
 	files := map[string]file{}
-	for _, name := range []string{SystemFile, UserFile, MCPFile} {
+	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
 		files[name], _ = readFile("", name)
 	}
 	defaultMCP := files[MCPFile].body
@@ -136,12 +142,20 @@ func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered
 		return nil, err
 	}
 	r.system = system.render(systemVars)
+	if strings.TrimSpace(r.system) == "" {
+		return nil, invalid(SystemFile, "empty body", line)
+	}
+	r.system += "\n\n" + WikiInstructionsParagraph
 	systemVars["BaseURL"] = ""
 	systemVars["ReadJobInput"] = "Extract the mounted input archive from the local input path."
 	systemVars["SubmitJobOutput"] = "Tar and gzip wiki/ only and atomically rename the completed archive to the local output path."
-	r.fileSystem = system.render(systemVars) + "\n\nThis session uses local files only. The input and output in the user message are local paths. Read the mounted archive and write the completed archive at the output path, creating its parent directory as needed. These instructions supersede any download or upload steps. Do not use the network or credentials. Finish only after writing the archive."
-	if strings.TrimSpace(r.system) == "" {
-		return nil, invalid(SystemFile, "empty body", line)
+	r.fileSystem = system.render(systemVars) + "\n\n" + WikiInstructionsParagraph + "\n\nThis session uses local files only. The input and output in the user message are local paths. Read the mounted archive and write the completed archive at the output path, creating its parent directory as needed. These instructions supersede any download or upload steps. Do not use the network or credentials. Finish only after writing the archive."
+	r.defaultPrompt = files[DefaultPromptFile].body
+	if isFrontmatterDelimiter(r.defaultPrompt) {
+		return nil, invalid(DefaultPromptFile, "syntax", 1)
+	}
+	if strings.TrimSpace(r.defaultPrompt) == "" {
+		return nil, invalid(DefaultPromptFile, "empty body", 1)
 	}
 	user := files[UserFile].body
 	if isFrontmatterDelimiter(user) {
@@ -179,6 +193,7 @@ func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered
 			Variables map[string]string
 		}{user, r.vars})},
 		{MCPFile, files[MCPFile].origin, hash(r.mcp)},
+		{DefaultPromptFile, files[DefaultPromptFile].origin, fmt.Sprintf("%x", sha256.Sum256([]byte(r.defaultPrompt)))},
 	}
 	return r, nil
 }

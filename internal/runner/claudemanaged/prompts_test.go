@@ -38,7 +38,7 @@ func TestSessionPromptOverrides(t *testing.T) {
 				}
 				count++
 				a := req.Body["agent"].(map[string]any)
-				if a["type"] != "agent_with_overrides" || a["id"] != "agent" || a["version"] != float64(3) || a["system"] != "custom https://kioku.test" || len(a["tools"].([]any)) != 1 || !reflect.DeepEqual(a["mcp_servers"], []any{}) || !reflect.DeepEqual(a["skills"], []any{}) {
+				if a["type"] != "agent_with_overrides" || a["id"] != "agent" || a["version"] != float64(3) || a["system"] != "custom https://kioku.test\n\n"+prompts.WikiInstructionsParagraph || len(a["tools"].([]any)) != 1 || !reflect.DeepEqual(a["mcp_servers"], []any{}) || !reflect.DeepEqual(a["skills"], []any{}) {
 					t.Fatal(a)
 				}
 				switch model {

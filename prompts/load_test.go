@@ -2,6 +2,8 @@ package prompts
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -45,7 +47,7 @@ func TestDefaultsAndCopiedFiles(t *testing.T) {
 	if got := loadTest(t, dir); !reflect.DeepEqual(got.Sources(), want.Sources()) {
 		t.Fatal("missing files changed defaults")
 	}
-	for _, name := range []string{SystemFile, UserFile, MCPFile} {
+	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
 		b, err := defaults.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -150,7 +152,7 @@ func TestLoadFrontmatterDelimiterWhitespace(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if r.Model() != (Model{ID: "custom"}) || r.System() != "body\n" {
+				if r.Model() != (Model{ID: "custom"}) || r.System() != "body\n\n\n"+WikiInstructionsParagraph {
 					t.Fatalf("model = %+v, system = %q", r.Model(), r.System())
 				}
 			})
@@ -173,7 +175,7 @@ func TestLoadEmptyFrontmatter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r.Model() != (Model{}) || r.System() != "body\n" {
+			if r.Model() != (Model{}) || r.System() != "body\n\n\n"+WikiInstructionsParagraph {
 				t.Fatalf("model = %+v, system = %q", r.Model(), r.System())
 			}
 			_, err = loadFiles(t, map[string]string{SystemFile: prefix + "{{.Unknown}}"})
@@ -385,7 +387,7 @@ func TestTemplatesMCPMergeAndSnapshot(t *testing.T) {
 	writePrompt(t, dir, UserFile, "custom {{.JobID}} {{.Namespace}} {{.InputURL}} {{.OutputURL}} {{.BaseURL}}")
 	writePrompt(t, dir, MCPFile, "instructions: 'Welcome {{.BaseURL}}'\ntools:\n  wiki_read:\n    description: '{{.BaseURL}} wiki'\n    properties:\n      project:\n        description: |\n          Select {{.BaseURL}}\n")
 	r := loadTest(t, dir)
-	if r.System() != "https://kioku.test 9.8.7 2468 {{ $KIOKU_JOB_TOKEN" {
+	if r.System() != "https://kioku.test 9.8.7 2468 {{ $KIOKU_JOB_TOKEN\n\n"+WikiInstructionsParagraph {
 		t.Fatal(r.System())
 	}
 	if r.Model() != (Model{ID: "custom", Effort: "high", Speed: "fast", InferenceGeo: "us"}) {
@@ -411,7 +413,7 @@ func TestTemplatesMCPMergeAndSnapshot(t *testing.T) {
 		t.Fatal("other descriptions changed")
 	}
 	writePrompt(t, dir, SystemFile, "changed")
-	if r.System() == "changed" {
+	if r.System() == "changed\n\n"+WikiInstructionsParagraph {
 		t.Fatal("snapshot changed")
 	}
 	if r.MCP().Tools["wiki_read"].Description != "https://kioku.test wiki" {
@@ -427,7 +429,7 @@ func TestLog(t *testing.T) {
 	writePrompt(t, dir, SystemFile, "---\nmodel: {id: private-secret, effort: high, speed: fast}\n---\nprivate-secret")
 	r := loadTest(t, dir)
 	r.Log()
-	if strings.Count(log.String(), "sha256=") != 3 || strings.Count(log.String(), "source=override") != 1 || strings.Count(log.String(), "source=default") != 2 || strings.Contains(log.String(), "private-secret") {
+	if strings.Count(log.String(), "sha256=") != 4 || strings.Count(log.String(), "source=override") != 1 || strings.Count(log.String(), "source=default") != 3 || strings.Contains(log.String(), "private-secret") {
 		t.Fatal(log.String())
 	}
 	if r.Model().ID == "" {
@@ -440,7 +442,7 @@ func TestLog(t *testing.T) {
 }
 func TestHashTracksEffectiveChanges(t *testing.T) {
 	original := defaultPrompts(t)
-	for _, name := range []string{SystemFile, UserFile, MCPFile} {
+	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
 		dir := t.TempDir()
 		body, _ := defaults.ReadFile(name)
 		if name == MCPFile {
@@ -488,6 +490,99 @@ func TestModelValuesArePlainStrings(t *testing.T) {
 		_, err := loadFiles(t, map[string]string{SystemFile: "---\nmodel: " + value + "\n---\nbody"})
 		if err == nil || !strings.Contains(err.Error(), "syntax") {
 			t.Fatal(value, err)
+		}
+	}
+}
+
+func TestWikiDefaultPrompt(t *testing.T) {
+	const embedded = "原資料ごとに、関係する concept、entity、analysis、overview のページを書き直す。wiki/index.md は、ページを種類ごとに分けた目次にする。\n"
+	for _, tc := range []struct{ name, input, want, origin string }{
+		{"default", "", embedded, "default"},
+		{"override", " 決定と論点を分けて書く。\n", " 決定と論点を分けて書く。\n", "override"},
+		{"BOM", "\ufeff本文\n", "本文\n", "override"},
+		{"literal templates", "{{.BaseURL}} {{.Unknown}} {{if .BaseURL}} {{", "{{.BaseURL}} {{.Unknown}} {{if .BaseURL}} {{", "override"},
+		{"later delimiter", "本文\n---\n", "本文\n---\n", "override"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.origin == "override" {
+				writePrompt(t, dir, DefaultPromptFile, tc.input)
+			}
+			r := loadTest(t, dir)
+			if got := r.WikiDefaultPrompt(); got != tc.want {
+				t.Fatalf("body = %q, want %q", got, tc.want)
+			}
+			want := Source{DefaultPromptFile, tc.origin, fmt.Sprintf("%x", sha256.Sum256([]byte(tc.want)))}
+			found := false
+			for _, source := range r.Sources() {
+				if source.File == DefaultPromptFile {
+					found = true
+					if source != want {
+						t.Fatalf("source = %+v, want %+v", source, want)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing default prompt source")
+			}
+			var log bytes.Buffer
+			old := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
+			defer slog.SetDefault(old)
+			r.Log()
+			if !strings.Contains(log.String(), "file="+DefaultPromptFile+" source="+tc.origin+" sha256="+want.SHA256) || strings.Contains(log.String(), strings.TrimSpace(tc.want)) {
+				t.Fatal(log.String())
+			}
+			writePrompt(t, dir, DefaultPromptFile, "changed")
+			if r.WikiDefaultPrompt() != tc.want {
+				t.Fatal("snapshot changed")
+			}
+		})
+	}
+}
+
+func TestWikiDefaultPromptInvalid(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"", "prompts: wiki-agent.default-prompt.md: empty body (line 1)"},
+		{"\ufeff \t\r\n\u3000", "prompts: wiki-agent.default-prompt.md: empty body (line 1)"},
+		{"---", "prompts: wiki-agent.default-prompt.md: syntax (line 1)"},
+		{"\ufeff--- \t\r\nprivate-secret", "prompts: wiki-agent.default-prompt.md: syntax (line 1)"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			_, err := loadFiles(t, map[string]string{DefaultPromptFile: tc.body})
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestWikiInstructionsParagraph(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		dir := t.TempDir()
+		if override {
+			writePrompt(t, dir, SystemFile, "Custom {{.ClientVersion}}")
+		}
+		r := loadTest(t, dir)
+		for _, system := range []string{r.System(), r.FileSystem()} {
+			if strings.Count(system, WikiInstructionsParagraph) != 1 {
+				t.Fatal("missing or repeated paragraph")
+			}
+		}
+		if !strings.HasSuffix(r.System(), "\n\n"+WikiInstructionsParagraph) ||
+			!strings.Contains(r.FileSystem(), "\n\n"+WikiInstructionsParagraph+"\n\nThis session uses local files only.") {
+			t.Fatal("paragraph ordering")
+		}
+		if override && (!strings.HasPrefix(r.System(), "Custom 9.8.7\n\n"+WikiInstructionsParagraph) ||
+			!strings.HasPrefix(r.FileSystem(), "Custom 9.8.7\n\n"+WikiInstructionsParagraph)) {
+			t.Fatal("paragraph must immediately follow rendered override")
+		}
+		want := hash(struct {
+			System string
+			Model  Model
+		}{r.System(), r.Model()})
+		if r.Sources()[0].SHA256 != want {
+			t.Fatal("system hash must include paragraph")
 		}
 	}
 }

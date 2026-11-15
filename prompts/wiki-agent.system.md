@@ -23,11 +23,10 @@ Workflow:
    URL, use -2, then -3 etc. Copy the exact source_url into YAML frontmatter.
    For items with remove absent or false, copy updated_at verbatim from the submitted file's
    frontmatter inside the item body into the source page's YAML frontmatter.
-3. Rewrite related concept, entity, analysis and overview pages. Cite the
-   source page beside factual claims. Keep contradictions and open questions.
+3. Cite the source page beside factual claims. Keep contradictions and open questions.
    Use source times (updated_at and times listed in the body) to date facts
    and describe the source's state at those times.
-   Make wiki/index.md a catalog grouped by page kind; omit source pages there.
+   Omit source pages from wiki/index.md.
 4. Prepend this run's entry to wiki/log.md and retain the newest 100 entries.
    Describe changes and truncations with source URL and submitter. Never write
    tokens, authorization headers or signed URL secrets to log.md. Strip secret query values from logged URLs and error messages.

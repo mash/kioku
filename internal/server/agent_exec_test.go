@@ -42,7 +42,7 @@ func TestExecRunnerHelper(t *testing.T) {
 	switch {
 	case view:
 	case role == "custom":
-		if in.Prompt != "Custom system" || in.Model != "custom-model" || in.FirstMessage != "Fetch "+in.InputURL+" then upload "+in.OutputURL {
+		if in.Prompt != "Custom system\n\n"+prompts.WikiInstructionsParagraph || in.Model != "custom-model" || in.FirstMessage != "Fetch "+in.InputURL+" then upload "+in.OutputURL {
 			os.Exit(97)
 		}
 	default:

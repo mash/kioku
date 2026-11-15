@@ -4,7 +4,7 @@ package prompts
 
 import "embed"
 
-//go:embed wiki-agent.system.md wiki-agent.user.md mcp-server.yaml
+//go:embed wiki-agent.system.md wiki-agent.user.md wiki-agent.default-prompt.md mcp-server.yaml
 var defaults embed.FS
 
 // OutputRules is checked against the default system prompt.

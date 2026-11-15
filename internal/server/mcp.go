@@ -57,6 +57,10 @@ func connectorProject(q *store.Queries, key, namespace string) (model.Project, s
 		return model.Project{}, "", fail(404, "project not found")
 	}
 	project, err := namespaceProject(q, parts[0], parts[1], grant.UserID)
+	var problem apiError
+	if err != nil && !errors.As(err, &problem) {
+		return model.Project{}, "", err
+	}
 	if !slices.Contains(grant.ProjectIDs, project.ID) {
 		return model.Project{}, "", fail(404, "project not found")
 	}

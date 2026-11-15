@@ -270,7 +270,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request, uid string) error 
 		}
 	}
 	var result model.Project
-	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+	if err := s.mutation(r, uid, func(q *store.Queries) error {
 		inv, e := activeInvite(q, hash)
 		if e != nil {
 			return e

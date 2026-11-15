@@ -81,15 +81,9 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 
 func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agentID string, automatic bool, now time.Time) (store.JobRow, error) {
 	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: nullableString(agentID), Automatic: automatic, WikiStatus: nullableString("pending"), Views: []store.ViewResultData{}}}
-	rows, err := q.ProjectJobs(p.ID)
+	_, pending, err := q.ProjectCounts(p.ID)
 	if err != nil {
 		return job, err
-	}
-	pending := 0
-	for _, j := range rows {
-		if j.ParentID == nil && (j.Status == "queued" || j.Status == "running") {
-			pending++
-		}
 	}
 	if pending >= s.Config.MaxQueued {
 		return job, fail(429, "project generation queue is full")
@@ -97,25 +91,35 @@ func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agen
 	return job, q.PutJob(job)
 }
 func (s *Server) scheduleGenerations(now time.Time) error {
+	var projects []store.ProjectRow
+	if err := s.Store.Read(context.Background(), func(q *store.Queries) error {
+		var err error
+		projects, err = q.DueProjects(now.UnixMilli())
+		return err
+	}); err != nil {
+		return err
+	}
 	queued := false
-	err := s.Store.Write(context.Background(), func(q *store.Queries) error {
-		projects, err := q.DueProjects(now.UnixMilli())
-		if err != nil {
-			return err
-		}
-		for _, p := range projects {
-			jobs, err := q.ProjectJobs(p.ID)
+	var errs []error
+	for _, candidate := range projects {
+		added := false
+		err := s.Store.Write(context.Background(), func(q *store.Queries) error {
+			p, err := q.Project(candidate.ID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}
-			busy := false
-			for _, j := range jobs {
-				if j.Kind == "generate" && (j.Status == "queued" || j.Status == "running") {
-					busy = true
-				}
+			if p.Deleting || p.NextGenerateAt == nil || *p.NextGenerateAt > now.UnixMilli() {
+				return nil
 			}
-			if busy {
-				continue
+			_, pending, err := q.ProjectCounts(p.ID)
+			if err != nil {
+				return err
+			}
+			if pending > 0 {
+				return nil
 			}
 			files, err := q.ProjectWiki(p.ID)
 			if err != nil {
@@ -148,22 +152,32 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 				return err
 			}
 			if len(items) == 0 || owner == "" {
-				continue
+				return nil
 			}
 			if _, err = q.User(owner); errors.Is(err, sql.ErrNoRows) {
-				continue
+				return nil
 			} else if err != nil {
 				return err
 			}
 			if _, err = s.queueGeneration(q, p, owner, "", true, now); err != nil {
 				return err
 			}
+			added = true
+			return nil
+		})
+		if err != nil {
+			errs = append(errs, err)
+			var fatal *store.FatalDatabaseError
+			var unknown *store.UnknownCommit
+			if errors.As(err, &fatal) || errors.As(err, &unknown) {
+				break
+			}
+		} else if added {
 			queued = true
 		}
-		return nil
-	})
-	if err == nil && queued {
+	}
+	if queued {
 		s.notify()
 	}
-	return err
+	return errors.Join(errs...)
 }

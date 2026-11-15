@@ -211,6 +211,9 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	loopbackURL := ""
 	expired := false
 	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
+		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
+			return err
+		}
 		var login store.SessionRow
 		var loginData store.CLILoginData
 		if device != "" {

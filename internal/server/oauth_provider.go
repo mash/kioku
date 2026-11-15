@@ -158,8 +158,11 @@ func (s *Server) authorizationRequest(r *http.Request) (store.OAuthClientRow, er
 		return client, fosite.ErrInvalidRequest
 	}
 	err := s.Store.Read(r.Context(), func(q *store.Queries) error {
-		provider, _ := newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
+		provider, adapter := newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
 		request, err := provider.NewAuthorizeRequest(r.Context(), r)
+		if adapter.failure != nil {
+			return adapter.failure
+		}
 		if err != nil {
 			return err
 		}
@@ -188,6 +191,10 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	}
 	client, err := s.authorizationRequest(r)
 	if err != nil {
+		var protocol *fosite.RFC6749Error
+		if !errors.As(err, &protocol) {
+			return err
+		}
 		http.Error(w, err.Error(), 400)
 		return nil
 	}
@@ -292,12 +299,20 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 			}
 			project, err := namespaceProject(q, parts[0], parts[1], current.UserID)
 			if err != nil {
+				var problem apiError
+				if !errors.As(err, &problem) {
+					return err
+				}
 				return fail(400, "selected project is unavailable; reopen the consent page")
 			}
 			projectIDs[i] = project.ID
 		}
-		provider, _ = newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
+		var adapter *oauthSQL
+		provider, adapter = newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
 		request, err = provider.NewAuthorizeRequest(r.Context(), r)
+		if adapter.failure != nil {
+			return adapter.failure
+		}
 		if err != nil {
 			return err
 		}
@@ -306,11 +321,10 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 		response, err = provider.NewAuthorizeResponse(r.Context(), request, &connectorSession{
 			DefaultSession: fosite.DefaultSession{Subject: current.UserID}, ProjectIDs: projectIDs,
 		})
-		if err != nil {
-			return err
+		if adapter.failure != nil {
+			return adapter.failure
 		}
-
-		return nil
+		return err
 	}); err != nil {
 		return err
 	}

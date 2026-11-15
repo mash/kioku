@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // Queries is bound to exactly one SQL transaction and never holds a State map.
@@ -81,6 +82,10 @@ func unmarshalData(raw string, v any) error { return json.Unmarshal([]byte(raw),
 // ResolveCommit opens one fresh connection and reads the affected rows. It does
 // not retry the mutation or regenerate a secret response.
 func (d *Database) ResolveCommit(ctx context.Context, inspect func(*Queries) error) error {
+	// The caller may disconnect after COMMIT. Recovery must still distinguish
+	// a healthy catalog from a failed connection, without repeating the write.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	db, err := catalogConnection(d.path, false, true)
 	if err != nil {
 		return &FatalDatabaseError{Cause: err}

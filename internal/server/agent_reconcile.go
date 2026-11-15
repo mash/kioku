@@ -12,6 +12,7 @@ import (
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
+	"github.com/mash/kioku/internal/runner/claudemanaged"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -89,6 +90,9 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 			return authErr
 		}
 		return s.failAgentJobLocked(ctx, job, authErr.Error(), &status)
+	}
+	if status.Reason == claudemanaged.MultipleSessionsReason {
+		return s.failAgentJobLocked(ctx, job, status.Reason, &status)
 	}
 	switch status.State {
 	case runner.StateStopped:

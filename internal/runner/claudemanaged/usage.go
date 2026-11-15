@@ -10,6 +10,8 @@ import (
 	"github.com/mash/kioku/internal/runner"
 )
 
+const MultipleSessionsReason = "multiple Claude sessions for one attempt"
+
 func usageObject(raw json.RawMessage) map[string]json.RawMessage {
 	var out map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &out)
@@ -73,7 +75,8 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 	for _, id := range ids {
 		s, err := client.GetSession(ctx, id)
 		if isNotFound(err) {
-			out.State = runner.StateUnknown
+			// A previous cleanup pass may already have deleted this session.
+			// Its usage is unknown, but its absence does not keep other runs alive.
 			samples = append(samples, runner.UsageSample{})
 			continue
 		}
@@ -122,6 +125,7 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 		}
 		if reason != "" {
 			out.Reason = reason
+			out.Failed = true
 		}
 	}
 	if found == 0 {
@@ -129,7 +133,7 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 	}
 	out.Usage = runner.SumUsage(samples)
 	if len(ids) > 1 {
-		out.Reason = "multiple Claude sessions for one attempt"
+		out.Reason = MultipleSessionsReason
 		out.Failed = true
 	}
 	return out, nil

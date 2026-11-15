@@ -119,8 +119,11 @@ func (a *API) FindAttemptSessions(ctx context.Context, key runner.AttemptKey) ([
 			return nil, apiError(err)
 		}
 		for _, session := range page.Data {
+			if session.ID == "" {
+				return nil, errors.New("Claude session list contains an empty ID")
+			}
 			meta := session.Metadata
-			if meta["kioku_job_id"] == key.JobID && meta["kioku_attempt_id"] == key.AttemptID && session.ID != "" {
+			if meta["kioku_job_id"] == key.JobID && meta["kioku_attempt_id"] == key.AttemptID {
 				ids = append(ids, session.ID)
 			}
 		}

@@ -2,8 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -328,12 +326,8 @@ func TestWikiViewListCreationOrder(t *testing.T) {
 
 func TestWikiViewUsesConfiguredDefaultUntilPromptSaved(t *testing.T) {
 	f, owner, p := orgProject(t)
-	dir := t.TempDir()
 	const override = "Organize decisions by date.\n"
-	if err := os.WriteFile(filepath.Join(dir, prompts.DefaultPromptFile), []byte(override), 0600); err != nil {
-		t.Fatal(err)
-	}
-	rendered, err := prompts.Load(dir, prompts.Variables{}, nil)
+	rendered, err := loadPrompts(t, prompts.Variables{}, map[string]string{prompts.DefaultPromptFile: override})
 	if err != nil {
 		t.Fatal(err)
 	}

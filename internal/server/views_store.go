@@ -193,17 +193,18 @@ func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, pr
 			record = saved
 		}
 	}
-	prior := record
 	if title != nil {
 		record.Title = *title
 	}
 	if prompt != nil {
 		record.Prompt = *prompt
 	}
+	// view.json is the commit point. The index changes only on the first save,
+	// so a failed index write leaves the Wiki View on its defaults.
 	if err := s.writeViewRecord(ctx, viewKey(pid, record.ID, "view.json"), record); err != nil {
 		return viewDefinition{}, err
 	}
-	if index.Wiki == nil || record != prior {
+	if index.Wiki == nil {
 		index.Wiki = &viewIndexEntry{ID: record.ID, Version: auth.Token()[:20]}
 		if err := s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index); err != nil {
 			return viewDefinition{}, err

@@ -73,3 +73,36 @@ func TestMigrationRejectsMissingMembershipBeforeMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrationRejectsMissingLivePrincipalsBeforeMutation(t *testing.T) {
+	for _, missing := range []string{"project organization", "organization member", "project member"} {
+		t.Run(missing, func(t *testing.T) {
+			path, objects, cipher, _ := migrationFixture(t)
+			project := legacyV2Project{ID: "p", OrgID: "o", Slug: "project", Members: map[string]string{"u": "owner"}}
+			switch missing {
+			case "project organization":
+				project.OrgID = "missing"
+			case "organization member":
+				migrationRecord(t, path, "organizations", "o", legacyV2Organization{ID: "o", Slug: "org", Members: map[string]string{"missing": "owner"}})
+			case "project member":
+				project.Members = map[string]string{"missing": "owner"}
+			}
+			migrationRecord(t, path, "projects", "p", project)
+			if err := migrateV2(t.Context(), path, objects, cipher, time.UnixMilli(5000)); err == nil {
+				t.Fatal("missing live principal was accepted")
+			}
+			if objects.puts != 0 || objects.deletes != 0 {
+				t.Fatalf("invalid input mutated objects: puts=%d deletes=%d", objects.puts, objects.deletes)
+			}
+			db, err := catalogConnection(path, false, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var version int
+			if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+				t.Fatal(version, err)
+			}
+		})
+	}
+}

@@ -57,12 +57,8 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 		if req.BudgetCents != 0 && (req.BudgetCents < 50 || req.BudgetCents > s.Config.AgentMaxSessionCents) {
 			return fail(400, "budget is outside the allowed range")
 		}
-		row, err := s.queueGeneration(q, p, uid, principal.AgentID, false, time.Now())
+		row, err := s.queueGeneration(q, p, uid, principal.AgentID, req.BudgetCents, false, time.Now())
 		if err != nil {
-			return err
-		}
-		row.Data.AgentBudgetCents = req.BudgetCents
-		if err = q.PutJob(row); err != nil {
 			return err
 		}
 		job, err = jobProjection(q, row)
@@ -79,8 +75,8 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 	return nil
 }
 
-func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agentID string, automatic bool, now time.Time) (store.JobRow, error) {
-	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: nullableString(agentID), Automatic: automatic, WikiStatus: nullableString("pending"), Views: []store.ViewResultData{}}}
+func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agentID string, budget int64, automatic bool, now time.Time) (store.JobRow, error) {
+	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: nullableString(agentID), AgentBudgetCents: budget, Automatic: automatic, WikiStatus: nullableString("pending"), Views: []store.ViewResultData{}}}
 	_, pending, err := q.ProjectCounts(p.ID)
 	if err != nil {
 		return job, err
@@ -159,7 +155,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			} else if err != nil {
 				return err
 			}
-			if _, err = s.queueGeneration(q, p, owner, "", true, now); err != nil {
+			if _, err = s.queueGeneration(q, p, owner, "", 0, true, now); err != nil {
 				return err
 			}
 			added = true

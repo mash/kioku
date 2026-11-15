@@ -310,10 +310,6 @@ func (s *Server) deleteViewLocked(ctx context.Context, pid, slug string) error {
 	}
 	return s.write(ctx, func(q *store.Queries) error {
 		row, err := q.ViewBySlug(pid, slug)
-		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
-			row = store.ViewRow{ProjectID: pid, ID: newWikiViewRecord(pid).ID, Slug: wikiViewSlug}
-			err = nil
-		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return fail(404, "view not found")
 		}

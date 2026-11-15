@@ -161,6 +161,7 @@ func (s *Server) saveDiscoveredRef(ctx context.Context, id string, ref runner.Ru
 	})
 }
 func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job store.JobRow, status runner.Status) error {
+	const timeoutReason = "managed agent output did not become available before the deadline"
 	files, ok := r.(runner.FileRunner)
 	if !ok || job.SessionID == nil || status.Run.ID != *job.SessionID {
 		return s.failAgentJobLocked(ctx, job, "cannot identify managed agent output", &status)
@@ -170,9 +171,12 @@ func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job st
 		return err
 	}
 	if expired {
-		return s.failAgentJobLocked(ctx, job, "managed agent output did not become available before the deadline", &status)
+		return s.failAgentJobLocked(ctx, job, timeoutReason, &status)
 	}
 	body, err := files.CollectOutput(ctx, sqlAttempt(job), status, s.agentOutputLimit(job))
+	if fileOutputExpired(job.Data.Run, s.storage.now().UnixMilli()) {
+		return s.failAgentJobLocked(ctx, job, timeoutReason, &status)
+	}
 	if errors.Is(err, runner.ErrOutputPending) || errors.Is(err, runner.ErrTemporary) {
 		return nil
 	}
@@ -186,6 +190,9 @@ func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job st
 		}
 		if !j.Data.Run.UsesProviderFiles || !equalOptional(j.SessionID, job.SessionID) || valueString(j.Phase) != "agent_running" {
 			return fail(409, "job no longer accepts managed agent output")
+		}
+		if fileOutputExpired(j.Data.Run, s.storage.now().UnixMilli()) {
+			return fail(409, timeoutReason)
 		}
 		return nil
 	}

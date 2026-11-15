@@ -45,6 +45,16 @@ func connectorCode(t *testing.T, f *fixture, token, namespace string) string {
 	if err := json.Unmarshal([]byte(result.Content[0].Text), &value); err != nil || value.Code == "" || value.Command != "kioku agent login "+value.Code || !value.Expires.After(time.Now()) || value.Expires.After(time.Now().Add(time.Minute)) {
 		t.Fatal("invalid login code result", err)
 	}
+	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		row, err := q.Session(auth.Hash(value.Code))
+		if err != nil {
+			return err
+		}
+		if !value.Expires.Equal(time.UnixMilli(row.Expires)) {
+			t.Fatal("login code response expiry differs from the persisted expiry")
+		}
+		return nil
+	}))
 	return value.Code
 }
 

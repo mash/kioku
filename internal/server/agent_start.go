@@ -127,11 +127,15 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 	}
 	runSpec := runner.RunSpec{Key: sqlAttempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), BudgetCents: job.Data.Run.BudgetCents, Deadline: storageDate(job.Data.Run.Deadline)}
 	vars := prompts.JobVariables{JobID: spec.JobID, Namespace: spec.Namespace, InputURL: spec.InputURL, OutputURL: spec.OutputURL}
+	var saveRefErr error
 	if offline {
 		vars.InputURL, vars.OutputURL = files.FilePaths()
 		runSpec.InputArchive = archive
 		runSpec.FirstMessage = s.Config.Prompts.FileUser(vars)
-		runSpec.SaveRef = func(ref runner.RunRef) error { return s.storage.saveRunRef(ctx, job.ID, ref) }
+		runSpec.SaveRef = func(ref runner.RunRef) error {
+			saveRefErr = s.storage.saveRunRef(ctx, job.ID, ref)
+			return saveRefErr
+		}
 	} else {
 		runSpec.FirstMessage = s.Config.Prompts.User(vars)
 	}
@@ -140,6 +144,11 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 		runSpec.FirstMessage = viewRunnerMessage(vars.InputURL, vars.OutputURL, offline)
 	}
 	ref, err := r.Start(ctx, runSpec)
+	// Runners sanitize checkpoint failures as temporary provider errors. Keep
+	// the database cause so the worker can resolve commits or stop on corruption.
+	if saveRefErr != nil {
+		return saveRefErr
+	}
 	if errors.Is(err, runner.ErrTemporary) {
 		return err
 	}

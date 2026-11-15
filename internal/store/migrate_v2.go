@@ -251,6 +251,18 @@ func (p *migrationPlan) apply(q *Queries) error {
 			return e
 		}
 	}
+	// Historical actors may have been deleted, but live ownership and membership
+	// must resolve before any legacy objects can be replaced or removed.
+	var missingPrincipal bool
+	if err := q.row(`SELECT
+		EXISTS(SELECT 1 FROM projects p WHERE NOT EXISTS(SELECT 1 FROM organizations o WHERE o.id=p.org_id)) OR
+		EXISTS(SELECT 1 FROM organization_members m WHERE NOT EXISTS(SELECT 1 FROM users u WHERE u.id=m.user_id)) OR
+		EXISTS(SELECT 1 FROM project_members m WHERE NOT EXISTS(SELECT 1 FROM users u WHERE u.id=m.user_id))`).Scan(&missingPrincipal); err != nil {
+		return err
+	}
+	if missingPrincipal {
+		return errors.New("missing legacy organization or member")
+	}
 	counts := map[string]int{"organizations": len(p.organizations), "organization_members": len(p.organizationMembers), "users": len(p.users), "user_identities": len(p.identities), "projects": len(p.projects), "project_members": len(p.projectMembers), "sessions": len(p.sessions), "invites": len(p.invites), "oauth_clients": len(p.clients), "inbox": len(p.inbox), "wiki_files": len(p.wiki), "jobs": len(p.jobs), "audit": len(p.audit), "views": len(p.views), "usage": len(p.usage)}
 	for table, want := range counts {
 		var n int

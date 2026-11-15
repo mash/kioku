@@ -153,7 +153,7 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 		return "", time.Time{}, fail(400, "role must be read or write")
 	}
 	raw := "kioku_code." + auth.Token()
-	expires := time.Now().UTC().Add(time.Minute)
+	expires := storageDate(time.Now().Add(time.Minute).UnixMilli())
 	err := s.Store.Write(context.Background(), func(q *store.Queries) error {
 		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
 			return err

@@ -319,10 +319,13 @@ func (o *storageOperations) beginFileWait(ctx context.Context, id string) (store
 		if j.Data.Run.OutputWaitSince == nil {
 			j.Data.Run.OutputWaitSince = &now
 		}
-		expired = now >= min(*j.Data.Run.OutputWaitSince+90000, j.Data.Run.Deadline)
+		expired = fileOutputExpired(j.Data.Run, now)
 		return q.PutJob(j)
 	})
 	return j, expired, err
+}
+func fileOutputExpired(run *store.RunData, now int64) bool {
+	return run.OutputWaitSince != nil && now >= min(*run.OutputWaitSince+90000, run.Deadline)
 }
 func (o *storageOperations) failJob(ctx context.Context, id, reason string, status *runner.Status, onlyWithoutOutput bool) (bool, error) {
 	outputWins := false

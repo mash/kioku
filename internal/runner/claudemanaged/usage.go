@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 )
 
@@ -28,14 +29,14 @@ func usageCount(raw json.RawMessage) *int64 {
 func parseUsage(raw string) runner.UsageSample {
 	root := usageObject(json.RawMessage(raw))
 	u := usageObject(root["usage"])
-	model := usageObject(usageObject(root["agent"])["model"])
+	agentModel := usageObject(usageObject(root["agent"])["model"])
 	out := runner.UsageSample{InputTokens: usageCount(u["input_tokens"]), OutputTokens: usageCount(u["output_tokens"]), CacheReadInputTokens: usageCount(u["cache_read_input_tokens"])}
 	var id string
-	if json.Unmarshal(model["id"], &id) == nil && id != "" {
+	if json.Unmarshal(agentModel["id"], &id) == nil && id != "" {
 		out.Model = &id
 	}
 	cache := usageObject(u["cache_creation"])
-	out.CacheCreationInputTokens = runner.SumUsage([]runner.UsageSample{{CacheCreationInputTokens: usageCount(cache["ephemeral_5m_input_tokens"])}, {CacheCreationInputTokens: usageCount(cache["ephemeral_1h_input_tokens"])}}).CacheCreationInputTokens
+	out.CacheCreationInputTokens = model.SumMeasurements(usageCount(cache["ephemeral_5m_input_tokens"]), usageCount(cache["ephemeral_1h_input_tokens"]))
 	cost := usageObject(u["list_cost"])
 	var currency, amount string
 	if json.Unmarshal(cost["currency"], &currency) == nil && currency == "USD" && json.Unmarshal(cost["amount"], &amount) == nil {

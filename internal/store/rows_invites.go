@@ -1,12 +1,5 @@
 package store
 
-func (q *Queries) Invite(key0 string) (InviteRow, error) {
-	return scanInvite(q.row("SELECT id,project_id,created_by,expires,used_by,token_hash,data FROM invites WHERE id=?", key0))
-}
-func (q *Queries) DeleteInvite(key0 string) error {
-	_, err := q.exec("DELETE FROM invites WHERE id=?", key0)
-	return err
-}
 func (q *Queries) PutInvite(v InviteRow) error {
 	raw, err := marshalData(v.Data)
 	if err != nil {

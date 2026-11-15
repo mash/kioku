@@ -112,7 +112,7 @@ func openCrashStorage(t *testing.T, root string) (*store.Database, *storageOpera
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := newStorageOperations(db, objects, Config{MaxWikiBytes: 64 << 20, AgentJobTimeout: time.Hour, AgentMaxSessions: 4, AgentMaxSessionCents: 1000})
+	o := newStorageOperations(db, objects, &Config{MaxWikiBytes: 64 << 20, GenerateDebounce: 10 * time.Second, AgentJobTimeout: time.Hour, AgentMaxSessions: 4, AgentMaxSessionCents: 1000})
 	o.now = func() time.Time { return time.UnixMilli(1000) }
 	return db, o
 }
@@ -364,7 +364,7 @@ func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			expectedRefs := assertStoredReferences(t, o)
-			restoredOps := newStorageOperations(restored, o.objects, *o.config)
+			restoredOps := newStorageOperations(restored, o.objects, o.config)
 			if got := assertStoredReferences(t, restoredOps); !reflect.DeepEqual(got, expectedRefs) {
 				t.Fatal("backup lost content references", got, expectedRefs)
 			}

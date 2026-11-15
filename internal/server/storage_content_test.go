@@ -44,7 +44,7 @@ func (b *storageTestObjects) List(ctx context.Context, prefix string) ([]blob.Ke
 func storageFixture(t *testing.T) (*storageOperations, *storageTestObjects) {
 	d, _ := sqlAuthFixture(t)
 	objects := &storageTestObjects{Store: local.Store{Dir: t.TempDir()}}
-	o := newStorageOperations(d, objects, Config{MaxWikiBytes: 64 << 20, GenerateDebounce: 10 * time.Second, AgentJobTimeout: time.Hour, AgentMaxSessions: 4, AgentMaxSessionCents: 1000})
+	o := newStorageOperations(d, objects, &Config{MaxWikiBytes: 64 << 20, GenerateDebounce: 10 * time.Second, AgentJobTimeout: time.Hour, AgentMaxSessions: 4, AgentMaxSessionCents: 1000})
 	o.now = func() time.Time { return time.UnixMilli(1000).UTC() }
 	return o, objects
 }
@@ -113,4 +113,14 @@ func TestInboxPutCommitsOnlyAfterObjectSuccess(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func readFixtureWikiFile(ctx context.Context, o *storageOperations, path string) (string, error) {
+	s := &Server{Store: o.db, Blobs: o.objects, storage: o}
+	rev, unlock, err := s.wikiFiles(ctx, "u", "p")
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	return s.wikiFile(ctx, rev, path)
 }

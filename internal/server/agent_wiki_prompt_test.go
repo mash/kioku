@@ -140,7 +140,7 @@ func TestEmptyInboxDoesNotReadWikiPrompt(t *testing.T) {
 	if code := f.request("PATCH", "/api/projects/"+p.ID+"/views/wiki", token, map[string]string{"prompt": "Saved"}, nil); code != 200 {
 		t.Fatal(code)
 	}
-	key := viewKey(p.ID, newWikiViewRecord(p.ID).ID, "view.json")
+	key := viewKey(p.ID, newWikiViewRow(p.ID).ID, "view.json")
 	if err := f.s.Blobs.Put(t.Context(), key, []byte("{")); err != nil {
 		t.Fatal(err)
 	}

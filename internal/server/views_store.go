@@ -25,13 +25,6 @@ var projectViewPresets = []viewPreset{
 
 const wikiViewSlug = "wiki"
 
-type wikiViewRecord struct {
-	ID     string `json:"view_id"`
-	Slug   string `json:"slug"`
-	Title  string `json:"title,omitempty"`
-	Prompt string `json:"prompt,omitempty"`
-}
-
 type viewDefinition struct {
 	ID             string     `json:"view_id"`
 	Slug           string     `json:"slug"`
@@ -45,8 +38,8 @@ type viewDefinition struct {
 	GeneratedAt    *time.Time `json:"generated_at,omitempty"`
 }
 
-func newWikiViewRecord(pid string) wikiViewRecord {
-	return wikiViewRecord{ID: "vw_" + auth.Hash(pid + "/wiki")[:20], Slug: wikiViewSlug}
+func newWikiViewRow(pid string) store.ViewRow {
+	return store.ViewRow{ProjectID: pid, ID: "vw_" + auth.Hash(pid + "/wiki")[:20], Slug: wikiViewSlug}
 }
 
 func (s *Server) defaultWikiPrompt() string {
@@ -56,8 +49,8 @@ func (s *Server) defaultWikiPrompt() string {
 	return prompts.DefaultWikiPrompt()
 }
 
-func (s *Server) wikiViewDefinition(record wikiViewRecord, project model.Project) viewDefinition {
-	view := viewDefinition{ID: record.ID, Slug: wikiViewSlug, Title: record.Title, Prompt: record.Prompt, CreatedAt: &project.Created, Status: "pending"}
+func (s *Server) wikiViewDefinition(row store.ViewRow, project model.Project) viewDefinition {
+	view := viewDefinition{ID: row.ID, Slug: wikiViewSlug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt), CreatedAt: &project.Created, Status: "pending"}
 	if view.Title == "" {
 		view.Title = "Wiki"
 	}
@@ -86,10 +79,9 @@ func sortViews(views []viewDefinition) {
 	})
 }
 
-func completeViewWikiRevision(p model.Project) string { return p.WikiCompleteRevision }
-func viewProjection(row store.ViewRow, p model.Project, s *Server) viewDefinition {
+func (s *Server) viewProjection(row store.ViewRow, p model.Project) viewDefinition {
 	if row.Slug == wikiViewSlug {
-		return s.wikiViewDefinition(wikiViewRecord{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt)}, p)
+		return s.wikiViewDefinition(row, p)
 	}
 	v := viewDefinition{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt), Status: valueString(row.Data.Status), Error: valueString(row.Data.Error), JobID: valueString(row.Data.JobID), WikiSnapshotID: valueString(row.Data.WikiSnapshotID)}
 	if row.CreatedAt != nil {
@@ -106,40 +98,6 @@ func viewProjection(row store.ViewRow, p model.Project, s *Server) viewDefinitio
 		v.GeneratedAt = nil
 	}
 	return v
-}
-func (s *Server) readWikiViewLocked(ctx context.Context, pid string) (wikiViewRecord, error) {
-	var record wikiViewRecord
-	err := s.Store.Read(ctx, func(q *store.Queries) error {
-		row, err := q.ViewBySlug(pid, wikiViewSlug)
-		if errors.Is(err, sql.ErrNoRows) {
-			record = newWikiViewRecord(pid)
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		record = wikiViewRecord{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt)}
-		return nil
-	})
-	return record, err
-}
-func (s *Server) viewProjectLocked(pid string) (model.Project, error) {
-	var p model.Project
-	err := s.Store.Read(context.Background(), func(q *store.Queries) error {
-		row, err := q.Project(pid)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fail(404, "project not found")
-		}
-		if err != nil {
-			return err
-		}
-		if row.Deleting {
-			return fail(404, "project not found")
-		}
-		p, err = projectProjection(q, row)
-		return err
-	})
-	return p, err
 }
 func (s *Server) listViewsLocked(ctx context.Context, pid string) ([]viewDefinition, error) {
 	views := []viewDefinition{}
@@ -164,10 +122,10 @@ func (s *Server) listViewsLocked(ctx context.Context, pid string) ([]viewDefinit
 			if row.Slug == wikiViewSlug {
 				hasWiki = true
 			}
-			views = append(views, viewProjection(row, p, s))
+			views = append(views, s.viewProjection(row, p))
 		}
 		if !hasWiki {
-			views = append(views, s.wikiViewDefinition(newWikiViewRecord(pid), p))
+			views = append(views, s.wikiViewDefinition(newWikiViewRow(pid), p))
 		}
 		return nil
 	})
@@ -175,15 +133,6 @@ func (s *Server) listViewsLocked(ctx context.Context, pid string) ([]viewDefinit
 	return views, err
 }
 func (s *Server) viewBySlugLocked(ctx context.Context, pid, slug string) (viewDefinition, error) {
-	return s.findViewLocked(ctx, pid, slug, "")
-}
-func (s *Server) viewByIDLocked(ctx context.Context, pid, id string) (viewDefinition, error) {
-	return s.findViewLocked(ctx, pid, "", id)
-}
-func (s *Server) viewForDisplayLocked(ctx context.Context, p model.Project, slug string) (viewDefinition, error) {
-	return s.viewBySlugLocked(ctx, p.ID, slug)
-}
-func (s *Server) findViewLocked(ctx context.Context, pid, slug, id string) (viewDefinition, error) {
 	var v viewDefinition
 	err := s.Store.Read(ctx, func(q *store.Queries) error {
 		p, err := q.Project(pid)
@@ -193,14 +142,9 @@ func (s *Server) findViewLocked(ctx context.Context, pid, slug, id string) (view
 		if p.Deleting {
 			return fail(404, "project not found")
 		}
-		var row store.ViewRow
-		if id != "" {
-			row, err = q.View(pid, id)
-		} else {
-			row, err = q.ViewBySlug(pid, slug)
-		}
+		row, err := q.ViewBySlug(pid, slug)
 		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
-			row = store.ViewRow{ProjectID: pid, ID: newWikiViewRecord(pid).ID, Slug: wikiViewSlug}
+			row = newWikiViewRow(pid)
 			err = nil
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -213,7 +157,7 @@ func (s *Server) findViewLocked(ctx context.Context, pid, slug, id string) (view
 		if err != nil {
 			return err
 		}
-		v = viewProjection(row, project, s)
+		v = s.viewProjection(row, project)
 		return nil
 	})
 	return v, err
@@ -257,13 +201,10 @@ func (s *Server) createViewLocked(ctx context.Context, pid, slug, title, prompt 
 		if err != nil {
 			return err
 		}
-		result = viewProjection(row, project, s)
+		result = s.viewProjection(row, project)
 		return nil
 	})
 	return result, err
-}
-func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, prompt *string) (viewDefinition, error) {
-	return s.updateViewLocked(ctx, pid, wikiViewSlug, title, prompt)
 }
 func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, title, prompt *string) (viewDefinition, error) {
 	if title == nil && prompt == nil || title != nil && strings.TrimSpace(*title) == "" || prompt != nil && strings.TrimSpace(*prompt) == "" {
@@ -273,7 +214,7 @@ func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, title, 
 	err := s.write(ctx, func(q *store.Queries) error {
 		row, err := q.ViewBySlug(pid, slug)
 		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
-			row = store.ViewRow{ProjectID: pid, ID: newWikiViewRecord(pid).ID, Slug: wikiViewSlug}
+			row = newWikiViewRow(pid)
 			err = nil
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -299,7 +240,7 @@ func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, title, 
 		if err != nil {
 			return err
 		}
-		result = viewProjection(row, project, s)
+		result = s.viewProjection(row, project)
 		return nil
 	})
 	return result, err

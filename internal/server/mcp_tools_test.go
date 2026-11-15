@@ -386,7 +386,7 @@ func TestConnectorWikiView(t *testing.T) {
 				t.Fatal(msg)
 			}
 			want := []map[string]any{
-				{"view_id": newWikiViewRecord(p.ID).ID, "slug": "wiki", "title": "Wiki", "generated_at": nil, "status": "pending"},
+				{"view_id": newWikiViewRow(p.ID).ID, "slug": "wiki", "title": "Wiki", "generated_at": nil, "status": "pending"},
 				{"view_id": "vw_" + auth.Hash(p.ID + "/project-map")[:20], "slug": "project-map", "title": "Project map", "generated_at": nil, "status": "pending"},
 			}
 			if state == "published" {

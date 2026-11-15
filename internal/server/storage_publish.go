@@ -260,36 +260,3 @@ func (o *storageOperations) publishView(ctx context.Context, id string, bundle *
 		return q.CompactHistory(j.ProjectID, nil)
 	})
 }
-func (o *storageOperations) readViewBundle(ctx context.Context, project, id string) ([]byte, error) {
-	unlock, err := o.lock(ctx, project)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	var v store.ViewRow
-	if err = o.db.Read(ctx, func(q *store.Queries) error {
-		var e error
-		v, e = q.View(project, id)
-		if e != nil {
-			return e
-		}
-		p, e := q.Project(project)
-		if e != nil {
-			return e
-		}
-		if v.BundleHash == nil || !equalOptional(v.ViewEpoch, p.ViewEpoch) {
-			return fail(404, "view not generated")
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	body, err := o.objects.Get(ctx, model.ViewContentKey(project, id, model.ContentHash(*v.BundleHash)))
-	if err != nil {
-		return nil, err
-	}
-	if string(model.HashContent(body)) != *v.BundleHash {
-		return nil, errors.New("view content integrity check failed")
-	}
-	return body, nil
-}

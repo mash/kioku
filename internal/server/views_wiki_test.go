@@ -57,7 +57,7 @@ func TestWikiViewDetail(t *testing.T) {
 func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 	f, owner, p := orgProject(t)
 	path := "/api/projects/" + p.ID + "/views"
-	id := newWikiViewRecord(p.ID).ID
+	id := newWikiViewRow(p.ID).ID
 	patch := func(body any) viewDetail {
 		t.Helper()
 		var got viewDetail
@@ -151,7 +151,7 @@ func TestWikiViewDoesNotReadObsoleteRecords(t *testing.T) {
 		}
 		return nil
 	}))
-	for _, key := range []blob.Key{viewsKey(p.ID, "index.json"), viewKey(p.ID, newWikiViewRecord(p.ID).ID, "view.json")} {
+	for _, key := range []blob.Key{viewsKey(p.ID, "index.json"), viewKey(p.ID, newWikiViewRow(p.ID).ID, "view.json")} {
 		fixtureCheck(t, f.s.Blobs.Put(t.Context(), key, []byte("broken")))
 	}
 	var got viewDetail
@@ -205,7 +205,7 @@ func TestWikiViewListCreationOrder(t *testing.T) {
 		slugs = append(slugs, v.Slug)
 	}
 	want := []string{"wiki", "project-map", created.Slug, "a-legacy", "b-legacy"}
-	if newWikiViewRecord(p.ID).ID > "vw_"+auth.Hash(p.ID + "/project-map")[:20] {
+	if newWikiViewRow(p.ID).ID > "vw_"+auth.Hash(p.ID + "/project-map")[:20] {
 		want[0], want[1] = want[1], want[0]
 	}
 	if !reflect.DeepEqual(slugs, want) {

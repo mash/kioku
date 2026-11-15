@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) Project(key0 string) (ProjectRow, error) {
-	return scanProject(q.row("SELECT id,org_id,slug,created,deleting,wiki_revision,wiki_incomplete,next_generate_at,view_epoch,data FROM projects WHERE id=?", key0))
+func (q *Queries) Project(id string) (ProjectRow, error) {
+	return scanProject(q.row("SELECT id,org_id,slug,created,deleting,wiki_revision,wiki_incomplete,next_generate_at,view_epoch,data FROM projects WHERE id=?", id))
 }
-func (q *Queries) DeleteProject(key0 string) error {
-	_, err := q.exec("DELETE FROM projects WHERE id=?", key0)
+func (q *Queries) DeleteProject(id string) error {
+	_, err := q.exec("DELETE FROM projects WHERE id=?", id)
 	return err
 }
 func (q *Queries) PutProject(v ProjectRow) error {

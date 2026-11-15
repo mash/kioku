@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -394,5 +395,22 @@ func TestMigrationRejectsSessionKeyCollisionBeforeMutation(t *testing.T) {
 	}
 	if b.puts != 0 || b.deletes != 0 {
 		t.Fatal(b.puts, b.deletes)
+	}
+}
+
+func TestMigrationTimePreservesNullAndTruncatesSubMilliseconds(t *testing.T) {
+	if migrationTime(time.Time{}) != nil {
+		t.Fatal("zero must be null")
+	}
+	for _, ms := range []int64{-1234, 0, 1794712365123} {
+		original := time.UnixMilli(ms).Add(456789 * time.Nanosecond)
+		stored := migrationTime(original)
+		if stored == nil || *stored != ms {
+			t.Fatalf("timestamp: %v", stored)
+		}
+		b, err := json.Marshal(stored)
+		if err != nil || string(b) != strconv.FormatInt(ms, 10) {
+			t.Fatalf("JSON: %s %v", b, err)
+		}
 	}
 }

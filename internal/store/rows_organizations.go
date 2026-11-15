@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) Organization(key0 string) (OrganizationRow, error) {
-	return scanOrganization(q.row("SELECT id,slug,data FROM organizations WHERE id=?", key0))
+func (q *Queries) Organization(id string) (OrganizationRow, error) {
+	return scanOrganization(q.row("SELECT id,slug,data FROM organizations WHERE id=?", id))
 }
-func (q *Queries) DeleteOrganization(key0 string) error {
-	_, err := q.exec("DELETE FROM organizations WHERE id=?", key0)
+func (q *Queries) DeleteOrganization(id string) error {
+	_, err := q.exec("DELETE FROM organizations WHERE id=?", id)
 	return err
 }
 func (q *Queries) PutOrganization(v OrganizationRow) error {

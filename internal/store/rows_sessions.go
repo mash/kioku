@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) Session(key0 string) (SessionRow, error) {
-	return scanSession(q.row("SELECT id,kind,status,user_id,project_id,expires,created,data FROM sessions WHERE id=?", key0))
+func (q *Queries) Session(id string) (SessionRow, error) {
+	return scanSession(q.row("SELECT id,kind,status,user_id,project_id,expires,created,data FROM sessions WHERE id=?", id))
 }
-func (q *Queries) DeleteSession(key0 string) error {
-	_, err := q.exec("DELETE FROM sessions WHERE id=?", key0)
+func (q *Queries) DeleteSession(id string) error {
+	_, err := q.exec("DELETE FROM sessions WHERE id=?", id)
 	return err
 }
 func (q *Queries) PutSession(v SessionRow) error {

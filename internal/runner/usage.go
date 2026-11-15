@@ -1,6 +1,6 @@
 package runner
 
-import "math"
+import "github.com/mash/kioku/internal/model"
 
 // UsageSample contains provider-reported values only. A nil value is unknown,
 // never an estimate or a known zero. It carries no billing/principal metadata.
@@ -18,17 +18,17 @@ func SumUsage(samples []UsageSample) UsageSample {
 		return UsageSample{}
 	}
 	out := UsageSample{}
-	model := samples[0].Model
-	if model != nil && *model != "" {
+	modelID := samples[0].Model
+	if modelID != nil && *modelID != "" {
 		same := true
 		for _, s := range samples {
-			if s.Model == nil || *s.Model != *model {
+			if s.Model == nil || *s.Model != *modelID {
 				same = false
 				break
 			}
 		}
 		if same {
-			v := *model
+			v := *modelID
 			out.Model = &v
 		}
 	}
@@ -42,20 +42,12 @@ func SumUsage(samples []UsageSample) UsageSample {
 		{func(s UsageSample) *int64 { return s.CacheCreationInputTokens }, &out.CacheCreationInputTokens},
 		{func(s UsageSample) *int64 { return s.CostCents }, &out.CostCents},
 	}
+	values := make([]*int64, len(samples))
 	for _, field := range fields {
-		var total int64
-		known := true
-		for _, s := range samples {
-			v := field.get(s)
-			if v == nil || *v < 0 || total > math.MaxInt64-*v {
-				known = false
-				break
-			}
-			total += *v
+		for i, sample := range samples {
+			values[i] = field.get(sample)
 		}
-		if known {
-			*field.dst = &total
-		}
+		*field.dst = model.SumMeasurements(values...)
 	}
 	return out
 }

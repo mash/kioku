@@ -3,30 +3,12 @@ package model
 import (
 	"encoding/json"
 	"math"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mash/kioku/internal/blob"
 )
 
-func TestStorageTimePreservesNullAndTruncatesSubMilliseconds(t *testing.T) {
-	if TimeToStorage(time.Time{}) != nil {
-		t.Fatal("zero must be null")
-	}
-	for _, ms := range []int64{-1234, 0, 1794712365123} {
-		original := time.UnixMilli(ms).Add(456789 * time.Nanosecond)
-		stored := TimeToStorage(original)
-		if stored == nil || int64(*stored) != ms || !stored.Time().Equal(time.UnixMilli(ms)) {
-			t.Fatalf("timestamp: %v", stored)
-		}
-		b, err := json.Marshal(stored)
-		if err != nil || string(b) != strconv.FormatInt(ms, 10) {
-			t.Fatalf("JSON: %s %v", b, err)
-		}
-	}
-}
 func TestStorageContentHashesAndKeys(t *testing.T) {
 	h := HashContent([]byte("abc"))
 	if h != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {

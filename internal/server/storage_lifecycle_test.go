@@ -68,9 +68,9 @@ func TestPartialWikiKeepsCompletedCapacity(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := o.readWikiFile(t.Context(), "p", "wiki/index.md")
-	if err != nil || string(got) != string(old) {
-		t.Fatal(string(got), err)
+	got, err := readFixtureWikiFile(t.Context(), o, "wiki/index.md")
+	if err != nil || got != string(old) {
+		t.Fatal(got, err)
 	}
 	b.put = nil
 	rev, err := o.publishWiki(t.Context(), "j", map[string]string{"wiki/index.md": "new"})
@@ -248,7 +248,7 @@ func TestFileOutputWaitSurvivesRestart(t *testing.T) {
 	if _, expired, e := o.beginFileWait(t.Context(), "j"); e != nil || expired {
 		t.Fatal(expired, e)
 	}
-	resumed := newStorageOperations(o.db, o.objects, *o.config)
+	resumed := newStorageOperations(o.db, o.objects, o.config)
 	resumed.now = func() time.Time { return time.UnixMilli(91000) }
 	j, expired, e := resumed.beginFileWait(t.Context(), "j")
 	if e != nil || !expired || *j.Data.Run.OutputWaitSince != 1000 {
@@ -287,7 +287,7 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 		t.Fatal(got)
 	}
 	// A new instance sees the stored usage and ignores a later known value.
-	resumed := newStorageOperations(o.db, b, *o.config)
+	resumed := newStorageOperations(o.db, b, o.config)
 	resumed.now = o.now
 	b.del = nil
 	late := int64(88)
@@ -331,7 +331,7 @@ func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
 		}); err == nil || done {
 			t.Fatal(done, err)
 		}
-		resumed := newStorageOperations(o.db, b, *o.config)
+		resumed := newStorageOperations(o.db, b, o.config)
 		resumed.now = func() time.Time { return time.UnixMilli(2000) }
 		cleaned := 0
 		cleanup := func(context.Context, runner.Attempt) error { cleaned++; return nil }

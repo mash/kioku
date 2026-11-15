@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) Job(key0 string) (JobRow, error) {
-	return scanJob(q.row("SELECT id,project_id,status,created,kind,session_id,input_ready,cleanup_complete,phase,output_hash,generation_snapshot,child_id,parent_id,data FROM jobs WHERE id=?", key0))
+func (q *Queries) Job(id string) (JobRow, error) {
+	return scanJob(q.row("SELECT id,project_id,status,created,kind,session_id,input_ready,cleanup_complete,phase,output_hash,generation_snapshot,child_id,parent_id,data FROM jobs WHERE id=?", id))
 }
-func (q *Queries) DeleteJob(key0 string) error {
-	_, err := q.exec("DELETE FROM jobs WHERE id=?", key0)
+func (q *Queries) DeleteJob(id string) error {
+	_, err := q.exec("DELETE FROM jobs WHERE id=?", id)
 	return err
 }
 func (q *Queries) PutJob(v JobRow) error {

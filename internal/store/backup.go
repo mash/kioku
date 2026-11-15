@@ -99,19 +99,12 @@ func (d *Database) backup(ctx context.Context, dest string, afterSnapshot func()
 	if err != nil {
 		return err
 	}
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if err = errors.Join(syncErr, closeErr); err != nil {
-		return err
-	}
-	f, err = os.Open(path)
-	if err != nil {
-		return err
-	}
 	digest := sha256.New()
-	_, copyErr := io.Copy(digest, f)
-	closeErr = f.Close()
-	if err = errors.Join(copyErr, closeErr); err != nil {
+	err = f.Sync()
+	if err == nil {
+		_, err = io.Copy(digest, f)
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
 		return err
 	}
 

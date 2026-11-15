@@ -81,10 +81,6 @@ func (q *Queries) DeleteProjectMember(project, user string) error {
 	_, err := q.exec("DELETE FROM project_members WHERE project_id=? AND user_id=?", project, user)
 	return err
 }
-func (q *Queries) DeleteOrganizationMember(org, user string) error {
-	_, err := q.exec("DELETE FROM organization_members WHERE org_id=? AND user_id=?", org, user)
-	return err
-}
 func (q *Queries) DeleteIdentity(user, provider string) error {
 	_, err := q.exec("DELETE FROM user_identities WHERE user_id=? AND provider=?", user, provider)
 	return err

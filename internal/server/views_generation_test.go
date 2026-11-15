@@ -190,7 +190,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	}
 	// E2/K0: public creation times are milliseconds; ties use the view ID.
 	firstSlug, secondSlug := "wiki", "project-map"
-	if projectMap.CreatedAt.Before(p.Created) || projectMap.CreatedAt.Equal(p.Created) && projectMap.ID < newWikiViewRecord(p.ID).ID {
+	if projectMap.CreatedAt.Before(p.Created) || projectMap.CreatedAt.Equal(p.Created) && projectMap.ID < newWikiViewRow(p.ID).ID {
 		firstSlug, secondSlug = secondSlug, firstSlug
 	}
 	if msg := connectorTool(t, f, access, "view_list", map[string]string{"project": p.Namespace}, &list); msg != "" ||

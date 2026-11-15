@@ -6,23 +6,9 @@ import (
 	"errors"
 	"math"
 	"strings"
-	"time"
 
 	"github.com/mash/kioku/internal/blob"
 )
-
-// StorageTime is a UTC Unix timestamp in milliseconds. Optional timestamps use
-// *StorageTime, so absence is distinct from the Unix epoch.
-type StorageTime int64
-
-func TimeToStorage(t time.Time) *StorageTime {
-	if t.IsZero() {
-		return nil
-	}
-	v := StorageTime(t.UnixMilli())
-	return &v
-}
-func (v StorageTime) Time() time.Time { return time.UnixMilli(int64(v)).UTC() }
 
 // ContentHash is the lowercase SHA-256 of an immutable object's bytes.
 type ContentHash string

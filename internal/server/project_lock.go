@@ -11,16 +11,6 @@ import (
 func (s *Server) lockProject(ctx context.Context, pid string) (func(), error) {
 	return s.storage.lock(ctx, pid)
 }
-func (s *Server) tryLockProject(pid string) (func(), bool) {
-	gate, _ := s.storage.gates.LoadOrStore(pid, make(chan struct{}, 1))
-	ch := gate.(chan struct{})
-	select {
-	case ch <- struct{}{}:
-		return func() { <-ch }, true
-	default:
-		return nil, false
-	}
-}
 func (s *Server) checkOwner(pid, uid string) error {
 	return s.Store.Read(context.Background(), func(q *store.Queries) error { _, err := owner(q, pid, uid); return err })
 }

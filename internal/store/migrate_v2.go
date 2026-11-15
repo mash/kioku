@@ -35,7 +35,6 @@ type migrationPlan struct {
 	usage               []UsageRow
 	copies              map[blob.Key][]byte
 	obsolete            []blob.Key
-	sourceRecords       int
 	migratedRecords     int
 	discardedRecords    int
 }
@@ -132,11 +131,11 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 	if err != nil {
 		return err
 	}
-	plan := &migrationPlan{copies: map[blob.Key][]byte{}, sourceRecords: len(records)}
+	plan := &migrationPlan{copies: map[blob.Key][]byte{}}
 	if err = plan.readRecords(ctx, records, objects, cipher, now); err != nil {
 		return err
 	}
-	if plan.sourceRecords != plan.migratedRecords+plan.discardedRecords {
+	if len(records) != plan.migratedRecords+plan.discardedRecords {
 		return errors.New("legacy record count mismatch")
 	}
 	// Exercise every constraint and verify row counts before the first PUT. This

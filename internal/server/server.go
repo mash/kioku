@@ -96,8 +96,7 @@ func New(c Config, stateStore catalog, b blob.Store, key *auth.Cipher) *Server {
 	if c.Prompts != nil {
 		s.mcpTools = mcpTools(c.Prompts)
 	}
-	s.storage = newStorageOperations(stateStore, b, c)
-	s.storage.config = &s.Config
+	s.storage = newStorageOperations(stateStore, b, &s.Config)
 	s.routes()
 	return s
 }

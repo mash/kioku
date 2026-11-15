@@ -165,7 +165,7 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	if current.ID != p.ID {
 		return fail(404, "project not found")
 	}
-	v, err := s.viewForDisplayLocked(ctx, current, r.PathValue("view"))
+	v, err := s.viewBySlugLocked(ctx, current.ID, r.PathValue("view"))
 	if err != nil {
 		return err
 	}

@@ -147,16 +147,7 @@ func (s *Server) saveDiscoveredRef(ctx context.Context, id string, ref runner.Ru
 		if j.Data.Run == nil {
 			return nil
 		}
-		if ref.ID != "" {
-			j.SessionID = &ref.ID
-			if valueString(j.Phase) == "preparing" {
-				j.Phase = nullableString("agent_running")
-			}
-		}
-		j.Data.Run.UsesProviderFiles = ref.UsesProviderFiles
-		j.Data.Run.Provider = nullableString(ref.Resources["provider"])
-		j.Data.Run.UploadStarted = ref.Resources["upload_started"] == "true"
-		j.Data.Run.InputFileID = nullableString(ref.Resources["input_file_id"])
+		applyRunRef(&j, ref)
 		return q.PutJob(j)
 	})
 }

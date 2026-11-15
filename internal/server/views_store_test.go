@@ -90,7 +90,7 @@ func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
 			if valueString(got.Data.JobID) != "old-job" || storedJob(t, f, child).Status != "running" {
 				t.Fatal("uncommitted publication visible", got)
 			}
-			body, err := f.s.storage.readViewBundle(ctx, p.ID, v.ID)
+			body, err := readFixtureViewBundle(ctx, f.s, p.ID, v.Slug)
 			fixtureCheck(t, err)
 			if string(body) != "old bundle" {
 				t.Fatal(string(body))
@@ -154,7 +154,7 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	// A settings edit does not invalidate an already running job.
 	fixtureCheck(t, f.s.storage.publishView(ctx, child, &viewBundle{files: map[string][]byte{"index.html": []byte("late")}}))
 	setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-2")
-	if _, err := f.s.storage.readViewBundle(ctx, p.ID, v.ID); err == nil {
+	if _, err := readFixtureViewBundle(ctx, f.s, p.ID, v.Slug); err == nil {
 		t.Fatal("obsolete bundle visible")
 	}
 	if code := f.request("DELETE", "/api/projects/"+p.ID+"/views/"+v.Slug, token, nil, nil); code != 204 {
@@ -212,4 +212,17 @@ func TestWikiViewPatchUsesSQLWithoutObjectReads(t *testing.T) {
 	if c := f.request("GET", api, token, nil, &v); c != 200 || v.Prompt != "Saved prompt" {
 		t.Fatal(c, v)
 	}
+}
+
+func readFixtureViewBundle(ctx context.Context, s *Server, pid, slug string) ([]byte, error) {
+	unlock, err := s.lockProject(ctx, pid)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	v, err := s.viewBySlugLocked(ctx, pid, slug)
+	if err != nil {
+		return nil, err
+	}
+	return s.readViewBundleLocked(ctx, pid, v)
 }

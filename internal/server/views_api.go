@@ -19,7 +19,7 @@ func viewHasNewWiki(view viewDefinition, project model.Project) *bool {
 	if view.GeneratedAt == nil || view.Slug == wikiViewSlug {
 		return nil
 	}
-	updated := view.WikiSnapshotID != completeViewWikiRevision(project)
+	updated := view.WikiSnapshotID != project.WikiCompleteRevision
 	return &updated
 }
 
@@ -73,7 +73,7 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	if err != nil {
 		return err
 	}
-	view, err := s.viewForDisplayLocked(r.Context(), project, r.PathValue("view"))
+	view, err := s.viewBySlugLocked(r.Context(), project.ID, r.PathValue("view"))
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) 
 		return err
 	}
 	if r.PathValue("view") == wikiViewSlug {
-		view, err := s.updateWikiViewLocked(r.Context(), pid, title, prompt)
+		view, err := s.updateViewLocked(r.Context(), pid, wikiViewSlug, title, prompt)
 		if err != nil {
 			return err
 		}

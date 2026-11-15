@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) Inbox(key0 string) (InboxRow, error) {
-	return scanInbox(q.row("SELECT id,project_id,source_url,remove,created,run_id,data FROM inbox WHERE id=?", key0))
+func (q *Queries) Inbox(id string) (InboxRow, error) {
+	return scanInbox(q.row("SELECT id,project_id,source_url,remove,created,run_id,data FROM inbox WHERE id=?", id))
 }
-func (q *Queries) DeleteInbox(key0 string) error {
-	_, err := q.exec("DELETE FROM inbox WHERE id=?", key0)
+func (q *Queries) DeleteInbox(id string) error {
+	_, err := q.exec("DELETE FROM inbox WHERE id=?", id)
 	return err
 }
 func (q *Queries) PutInbox(v InboxRow) error {

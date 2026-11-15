@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) User(key0 string) (UserRow, error) {
-	return scanUser(q.row("SELECT id,email,data FROM users WHERE id=?", key0))
+func (q *Queries) User(id string) (UserRow, error) {
+	return scanUser(q.row("SELECT id,email,data FROM users WHERE id=?", id))
 }
-func (q *Queries) DeleteUser(key0 string) error {
-	_, err := q.exec("DELETE FROM users WHERE id=?", key0)
+func (q *Queries) DeleteUser(id string) error {
+	_, err := q.exec("DELETE FROM users WHERE id=?", id)
 	return err
 }
 func (q *Queries) PutUser(v UserRow) error {

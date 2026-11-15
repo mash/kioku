@@ -1,7 +1,7 @@
 package store
 
-func (q *Queries) Usage(key0 string) (UsageRow, error) {
-	return scanUsage(q.row("SELECT attempt_id,project_id,job_id,recorded_at,data FROM usage WHERE attempt_id=?", key0))
+func (q *Queries) Usage(attemptID string) (UsageRow, error) {
+	return scanUsage(q.row("SELECT attempt_id,project_id,job_id,recorded_at,data FROM usage WHERE attempt_id=?", attemptID))
 }
 func (q *Queries) RecordUsage(v UsageRow) error {
 	raw, err := marshalData(v.Data)

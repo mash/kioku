@@ -76,7 +76,6 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) err
 			}
 			sessions = append(sessions, map[string]any{"id": row.ID, "current": row.ID == current, "created": creationDate(row.Created), "expires": storageDate(row.Expires), "provider": valueString(data.IdentityProvider)})
 		}
-		sort.Slice(sessions, func(i, j int) bool { return sessions[i]["id"].(string) < sessions[j]["id"].(string) })
 		result = map[string]any{"id": u.ID, "name": u.Data.Name, "email": u.Email, "identities": identities, "sessions": sessions}
 		return nil
 	})

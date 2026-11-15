@@ -211,9 +211,7 @@ func (s *Server) Prepare() error {
 		}
 		if s.runners == nil {
 			s.prepareErr = errors.New("runners are not configured")
-			return
 		}
-
 	})
 	if s.prepareErr != nil {
 		return s.prepareErr

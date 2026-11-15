@@ -25,6 +25,18 @@ func sqlAttempt(j store.JobRow) runner.Attempt {
 	}
 	return runner.Attempt{Key: runner.AttemptKey{JobID: j.ID, AttemptID: j.ID, ProjectID: j.ProjectID}, Run: ref}
 }
+func applyRunRef(j *store.JobRow, ref runner.RunRef) {
+	if ref.ID != "" {
+		j.SessionID = &ref.ID
+		if valueString(j.Phase) == "preparing" {
+			j.Phase = nullableString("agent_running")
+		}
+	}
+	j.Data.Run.UsesProviderFiles = ref.UsesProviderFiles
+	j.Data.Run.Provider = nullableString(ref.Resources["provider"])
+	j.Data.Run.UploadStarted = ref.Resources["upload_started"] == "true"
+	j.Data.Run.InputFileID = nullableString(ref.Resources["input_file_id"])
+}
 func (o *storageOperations) cleanup(ctx context.Context, id string, status runner.Status, providerCleanup func(context.Context, runner.Attempt) error) (bool, error) {
 	// The caller holds the project generation gate across inspection and
 	// cleanup. Provider IO holds neither the content gate nor a SQL transaction.

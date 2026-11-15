@@ -11,7 +11,6 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -27,23 +26,8 @@ type storageOperations struct {
 	gates   sync.Map
 }
 
-func newStorageOperations(db catalog, objects blob.Store, c Config) *storageOperations {
-	if c.MaxWikiBytes == 0 {
-		c.MaxWikiBytes = 64 << 20
-	}
-	if c.GenerateDebounce == 0 {
-		c.GenerateDebounce = 10 * time.Second
-	}
-	if c.AgentJobTimeout == 0 {
-		c.AgentJobTimeout = time.Hour
-	}
-	if c.AgentMaxSessions == 0 {
-		c.AgentMaxSessions = 4
-	}
-	if c.AgentMaxSessionCents == 0 {
-		c.AgentMaxSessionCents = 1000
-	}
-	return &storageOperations{db: db, objects: objects, config: &c, now: func() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }, id: func() string { return auth.Token()[:20] }}
+func newStorageOperations(db catalog, objects blob.Store, c *Config) *storageOperations {
+	return &storageOperations{db: db, objects: objects, config: c, now: func() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }, id: func() string { return auth.Token()[:20] }}
 }
 func (o *storageOperations) lock(ctx context.Context, project string) (func(), error) {
 	if err := ctx.Err(); err != nil {
@@ -202,26 +186,6 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 		return declined
 	}
 	return fail(503, "inbox commit was not applied; retry the request")
-
-}
-func (o *storageOperations) readWikiFile(ctx context.Context, project, path string) ([]byte, error) {
-	unlock, err := o.lock(ctx, project)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	var f store.WikiFileRow
-	if err = o.db.Read(ctx, func(q *store.Queries) error { var err error; f, err = q.WikiFile(project, path); return err }); err != nil {
-		return nil, err
-	}
-	body, err := o.objects.Get(ctx, model.WikiContentKey(project, model.ContentHash(f.Hash)))
-	if err != nil {
-		return nil, err
-	}
-	if string(model.HashContent(body)) != f.Hash || int64(len(body)) != f.Data.Bytes {
-		return nil, errors.New("wiki content integrity check failed")
-	}
-	return body, nil
 }
 func sqlJobAuthorization(q *store.Queries, j store.JobRow, now int64) error {
 	if _, err := sqlMember(q, j.ProjectID, j.Data.UserID); err != nil {

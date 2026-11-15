@@ -1,10 +1,10 @@
 package store
 
-func (q *Queries) View(key0 string, key1 string) (ViewRow, error) {
-	return scanView(q.row("SELECT project_id,id,slug,created_at,bundle_hash,view_epoch,data FROM views WHERE project_id=? AND id=?", key0, key1))
+func (q *Queries) View(project string, id string) (ViewRow, error) {
+	return scanView(q.row("SELECT project_id,id,slug,created_at,bundle_hash,view_epoch,data FROM views WHERE project_id=? AND id=?", project, id))
 }
-func (q *Queries) DeleteView(key0 string, key1 string) error {
-	_, err := q.exec("DELETE FROM views WHERE project_id=? AND id=?", key0, key1)
+func (q *Queries) DeleteView(project string, id string) error {
+	_, err := q.exec("DELETE FROM views WHERE project_id=? AND id=?", project, id)
 	return err
 }
 func (q *Queries) PutView(v ViewRow) error {

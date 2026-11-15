@@ -26,7 +26,7 @@ func TestConcurrentPutReadPublishAndGC(t *testing.T) {
 		func(i int) error {
 			return o.putInbox(t.Context(), store.InboxRow{ID: fmt.Sprintf("i-%d", i), ProjectID: "p", SourceURL: "https://example.com/source", Data: store.InboxData{Submitter: "u"}}, []byte(fmt.Sprintf("source %d", i)))
 		},
-		func(i int) error { _, err := o.readWikiFile(t.Context(), "p", "wiki/index.md"); return err },
+		func(i int) error { _, err := readFixtureWikiFile(t.Context(), o, "wiki/index.md"); return err },
 		func(i int) error {
 			id := fmt.Sprintf("j-%d", i)
 			if err := o.db.Write(t.Context(), func(q *store.Queries) error {
@@ -60,9 +60,9 @@ func TestConcurrentPutReadPublishAndGC(t *testing.T) {
 		}
 	}
 	assertStoredReferences(t, o)
-	got, err := o.readWikiFile(t.Context(), "p", "wiki/index.md")
-	if err != nil || string(got) != "wiki 19" {
-		t.Fatal(string(got), err)
+	got, err := readFixtureWikiFile(t.Context(), o, "wiki/index.md")
+	if err != nil || got != "wiki 19" {
+		t.Fatal(got, err)
 	}
 	if err := o.db.Read(t.Context(), func(q *store.Queries) error {
 		items, err := q.ProjectInbox("p")

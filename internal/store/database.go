@@ -147,15 +147,15 @@ func (d *Database) validateCatalog() error {
 	}
 	// Compare sqlite_master definitions: this verifies column types, NOT NULL,
 	// primary/unique keys, checks, and partial-index predicates together.
-	rows, err := d.writer.Query("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")
+	rows, err := d.writer.Query("SELECT name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	actual := map[string]string{}
 	for rows.Next() {
-		var kind, name, ddl string
-		if err := rows.Scan(&kind, &name, &ddl); err != nil {
+		var name, ddl string
+		if err := rows.Scan(&name, &ddl); err != nil {
 			return err
 		}
 		actual[name] = normalizeDDL(ddl)

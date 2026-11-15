@@ -212,16 +212,7 @@ func (o *storageOperations) saveRunRef(ctx context.Context, id string, ref runne
 		if j.SessionID != nil && ref.ID != "" && *j.SessionID != ref.ID {
 			return fail(409, "generation attempt changed")
 		}
-		if ref.ID != "" {
-			j.SessionID = &ref.ID
-			if valueString(j.Phase) == "preparing" {
-				j.Phase = nullableString("agent_running")
-			}
-		}
-		j.Data.Run.UsesProviderFiles = ref.UsesProviderFiles
-		j.Data.Run.Provider = nullableString(ref.Resources["provider"])
-		j.Data.Run.UploadStarted = ref.Resources["upload_started"] == "true"
-		j.Data.Run.InputFileID = nullableString(ref.Resources["input_file_id"])
+		applyRunRef(&j, ref)
 		return q.PutJob(j)
 	})
 }
@@ -255,44 +246,36 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		return "", err
 	}
 	hash := string(model.HashContent(body))
-	if valueString(j.OutputHash) == hash {
-		return hash, o.db.Write(ctx, func(q *store.Queries) error {
-			if err := check(q); err != nil {
-				return err
-			}
-			for _, fn := range commit {
-				if err := fn(q); err != nil {
-					return err
+	changed := valueString(j.OutputHash) != hash
+	if changed {
+		prefix := "projects/" + j.ProjectID + "/.kioku/jobs/" + id + "/"
+		keys, err := o.objects.List(ctx, prefix)
+		if err != nil {
+			return "", err
+		}
+		for _, key := range keys {
+			name := strings.TrimPrefix(string(key), prefix)
+			if strings.HasPrefix(name, "output-") && strings.HasSuffix(name, ".tar.gz") && name != "output-"+valueString(j.OutputHash)+".tar.gz" {
+				if err = o.objects.Delete(ctx, key); err != nil {
+					return "", fail(503, "previous output cleanup pending")
 				}
 			}
-			return nil
-		})
-	}
-	prefix := "projects/" + j.ProjectID + "/.kioku/jobs/" + id + "/"
-	keys, err := o.objects.List(ctx, prefix)
-	if err != nil {
-		return "", err
-	}
-	for _, key := range keys {
-		name := strings.TrimPrefix(string(key), prefix)
-		if strings.HasPrefix(name, "output-") && strings.HasSuffix(name, ".tar.gz") && name != "output-"+valueString(j.OutputHash)+".tar.gz" {
-			if err = o.objects.Delete(ctx, key); err != nil {
-				return "", fail(503, "previous output cleanup pending")
-			}
 		}
-	}
-	if err = o.objects.Put(ctx, sqlJobKey(j, "output-"+hash+".tar.gz"), body); err != nil {
-		return "", err
+		if err = o.objects.Put(ctx, sqlJobKey(j, "output-"+hash+".tar.gz"), body); err != nil {
+			return "", err
+		}
 	}
 	err = o.db.Write(ctx, func(q *store.Queries) error {
 		if err := check(q); err != nil {
 			return err
 		}
-		j.OutputHash = &hash
-		j.Phase = nullableString("output_received")
-		j.Data.Run.OutputRejection = nil
-		if err := q.PutJob(j); err != nil {
-			return err
+		if changed {
+			j.OutputHash = &hash
+			j.Phase = nullableString("output_received")
+			j.Data.Run.OutputRejection = nil
+			if err := q.PutJob(j); err != nil {
+				return err
+			}
 		}
 		for _, fn := range commit {
 			if err := fn(q); err != nil {

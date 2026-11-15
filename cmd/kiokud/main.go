@@ -113,7 +113,6 @@ func run() error {
 		return err
 	}
 	defer stateStore.Close()
-	// The catalog lock prevents concurrent startups from generating different keys.
 	providers := map[string]auth.Provider{}
 	for _, name := range registry.Names() {
 		prefix := strings.ToUpper(name)

@@ -1,11 +1,7 @@
 package store
 
-func (q *Queries) Audit(key0 string) (AuditRow, error) {
-	return scanAudit(q.row("SELECT id,project_id,created,data FROM audit WHERE id=?", key0))
-}
-func (q *Queries) DeleteAudit(key0 string) error {
-	_, err := q.exec("DELETE FROM audit WHERE id=?", key0)
-	return err
+func (q *Queries) Audit(id string) (AuditRow, error) {
+	return scanAudit(q.row("SELECT id,project_id,created,data FROM audit WHERE id=?", id))
 }
 func (q *Queries) PutAudit(v AuditRow) error {
 	raw, err := marshalData(v.Data)

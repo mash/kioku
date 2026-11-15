@@ -13,6 +13,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/prompts"
 )
 
 type viewPreset struct {
@@ -24,11 +25,21 @@ var projectViewPresets = []viewPreset{
 	{"カンバン", "カンバン", "Wiki の作業を状態別に並べ、担当と根拠を示す。"},
 }
 
+const wikiViewSlug = "wiki"
+
+type wikiViewRecord struct {
+	ID     string `json:"view_id"`
+	Slug   string `json:"slug"`
+	Title  string `json:"title,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+}
+
 type viewDefinition struct {
 	ID             string     `json:"view_id"`
 	Slug           string     `json:"slug"`
 	Title          string     `json:"title"`
 	Prompt         string     `json:"prompt"`
+	CreatedAt      *time.Time `json:"created_at,omitempty"`
 	Status         string     `json:"status"`
 	Error          string     `json:"error,omitempty"`
 	JobID          string     `json:"job_id,omitempty"`
@@ -38,6 +49,7 @@ type viewDefinition struct {
 }
 
 type viewIndex struct {
+	Wiki    *viewIndexEntry           `json:"-"`
 	Views   map[string]viewIndexEntry `json:"views"`
 	Removed []string                  `json:"removed,omitempty"`
 }
@@ -69,6 +81,134 @@ type viewEdit struct {
 	Version string `json:"settings_generation"`
 	Title   string `json:"title"`
 	Prompt  string `json:"prompt"`
+}
+
+func (index *viewIndex) UnmarshalJSON(body []byte) error {
+	type plain viewIndex
+	var decoded plain
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return err
+	}
+	*index = viewIndex(decoded)
+	if entry, ok := index.Views[wikiViewSlug]; ok {
+		index.Wiki = &entry
+		delete(index.Views, wikiViewSlug)
+	}
+	return nil
+}
+
+func (index viewIndex) MarshalJSON() ([]byte, error) {
+	type plain viewIndex
+	encoded := plain(index)
+	encoded.Views = make(map[string]viewIndexEntry, len(index.Views)+1)
+	for slug, entry := range index.Views {
+		encoded.Views[slug] = entry
+	}
+	if index.Wiki != nil {
+		encoded.Views[wikiViewSlug] = *index.Wiki
+	}
+	return json.Marshal(encoded)
+}
+
+func newWikiViewRecord(pid string) wikiViewRecord {
+	return wikiViewRecord{ID: "vw_" + auth.Hash(pid + "/wiki")[:20], Slug: wikiViewSlug}
+}
+
+func (s *Server) readWikiViewLocked(ctx context.Context, pid string) (wikiViewRecord, error) {
+	index, err := s.readViewIndexLocked(ctx, pid)
+	if err != nil {
+		return wikiViewRecord{}, err
+	}
+	return s.loadWikiViewLocked(ctx, pid, index)
+}
+
+func (s *Server) loadWikiViewLocked(ctx context.Context, pid string, index viewIndex) (wikiViewRecord, error) {
+	expected := newWikiViewRecord(pid)
+	if index.Wiki == nil {
+		return expected, nil
+	}
+	var record wikiViewRecord
+	if err := s.readViewRecord(ctx, viewKey(pid, index.Wiki.ID, "view.json"), &record); err != nil {
+		return record, err
+	}
+	if index.Wiki.ID != expected.ID || record.ID != expected.ID || record.Slug != expected.Slug {
+		return record, errors.New("wiki view metadata does not match project index")
+	}
+	return record, nil
+}
+
+func (s *Server) wikiViewDefinition(record wikiViewRecord, project model.Project) viewDefinition {
+	view := viewDefinition{ID: record.ID, Slug: wikiViewSlug, Title: record.Title, Prompt: record.Prompt, CreatedAt: &project.Created, Status: "pending"}
+	if view.Title == "" {
+		view.Title = "Wiki"
+	}
+	if view.Prompt == "" {
+		if s.Config.Prompts != nil {
+			view.Prompt = s.Config.Prompts.WikiDefaultPrompt()
+		} else {
+			view.Prompt = prompts.DefaultWikiPrompt()
+		}
+	}
+	if !project.WikiIncomplete && !project.WikiUpdatedAt.IsZero() {
+		view.Status, view.GeneratedAt = "completed", &project.WikiUpdatedAt
+	}
+	return view
+}
+
+func (s *Server) updateWikiViewLocked(ctx context.Context, pid string, title, prompt *string) (viewDefinition, error) {
+	if title == nil && prompt == nil {
+		return viewDefinition{}, fail(400, "provide title or prompt with text")
+	}
+	index, err := s.readViewIndexLocked(ctx, pid)
+	if err != nil {
+		return viewDefinition{}, err
+	}
+	// A missing or corrupt record is replaced so the owner can repair it.
+	// Storage errors still fail, so a transient read cannot discard settings.
+	record, err := s.loadWikiViewLocked(ctx, pid, index)
+	if err != nil {
+		if _, getErr := s.Blobs.Get(ctx, viewKey(pid, index.Wiki.ID, "view.json")); getErr != nil && !viewObjectMissing(getErr) {
+			return viewDefinition{}, getErr
+		}
+		record = newWikiViewRecord(pid)
+	}
+	prior := record
+	if title != nil {
+		record.Title = *title
+	}
+	if prompt != nil {
+		record.Prompt = *prompt
+	}
+	if err := s.writeViewRecord(ctx, viewKey(pid, record.ID, "view.json"), record); err != nil {
+		return viewDefinition{}, err
+	}
+	if index.Wiki == nil || record != prior {
+		index.Wiki = &viewIndexEntry{ID: record.ID, Version: auth.Token()[:20]}
+		if err := s.writeViewRecord(ctx, viewsKey(pid, "index.json"), index); err != nil {
+			return viewDefinition{}, err
+		}
+	}
+	project, err := s.viewProjectLocked(pid)
+	if err != nil {
+		return viewDefinition{}, err
+	}
+	return s.wikiViewDefinition(record, project), nil
+}
+
+func sortViews(views []viewDefinition) {
+	sort.Slice(views, func(i, j int) bool {
+		a, b := views[i], views[j]
+		if a.CreatedAt == nil {
+			return b.CreatedAt == nil && a.Slug < b.Slug
+		}
+		if b.CreatedAt == nil {
+			return true
+		}
+		if a.CreatedAt.Equal(*b.CreatedAt) {
+			return a.ID < b.ID
+		}
+		return a.CreatedAt.Before(*b.CreatedAt)
+	})
 }
 
 func (v viewDefinition) result() viewResult {
@@ -135,7 +275,8 @@ func (s *Server) readViewIndexLocked(ctx context.Context, pid string) (viewIndex
 	// the user deletes it. A retry of the initial write uses the same ID.
 	id := "vw_" + auth.Hash(pid + "/project-map")[:20]
 	preset := projectViewPresets[0]
-	view := viewDefinition{ID: id, Slug: "project-map", Title: preset.Title, Prompt: preset.Prompt, Status: "pending"}
+	now := time.Now().UTC()
+	view := viewDefinition{CreatedAt: &now, ID: id, Slug: "project-map", Title: preset.Title, Prompt: preset.Prompt, Status: "pending"}
 	if err := s.writeViewRecord(ctx, viewKey(pid, id, "view.json"), view); err != nil {
 		return index, err
 	}
@@ -185,7 +326,17 @@ func (s *Server) listViewsLocked(ctx context.Context, pid string) ([]viewDefinit
 	if err := s.collectDeletedViewsLocked(ctx, pid, index); err != nil {
 		slog.Warn("view cleanup deferred", "project", pid, "error", err)
 	}
-	return s.readViewsLocked(ctx, pid, project.ViewEpoch, index)
+	views, err := s.readViewsLocked(ctx, pid, project.ViewEpoch, index)
+	if err != nil {
+		return nil, err
+	}
+	wiki, err := s.loadWikiViewLocked(ctx, pid, index)
+	if err != nil {
+		return nil, err
+	}
+	views = append(views, s.wikiViewDefinition(wiki, project))
+	sortViews(views)
+	return views, nil
 }
 
 func (s *Server) readViewsLocked(ctx context.Context, pid, epoch string, index viewIndex) ([]viewDefinition, error) {
@@ -197,7 +348,6 @@ func (s *Server) readViewsLocked(ctx context.Context, pid, epoch string, index v
 		}
 		views = append(views, view)
 	}
-	sort.Slice(views, func(i, j int) bool { return views[i].Slug < views[j].Slug })
 	return views, nil
 }
 
@@ -270,17 +420,18 @@ func (s *Server) createViewLocked(ctx context.Context, pid, slug, title, prompt 
 	id := "vw_" + auth.Token()[:20]
 	if slug == "" {
 		slug = projectSlug(title)
-		if _, exists := index.Views[slug]; exists {
+		if _, exists := index.Views[slug]; exists || slug == wikiViewSlug {
 			slug = "view-" + auth.Hash(id)[:20]
 		}
 	}
 	if !validSlug(slug) {
 		return viewDefinition{}, fail(400, "invalid view slug")
 	}
-	if _, exists := index.Views[slug]; exists {
+	if _, exists := index.Views[slug]; exists || slug == wikiViewSlug {
 		return viewDefinition{}, fail(409, "view slug is already in use")
 	}
-	view := viewDefinition{ID: id, Slug: slug, Title: title, Prompt: prompt, Status: "pending", Version: auth.Token()[:20]}
+	now := time.Now().UTC()
+	view := viewDefinition{CreatedAt: &now, ID: id, Slug: slug, Title: title, Prompt: prompt, Status: "pending", Version: auth.Token()[:20]}
 	if err = s.writeViewRecord(ctx, viewKey(pid, id, "view.json"), view); err != nil {
 		return viewDefinition{}, err
 	}
@@ -686,7 +837,10 @@ func (s *Server) collectViewsLocked(ctx context.Context, pid string) error {
 	if err != nil {
 		return err
 	}
-	live := make(map[string]bool, len(index.Views))
+	live := make(map[string]bool, len(index.Views)+1)
+	if index.Wiki != nil {
+		live[index.Wiki.ID] = true
+	}
 	project, err := s.viewProjectLocked(pid)
 	if err != nil {
 		return err

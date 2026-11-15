@@ -71,6 +71,14 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	if err != nil {
 		return err
 	}
+	if r.PathValue("view") == wikiViewSlug {
+		record, err := s.readWikiViewLocked(r.Context(), pid)
+		if err != nil {
+			return err
+		}
+		jsonOut(w, 200, viewDetail{viewDefinition: s.wikiViewDefinition(record, project)})
+		return nil
+	}
 	view, err := s.viewBySlugLocked(r.Context(), pid, r.PathValue("view"))
 	if err != nil {
 		return err
@@ -104,6 +112,14 @@ func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) 
 	if err != nil {
 		return err
 	}
+	if r.PathValue("view") == wikiViewSlug {
+		view, err := s.updateWikiViewLocked(r.Context(), pid, title, prompt)
+		if err != nil {
+			return err
+		}
+		jsonOut(w, 200, viewDetail{viewDefinition: view})
+		return nil
+	}
 	view, err := s.updateViewLocked(r.Context(), pid, r.PathValue("view"), title, prompt)
 	if err != nil {
 		return err
@@ -132,6 +148,9 @@ func (s *Server) deleteView(w http.ResponseWriter, r *http.Request, uid string) 
 	defer unlock()
 	if err := s.checkOwner(pid, uid); err != nil {
 		return err
+	}
+	if r.PathValue("view") == wikiViewSlug {
+		return fail(409, "the wiki view cannot be deleted")
 	}
 	if err := s.deleteViewLocked(r.Context(), pid, r.PathValue("view")); err != nil {
 		return err

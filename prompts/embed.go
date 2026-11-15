@@ -11,3 +11,9 @@ var defaults embed.FS
 //
 //go:embed output-rules.txt
 var OutputRules string
+
+// DefaultWikiPrompt returns the embedded instructions for organizing a wiki.
+func DefaultWikiPrompt() string {
+	body, _ := defaults.ReadFile(DefaultPromptFile)
+	return string(body)
+}

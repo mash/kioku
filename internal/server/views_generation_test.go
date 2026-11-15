@@ -178,7 +178,8 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 		} `json:"views"`
 	}
 	if msg := connectorTool(t, f, access, "view_list", map[string]string{"project": p.Namespace}, &list); msg != "" ||
-		len(list.Views) != 2 || list.Views[0].Slug != "delivery" || list.Views[0].Status != "completed" {
+		len(list.Views) != 3 || list.Views[0].Slug != "wiki" || list.Views[1].Slug != "project-map" ||
+		list.Views[2].Slug != "delivery" || list.Views[2].Status != "completed" {
 		t.Fatalf("view_list: %s %+v", msg, list)
 	}
 	args := map[string]any{"project": p.Namespace, "view": "delivery", "path": "summary.md"}

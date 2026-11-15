@@ -1,7 +1,6 @@
 package server
 
 import (
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -21,13 +20,9 @@ func TestWikiViewPage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	get := func(path, token string) *httptest.ResponseRecorder {
-		t.Helper()
-		return browserPage(t, f, path, token)
-	}
 	path := "/" + p.Namespace + "/views/wiki"
 	api := "/api/projects/" + p.Namespace + "/views/wiki"
-	if w := get(path, owner); w.Code != 200 || !strings.Contains(w.Body.String(), "<h1>Wiki</h1>") {
+	if w := browserPage(t, f, path, owner); w.Code != 200 || !strings.Contains(w.Body.String(), "<h1>Wiki</h1>") {
 		t.Fatalf("default page: %d %s", w.Code, w.Body.String())
 	}
 	if code := f.request("PATCH", api, owner, map[string]string{"title": "Notes", "prompt": "Organize decisions by date."}, nil); code != 200 {
@@ -57,7 +52,7 @@ func TestWikiViewPage(t *testing.T) {
 				status = "生成済み"
 			}
 			for _, token := range []string{owner, reader} {
-				w := get(path, token)
+				w := browserPage(t, f, path, token)
 				html := w.Body.String()
 				for _, want := range []string{"<h1>Notes</h1>", "<p>" + status + "</p>", `href="/` + p.Namespace + `">Wiki</a>`} {
 					if w.Code != 200 || !strings.Contains(html, want) {
@@ -84,7 +79,7 @@ func TestWikiViewPage(t *testing.T) {
 				if w.Header().Get("Content-Security-Policy") != policy {
 					t.Fatal("unexpected CSP", w.Header())
 				}
-				w = get("/"+p.Namespace, token)
+				w = browserPage(t, f, "/"+p.Namespace, token)
 				html = w.Body.String()
 				first := strings.Index(html, `href="`+path+`">Notes</a>`)
 				second := strings.Index(html, `href="/`+p.Namespace+`/views/project-map"`)
@@ -99,7 +94,7 @@ func TestWikiViewPage(t *testing.T) {
 		})
 	}
 	for _, token := range []string{"", f.login("wiki-outsider@example.com")} {
-		if w := get(path, token); w.Code != 404 || strings.Contains(w.Body.String(), "<h1>Notes</h1>") {
+		if w := browserPage(t, f, path, token); w.Code != 404 || strings.Contains(w.Body.String(), "<h1>Notes</h1>") {
 			t.Fatalf("unauthorized page: %d", w.Code)
 		}
 	}

@@ -21,7 +21,6 @@ type Client interface {
 	ArchiveVault(context.Context, string) error
 	CreateSession(context.Context, SessionInput) (string, error)
 	GetSession(context.Context, string) (Session, error)
-	FindSessionByJob(context.Context, string, ...string) (string, error)
 	FindAttemptSessions(context.Context, runner.AttemptKey) ([]string, error)
 	Interrupt(context.Context, string) error
 	ArchiveSession(context.Context, string) error
@@ -230,40 +229,6 @@ func (a *API) GetSession(ctx context.Context, id string) (Session, error) {
 		cursor = page.NextPage
 	}
 	return s, nil
-}
-func (a *API) FindSessionByJob(ctx context.Context, jobID string, attemptID ...string) (string, error) {
-	if len(attemptID) > 1 {
-		return "", errors.New("at most one attempt ID is allowed")
-	}
-	cursor := ""
-	seen := map[string]bool{}
-	id := ""
-	var latest time.Time
-	for {
-		params := anthropic.BetaSessionListParams{}
-		if cursor != "" {
-			params.Page = anthropic.String(cursor)
-		}
-		page, err := a.sdk.Sessions.List(ctx, params)
-		if err != nil {
-			return "", apiError(err)
-		}
-		for _, s := range page.Data {
-			if s.Metadata["kioku_job_id"] == jobID && (len(attemptID) == 0 || s.Metadata["kioku_attempt_id"] == attemptID[0]) && s.ArchivedAt.IsZero() && (id == "" || s.CreatedAt.After(latest) || s.CreatedAt.Equal(latest) && s.ID > id) {
-				id = s.ID
-				latest = s.CreatedAt
-			}
-		}
-		if page.NextPage == "" {
-			break
-		}
-		if seen[page.NextPage] {
-			return "", fmt.Errorf("%w: repeated session cursor", ErrTemporary)
-		}
-		seen[page.NextPage] = true
-		cursor = page.NextPage
-	}
-	return id, nil
 }
 func (a *API) Interrupt(ctx context.Context, id string) error {
 	_, err := a.sdk.Sessions.Events.Send(ctx, id, anthropic.BetaSessionEventSendParams{Events: []anthropic.BetaManagedAgentsEventParamsUnion{{OfUserInterrupt: &anthropic.BetaManagedAgentsUserInterruptEventParams{}}}})

@@ -39,11 +39,27 @@ func catalogConnection(path string, create, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite inherits the database mode for WAL/SHM files. Protect the file
+	// before opening any connection, including startup probes and migration.
+	if create {
+		f, err := os.OpenFile(abs, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		if err = f.Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err = os.Chmod(abs, 0600); err != nil {
+		return nil, err
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if err = os.Chmod(abs+suffix, 0600); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	u := url.URL{Scheme: "file", Path: abs}
 	q := url.Values{"mode": {"rw"}, "_pragma": {"busy_timeout(5000)", "synchronous(FULL)", "secure_delete(ON)"}}
-	if create {
-		q.Set("mode", "rwc")
-	}
 	if readOnly {
 		q.Add("_pragma", "query_only(ON)")
 	} else {
@@ -93,9 +109,6 @@ func OpenDatabase(path string, create bool) (*Database, error) {
 		}
 	}
 	if err = d.validateCatalog(); err != nil {
-		return fail(err)
-	}
-	if err = os.Chmod(path, 0600); err != nil {
 		return fail(err)
 	}
 	d.reader, err = catalogConnection(path, false, true)

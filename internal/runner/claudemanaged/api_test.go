@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,7 +24,7 @@ func newClient(t *testing.T) (*claudemanaged.API, *fake.Server) {
 }
 func createSession(t *testing.T, a *claudemanaged.API, job string) string {
 	t.Helper()
-	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", VaultID: "vault", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job}, FirstMessage: "Input and output URLs"})
+	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", VaultID: "vault", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job, "kioku_attempt_id": job}, FirstMessage: "Input and output URLs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestClientLifecycleAndWireContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := a.CreateSession(ctx, claudemanaged.SessionInput{MAAgentID: "agent", MAAgentVersion: 3, EnvironmentID: "env", VaultID: vault, BudgetCents: 1234, Title: "Wiki job", Metadata: map[string]string{"kioku_job_id": "job"}, FirstMessage: "Read input then upload output"})
+	id, err := a.CreateSession(ctx, claudemanaged.SessionInput{MAAgentID: "agent", MAAgentVersion: 3, EnvironmentID: "env", VaultID: vault, BudgetCents: 1234, Title: "Wiki job", Metadata: map[string]string{"kioku_job_id": "job", "kioku_attempt_id": "job"}, FirstMessage: "Read input then upload output"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestClientLifecycleAndWireContract(t *testing.T) {
 	if err != nil || s.LastStopReason != "end_turn" || (s.Usage.CostCents == nil || *s.Usage.CostCents != 123) || s.Status != "idle" {
 		t.Fatal(s, err)
 	}
-	if got, err := a.FindSessionByJob(ctx, "job"); err != nil || got != id {
+	if got, err := a.FindAttemptSessions(ctx, runner.AttemptKey{JobID: "job", AttemptID: "job", ProjectID: "project"}); err != nil || !reflect.DeepEqual(got, []string{id}) {
 		t.Fatal(got, err)
 	}
 	if err := a.Interrupt(ctx, id); err != nil {
@@ -107,6 +108,9 @@ func TestClientPaginatesAndUsesEventTimestamps(t *testing.T) {
 	createSession(t, a, "other")
 	old := createSession(t, a, "target")
 	latest := createSession(t, a, "target")
+	if err := a.ArchiveSession(t.Context(), old); err != nil {
+		t.Fatal(err)
+	}
 	s := f.Session(latest)
 	s.Events = []map[string]any{
 		{"id": "e3", "type": "session.status_idle", "processed_at": "2026-11-01T03:00:00Z", "stop_reason": map[string]string{"type": "budget_reached"}},
@@ -115,11 +119,11 @@ func TestClientPaginatesAndUsesEventTimestamps(t *testing.T) {
 		{"id": "e2", "type": "session.status_idle", "processed_at": "2026-11-01T02:00:00Z", "stop_reason": map[string]string{"type": "requires_action"}},
 	}
 	f.SetSession(s)
-	if id, err := a.FindSessionByJob(context.Background(), "target"); err != nil || id != latest || id == old {
-		t.Fatal(id, err)
+	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "target", AttemptID: "target", ProjectID: "project"}); err != nil || len(ids) != 2 || !slices.Contains(ids, old) || !slices.Contains(ids, latest) {
+		t.Fatal(ids, err)
 	}
-	if id, err := a.FindSessionByJob(context.Background(), "absent"); err != nil || id != "" {
-		t.Fatal(id, err)
+	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "absent", AttemptID: "absent", ProjectID: "project"}); err != nil || len(ids) != 0 {
+		t.Fatal(ids, err)
 	}
 	got, err := a.GetSession(context.Background(), latest)
 	if err != nil || got.LastStopReason != "budget_reached" {

@@ -233,8 +233,7 @@ func fixtureRow(j fixtureJob) store.JobRow {
 		row.InputReady = !r.CleanupComplete
 		row.SessionID = store.NullableString(r.Ref.ID)
 		row.OutputHash = store.NullableString(r.OutputHash)
-		ids := append([]string{}, r.InboxIDs...)
-		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, Provider: store.NullableString(r.Ref.Resources["provider"]), UploadStarted: r.Ref.Resources["upload_started"] == "true", InputFileID: store.NullableString(r.Ref.Resources["input_file_id"]), AbortReason: store.NullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: store.NullableString(r.OutputRejection), BudgetCents: r.BudgetCents, InboxIDs: ids}
+		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, Provider: store.NullableString(r.Ref.Resources["provider"]), UploadStarted: r.Ref.Resources["upload_started"] == "true", InputFileID: store.NullableString(r.Ref.Resources["input_file_id"]), AbortReason: store.NullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: store.NullableString(r.OutputRejection), BudgetCents: r.BudgetCents}
 		if r.OutputWaitSince != nil {
 			n := r.OutputWaitSince.UnixMilli()
 			row.Data.Run.OutputWaitSince = &n
@@ -279,7 +278,13 @@ func fixtureJobProjection(t testing.TB, q *store.Queries, row store.JobRow) fixt
 		j.ViewTask = &fixtureViewTask{ParentID: store.ValueString(row.ParentID), ViewID: v.ViewID, Snapshot: fixtureParentSnapshot(t, q, row.ParentID)}
 	}
 	if r := row.Data.Run; r != nil {
-		j.Run = &fixtureAgentRun{InboxIDs: r.InboxIDs, Ref: sqlAttempt(row).Run, Phase: model.ManagedPhase(store.ValueString(row.Phase)), CostCents: pub.Run.CostCents, CleanupComplete: row.CleanupComplete, AbortReason: store.ValueString(r.AbortReason), PreparedAt: storageDate(r.PreparedAt), Deadline: storageDate(r.Deadline), Attempt: fixtureAttempt{ID: row.ID}, BudgetCents: r.BudgetCents, OutputHash: store.ValueString(row.OutputHash), OutputRejection: store.ValueString(r.OutputRejection)}
+		pinned, err := q.RunInbox(row.ProjectID, row.ID)
+		fixtureCheck(t, err)
+		ids := []string{}
+		for _, item := range pinned {
+			ids = append(ids, item.ID)
+		}
+		j.Run = &fixtureAgentRun{InboxIDs: ids, Ref: sqlAttempt(row).Run, Phase: model.ManagedPhase(store.ValueString(row.Phase)), CostCents: pub.Run.CostCents, CleanupComplete: row.CleanupComplete, AbortReason: store.ValueString(r.AbortReason), PreparedAt: storageDate(r.PreparedAt), Deadline: storageDate(r.Deadline), Attempt: fixtureAttempt{ID: row.ID}, BudgetCents: r.BudgetCents, OutputHash: store.ValueString(row.OutputHash), OutputRejection: store.ValueString(r.OutputRejection)}
 		if row.OutputHash != nil {
 			j.Run.OutputKey = sqlJobKey(row, "output-"+*row.OutputHash+".tar.gz")
 		}

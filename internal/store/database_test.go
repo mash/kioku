@@ -234,7 +234,7 @@ func TestHistoryKeepsPendingCleanupAndUnconsumedChildren(t *testing.T) {
 				cleanup := testJob("cleanup", "p", "failed", 0)
 				cleanup.Phase = pointer("preparing")
 				cleanup.CleanupComplete = false
-				cleanup.Data.Run = &RunData{InboxIDs: []string{}}
+				cleanup.Data.Run = &RunData{}
 				if err := q.PutJob(cleanup); err != nil {
 					return err
 				}

@@ -18,6 +18,9 @@ func (q *Queries) AvailableInbox(project string, removeOnly bool) ([]InboxRow, e
 	}
 	return q.listInbox("WHERE project_id=? AND run_id IS NULL ORDER BY created,id", project)
 }
+func (q *Queries) RunInbox(project, run string) ([]InboxRow, error) {
+	return q.listInbox("WHERE project_id=? AND run_id=? ORDER BY created,id", project, run)
+}
 func (q *Queries) ProjectWiki(project string) ([]WikiFileRow, error) {
 	return q.listWikiFile("WHERE project_id=? ORDER BY path", project)
 }

@@ -29,9 +29,6 @@ func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
 			}
 			if rule == "c" || rule == "e" {
 				f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-					job := fixtureJobsGet(t, st, j.ID)
-					job.Run.InboxIDs = []string{"item"}
-					fixtureJobsPut(t, st, j.ID, job)
 					fixtureInboxPut(t, st, "item", model.InboxItem{ID: "item", ProjectID: j.ProjectID, RunID: j.ID, Remove: rule == "c", SourceURL: "https://example.com/a"})
 					return nil
 				})

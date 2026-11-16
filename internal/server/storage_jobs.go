@@ -149,7 +149,7 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		j.Phase = &phase
 		j.CleanupComplete = false
 		j.InputReady = true
-		j.Data.Run = &store.RunData{UsesProviderFiles: file, Provider: store.NullableString(provider), PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget, InboxIDs: []string{}}
+		j.Data.Run = &store.RunData{UsesProviderFiles: file, Provider: store.NullableString(provider), PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget}
 		if j.Data.WikiStatus != nil {
 			j.Data.WikiStatus = store.NullableString("running")
 		}
@@ -165,7 +165,6 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 			if err = q.PutInbox(current); err != nil {
 				return err
 			}
-			j.Data.Run.InboxIDs = append(j.Data.Run.InboxIDs, item.ID)
 		}
 		input.Job = j
 		return q.PutJob(j)

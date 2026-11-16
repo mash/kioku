@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"net/http"
@@ -46,7 +45,7 @@ func (s *Server) outputContext(ctx context.Context, job store.JobRow) (map[strin
 	var rev model.Revision
 	items := []model.InboxItem{}
 	err = s.Store.Read(ctx, func(q *store.Queries) error {
-		current, err := s.storage.runningJob(q, job.ID)
+		_, err := s.storage.runningJob(q, job.ID)
 		if err != nil {
 			return err
 		}
@@ -58,17 +57,11 @@ func (s *Server) outputContext(ctx context.Context, job store.JobRow) (map[strin
 		if err != nil {
 			return err
 		}
-		for _, id := range current.Data.Run.InboxIDs {
-			item, err := q.Inbox(id)
-			if errors.Is(err, sql.ErrNoRows) {
-				return fail(409, "generation inbox missing")
-			}
-			if err != nil {
-				return err
-			}
-			if store.ValueString(item.RunID) != job.ID {
-				return fail(409, "generation inbox missing")
-			}
+		pinned, err := q.RunInbox(job.ProjectID, job.ID)
+		if err != nil {
+			return err
+		}
+		for _, item := range pinned {
 			items = append(items, inboxProjection(item))
 		}
 		return nil

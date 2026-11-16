@@ -45,17 +45,16 @@ type JobData struct {
 	ViewTask         *ViewTaskData    `json:"view_task"`
 }
 type RunData struct {
-	UsesProviderFiles bool     `json:"uses_provider_files"`
-	Provider          *string  `json:"provider"`
-	UploadStarted     bool     `json:"upload_started"`
-	InputFileID       *string  `json:"input_file_id"`
-	AbortReason       *string  `json:"abort_reason"`
-	PreparedAt        int64    `json:"prepared_at"`
-	Deadline          int64    `json:"deadline"`
-	OutputWaitSince   *int64   `json:"output_wait_since"`
-	OutputRejection   *string  `json:"output_rejection"`
-	BudgetCents       int64    `json:"budget_cents"`
-	InboxIDs          []string `json:"inbox_ids"`
+	UsesProviderFiles bool    `json:"uses_provider_files"`
+	Provider          *string `json:"provider"`
+	UploadStarted     bool    `json:"upload_started"`
+	InputFileID       *string `json:"input_file_id"`
+	AbortReason       *string `json:"abort_reason"`
+	PreparedAt        int64   `json:"prepared_at"`
+	Deadline          int64   `json:"deadline"`
+	OutputWaitSince   *int64  `json:"output_wait_since"`
+	OutputRejection   *string `json:"output_rejection"`
+	BudgetCents       int64   `json:"budget_cents"`
 }
 type ViewResultData struct {
 	ViewID string  `json:"view_id"`

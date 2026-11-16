@@ -10,9 +10,6 @@ func (q *Queries) PutJob(v JobRow) error {
 	if v.Data.Views == nil {
 		v.Data.Views = []ViewResultData{}
 	}
-	if v.Data.Run != nil && v.Data.Run.InboxIDs == nil {
-		v.Data.Run.InboxIDs = []string{}
-	}
 	raw, err := marshalData(v.Data)
 	if err != nil {
 		return err

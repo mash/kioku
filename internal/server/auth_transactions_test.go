@@ -76,7 +76,7 @@ func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
 		if err := q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}, 0); err != nil {
 			return err
 		}
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("collision"), Kind: "web", Status: "active", UserID: "u", Expires: 2000, Data: json.RawMessage(`{}`)}, 0)
+		return q.InsertSession(store.SessionRow{ID: auth.Hash("collision"), Kind: "user", Status: "active", UserID: "u", Expires: 2000, Data: json.RawMessage(`{}`)}, 0)
 	})
 	err := d.Write(t.Context(), func(q *store.Queries) error {
 		_, err := exchangeCLILogin(q, "device", "code", "verifier", "collision", now)

@@ -133,7 +133,7 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 			},
 			func() error { return q.PutInbox(inbox) },
 			func() error {
-				return q.InsertSession(store.SessionRow{ID: "s", Kind: "web", Status: "active", UserID: "u", Expires: 10000, Data: json.RawMessage(`{}`)}, 0)
+				return q.InsertSession(store.SessionRow{ID: "s", Kind: "user", Status: "active", UserID: "u", Expires: 10000, Data: json.RawMessage(`{}`)}, 0)
 			},
 		} {
 			if err := fn(); err != nil {

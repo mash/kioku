@@ -209,7 +209,7 @@ func TestMigrationKeepsUsedAuthenticationAndDropsJobRows(t *testing.T) {
 	}
 	defer d.Close()
 	if e = d.Read(t.Context(), func(q *Queries) error {
-		for id, kind := range map[string]string{"human": "web", "agenthash": "agent", auth.Hash("device"): "cli_login", "code": "oauth_code", "refresh": "mcp"} {
+		for id, kind := range map[string]string{"human": "user", "agenthash": "agent", auth.Hash("device"): "cli_login", "code": "oauth_code", "refresh": "mcp"} {
 			s, e := q.Session(id)
 			if e != nil {
 				return e

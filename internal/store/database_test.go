@@ -69,7 +69,7 @@ func TestSchemaRejectsInvalidRows(t *testing.T) {
 		`INSERT INTO users VALUES('u','a','[]')`,
 		`INSERT INTO organization_members VALUES('o','u','admin')`,
 		`INSERT INTO projects VALUES('p','o','p',0,2,NULL,NULL,'{}')`,
-		`INSERT INTO sessions VALUES('s','web','pending','u',NULL,10,0,'{}')`,
+		`INSERT INTO sessions VALUES('s','user','pending','u',NULL,10,0,'{}')`,
 		`INSERT INTO sessions VALUES('s','agent','active','',NULL,10,0,'{}')`,
 		`INSERT INTO usage VALUES('p',NULL,0,'{}')`,
 		`INSERT INTO wiki_files VALUES('p','wiki/a','bad','{"bytes":1}')`,
@@ -325,7 +325,7 @@ func TestCatalogQueriesUseDeclaredIndexes(t *testing.T) {
 	for _, tc := range []struct{ query, index string }{
 		{"SELECT id FROM jobs INDEXED BY jobs_queue WHERE status='queued' ORDER BY created,id LIMIT 1", "jobs_queue"},
 		{"SELECT id FROM projects WHERE next_generate_at IS NOT NULL AND deleting=0 AND next_generate_at<=100 ORDER BY next_generate_at,id", "projects_due"},
-		{"SELECT id FROM sessions WHERE user_id='u' AND kind='web' ORDER BY expires,id", "sessions_user"},
+		{"SELECT id FROM sessions WHERE user_id='u' AND kind='user' ORDER BY expires,id", "sessions_user"},
 		{"SELECT id FROM jobs WHERE session_id='s'", "jobs_session"},
 	} {
 		rows, err := d.reader.Query("EXPLAIN QUERY PLAN " + tc.query)

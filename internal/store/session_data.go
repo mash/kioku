@@ -13,7 +13,6 @@ type SessionRoleData struct {
 }
 
 type IdentitySessionData struct {
-	SessionRoleData
 	IdentityProvider     *string `json:"identity_provider"`
 	IdentityID           *string `json:"identity_id"`
 	IdentityAccessToken  *string `json:"identity_access_token"`

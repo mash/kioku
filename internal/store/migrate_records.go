@@ -93,7 +93,9 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if e := decodeLegacyJSON(r.body, &v); e != nil {
 				return e
 			}
-			if v.JobID != "" || v.Role == "job" {
+			// Agent-scoped legacy sessions are discarded like job sessions:
+			// a plain user session would widen their access.
+			if v.JobID != "" || v.Role == "job" || v.AgentID != "" {
 				p.discardedRecords++
 				continue
 			}
@@ -101,9 +103,7 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if e != nil {
 				return e
 			}
-			data.AgentID = NullableString(v.AgentID)
-			data.Role = NullableString(v.Role)
-			if e = p.addSession(SessionRow{ID: r.id, Kind: "web", Status: "active", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, data); e != nil {
+			if e = p.addSession(SessionRow{ID: r.id, Kind: "user", Status: "active", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, data); e != nil {
 				return e
 			}
 		case "agent_tokens":

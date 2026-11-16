@@ -571,7 +571,7 @@ func fixtureSessionsPut(t testing.TB, q *store.Queries, id string, v fixtureSess
 	data.IdentityRefreshToken = store.NullableString(v.IdentityRefreshToken)
 	kind := old.Kind
 	if kind == "" {
-		kind = "web"
+		kind = "user"
 	}
 	created := int64(0)
 	if !v.Created.IsZero() {
@@ -587,12 +587,10 @@ func fixtureSessionsList(t testing.TB, source any, uid string) map[string]fixtur
 	}
 	q := source.(*store.Queries)
 	out := map[string]fixtureSession{}
-	for _, kind := range []string{"web", "cli"} {
-		rows, err := q.UserSessions(uid, kind)
-		fixtureCheck(t, err)
-		for _, r := range rows {
-			out[r.ID] = fixtureSessionsGet(t, q, r.ID)
-		}
+	rows, err := q.UserSessions(uid, "user")
+	fixtureCheck(t, err)
+	for _, r := range rows {
+		out[r.ID] = fixtureSessionsGet(t, q, r.ID)
 	}
 	return out
 }

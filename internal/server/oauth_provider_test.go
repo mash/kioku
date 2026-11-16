@@ -160,20 +160,6 @@ func TestConnectorOAuthPKCEAndSingleUse(t *testing.T) {
 	}
 }
 
-func TestConnectorOAuthConsentWithCLISession(t *testing.T) {
-	t.Parallel()
-	f, human, project := orgProject(t)
-	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
-		session, err := q.Session(auth.Hash(human))
-		if err != nil {
-			return err
-		}
-		session.Kind = "cli"
-		return q.PutSession(session)
-	}))
-	_, form := connectorAuthCode(t, f, connectorClient(t, f), human, project.ID)
-	connectorTokenPair(t, f, form)
-}
 func TestConnectorRejectsUnregisteredRedirect(t *testing.T) {
 	t.Parallel()
 	f := setupWithWorker(t, false)

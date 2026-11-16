@@ -81,12 +81,12 @@ func TestBrowserLoginIgnoresExpiredSessionsAtCapacity(t *testing.T) {
 	f := setupLoopback(t)
 	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
 		INSERT INTO sessions(id,kind,status,user_id,project_id,created,expires,data)
-		SELECT 'expired-'||x,'web','active','old',NULL,0,0,'{}' FROM n`)
+		SELECT 'expired-'||x,'user','active','old',NULL,0,0,'{}' FROM n`)
 	req := startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + "/auth/google/start"})
 	if resp := finishLoopbackOAuth(t, f, req); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expired sessions prevent browser login: %d", resp.StatusCode)
 	}
-	if n := sessionKindCount(t, f, "web"); n != 10001 {
+	if n := sessionKindCount(t, f, "user"); n != 10001 {
 		t.Fatalf("browser login pruned sessions outside the hourly pruning: %d", n)
 	}
 

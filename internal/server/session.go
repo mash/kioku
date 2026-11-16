@@ -45,12 +45,12 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 				return e
 			}
 			switch row.Kind {
-			case "web", "cli":
+			case "user":
 				identity, e := store.SessionData[store.IdentitySessionData](row)
 				if e != nil {
 					return e
 				}
-				principal = authenticatedSession{UserID: row.UserID, ProjectID: store.ValueString(row.ProjectID), AgentID: store.ValueString(identity.AgentID), Role: store.ValueString(identity.Role), Expires: storageDate(row.Expires), Identity: identity}
+				principal = authenticatedSession{UserID: row.UserID, ProjectID: store.ValueString(row.ProjectID), Expires: storageDate(row.Expires), Identity: identity}
 				return nil
 			case "agent":
 				if r.Header.Get("Authorization") == "" {

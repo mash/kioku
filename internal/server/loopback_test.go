@@ -86,7 +86,7 @@ func loopbackSnapshot(t *testing.T, f *fixture) string {
 	fixtureCheck(t, err)
 	defer tx.Rollback()
 	var parts []string
-	for _, query := range []string{"SELECT id,email,data FROM users ORDER BY id", "SELECT id,kind,status,user_id,project_id,expires,created,data FROM sessions WHERE kind IN ('web','cli','cli_login') ORDER BY id"} {
+	for _, query := range []string{"SELECT id,email,data FROM users ORDER BY id", "SELECT id,kind,status,user_id,project_id,expires,created,data FROM sessions WHERE kind IN ('user','cli_login') ORDER BY id"} {
 		rows, err := tx.Query(query)
 		fixtureCheck(t, err)
 		columns, err := rows.Columns()
@@ -432,7 +432,7 @@ func TestLoopbackConcurrentExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := sessionKindCount(t, f, "cli")
+	before := sessionKindCount(t, f, "user")
 	body, err := json.Marshal(map[string]string{"device": a.device, "code": u.Query().Get("code"), "code_verifier": a.verifier})
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +454,7 @@ func TestLoopbackConcurrentExchange(t *testing.T) {
 	if !(first == 200 && second == 410 || first == 410 && second == 200) {
 		t.Fatal(first, second)
 	}
-	if sessionKindCount(t, f, "cli") != before+1 {
+	if sessionKindCount(t, f, "user") != before+1 {
 		t.Fatal("concurrent exchange issued extra sessions")
 	}
 }

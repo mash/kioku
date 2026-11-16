@@ -16,7 +16,7 @@ func (s *Server) confirmAccount(r *http.Request, uid string) error {
 	return err
 }
 func (s *Server) updateAccount(r *http.Request, uid string, fn func(*store.Queries) error) error {
-	key, principal, err := s.session(r)
+	key, _, err := s.session(r)
 	if err != nil {
 		return err
 	}
@@ -28,7 +28,7 @@ func (s *Server) updateAccount(r *http.Request, uid string, fn func(*store.Queri
 		if err != nil {
 			return err
 		}
-		if (session.Kind != "web" && session.Kind != "cli") || principal.AgentID != "" {
+		if session.Kind != "user" {
 			return fail(401, "session changed; sign in again")
 		}
 		return fn(q)
@@ -60,7 +60,7 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) err
 			return err
 		}
 		for _, row := range rows {
-			if (row.Kind != "web" && row.Kind != "cli") || !row.Active(time.Now().UnixMilli()) {
+			if row.Kind != "user" || !row.Active(time.Now().UnixMilli()) {
 				continue
 			}
 			data, err := store.SessionData[store.IdentitySessionData](row)
@@ -90,7 +90,7 @@ func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request, uid strin
 		if err != nil {
 			return err
 		}
-		if row.UserID != uid || (row.Kind != "web" && row.Kind != "cli") {
+		if row.UserID != uid || row.Kind != "user" {
 			return fail(404, "session not found")
 		}
 		return q.DeleteSession(row.ID)
@@ -141,7 +141,7 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 			return err
 		}
 		for _, row := range rows {
-			if row.Kind != "web" && row.Kind != "cli" && row.Kind != "cli_login" {
+			if row.Kind != "user" && row.Kind != "cli_login" {
 				continue
 			}
 			data, err := store.SessionData[store.IdentitySessionData](row)

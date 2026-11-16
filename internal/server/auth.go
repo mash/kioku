@@ -254,7 +254,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		if e != nil {
 			return e
 		}
-		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "web", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw}, time.Now().UnixMilli())
+		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw}, time.Now().UnixMilli())
 	})
 	if err != nil {
 		return err
@@ -330,8 +330,6 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 			return fail(401, "identity no longer linked to this account")
 		}
 		next := identityData(s.Cipher, fresh, uid, providerName, id)
-		next.AgentID = current.AgentID
-		next.Role = current.Role
 		row.Data, e = store.EncodeSessionData(next)
 		if e != nil {
 			return e

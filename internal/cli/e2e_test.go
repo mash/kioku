@@ -86,7 +86,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		return q.PutSession(store.SessionRow{ID: auth.Hash(token), Kind: "cli", Status: "active", UserID: "test-user", Expires: time.Now().Add(time.Hour).UnixMilli(), Data: raw})
+		return q.PutSession(store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: "test-user", Expires: time.Now().Add(time.Hour).UnixMilli(), Data: raw})
 	}); err != nil {
 		t.Fatal(err)
 	}

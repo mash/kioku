@@ -53,7 +53,7 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 	if err != nil {
 		return store.SessionRow{}, err
 	}
-	issued := store.SessionRow{ID: auth.Hash(token), Kind: "cli", Status: "active", UserID: v.UserID, Expires: now.Add(30 * 24 * time.Hour).UnixMilli(), Created: now.UnixMilli(), Data: raw}
+	issued := store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: v.UserID, Expires: now.Add(30 * 24 * time.Hour).UnixMilli(), Created: now.UnixMilli(), Data: raw}
 	if err = q.InsertSession(issued, now.UnixMilli()); err != nil {
 		return store.SessionRow{}, err
 	}

@@ -64,6 +64,10 @@ type apiError struct {
 
 func (e apiError) Error() string            { return e.message }
 func fail(status int, message string) error { return apiError{status, message} }
+
+// MaxWikiBytes is the default limit of published Wiki bytes per project.
+const MaxWikiBytes = 64 << 20
+
 func New(c Config, stateStore catalog, b blob.Store, key *auth.Cipher) *Server {
 	if c.AgentMaxSessions == 0 {
 		c.AgentMaxSessions = 4
@@ -75,7 +79,7 @@ func New(c Config, stateStore catalog, b blob.Store, key *auth.Cipher) *Server {
 		c.AgentMaxSessionCents = 1000
 	}
 	if c.MaxWikiBytes <= 0 {
-		c.MaxWikiBytes = 64 << 20
+		c.MaxWikiBytes = MaxWikiBytes
 	}
 	if c.MaxQueued <= 0 {
 		c.MaxQueued = 20

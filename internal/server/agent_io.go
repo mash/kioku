@@ -114,7 +114,7 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			problem := "compressed output exceeds twice max-wiki-bytes"
+			problem := "compressed output exceeds twice the Wiki limit"
 			if job.ParentID != nil {
 				if err := s.recordViewOutputRejection(r.Context(), job.ID, check, errViewLimit); err != nil {
 					return err
@@ -175,11 +175,11 @@ func (s *Server) recordViewOutputRejection(ctx context.Context, id string, check
 func (s *Server) validateWikiOutput(ctx context.Context, job store.JobRow, body []byte) (int, error) {
 	lim := s.outputLimits()
 	if int64(len(body)) > lim.MaxCompressed {
-		return 0, &agentgen.OutputError{Problems: []string{"compressed output exceeds twice max-wiki-bytes"}}
+		return 0, &agentgen.OutputError{Problems: []string{"compressed output exceeds twice the Wiki limit"}}
 	}
 	pages, err := agentgen.ReadOutput(bytes.NewReader(body), lim)
 	if errors.Is(err, agentgen.ErrOutputTooLarge) {
-		return 0, &agentgen.OutputError{Problems: []string{"expanded output exceeds twice max-wiki-bytes"}}
+		return 0, &agentgen.OutputError{Problems: []string{"expanded output exceeds twice the Wiki limit"}}
 	}
 	if err != nil {
 		return 0, err

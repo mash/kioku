@@ -53,11 +53,11 @@ At output PUT, the server checks archive paths/types, duplicates, UTF-8, index.m
 
 There is one current Wiki tree. Publication replaces it atomically in one catalog transaction. File hashes avoid unchanged writes and omitted files are deleted. Publication rechecks membership and the requesting agent's validity. Inbox items are consumed only in the successful final state update; new items arriving during the run stay waiting. Failure releases pinned items, except when a newer waiting item has already superseded the same URL.
 
-`--max-wiki-bytes` defaults to 64 MiB and measures published Wiki bytes in `Revision.StoredBytes`. Publication may exceed it. While over limit, file puts return 413, removal puts remain allowed, and generation pins only removals. Without removals, the Wiki stage makes no model call. Compressed and expanded Wiki output archives each have a hard limit of twice the configured value (400).
+The Wiki limit is 64 MiB and measures published Wiki bytes in `Revision.StoredBytes`. Publication may exceed it. While over limit, file puts return 413, removal puts remain allowed, and generation pins only removals. Without removals, the Wiki stage makes no model call. Compressed and expanded Wiki output archives each have a hard limit of 128 MiB (400).
 
 ## Scheduling and freshness
 
-The debounce period (`--generate-debounce`, default 10s) restarts at each saved put. When it ends and no job is queued or running, kiokud queues an automatic generation for waiting inbox items. kiokud does not retry a failed automatic generation. With a debounce period of 0, kiokud generates at the next check.
+The debounce period of 10 seconds restarts at each saved put. When it ends and no job is queued or running, kiokud queues an automatic generation for waiting inbox items. kiokud does not retry a failed automatic generation.
 
 `kioku generate` requests a run; `generate --wait` waits and pulls. An empty inbox completes unchanged without starting a model. Missing runner configuration fails a generation job, including an empty one. `job wait ID` pulls a completed generation; Run `kioku generate --wait` again after a failure. The new job pins the items waiting when it starts. There is no full/incremental mode, fingerprint, source version or intake dependency list. Status reports inbox items and wiki_updated_at.
 
@@ -122,7 +122,7 @@ The trusted command enforces its own network sandbox.
 
 Select `KIOKU_STORAGE=local|s3` (or `--storage`, which takes precedence). The default is local, storing objects in `<KIOKU_DATA>/objects` (`./data/objects` when the data directory is also unset). S3 credentials with local selected are rejected. S3 requires all credentials and writes directly to remote storage without a local content cache or fallback. Existing S3 deployments must explicitly select s3. Changing this setting does not migrate existing objects or catalog bucket mappings. Old cache files are unused.
 
-Queued/running generation jobs live in project storage. Generation has a persisted `--agent-job-timeout` (default one hour), with up to four sessions globally (`--agent-max-sessions`) and one running generation per project. The worker starts a run and proceeds to another project; there are no intake workers.
+Queued/running generation jobs live in project storage. Generation has a persisted deadline of one hour, with up to four sessions globally and one running generation per project. The worker starts a run and proceeds to another project; there are no intake workers.
 
 Generation phases are `preparing`, `agent_running`, `output_received`, and `finalizing`. The server validates output on retrieval or upload and stores its hash; finalization pins that output against replacement. Only the reconciler calls `Runner.Inspect`, once per job per pass, and passes its `Status` to finalization, failure handling and cleanup. Passes run every 30 seconds, at worker startup, and on signed MA webhooks or exec exit callbacks. The four states are None, Running, Stopped and Unknown; the zero value is Unknown.
 
@@ -130,7 +130,7 @@ For a missing run handle, `Inspect` searches by job and attempt metadata and sav
 
 Completed/failed jobs retain a cleanup marker and remain in the hot index until resource cleanup and tar removal finish. A late-discovered running run is stopped before cleanup. Each generation has a new job and attempt ID. Discovery matches both IDs, so a previous generation cannot supply its run or cost. Stop confirmation and publication can take until the next pass (up to 30 seconds).
 
-Project deletion interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. If reconciliation has not confirmed stop/cleanup, deletion returns 503 and preserves the data needed to retry. URL removal instead queues an item with remove true and does not cancel a running generation. New puts remain independent of a running agent. `--max-jobs 20` bounds queued jobs per project; the separate inbox limit is 200.
+Project deletion interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. If reconciliation has not confirmed stop/cleanup, deletion returns 503 and preserves the data needed to retry. URL removal instead queues an item with remove true and does not cancel a running generation. New puts remain independent of a running agent. 20 bounds queued jobs per project; the separate inbox limit is 200.
 
 Finishing a generation and recording its provider cost use the control/content redo protocol; page writes may already be visible before completion. Hourly maintenance prunes expired sessions, invites and old history, and removes unreferenced inbox bodies. The server validates returned archives and never executes their contents.
 
@@ -173,7 +173,7 @@ For Wiki generation, `prompt` and `first_message` are rendered from `prompts/wik
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 
-The command enforces `budget_cents` (USD cents) and `deadline`. The common server limits still apply: a minimum budget of 50 cents, `--agent-max-session-usd`, `--agent-max-sessions`, and `--agent-job-timeout`. The worker's five-minute startup context does not govern the child's lifetime; the reconciler stops it after the persisted deadline.
+The command enforces `budget_cents` (USD cents) and `deadline`. The common server limits still apply: a minimum budget of 50 cents, a maximum of $10 per session, four concurrent sessions, and the one-hour deadline. The worker's five-minute startup context does not govern the child's lifetime; the reconciler stops it after the persisted deadline.
 
 Write a result object as stdout's last nonempty line:
 

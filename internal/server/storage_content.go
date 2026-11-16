@@ -91,7 +91,7 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 			return err
 		}
 		if !item.Remove && size > o.config.MaxWikiBytes {
-			return fail(413, "published wiki exceeds max-wiki-bytes; remove sources first")
+			return fail(413, "published wiki exceeds the Wiki limit; remove sources first")
 		}
 		count, err := q.InboxCountExceptReplacement(item.ProjectID, item.SourceURL)
 		if err != nil {

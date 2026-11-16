@@ -236,8 +236,8 @@ Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `sour
 | --- | --- |
 | put 1要求の JSON 全体1 MiB | 超過は413。1要求に1項目だけ受け付ける |
 | プロジェクトの inbox 200項目 | 固定中も数える。追加で超える場合は429 |
-| `--max-wiki-bytes`（既定64 MiB） | 公開後の合計で判定。超過中の本文の put は413、削除の依頼は受付可能 |
-| 出力 tar の圧縮後・展開後それぞれ設定値の2倍 | 受け取り時に400。ページ数・1ページの固定上限はない |
+| 公開 Wiki 64 MiB | 公開後の合計で判定。超過中の本文の put は413、削除の依頼は受付可能 |
+| 出力 tar の圧縮後・展開後それぞれ128 MiB | 受け取り時に400。ページ数・1ページの固定上限はない |
 | 入力 tar の展開後256 MiB | 超過した実行は失敗し、項目を残す |
 
 公開は Wiki の上限を超えても成功します。超過中の生成は削除の依頼だけを固定し、本文を待機に残します。削除の依頼がなければ実行しません。`kioku -n "$NAMESPACE" project usage` で公開容量と inbox 件数を確認します。公開容量の `Revision.StoredBytes` は派生した maps も含みます。入力の全資料が256 MiBに収まらない場合は、不要な待機資料を取り消すなどして入力を減らす必要があります。
@@ -307,11 +307,7 @@ kioku -n "$NAMESPACE" project delete --yes           # owner: プロジェクト
 
 kiokud は1時間ごとに未参照の本文を含むオブジェクトを回収し、期限切れのセッションと招待を消し、完了／失敗ジョブを30日、監査履歴を90日で整理します。オブジェクトストアの旧バージョンは、プロバイダー側でも保持・削除を設定します。
 
-```bash
-kiokud --max-wiki-bytes 67108864 --max-jobs 20 --rate-per-minute 600
-```
-
-Wiki の容量と待機ジョブ数はプロジェクトごとに制限します。リクエスト数は接続元 IP ごとに毎分制限し、認証開始は20回／分です。転送ヘッダーを信用せず実接続元を使うため、プロキシ経由では入口側の制限も設定します。
+Wiki の容量（64 MiB）と待機ジョブ数（20）はプロジェクトごとに制限します。リクエスト数は接続元 IP ごとに600回／分に制限し、認証開始は20回／分です。転送ヘッダーを信用せず実接続元を使うため、プロキシ経由では入口側の制限も設定します。
 
 `GET /healthz` はメタデータの正常性を確認します。構造化アクセスログに認証トークン・招待トークン・クエリは出力しません。Prometheus形式の `GET /metrics` は `KIOKU_METRICS_TOKEN` をBearerで要求し、未設定なら利用できません。
 
@@ -360,7 +356,7 @@ The web path is `/acme/platform`. `-n ORG/PROJECT` selects the projects.json pat
 - [Generation worker architecture](docs/WORKERS.md): durable queue, one generation worker, and independent cleanup maintenance.
 
 
-`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. kiokud generates a project when no put arrives for the debounce period (`--generate-debounce`, default 10s); each put restarts the debounce period. kiokud does not retry a failed automatic generation; the next put or `generate --wait` runs it. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items and `wiki_updated_at`. There is one wiki; publication replaces it atomically, so readers never see a partial update.
+`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. kiokud generates a project when no put arrives for 10 seconds; each put restarts this period. kiokud does not retry a failed automatic generation; the next put or `generate --wait` runs it. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items and `wiki_updated_at`. There is one wiki; publication replaces it atomically, so readers never see a partial update.
 
 CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together. Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 
@@ -462,7 +458,7 @@ CLI は `kioku --server https://kioku.example.com login` で接続し、
 
 `prompts/` 全体はコピーしないでください。DIR 直下の未知の名前（symlink を含む）は起動エラーです。`.` で始まる名前だけを無視します。MCP のツール名・順序・schema と wiki agent の tools は Go に固定されています。`output-rules.txt` と hook の文は差し替え対象ではありません。
 
-`wiki-agent.default-prompt.md` 以外の 3 ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、`--max-wiki-bytes` の2倍です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` の項目は固定です。managed runner では `BaseURL` は空になり、`InputURL` と `OutputURL` はローカルパスになります。system ファイルには `{{.ReadJobInput}}` と `{{.SubmitJobOutput}}` でrunnerに合った入出力手順を差し込めます。
+`wiki-agent.default-prompt.md` 以外の 3 ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、128 MiB（Wiki の上限64 MiBの2倍）です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` の項目は固定です。managed runner では `BaseURL` は空になり、`InputURL` と `OutputURL` はローカルパスになります。system ファイルには `{{.ReadJobInput}}` と `{{.SubmitJobOutput}}` でrunnerに合った入出力手順を差し込めます。
 
 テンプレートを展開する 3 ファイルでは、Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
 

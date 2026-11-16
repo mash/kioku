@@ -176,32 +176,6 @@ func sqlOAuthRequest(now time.Time) *fosite.Request {
 	session := &connectorSession{DefaultSession: fosite.DefaultSession{Subject: "u", ExpiresAt: map[fosite.TokenType]time.Time{fosite.AuthorizeCode: now.Add(time.Minute), fosite.AccessToken: now.Add(time.Hour), fosite.RefreshToken: now.Add(24 * time.Hour)}}, ProjectIDs: []string{"p"}}
 	return &fosite.Request{ID: "family", RequestedAt: now, Client: &fosite.DefaultClient{ID: "client", Public: true, RedirectURIs: []string{"https://example.com/callback"}}, Session: session, Form: url.Values{"code_challenge": {"challenge"}, "code_challenge_method": {"S256"}}}
 }
-func TestExpiredAccessSurvivesWhileLoginCodeReferencesIt(t *testing.T) {
-	t.Parallel()
-	d, _ := sqlAuthFixture(t)
-	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.InsertSession(store.SessionRow{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 100, Data: sqlJSON(t, store.MCPData{TokenKind: "access", ProjectIDs: []string{"p"}})}, 0); err != nil {
-			return err
-		}
-		if err := q.InsertSession(store.SessionRow{ID: "code", Kind: "login_code", Status: "pending", UserID: "u", Expires: 200, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "access"})}, 0); err != nil {
-			return err
-		}
-		if err := q.PruneSessions(100); err != nil {
-			return err
-		}
-		_, err := q.Session("access")
-		return err
-	})
-	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.PruneSessions(200); err != nil {
-			return err
-		}
-		if _, err := q.Session("access"); !errors.Is(err, sql.ErrNoRows) {
-			t.Fatal("expired retained", err)
-		}
-		return nil
-	})
-}
 func TestSQLFositeRequestUsesMillisecondsAndParentSelection(t *testing.T) {
 	t.Parallel()
 	r := sqlOAuthRequest(time.Now().UTC())

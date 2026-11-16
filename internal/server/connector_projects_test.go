@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
@@ -158,31 +157,6 @@ func TestConnectorCodeExchangeRechecksProject(t *testing.T) {
 		if status := f.request("POST", "/api/agent/login", "", body, nil); status != 401 {
 			t.Fatal("rejected code was not consumed", status)
 		}
-	}
-}
-
-func TestConnectorCodeKeepsItsLifetimeAcrossAccessExpiry(t *testing.T) {
-	t.Parallel()
-	f := setupWithWorker(t, false)
-	human := f.login("owner@example.com")
-	p := securityProject(t, f, human)
-	access := connectorAccessToken(t, f, human, p.ID)
-	code := connectorCode(t, f, access, p.Namespace)
-	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		key := auth.Hash(access)
-		grant := fixtureOAuthTokensGet(t, st, key)
-		grant.Expires = time.Now().Add(-time.Second)
-		fixtureOAuthTokensPut(t, st, key, grant)
-		fixtureCheck(t, st.PruneSessions(time.Now().UnixMilli()))
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if status := f.request("POST", "/mcp", access, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}, nil); status != 401 {
-		t.Fatal("expired access token authenticated", status)
-	}
-	if status := f.request("POST", "/api/agent/login", "", map[string]string{"code": code, "name": "test-host"}, nil); status != 200 {
-		t.Fatal("unexpired code lost its selection", status)
 	}
 }
 

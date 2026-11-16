@@ -32,6 +32,7 @@ type e2e struct {
 	t      *testing.T
 	url    string
 	client *http.Client
+	db     *store.Database
 }
 
 func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
@@ -78,7 +79,7 @@ func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
 	})
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &e2e{t: t, url: ts.URL, client: client}
+	return &e2e{t: t, url: ts.URL, client: client, db: db}
 }
 
 func testOIDCProvider(t *testing.T, baseURL string) auth.Provider {
@@ -427,4 +428,35 @@ func TestE2EAccountSessionRevocation(t *testing.T) {
 	e.expect(e.call("POST", "/api/account/revoke-all", human, nil), 200, nil)
 	e.expect(e.call("GET", "/api/me", human, nil), 401, nil)
 	e.expect(e.call("GET", "/api/me", other, nil), 200, nil)
+}
+
+func TestE2EAgentLoginRejectsExpiredAccessToken(t *testing.T) {
+	t.Parallel()
+	e := newE2E(t)
+	human := e.login("owner")
+	project := e.project(human, "selected")
+	access, _ := e.tokens(e.oauthCode(human, project))
+	var grant struct{ Code string }
+	e.tool(access, "cli_login_code", map[string]string{"project": project, "role": "read"}, false, &grant)
+	// The access token expires after the login code was issued and before the agent exchanges it.
+	if err := e.db.Write(t.Context(), func(q *store.Queries) error {
+		owner, err := q.Session(auth.Hash(human))
+		if err != nil {
+			return err
+		}
+		rows, err := q.UserSessions(owner.UserID, "mcp")
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			row.Expires = time.Now().Add(-time.Second).UnixMilli()
+			if err := q.PutSession(row); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.call("POST", "/api/agent/login", "", map[string]string{"code": grant.Code, "name": "reader"}), 404, nil)
 }

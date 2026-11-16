@@ -8,7 +8,7 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-func TestMaintenancePrunesSessionsAndPreservesPendingLogin(t *testing.T) {
+func TestMaintenancePrunesExpiredAndConsumedSessions(t *testing.T) {
 	t.Parallel()
 	o, _ := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
@@ -28,16 +28,12 @@ func TestMaintenancePrunesSessionsAndPreservesPendingLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error {
-		for _, id := range []string{"expired", "consumed"} {
+		for _, id := range []string{"expired", "consumed", "access"} {
 			if _, err := q.Session(id); !errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("session %s was not pruned: %v", id, err)
 			}
 		}
-		for _, id := range []string{"access", "pending"} {
-			if _, err := q.Session(id); err != nil {
-				return err
-			}
-		}
-		return nil
+		_, err := q.Session("pending")
+		return err
 	}))
 }

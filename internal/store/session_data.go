@@ -114,37 +114,10 @@ func (q *Queries) RevokeOAuthFamily(user, id string) error {
 	return nil
 }
 func (q *Queries) PruneSessions(now int64) error {
-	codes, err := q.listSession("WHERE kind='login_code' AND status='pending' AND expires>?", now)
-	if err != nil {
+	if _, err := q.exec("DELETE FROM sessions WHERE expires<=?", now); err != nil {
 		return err
 	}
-	references := map[string]bool{}
-	for _, v := range codes {
-		var data LoginCodeData
-		if err := json.Unmarshal(v.Data, &data); err != nil {
-			return err
-		}
-		references[data.GrantKey] = true
-	}
-	rows, err := q.listSession("WHERE expires<=? ORDER BY expires,id", now)
-	if err != nil {
-		return err
-	}
-	for _, v := range rows {
-		if references[v.ID] && v.Kind == "mcp" {
-			var data MCPData
-			if err := json.Unmarshal(v.Data, &data); err != nil {
-				return err
-			}
-			if data.TokenKind == "access" {
-				continue
-			}
-		}
-		if err := q.DeleteSession(v.ID); err != nil {
-			return err
-		}
-	}
-	_, err = q.exec("DELETE FROM sessions WHERE kind='cli_login' AND status='active'")
+	_, err := q.exec("DELETE FROM sessions WHERE kind='cli_login' AND status='active'")
 	return err
 }
 

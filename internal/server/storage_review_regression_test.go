@@ -232,3 +232,16 @@ func TestScheduledProjectFailureDoesNotBlockOtherProjects(t *testing.T) {
 		return nil
 	}))
 }
+
+func TestOAuthRegistrationCapacityKeepsTooManyRequestsResponse(t *testing.T) {
+	f, _, _ := orgProject(t)
+	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
+		INSERT INTO oauth_clients(client_id,data) SELECT 'client-'||x,'{}' FROM n`)
+	req := httptest.NewRequest("POST", "/oauth/register", strings.NewReader(`{"redirect_uris":["https://client.example/callback"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "too many OAuth clients") {
+		t.Fatalf("registration capacity response: %d %s", w.Code, w.Body.String())
+	}
+}

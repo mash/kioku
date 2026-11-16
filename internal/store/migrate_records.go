@@ -9,6 +9,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
+	"github.com/ory/fosite"
 )
 
 func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Record, objects blob.Store, cipher *auth.Cipher, now time.Time) error {
@@ -232,6 +233,12 @@ func migrateIdentity(cipher *auth.Cipher, user, provider, id, encrypted string) 
 	return data, nil
 }
 func migrateOAuthRequest(raw json.RawMessage) (json.RawMessage, int64, error) {
+	// Validate the same types Fosite restores before committing the migration
+	// and deleting its inputs. A missing ID would create a new replay family.
+	value := fosite.Request{Client: &fosite.DefaultClient{}, Session: &fosite.DefaultSession{}}
+	if err := json.Unmarshal(raw, &value); err != nil || value.ID == "" || value.Client == nil || value.Client.GetID() == "" || value.Session == nil {
+		return nil, 0, errors.New("invalid legacy OAuth request")
+	}
 	var request map[string]json.RawMessage
 	if e := decodeLegacyJSON(raw, &request); e != nil {
 		return nil, 0, e

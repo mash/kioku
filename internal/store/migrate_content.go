@@ -68,6 +68,11 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			return errors.New("legacy Wiki identity mismatch")
 		}
 		project.WikiRevision = &w.ID
+		// v2 used the current revision when a completed Wiki had no explicit
+		// complete revision. Resolve that once, before dropping the old state.
+		if !content.Incomplete && project.Data.WikiCompleteRevision == nil {
+			project.Data.WikiCompleteRevision = &w.ID
+		}
 		project.Data.WikiCreated = migrationTime(w.Created)
 		project.Data.WikiCompleteBytes = w.CompleteBytes
 		var total int64

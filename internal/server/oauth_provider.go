@@ -113,6 +113,9 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		return q.InsertOAuthClient(client)
 	}); err != nil {
+		if errors.Is(err, store.ErrSessionCapacity) {
+			return fail(http.StatusTooManyRequests, "too many OAuth clients")
+		}
 		return err
 	}
 	jsonOut(w, 201, map[string]any{"client_id": client.ClientID, "client_name": client.Data.ClientName, "redirect_uris": client.Data.RedirectURIs, "token_endpoint_auth_method": "none", "grant_types": []string{"authorization_code", "refresh_token"}, "response_types": []string{"code"}, "scope": connectorScope})

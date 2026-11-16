@@ -95,7 +95,3 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 	})
 	return key, principal, err
 }
-func (s *Server) userID(r *http.Request) string {
-	_, principal, _ := s.session(r)
-	return principal.UserID
-}

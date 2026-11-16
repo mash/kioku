@@ -148,7 +148,7 @@ func TestInterruptedPublicationKeepsInbox(t *testing.T) {
 		t.Fatal(j)
 	}
 	f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if fixtureProjectsGet(t, st, p.ID).WikiIncomplete || fixtureInboxGet(t, st, item.ID).ID == "" || fixtureInboxGet(t, st, item.ID).RunID != j.ID {
+		if fixtureInboxGet(t, st, item.ID).ID == "" || fixtureInboxGet(t, st, item.ID).RunID != j.ID {
 			t.Fatal(fixtureProjectsGet(t, st, p.ID), fixtureInboxList(t, st, p.ID))
 		}
 		return nil
@@ -376,7 +376,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 			restartManagedFixture(t, f)
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 				p := fixtureProjectsGet(t, st, p.ID)
-				if p.WikiIncomplete || p.Revision != "" || len(fixtureRevisionsList(t, st, p.ID)) != 0 {
+				if p.Revision != "" || len(fixtureRevisionsList(t, st, p.ID)) != 0 {
 					t.Fatal("failed upload changed published Wiki", p)
 				}
 				return nil

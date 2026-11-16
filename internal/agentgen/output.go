@@ -22,8 +22,6 @@ type OutputLimits struct {
 	MaxCompressed, MaxUncompressed int64
 }
 
-func DefaultOutputLimits() OutputLimits { return OutputLimits{128 << 20, 128 << 20} }
-
 var outputName = regexp.MustCompile(`^wiki/[a-z0-9][a-z0-9-]*\.md$`)
 
 func ReadOutput(r io.Reader, lim OutputLimits) (map[string]string, error) {

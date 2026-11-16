@@ -129,7 +129,7 @@ Claude Code では、親がプロンプトの URL と自分で開いた URL・�
 - 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。
 - local mode: `put` の成功は Kioku がファイルを受け付けたことを示す。ユーザーに受付を伝える。Wiki の生成を待たない。
   Wiki は最後の put の約 10 秒後の自動生成か `generate --wait` で更新する。`generate --wait` は生成完了後に pull する。
-  `status` の inbox、`wiki_updated_at`、`wiki_incomplete` を区別する。
+  `status` の inbox と `wiki_updated_at` を区別する。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。
 - local mode: 読み取り専用の認証では `put`、`delete`、`generate` を実行しない。
   即時生成の依頼も認証の権限を増やさない。

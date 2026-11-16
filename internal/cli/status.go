@@ -22,7 +22,6 @@ func (a *App) status() error {
 			result["inbox_count"] = p.InboxCount
 			result["remote_revision"] = p.Revision
 			result["wiki_updated_at"] = p.WikiUpdatedAt
-			result["wiki_incomplete"] = p.WikiIncomplete
 			found = true
 		}
 	}

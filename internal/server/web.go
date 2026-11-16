@@ -135,7 +135,7 @@ const projectTemplate = `{{define "body"}}
 .view-settings textarea{min-height:8rem}.view-settings summary{cursor:pointer}
 @media(max-width:710px){.project-columns{grid-template-columns:minmax(0,1fr)}.views-sidebar{border-left:0;border-top:1px solid #ddd;padding:1rem 0}}
 </style>
-<h1>{{.Project.Name}}</h1><p><small>{{if .Project.WikiIncomplete}}Updating wiki{{else if .Project.WikiUpdatedAt.IsZero}}Wiki generation pending{{else}}Wiki updated {{.Project.WikiUpdatedAt.Format "2006-01-02 15:04 UTC"}}{{end}}</small></p>
+<h1>{{.Project.Name}}</h1><p><small>{{if .Project.WikiUpdatedAt.IsZero}}Wiki generation pending{{else}}Wiki updated {{.Project.WikiUpdatedAt.Format "2006-01-02 15:04 UTC"}}{{end}}</small></p>
 <form method="post" action="/api/projects/{{.Project.Namespace}}/generate"><label>セッション予算（USD） <input name="budget_usd" type="number" min="0.50" max="{{.MaxBudget}}" step="0.01" value="0.50" required></label> <button>生成する</button></form>
 {{range .RecentJobs}}<p><a href="/api/projects/{{$.Project.Namespace}}/jobs/{{.ID}}">生成ジョブ</a>: {{.Status}}{{if .Error}} — {{.Error}}{{end}}</p>{{end}}
 <div class="project-columns">

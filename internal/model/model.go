@@ -23,17 +23,16 @@ type User struct {
 	Identities map[string]string `json:"identities,omitempty"`
 }
 type Project struct {
-	WikiIncomplete bool              `json:"wiki_incomplete"`
-	WikiUpdatedAt  time.Time         `json:"wiki_updated_at"`
-	OrgID          string            `json:"-"`
-	Slug           string            `json:"slug"`
-	Namespace      string            `json:"namespace"`
-	ID             string            `json:"-"`
-	Name           string            `json:"name"`
-	Members        map[string]string `json:"members"`
-	Revision       string            `json:"revision"`
-	Created        time.Time         `json:"created"`
-	Deleting       bool              `json:"-"`
+	WikiUpdatedAt time.Time         `json:"wiki_updated_at"`
+	OrgID         string            `json:"-"`
+	Slug          string            `json:"slug"`
+	Namespace     string            `json:"namespace"`
+	ID            string            `json:"-"`
+	Name          string            `json:"name"`
+	Members       map[string]string `json:"members"`
+	Revision      string            `json:"revision"`
+	Created       time.Time         `json:"created"`
+	Deleting      bool              `json:"-"`
 }
 
 // ProjectEntry adds current inbox state to a project listing without persisting it.

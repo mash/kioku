@@ -213,9 +213,6 @@ func (s *Server) requestHook(ctx context.Context, pid string) mutationHook {
 	identity, _ := r.Context().Value(authContextKey{}).(requestIdentity)
 	return s.httpMutation(r, identity.principal.UserID, pid)
 }
-func (s *Server) requestMutation(ctx context.Context, q *store.Queries, pid string) error {
-	return s.requestHook(ctx, pid).apply(q, func(*store.Queries) error { return nil })
-}
 func (s *Server) write(ctx context.Context, fn func(*store.Queries) error) error {
 	r, ok := ctx.Value(mutationRequestKey{}).(*http.Request)
 	pid := ""

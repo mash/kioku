@@ -57,7 +57,7 @@ func (s *Server) wikiViewDefinition(row store.ViewRow, project model.Project) vi
 	if view.Prompt == "" {
 		view.Prompt = s.defaultWikiPrompt()
 	}
-	if !project.WikiIncomplete && !project.WikiUpdatedAt.IsZero() {
+	if !project.WikiUpdatedAt.IsZero() {
 		view.Status, view.GeneratedAt = "completed", &project.WikiUpdatedAt
 	}
 	return view

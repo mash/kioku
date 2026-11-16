@@ -119,7 +119,7 @@ func TestInterruptedImmutableWikiCanBeRetried(t *testing.T) {
 	sendOutput(t, f, f.auto, j, "Generated")
 	f.auto.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
 	deferredPublication(t, f, j)
-	if p := fixtureProjectsGet(t, f, p.ID); p.WikiIncomplete || p.Revision != "" {
+	if p := fixtureProjectsGet(t, f, p.ID); p.Revision != "" {
 		t.Fatal(p)
 	}
 	if len(f.readWiki("/api/projects/"+p.ID, token)) != 0 {
@@ -129,7 +129,7 @@ func TestInterruptedImmutableWikiCanBeRetried(t *testing.T) {
 	if got := reconcileManaged(t, f, j); got.Status != "completed" {
 		t.Fatal(got)
 	}
-	if project := fixtureProjectsGet(t, f, p.ID); project.WikiIncomplete || len(fixtureInboxList(t, f, p.ID)) != 0 {
+	if project := fixtureProjectsGet(t, f, p.ID); len(fixtureInboxList(t, f, p.ID)) != 0 {
 		t.Fatal(project)
 	}
 	if _, err := objects.Get(t.Context(), blob.Key("projects/"+p.ID+"/.kioku/state.json")); !errors.Is(err, os.ErrNotExist) {

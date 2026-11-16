@@ -86,10 +86,4 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatal("expired execution deadline prevented publication recovery", j.Status, j.Error)
 	}
-	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if fixtureProjectsGet(t, st, p.ID).WikiIncomplete {
-			t.Error("publication left incomplete")
-		}
-		return nil
-	})
 }

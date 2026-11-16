@@ -23,7 +23,6 @@ import (
 // not reconstruct a State snapshot or read any legacy stored representation.
 
 type fixtureProject struct {
-	WikiIncomplete bool              `json:"wiki_incomplete,omitempty"`
 	WikiUpdatedAt  time.Time         `json:"wiki_updated_at,omitempty"`
 	NextGenerateAt time.Time         `json:"next_generate_at,omitempty"`
 	OrgID          string            `json:"org_id"`
@@ -329,7 +328,7 @@ func fixtureProjectsFind(t testing.TB, source any, id string) (fixtureProject, b
 	fixtureCheck(t, err)
 	p, err := projectProjection(q, row)
 	fixtureCheck(t, err)
-	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: optionalDate(row.NextGenerateAt)}, true
+	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: optionalDate(row.NextGenerateAt)}, true
 }
 func fixtureProjectsGet(t testing.TB, source any, id string) fixtureProject {
 	if f, ok := source.(*fixture); ok {

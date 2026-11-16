@@ -20,6 +20,8 @@ type entry struct {
 	kind       byte
 }
 
+var testOutputLimits = OutputLimits{128 << 20, 128 << 20}
+
 func archive(t *testing.T, entries ...entry) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -58,7 +60,7 @@ func archive(t *testing.T, entries ...entry) []byte {
 func TestReadOutputRejectsAttacks(t *testing.T) {
 	for _, name := range []string{"wiki/../../x.md", "/etc/passwd", "wiki/a/../../b.md", "wiki/../x.md", "wiki/a\\b.md", "wiki/UPPER.md", "wiki/a_b.md", "maps/graph.json"} {
 		t.Run(name, func(t *testing.T) {
-			_, err := ReadOutput(bytes.NewReader(archive(t, entry{"wiki/index.md", "index", 0}, entry{name, "bad", 0})), DefaultOutputLimits())
+			_, err := ReadOutput(bytes.NewReader(archive(t, entry{"wiki/index.md", "index", 0}, entry{name, "bad", 0})), testOutputLimits)
 			var oe *OutputError
 			if !errors.As(err, &oe) || len(oe.Problems) == 0 {
 				t.Fatal(err)
@@ -67,7 +69,7 @@ func TestReadOutputRejectsAttacks(t *testing.T) {
 	}
 	for _, kind := range []byte{tar.TypeSymlink, tar.TypeLink, tar.TypeChar, tar.TypeBlock, tar.TypeFifo} {
 		t.Run(fmt.Sprintf("type-%d", kind), func(t *testing.T) {
-			_, err := ReadOutput(bytes.NewReader(archive(t, entry{"wiki/index.md", "index", 0}, entry{"wiki/a.md", "", kind})), DefaultOutputLimits())
+			_, err := ReadOutput(bytes.NewReader(archive(t, entry{"wiki/index.md", "index", 0}, entry{"wiki/a.md", "", kind})), testOutputLimits)
 			if err == nil {
 				t.Fatal("accepted special entry")
 			}
@@ -82,7 +84,7 @@ func TestReadOutputRejectsAttacks(t *testing.T) {
 		{"non-utf8", []entry{{"wiki/index.md", string([]byte{0xff}), 0}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ReadOutput(bytes.NewReader(archive(t, tc.entries...)), DefaultOutputLimits())
+			_, err := ReadOutput(bytes.NewReader(archive(t, tc.entries...)), testOutputLimits)
 			if err == nil {
 				t.Fatal("accepted invalid output")
 			}
@@ -92,13 +94,13 @@ func TestReadOutputRejectsAttacks(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		entries = append(entries, entry{fmt.Sprintf("wiki/p%d.md", i), "x", 0})
 	}
-	if _, err := ReadOutput(bytes.NewReader(archive(t, entries...)), DefaultOutputLimits()); err != nil {
+	if _, err := ReadOutput(bytes.NewReader(archive(t, entries...)), testOutputLimits); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestReadOutputBoundsAndIntegrity(t *testing.T) {
 	valid := archive(t, entry{"wiki/", "", tar.TypeDir}, entry{"wiki/index.md", "# Index", 0})
-	pages, err := ReadOutput(bytes.NewReader(valid), DefaultOutputLimits())
+	pages, err := ReadOutput(bytes.NewReader(valid), testOutputLimits)
 	if err != nil || pages["wiki/index.md"] != "# Index" {
 		t.Fatal(pages, err)
 	}
@@ -109,10 +111,10 @@ func TestReadOutputBoundsAndIntegrity(t *testing.T) {
 	}
 	bad := append([]byte(nil), valid...)
 	bad[len(bad)-5] ^= 1
-	if _, err := ReadOutput(bytes.NewReader(bad), DefaultOutputLimits()); err == nil {
+	if _, err := ReadOutput(bytes.NewReader(bad), testOutputLimits); err == nil {
 		t.Fatal("accepted invalid gzip CRC")
 	}
-	if _, err := ReadOutput(bytes.NewReader(valid[:len(valid)/2]), DefaultOutputLimits()); err == nil {
+	if _, err := ReadOutput(bytes.NewReader(valid[:len(valid)/2]), testOutputLimits); err == nil {
 		t.Fatal("accepted truncated archive")
 	}
 	// A small compressed input expands past 64 MiB; stop while streaming it.

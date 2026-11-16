@@ -230,7 +230,7 @@ Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `sour
 
 出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開します。原資料ページをサーバーが後から付け足す処理はありません。
 
-公開に成功した実行の項目だけを inbox から消します。失敗した実行の項目は待機に戻します。公開の途中で停止した場合は `wiki_incomplete` と項目を残します。新しい put が同じ URL の待機項目を作っていた場合は、失敗した古い項目を戻さず新しい項目を優先します。
+公開に成功した実行の項目だけを inbox から消します。失敗した実行の項目は待機に戻します。新しい put が同じ URL の待機項目を作っていた場合は、失敗した古い項目を戻さず新しい項目を優先します。
 
 | 制限 | 動作 |
 | --- | --- |
@@ -282,7 +282,7 @@ export S3_SECRET_ACCESS_KEY=...
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、生成中に変更ファイルを順次上書きします。閲覧中に新旧ページが混在することを許容します。`wiki_incomplete` と実行に固定した inbox の ID を保存し、失敗時の再実行を可能にします。pull は公開済みの Wiki Markdown を取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
+Wikiは一組だけを保持し、公開時に 1 つのトランザクションで丸ごと置き換えます。閲覧中に新旧ページは混在しません。実行に固定した inbox を記録し、失敗時の再実行を可能にします。pull は公開済みの Wiki Markdown を取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
@@ -360,7 +360,7 @@ The web path is `/acme/platform`. `-n ORG/PROJECT` selects the projects.json pat
 - [Generation worker architecture](docs/WORKERS.md): durable queue, one generation worker, and independent cleanup maintenance.
 
 
-`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. kiokud generates a project when no put arrives for the debounce period (`--generate-debounce`, default 10s); each put restarts the debounce period. kiokud does not retry a failed automatic generation; the next put or `generate --wait` runs it. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items, `wiki_updated_at` and `wiki_incomplete`. There is one mutable wiki; readers can see partial updates during publication.
+`kioku -n "$NAMESPACE" put FILE...` saves inbox items without fetching or generating. kiokud generates a project when no put arrives for the debounce period (`--generate-debounce`, default 10s); each put restarts the debounce period. kiokud does not retry a failed automatic generation; the next put or `generate --wait` runs it. `kioku -n "$NAMESPACE" generate --wait` waits for publication and pulls the wiki. Inspect `kioku -n "$NAMESPACE" status` for inbox items and `wiki_updated_at`. There is one wiki; publication replaces it atomically, so readers never see a partial update.
 
 CLI API requests send `Kioku-Client-Version`. The server rejects missing or older versions with 426; this release requires 0.1.0. Browser sessions and MCP are exempt. Upgrade the server, CLI and plugin together. Development builds marked `dev` bypass the version gate. No compatibility aliases are provided.
 

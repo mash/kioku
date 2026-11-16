@@ -87,7 +87,7 @@ Expiry, revocation, issuer removal from the project, account deletion and accoun
 
 Request authentication retains the original restricted principal for the entire request. A concurrent revocation never turns an agent request into the issuer's unrestricted account identity.
 
-The server has one mutable Wiki tree. Pull can include partial progress while generation is running; inspect `status` for `wiki_incomplete` when freshness matters. Pull and the MCP Wiki tools expose published Wiki pages. Before generation, inbox metadata is available through the CLI status or each entry of GET /api/projects (inbox_count and inbox, containing source_url and remove true only for removals). Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
+The server has one Wiki tree. Publication replaces it atomically, so pull never sees a partial generation. Pull and the MCP Wiki tools expose published Wiki pages. Before generation, inbox metadata is available through the CLI status or each entry of GET /api/projects (inbox_count and inbox, containing source_url and remove true only for removals). Project content and inbox state live in project storage, independently of the account/configuration SQLite backup.
 
 ## Internal runner credential
 

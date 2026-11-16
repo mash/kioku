@@ -27,3 +27,7 @@ func (q *Queries) ConsumeSession(id, kind string, now int64) (bool, error) {
 	n, err := res.RowsAffected()
 	return n == 1, err
 }
+
+func (q *Queries) ProjectUserSessions(project, user, kind string) ([]SessionRow, error) {
+	return q.listSession("WHERE project_id=? AND kind=? AND user_id=? ORDER BY id", project, kind, user)
+}

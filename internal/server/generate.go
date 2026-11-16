@@ -110,25 +110,18 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			if p.Deleting || p.NextGenerateAt == nil || *p.NextGenerateAt > now.UnixMilli() {
 				return nil
 			}
-			_, pending, err := q.ProjectCounts(p.ID)
+			pending, err := q.HasPendingGeneration(p.ID)
 			if err != nil {
 				return err
 			}
-			if pending > 0 {
+			if pending {
 				return nil
 			}
-			files, err := q.ProjectWiki(p.ID)
+			size, err := wikiCapacity(q, p)
 			if err != nil {
 				return err
 			}
-			size, err := wikiBytes(files)
-			if err != nil {
-				return err
-			}
-			if p.Data.WikiCompleteBytes != nil {
-				size = *p.Data.WikiCompleteBytes
-			}
-			items, err := q.AvailableInbox(p.ID, size > s.Config.MaxWikiBytes)
+			available, err := q.HasAvailableInbox(p.ID, size > s.Config.MaxWikiBytes)
 			if err != nil {
 				return err
 			}
@@ -147,7 +140,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 			if err = q.PutProject(p); err != nil {
 				return err
 			}
-			if len(items) == 0 || owner == "" {
+			if !available || owner == "" {
 				return nil
 			}
 			if _, err = q.User(owner); errors.Is(err, sql.ErrNoRows) {

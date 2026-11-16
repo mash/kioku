@@ -57,20 +57,32 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) er
 		if e != nil {
 			return e
 		}
+		selected := rows[:0]
+		ids := []string{}
 		for _, row := range rows {
 			if principal.AgentID != "" && row.ID != principal.ProjectID {
 				continue
 			}
-			p, e := projectProjection(q, row)
-			if e != nil {
-				return e
-			}
-			entry := model.ProjectEntry{Project: p, Inbox: []model.InboxEntry{}}
-			items, e := q.ProjectInbox(p.ID)
+			selected = append(selected, row)
+			ids = append(ids, row.ID)
+		}
+		projects, e := projectProjections(q, selected)
+		if e != nil {
+			return e
+		}
+		inbox := map[string][]store.InboxRow{}
+		if len(ids) > 0 {
+			items, e := q.InboxForProjects(ids)
 			if e != nil {
 				return e
 			}
 			for _, item := range items {
+				inbox[item.ProjectID] = append(inbox[item.ProjectID], item)
+			}
+		}
+		for _, p := range projects {
+			entry := model.ProjectEntry{Project: p, Inbox: []model.InboxEntry{}}
+			for _, item := range inbox[p.ID] {
 				entry.Inbox = append(entry.Inbox, model.InboxEntry{SourceURL: item.SourceURL, Remove: item.Remove})
 			}
 			sort.Slice(entry.Inbox, func(i, j int) bool {

@@ -192,15 +192,12 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 		if err != nil {
 			return err
 		}
+		roles, err := q.OrganizationRoles(uid)
+		if err != nil {
+			return err
+		}
 		for _, org := range orgs {
-			role, err := q.OrganizationRole(org.ID, uid)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if role != "owner" {
+			if roles[org.ID] != "owner" {
 				continue
 			}
 			projects, err := q.OrganizationProjects(org.ID)

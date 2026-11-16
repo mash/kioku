@@ -13,7 +13,7 @@ import (
 )
 
 // wikiFiles holds the project lock until the caller finishes reading files.
-func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision, func(), error) {
+func (s *Server) wikiFiles(ctx context.Context, uid, pid string, names ...string) (model.Revision, func(), error) {
 	unlock, err := s.storage.lock(ctx, pid)
 	if err != nil {
 		return model.Revision{}, nil, err
@@ -24,7 +24,7 @@ func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision
 		if err != nil {
 			return err
 		}
-		rev, err = wikiProjection(q, p)
+		rev, err = wikiProjection(q, p, names...)
 		return err
 	})
 	if err != nil {
@@ -49,7 +49,7 @@ func (s *Server) wikiFile(ctx context.Context, rev model.Revision, name string) 
 // snapshot serves the file listing and individual pages of the current Wiki.
 // Publication and deletion use this same project lock for each file write.
 func (s *Server) snapshot(w http.ResponseWriter, r *http.Request, uid string) error {
-	rev, unlock, err := s.wikiFiles(r.Context(), uid, r.PathValue("project"))
+	rev, unlock, err := s.wikiFiles(r.Context(), uid, r.PathValue("project"), r.URL.Query().Get("file"))
 	if err != nil {
 		return err
 	}

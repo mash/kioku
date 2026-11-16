@@ -26,6 +26,18 @@ func sqlAttempt(j store.JobRow) runner.Attempt {
 	}
 	return runner.Attempt{Key: runner.AttemptKey{JobID: j.ID, AttemptID: j.ID, ProjectID: j.ProjectID}, Run: ref}
 }
+func runRefChanged(j store.JobRow, ref runner.RunRef) bool {
+	run := j.Data.Run
+	if run == nil {
+		return false
+	}
+	return ref.ID != "" && (store.ValueString(j.SessionID) != ref.ID || store.ValueString(j.Phase) == "preparing") ||
+		run.UsesProviderFiles != ref.UsesProviderFiles ||
+		!equalOptional(run.Provider, store.NullableString(ref.Resources["provider"])) ||
+		run.UploadStarted != (ref.Resources["upload_started"] == "true") ||
+		!equalOptional(run.InputFileID, store.NullableString(ref.Resources["input_file_id"]))
+}
+
 func applyRunRef(j *store.JobRow, ref runner.RunRef) {
 	if ref.ID != "" {
 		j.SessionID = &ref.ID

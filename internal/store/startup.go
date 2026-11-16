@@ -86,18 +86,34 @@ func OpenStorage(ctx context.Context, dir string, objects blob.Store, loadKey fu
 		return nil, nil, err
 	}
 	if registry, ok := objects.(interface{ RegisterProjectBucket(string, string) }); ok {
-		var projects []ProjectRow
+		type projectBucket struct {
+			ID     string
+			Bucket *string
+		}
+		var projects []projectBucket
 		if err = db.Read(ctx, func(q *Queries) error {
 			var err error
-			projects, err = q.listProject("ORDER BY id")
+			projects, err = listRows(q, "SELECT id,data FROM projects ORDER BY id", func(r rowScanner) (projectBucket, error) {
+				var p projectBucket
+				var raw string
+				if err := r.Scan(&p.ID, &raw); err != nil {
+					return p, err
+				}
+				var data struct {
+					StorageBucket *string `json:"storage_bucket"`
+				}
+				err := unmarshalData(raw, &data)
+				p.Bucket = data.StorageBucket
+				return p, err
+			})
 			return err
 		}); err != nil {
 			db.Close()
 			return nil, nil, err
 		}
 		for _, p := range projects {
-			if p.Data.StorageBucket != nil {
-				registry.RegisterProjectBucket(p.ID, *p.Data.StorageBucket)
+			if p.Bucket != nil {
+				registry.RegisterProjectBucket(p.ID, *p.Bucket)
 			}
 		}
 	}

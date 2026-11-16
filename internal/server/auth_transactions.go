@@ -166,13 +166,17 @@ func sqlMember(q *store.Queries, pid, uid string) (store.ProjectRow, error) {
 	if err != nil {
 		return p, err
 	}
+	return sqlProjectMember(q, p, uid)
+}
+func sqlProjectMember(q *store.Queries, p store.ProjectRow, uid string) (store.ProjectRow, error) {
+	var err error
 	if _, err = q.User(uid); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return p, fail(404, "project not found")
 		}
 		return p, err
 	}
-	if _, err = q.ProjectRole(pid, uid); err != nil {
+	if _, err = q.ProjectRole(p.ID, uid); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return p, fail(404, "project not found")
 		}

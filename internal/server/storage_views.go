@@ -49,8 +49,43 @@ func beginSQLViews(q *store.Queries, j *store.JobRow, p store.ProjectRow, budget
 // creates the next child in one transaction. Repeating it cannot charge twice.
 func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 	var initial store.JobRow
-	if err := o.db.Read(ctx, func(q *store.Queries) error { var e error; initial, e = q.Job(id); return e }); err != nil {
+	waiting := false
+	if err := o.db.Read(ctx, func(q *store.Queries) error {
+		var err error
+		initial, err = q.Job(id)
+		if err != nil {
+			return err
+		}
+		g := initial.Data.ViewGeneration
+		if initial.Status != "running" || g == nil || initial.ChildID == nil || g.Next < 0 || g.Next >= len(initial.Data.Views) {
+			return nil
+		}
+		child, err := q.Job(*initial.ChildID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if child.Status != "queued" && child.Status != "running" {
+			return nil
+		}
+		project, err := q.Project(initial.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !project.Deleting && initial.Data.Run != nil && valueBool(initial.CleanupComplete) {
+			if _, err = q.Usage(initial.ID); err != nil {
+				return err
+			}
+		}
+		waiting = true
+		return nil
+	}); err != nil {
 		return err
+	}
+	if waiting {
+		return nil
 	}
 	generationUnlock, err := o.lock(ctx, "generate:"+initial.ProjectID)
 	if err != nil {

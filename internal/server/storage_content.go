@@ -63,6 +63,16 @@ func wikiBytes(files []store.WikiFileRow) (int64, error) {
 	}
 	return total, nil
 }
+func wikiCapacity(q *store.Queries, p store.ProjectRow) (int64, error) {
+	if p.Data.WikiCompleteBytes != nil {
+		return *p.Data.WikiCompleteBytes, nil
+	}
+	files, err := q.ProjectWiki(p.ID)
+	if err != nil {
+		return 0, err
+	}
+	return wikiBytes(files)
+}
 func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, body []byte, commit ...mutationHook) error {
 	unlock, err := o.lock(ctx, item.ProjectID)
 	if err != nil {
@@ -81,39 +91,26 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 		if err != nil {
 			return err
 		}
-		files, err := q.ProjectWiki(item.ProjectID)
+		size, err := wikiCapacity(q, p)
 		if err != nil {
 			return err
-		}
-		size, err := wikiBytes(files)
-		if err != nil {
-			return err
-		}
-		if p.Data.WikiCompleteBytes != nil {
-			size = *p.Data.WikiCompleteBytes
 		}
 		if !item.Remove && size > o.config.MaxWikiBytes {
 			return fail(413, "published wiki exceeds max-wiki-bytes; remove sources first")
 		}
-		items, err := q.ProjectInbox(item.ProjectID)
+		count, err := q.InboxCountExceptReplacement(item.ProjectID, item.SourceURL)
 		if err != nil {
 			return err
-		}
-		count := 0
-		for _, v := range items {
-			if v.RunID != nil || v.SourceURL != item.SourceURL {
-				count++
-			}
 		}
 		if count >= maxInboxItems {
 			return fail(429, "project inbox is full")
 		}
 		return nil
 	}
-	if err = o.db.Read(ctx, check); err != nil {
-		return err
-	}
 	if !item.Remove {
+		if err = o.db.Read(ctx, check); err != nil {
+			return err
+		}
 		if err = o.objects.Put(ctx, sqlInboxKey(item), body); err != nil {
 			return err
 		}
@@ -183,7 +180,7 @@ func sqlJobAuthorization(q *store.Queries, j store.JobRow, now int64) error {
 	if j.Data.AgentID == nil {
 		return nil
 	}
-	agents, err := q.ProjectSessions(j.ProjectID, "agent")
+	agents, err := q.ProjectUserSessions(j.ProjectID, j.Data.UserID, "agent")
 	if err != nil {
 		return err
 	}
@@ -212,6 +209,9 @@ func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRo
 	if err = sqlJobAuthorization(q, j, o.now().UnixMilli()); err != nil {
 		return j, err
 	}
+	return checkJobParent(q, j)
+}
+func checkJobParent(q *store.Queries, j store.JobRow) (store.JobRow, error) {
 	if j.ParentID != nil {
 		p, err := q.Project(j.ProjectID)
 		if err != nil {
@@ -221,11 +221,24 @@ func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRo
 		if err != nil {
 			return j, err
 		}
-		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != id || p.WikiIncomplete || store.ValueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
+		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != j.ID || p.WikiIncomplete || store.ValueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
 			return j, fail(409, "Wiki または生成ジョブが変更されました")
 		}
 	}
 	return j, nil
+}
+
+// outputJob reuses an authorized row from this transaction. Parent linkage is
+// independent of token validation and must still be checked.
+func (o *storageOperations) outputJob(q *store.Queries, id string, authorize func(*store.Queries) (store.JobRow, error)) (store.JobRow, error) {
+	if authorize == nil {
+		return o.runningJob(q, id)
+	}
+	j, err := authorize(q)
+	if err != nil {
+		return j, err
+	}
+	return checkJobParent(q, j)
 }
 
 type mutationHook struct{ check, audit func(*store.Queries) error }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -113,6 +114,18 @@ func TestReadSnapshotDoesNotMixCommits(t *testing.T) {
 		}
 		if err := d.Write(t.Context(), func(w *Queries) error {
 			return w.PutUser(UserRow{ID: "u", Email: "new", Data: UserData{Name: "After"}})
+		}); err != nil {
+			return err
+		}
+		// Another reader must see the new commit without waiting for this snapshot.
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if err := d.Read(ctx, func(other *Queries) error {
+			latest, err := other.User("u")
+			if err == nil && latest.Email != "new" {
+				return fmt.Errorf("new reader saw %q", latest.Email)
+			}
+			return err
 		}); err != nil {
 			return err
 		}

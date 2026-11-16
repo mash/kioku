@@ -104,3 +104,37 @@ func (q *Queries) InsertOAuthClient(v OAuthClientRow) error {
 	}
 	return q.PutOAuthClient(v)
 }
+
+func (q *Queries) OrganizationRoles(user string) (map[string]string, error) {
+	return q.members("SELECT org_id,role FROM organization_members WHERE user_id=?", user)
+}
+func (q *Queries) OrganizationsByIDs(ids []string) ([]OrganizationRow, error) {
+	raw, err := marshalData(ids)
+	if err != nil {
+		return nil, err
+	}
+	return q.listOrganization("WHERE id IN (SELECT value FROM json_each(?))", raw)
+}
+func (q *Queries) MembersForProjects(ids []string) (map[string]map[string]string, error) {
+	raw, err := marshalData(ids)
+	if err != nil {
+		return nil, err
+	}
+	type membership struct{ Project, User, Role string }
+	rows, err := listRows(q, "SELECT project_id,user_id,role FROM project_members WHERE project_id IN (SELECT value FROM json_each(?))", func(r rowScanner) (membership, error) {
+		var m membership
+		err := r.Scan(&m.Project, &m.User, &m.Role)
+		return m, err
+	}, raw)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]map[string]string{}
+	for _, id := range ids {
+		out[id] = map[string]string{}
+	}
+	for _, m := range rows {
+		out[m.Project][m.User] = m.Role
+	}
+	return out, nil
+}

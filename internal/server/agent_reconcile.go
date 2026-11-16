@@ -68,7 +68,7 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 	status, inspectErr := r.Inspect(ctx, sqlAttempt(job))
 	if inspectErr != nil {
 		status = runner.Status{State: runner.StateUnknown}
-	} else if status.Run.ID != "" {
+	} else if status.Run.ID != "" && runRefChanged(job, status.Run) {
 		if err := s.saveDiscoveredRef(ctx, job.ID, status.Run); err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func (s *Server) saveDiscoveredRef(ctx context.Context, id string, ref runner.Ru
 		if err != nil {
 			return err
 		}
-		if j.Data.Run == nil {
+		if j.Data.Run == nil || !runRefChanged(j, ref) {
 			return nil
 		}
 		applyRunRef(&j, ref)
@@ -174,18 +174,18 @@ func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job st
 	if err != nil {
 		return s.failAgentJobLocked(ctx, job, err.Error(), &status)
 	}
-	check := func(q *store.Queries) error {
+	check := func(q *store.Queries) (store.JobRow, error) {
 		j, err := s.storage.runningJob(q, job.ID)
 		if err != nil {
-			return err
+			return j, err
 		}
 		if !j.Data.Run.UsesProviderFiles || !equalOptional(j.SessionID, job.SessionID) || store.ValueString(j.Phase) != "agent_running" {
-			return fail(409, "job no longer accepts managed agent output")
+			return j, fail(409, "job no longer accepts managed agent output")
 		}
 		if fileOutputExpired(j.Data.Run, s.storage.now().UnixMilli()) {
-			return fail(409, timeoutReason)
+			return j, fail(409, timeoutReason)
 		}
-		return nil
+		return j, nil
 	}
 	_, _, err = s.saveAgentOutput(ctx, job, body, check)
 	if err != nil {

@@ -110,12 +110,10 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	}
 	defer unlock()
 	var job store.JobRow
-	check := func(q *store.Queries) error {
-		var err error
-		job, err = checkSQLJobCredential(q, s.Cipher, requestBearer(r), r.PathValue("project"), r.PathValue("job"), time.Now())
-		return err
+	check := func(q *store.Queries) (store.JobRow, error) {
+		return checkSQLJobCredential(q, s.Cipher, requestBearer(r), r.PathValue("project"), r.PathValue("job"), time.Now())
 	}
-	if err := s.Store.Read(r.Context(), check); err != nil {
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error { var err error; job, err = check(q); return err }); err != nil {
 		return err
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.agentOutputLimit(job))
@@ -147,7 +145,7 @@ func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string)
 	jsonOut(w, 200, map[string]any{"pages": pages, "bytes": len(body), "sha256": hash})
 	return nil
 }
-func (s *Server) saveAgentOutput(ctx context.Context, job store.JobRow, body []byte, check func(*store.Queries) error, commit ...func(*store.Queries) error) (int, string, error) {
+func (s *Server) saveAgentOutput(ctx context.Context, job store.JobRow, body []byte, check func(*store.Queries) (store.JobRow, error), commit ...func(*store.Queries) error) (int, string, error) {
 	var count int
 	if job.ParentID != nil {
 		bundle, err := readViewRunnerOutput(body)
@@ -168,14 +166,9 @@ func (s *Server) saveAgentOutput(ctx context.Context, job store.JobRow, body []b
 	hash, err := s.storage.saveOutput(ctx, job.ID, body, check, commit...)
 	return count, hash, err
 }
-func (s *Server) recordViewOutputRejection(ctx context.Context, id string, check func(*store.Queries) error, rejection error) error {
+func (s *Server) recordViewOutputRejection(ctx context.Context, id string, check func(*store.Queries) (store.JobRow, error), rejection error) error {
 	return s.Store.Write(ctx, func(q *store.Queries) error {
-		if check != nil {
-			if err := check(q); err != nil {
-				return err
-			}
-		}
-		j, err := s.storage.runningJob(q, id)
+		j, err := s.storage.outputJob(q, id, check)
 		if err != nil {
 			return err
 		}

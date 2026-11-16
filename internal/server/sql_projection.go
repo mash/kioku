@@ -30,8 +30,43 @@ func projectProjection(q *store.Queries, row store.ProjectRow) (model.Project, e
 	if err != nil {
 		return model.Project{}, err
 	}
-	return model.Project{ID: row.ID, OrgID: row.OrgID, Slug: row.Slug, Namespace: org.Slug + "/" + row.Slug, Name: row.Data.Name, Members: members, Created: storageDate(row.Created), Deleting: row.Deleting, Revision: store.ValueString(row.WikiRevision), WikiIncomplete: row.WikiIncomplete, WikiCompleteRevision: store.ValueString(row.Data.WikiCompleteRevision), WikiUpdatedAt: optionalDate(row.Data.WikiUpdatedAt), ViewEpoch: store.ValueString(row.ViewEpoch)}, nil
+	return projectValue(row, org.Slug, members), nil
 }
+func projectValue(row store.ProjectRow, orgSlug string, members map[string]string) model.Project {
+	return model.Project{ID: row.ID, OrgID: row.OrgID, Slug: row.Slug, Namespace: orgSlug + "/" + row.Slug, Name: row.Data.Name, Members: members, Created: storageDate(row.Created), Deleting: row.Deleting, Revision: store.ValueString(row.WikiRevision), WikiIncomplete: row.WikiIncomplete, WikiCompleteRevision: store.ValueString(row.Data.WikiCompleteRevision), WikiUpdatedAt: optionalDate(row.Data.WikiUpdatedAt), ViewEpoch: store.ValueString(row.ViewEpoch)}
+}
+func projectProjections(q *store.Queries, rows []store.ProjectRow) ([]model.Project, error) {
+	out := make([]model.Project, 0, len(rows))
+	if len(rows) == 0 {
+		return out, nil
+	}
+	ids, orgIDs := make([]string, 0, len(rows)), make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+		orgIDs = append(orgIDs, row.OrgID)
+	}
+	members, err := q.MembersForProjects(ids)
+	if err != nil {
+		return nil, err
+	}
+	orgs, err := q.OrganizationsByIDs(orgIDs)
+	if err != nil {
+		return nil, err
+	}
+	slugs := map[string]string{}
+	for _, org := range orgs {
+		slugs[org.ID] = org.Slug
+	}
+	for _, row := range rows {
+		slug, ok := slugs[row.OrgID]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+		out = append(out, projectValue(row, slug, members[row.ID]))
+	}
+	return out, nil
+}
+
 func organizationProjection(q *store.Queries, row store.OrganizationRow) (model.Organization, error) {
 	members, err := q.OrganizationMembers(row.ID)
 	return model.Organization{ID: row.ID, Slug: row.Slug, Name: row.Data.Name, Created: storageDate(row.Data.Created), Members: members}, err
@@ -41,6 +76,40 @@ func userProjection(q *store.Queries, row store.UserRow) (model.User, error) {
 	return model.User{ID: row.ID, Name: row.Data.Name, Email: row.Email, Identities: ids}, err
 }
 func jobProjection(q *store.Queries, row store.JobRow) (model.Job, error) {
+	var cost *int64
+	if row.Data.Run != nil {
+		usage, err := q.Usage(row.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return model.Job{}, err
+		}
+		cost = usage.Data.CostCents
+	}
+	return jobValue(row, cost), nil
+}
+func jobProjections(q *store.Queries, rows []store.JobRow) ([]model.Job, error) {
+	ids := []string{}
+	for _, row := range rows {
+		if row.Data.Run != nil {
+			ids = append(ids, row.ID)
+		}
+	}
+	costs := map[string]*int64{}
+	if len(ids) > 0 {
+		usage, err := q.UsageForJobs(ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range usage {
+			costs[u.AttemptID] = u.Data.CostCents
+		}
+	}
+	out := make([]model.Job, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, jobValue(row, costs[row.ID]))
+	}
+	return out, nil
+}
+func jobValue(row store.JobRow, cost *int64) model.Job {
 	j := model.Job{ID: row.ID, ProjectID: row.ProjectID, Kind: row.Kind, Status: row.Status, Created: storageDate(row.Created), UserID: row.Data.UserID, AgentID: store.ValueString(row.Data.AgentID), AgentBudgetCents: row.Data.AgentBudgetCents, Automatic: row.Data.Automatic, Error: store.ValueString(row.Data.Error), Revision: store.ValueString(row.Data.Revision), WikiStatus: store.ValueString(row.Data.WikiStatus), Unchanged: row.Data.Unchanged, Views: []model.ViewJobResult{}}
 	for _, v := range row.Data.Views {
 		j.Views = append(j.Views, model.ViewJobResult{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: store.ValueString(v.Error)})
@@ -48,15 +117,9 @@ func jobProjection(q *store.Queries, row store.JobRow) (model.Job, error) {
 	if row.Data.Run != nil {
 		run := row.Data.Run
 		j.Run = &model.AgentRun{Phase: model.ManagedPhase(store.ValueString(row.Phase)), BudgetCents: run.BudgetCents, PreparedAt: storageDate(run.PreparedAt), Deadline: storageDate(run.Deadline), CleanupComplete: valueBool(row.CleanupComplete)}
-		usage, err := q.Usage(row.ID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return j, err
-		}
-		if err == nil {
-			j.Run.CostCents = usage.Data.CostCents
-		}
+		j.Run.CostCents = cost
 	}
-	return j, nil
+	return j
 }
 func member(q *store.Queries, pid, uid string) (model.Project, error) {
 	row, err := sqlMember(q, pid, uid)
@@ -117,9 +180,20 @@ func creationDate(v int64) time.Time {
 	return storageDate(v)
 }
 
-func wikiProjection(q *store.Queries, p store.ProjectRow) (model.Revision, error) {
+func wikiProjection(q *store.Queries, p store.ProjectRow, names ...string) (model.Revision, error) {
 	rev := model.Revision{ID: store.ValueString(p.WikiRevision), ProjectID: p.ID, Files: map[string]blob.Key{}, FileHashes: map[string]string{}, FileBytes: map[string]int64{}}
-	rows, err := q.ProjectWiki(p.ID)
+	var rows []store.WikiFileRow
+	var err error
+	if len(names) > 0 && names[0] != "" {
+		row, e := q.WikiFile(p.ID, names[0])
+		if e == nil {
+			rows = append(rows, row)
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return rev, e
+		}
+	} else {
+		rows, err = q.ProjectWiki(p.ID)
+	}
 	if err != nil {
 		return rev, err
 	}

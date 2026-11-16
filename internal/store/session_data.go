@@ -132,7 +132,7 @@ func (q *Queries) PruneSessions(now int64) error {
 		}
 		references[data.GrantKey] = true
 	}
-	rows, err := q.listSession("WHERE expires<=? OR (kind='cli_login' AND status='active') ORDER BY expires,id", now)
+	rows, err := q.listSession("WHERE expires<=? ORDER BY expires,id", now)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,8 @@ func (q *Queries) PruneSessions(now int64) error {
 			return err
 		}
 	}
-	return nil
+	_, err = q.exec("DELETE FROM sessions WHERE kind='cli_login' AND status='active'")
+	return err
 }
 
 func (d CLILoginData) MarshalJSON() ([]byte, error) {

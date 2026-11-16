@@ -117,14 +117,8 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, uid string) error 
 		if err != nil {
 			return err
 		}
-		for _, row := range rows {
-			p, err := projectProjection(q, row)
-			if err != nil {
-				return err
-			}
-			data.Projects = append(data.Projects, p)
-		}
-		return nil
+		data.Projects, err = projectProjections(q, rows)
+		return err
 	}); err != nil {
 		return err
 	}
@@ -202,11 +196,11 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		if err != nil {
 			return err
 		}
-		for _, row := range jobs {
-			j, err := jobProjection(q, row)
-			if err != nil {
-				return err
-			}
+		projected, err := jobProjections(q, jobs)
+		if err != nil {
+			return err
+		}
+		for _, j := range projected {
 			j.Error = strings.ReplaceAll(j.Error, p.ID, "[project]")
 			data.RecentJobs = append(data.RecentJobs, j)
 		}

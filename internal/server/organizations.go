@@ -105,13 +105,13 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 		if e != nil {
 			return e
 		}
+		roles, e := q.OrganizationRoles(uid)
+		if e != nil {
+			return e
+		}
 		owned := 0
 		for _, o := range orgs {
-			role, e := q.OrganizationRole(o.ID, uid)
-			if e != nil && !errors.Is(e, sql.ErrNoRows) {
-				return e
-			}
-			if role == "owner" {
+			if roles[o.ID] == "owner" {
 				owned++
 			}
 		}
@@ -140,12 +140,14 @@ func (s *Server) organizations(w http.ResponseWriter, r *http.Request, uid strin
 		if e != nil {
 			return e
 		}
+		roles, e := q.OrganizationRoles(uid)
+		if e != nil {
+			return e
+		}
 		for _, org := range orgs {
-			role, e := q.OrganizationRole(org.ID, uid)
-			if errors.Is(e, sql.ErrNoRows) {
+			role := roles[org.ID]
+			if role == "" {
 				role = "member"
-			} else if e != nil {
-				return e
 			}
 			out = append(out, map[string]string{"id": org.ID, "slug": org.Slug, "name": org.Data.Name, "role": role})
 		}
@@ -184,7 +186,7 @@ func namespaceProject(q *store.Queries, orgSlug, slug, uid string, allowDeleting
 	if e != nil {
 		return projected, e
 	}
-	_, e = sqlMember(q, p.ID, uid)
+	_, e = sqlProjectMember(q, p, uid)
 	return projected, e
 }
 func (s *Server) namespacePage(w http.ResponseWriter, r *http.Request, uid string) error {

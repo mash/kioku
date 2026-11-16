@@ -14,7 +14,7 @@ import (
 	"modernc.org/sqlite"
 )
 
-// Database owns one writer and one independent, read-only snapshot connection.
+// Database owns one writer and a small pool of independent, read-only snapshot connections.
 // No transaction is retained across object-store or provider operations.
 type Database struct {
 	lock   *os.File
@@ -71,8 +71,12 @@ func catalogConnection(path string, create, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	connections := 1
+	if readOnly {
+		connections = 4
+	}
+	db.SetMaxOpenConns(connections)
+	db.SetMaxIdleConns(connections)
 	if err = db.Ping(); err != nil {
 		db.Close()
 		return nil, err

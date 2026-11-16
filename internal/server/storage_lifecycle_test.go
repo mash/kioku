@@ -231,7 +231,16 @@ func TestParentConsumesChildCostOnce(t *testing.T) {
 		if p.Data.ViewGeneration.Remaining != want || p.ChildID == nil || *p.ChildID == "child" {
 			t.Fatal(p)
 		}
-		if err := o.advanceViews(t.Context(), "parent"); err != nil {
+		// Waiting for a queued child must not wait for the generation gate.
+		unlock, err := o.lock(t.Context(), "generate:p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		err = o.advanceViews(ctx, "parent")
+		cancel()
+		unlock()
+		if err != nil {
 			t.Fatal(err)
 		}
 		if p2 := readSQLJob(t, o, "parent"); p2.Data.ViewGeneration.Remaining != want || *p2.ChildID != *p.ChildID {
@@ -405,12 +414,12 @@ func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
 	}
 	// A rejected post-PUT authorization leaves the previously selected output.
 	checks := 0
-	_, e = o.saveOutput(t.Context(), "j", []byte("two"), func(*store.Queries) error {
+	_, e = o.saveOutput(t.Context(), "j", []byte("two"), func(q *store.Queries) (store.JobRow, error) {
 		checks++
 		if checks == 2 {
-			return fail(403, "revoked")
+			return store.JobRow{}, fail(403, "revoked")
 		}
-		return nil
+		return o.runningJob(q, "j")
 	})
 	if e == nil {
 		t.Fatal("post PUT check ignored")

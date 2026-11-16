@@ -61,3 +61,31 @@ func (q *Queries) PruneInvites(project string, now int64) error {
 	_, err := q.exec("DELETE FROM invites WHERE project_id=? AND expires<=?", project, now)
 	return err
 }
+
+func (q *Queries) InboxCountExceptReplacement(project, source string) (int, error) {
+	var count int
+	err := q.row("SELECT count(*) FROM inbox WHERE project_id=? AND (run_id IS NOT NULL OR source_url<>?)", project, source).Scan(&count)
+	return count, err
+}
+func (q *Queries) HasAvailableInbox(project string, removeOnly bool) (bool, error) {
+	query := "SELECT EXISTS(SELECT 1 FROM inbox WHERE project_id=? AND run_id IS NULL"
+	if removeOnly {
+		query += " AND remove=1"
+	}
+	var found bool
+	err := q.row(query+")", project).Scan(&found)
+	return found, err
+}
+func (q *Queries) HasPendingGeneration(project string) (bool, error) {
+	var found bool
+	err := q.row("SELECT EXISTS(SELECT 1 FROM jobs WHERE project_id=? AND status IN ('queued','running') AND parent_id IS NULL)", project).Scan(&found)
+	return found, err
+}
+
+func (q *Queries) InboxForProjects(ids []string) ([]InboxRow, error) {
+	raw, err := marshalData(ids)
+	if err != nil {
+		return nil, err
+	}
+	return q.listInbox("WHERE project_id IN (SELECT value FROM json_each(?)) ORDER BY created,id", raw)
+}

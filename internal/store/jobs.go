@@ -13,7 +13,7 @@ func (q *Queries) RecentGenerationJobs(project string, limit int) ([]JobRow, err
 	return q.listJob("WHERE project_id=? AND kind='generate' ORDER BY created DESC,id DESC LIMIT ?", project, limit)
 }
 func (q *Queries) ReconcileJobs() ([]JobRow, error) {
-	return q.listJob("WHERE phase IS NOT NULL AND (cleanup_complete=0 OR status='running') ORDER BY id")
+	return listRows(q, "SELECT "+jobsColumns+" FROM jobs WHERE phase IS NOT NULL AND cleanup_complete=0 UNION SELECT "+jobsColumns+" FROM jobs WHERE phase IS NOT NULL AND status='running' ORDER BY id", scanJob)
 }
 func (q *Queries) GenerationJobs() ([]JobRow, error) {
 	return q.listJob("WHERE status='running' AND generation_snapshot IS NOT NULL ORDER BY created,id")
@@ -53,26 +53,34 @@ func (q *Queries) NextQueued(maxSessions int, deferred ...string) (JobRow, error
 // unconsumed child results are protected independently from public history.
 func (q *Queries) CompactHistory(project string, now *int64) error {
 	eligible := `project_id=? AND status IN ('completed','failed','skipped') AND (phase IS NULL OR cleanup_complete=1) AND NOT EXISTS(SELECT 1 FROM jobs AS parent WHERE parent.child_id=jobs.id)`
-	ids := `SELECT id FROM jobs WHERE ` + eligible + ` ORDER BY created DESC,id DESC LIMIT -1 OFFSET 256`
-	if _, err := q.exec("UPDATE inbox SET run_id=NULL WHERE run_id IN ("+ids+")", project); err != nil {
+
+	query := `SELECT id FROM (SELECT id FROM jobs WHERE ` + eligible + ` ORDER BY created DESC,id DESC LIMIT -1 OFFSET 256)`
+	args := []any{project}
+	if now != nil {
+		query += ` UNION SELECT id FROM jobs WHERE ` + eligible + ` AND created<?`
+		args = append(args, project, *now-int64(30*24*time.Hour/time.Millisecond))
+	}
+	ids, err := listRows(q, query, func(r rowScanner) (string, error) { var id string; err := r.Scan(&id); return id, err }, args...)
+	if err != nil {
 		return err
 	}
-	if _, err := q.exec("DELETE FROM jobs WHERE id IN ("+ids+")", project); err != nil {
-		return err
+	if len(ids) > 0 {
+		raw, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		if _, err = q.exec("UPDATE inbox SET run_id=NULL WHERE project_id=? AND run_id IN (SELECT value FROM json_each(?))", project, string(raw)); err != nil {
+			return err
+		}
+		if _, err = q.exec("DELETE FROM jobs WHERE id IN (SELECT value FROM json_each(?))", string(raw)); err != nil {
+			return err
+		}
 	}
-	if _, err := q.exec("DELETE FROM audit WHERE id IN (SELECT id FROM audit WHERE project_id=? ORDER BY created DESC,id DESC LIMIT -1 OFFSET 256)", project); err != nil {
+	if _, err = q.exec("DELETE FROM audit WHERE id IN (SELECT id FROM audit WHERE project_id=? ORDER BY created DESC,id DESC LIMIT -1 OFFSET 256)", project); err != nil {
 		return err
 	}
 	if now != nil {
-		ids = `SELECT id FROM jobs WHERE ` + eligible + ` AND created<?`
-		cutoff := *now - int64(30*24*time.Hour/time.Millisecond)
-		if _, err := q.exec("UPDATE inbox SET run_id=NULL WHERE run_id IN ("+ids+")", project, cutoff); err != nil {
-			return err
-		}
-		if _, err := q.exec("DELETE FROM jobs WHERE id IN ("+ids+")", project, cutoff); err != nil {
-			return err
-		}
-		if _, err := q.exec("DELETE FROM audit WHERE project_id=? AND created<?", project, *now-int64(90*24*time.Hour/time.Millisecond)); err != nil {
+		if _, err = q.exec("DELETE FROM audit WHERE project_id=? AND created<?", project, *now-int64(90*24*time.Hour/time.Millisecond)); err != nil {
 			return err
 		}
 	}
@@ -80,4 +88,12 @@ func (q *Queries) CompactHistory(project string, now *int64) error {
 }
 func (q *Queries) ProjectAudit(project string) ([]AuditRow, error) {
 	return q.listAudit("WHERE project_id=? ORDER BY created,id", project)
+}
+
+func (q *Queries) UsageForJobs(ids []string) ([]UsageRow, error) {
+	raw, err := marshalData(ids)
+	if err != nil {
+		return nil, err
+	}
+	return listRows(q, "SELECT "+usageColumns+" FROM usage WHERE attempt_id IN (SELECT value FROM json_each(?))", scanUsage, raw)
 }

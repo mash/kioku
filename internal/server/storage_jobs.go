@@ -84,12 +84,14 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 			return err
 		}
 		if input.Job.ParentID == nil {
-			size, err := wikiBytes(input.Wiki)
-			if err != nil {
-				return err
-			}
+			var size int64
 			if input.Project.Data.WikiCompleteBytes != nil {
 				size = *input.Project.Data.WikiCompleteBytes
+			} else {
+				size, err = wikiBytes(input.Wiki)
+				if err != nil {
+					return err
+				}
 			}
 			input.Inbox, err = q.AvailableInbox(input.Project.ID, size > o.config.MaxWikiBytes)
 			if err != nil {
@@ -221,7 +223,7 @@ func (o *storageOperations) saveRunRef(ctx context.Context, id string, ref runne
 		return q.PutJob(j)
 	})
 }
-func (o *storageOperations) saveOutput(ctx context.Context, id string, body []byte, authorize func(*store.Queries) error, commit ...func(*store.Queries) error) (string, error) {
+func (o *storageOperations) saveOutput(ctx context.Context, id string, body []byte, authorize func(*store.Queries) (store.JobRow, error), commit ...func(*store.Queries) error) (string, error) {
 	var j store.JobRow
 	if err := o.db.Read(ctx, func(q *store.Queries) error { var err error; j, err = q.Job(id); return err }); err != nil {
 		return "", err
@@ -232,12 +234,7 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 	}
 	defer unlock()
 	check := func(q *store.Queries) error {
-		if authorize != nil {
-			if err := authorize(q); err != nil {
-				return err
-			}
-		}
-		current, err := o.runningJob(q, id)
+		current, err := o.outputJob(q, id, authorize)
 		if err != nil {
 			return err
 		}

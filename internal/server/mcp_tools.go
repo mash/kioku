@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -166,14 +168,17 @@ func (s *Server) mcpProjects(key string) (any, error) {
 		if err != nil {
 			return err
 		}
+		selected := rows[:0]
 		for _, row := range rows {
-			if row.Deleting || !slices.Contains(grant.ProjectIDs, row.ID) {
-				continue
+			if !row.Deleting && slices.Contains(grant.ProjectIDs, row.ID) {
+				selected = append(selected, row)
 			}
-			p, err := projectProjection(q, row)
-			if err != nil {
-				return err
-			}
+		}
+		projected, err := projectProjections(q, selected)
+		if err != nil {
+			return err
+		}
+		for _, p := range projected {
 			projects = append(projects, map[string]string{"namespace": p.Namespace, "name": p.Name, "role": p.Members[grant.UserID]})
 		}
 		return nil
@@ -182,7 +187,7 @@ func (s *Server) mcpProjects(key string) (any, error) {
 	return map[string]any{"projects": projects}, err
 }
 
-func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) (model.Revision, func(), error) {
+func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string, names ...string) (model.Revision, func(), error) {
 	project, unlock, err := s.lockConnectorProject(ctx, key, namespace)
 	if err != nil {
 		return model.Revision{}, nil, err
@@ -193,7 +198,7 @@ func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) 
 		if err != nil {
 			return err
 		}
-		rev, err = wikiProjection(q, row)
+		rev, err = wikiProjection(q, row, names...)
 		return err
 	})
 	if err != nil {
@@ -204,7 +209,7 @@ func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) 
 }
 
 func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, offset int) (any, error) {
-	rev, unlock, err := s.connectorWikiFiles(ctx, key, namespace)
+	rev, unlock, err := s.connectorWikiFiles(ctx, key, namespace, name)
 	if err != nil {
 		return nil, err
 	}
@@ -260,10 +265,38 @@ func (s *Server) lockConnectorProject(ctx context.Context, key, namespace string
 	if err != nil {
 		return model.Project{}, nil, err
 	}
-	current, err := resolve()
-	if err == nil && current.ID != p.ID {
-		err = fail(404, "project not found")
-	}
+	var current model.Project
+	err = s.Store.Read(ctx, func(q *store.Queries) error {
+		grant, ok, err := connectorGrant(q, key)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fail(401, "connector login required")
+		}
+		if !slices.Contains(grant.ProjectIDs, p.ID) {
+			return fail(404, "project not found")
+		}
+		row, err := q.Project(p.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "project not found")
+		}
+		if err != nil {
+			return err
+		}
+		current, err = projectProjection(q, row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fail(404, "project not found")
+		}
+		if err != nil {
+			return err
+		}
+		if current.Namespace != namespace {
+			return fail(404, "project not found")
+		}
+		_, err = sqlProjectMember(q, row, grant.UserID)
+		return err
+	})
 	if err != nil {
 		unlock()
 		return model.Project{}, nil, err

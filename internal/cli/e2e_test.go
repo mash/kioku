@@ -15,7 +15,6 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/cli"
-	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
@@ -36,11 +35,6 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := server.New(server.Config{Prompts: rendered, GenerateDebounce: time.Hour, BaseURL: "http://127.0.0.1"}, stateStore, local.Store{Dir: filepath.Join(data, "objects")}, key)
-	g, err := runners.Load(runners.Config{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.SetRunners(g)
 	ts := httptest.NewServer(s.Handler())
 	s.Config.BaseURL = ts.URL
 	ctx, cancel := context.WithCancel(context.Background())
@@ -52,9 +46,6 @@ func TestCLIFullWorkflow(t *testing.T) {
 			t.Error(err)
 		}
 		ts.Close()
-		if err := g.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
 		stateStore.Close()
 	}()
 	config := t.TempDir()

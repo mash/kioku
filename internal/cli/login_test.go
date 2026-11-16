@@ -21,7 +21,6 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/authtest"
 	"github.com/mash/kioku/internal/blob/local"
-	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
@@ -385,11 +384,6 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := server.New(server.Config{Prompts: rendered, Providers: map[string]auth.Provider{"google": provider}}, stateStore, local.Store{Dir: filepath.Join(dir, "objects")}, cipher)
-	set, err := runners.Load(runners.Config{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.SetRunners(set)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	s.Config.BaseURL = ts.URL

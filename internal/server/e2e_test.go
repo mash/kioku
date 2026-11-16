@@ -61,7 +61,7 @@ func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
 		cancel()
 		t.Fatal(err)
 	}
-	s.SetRunners(rs)
+	s.SetRunner(rs.Runner)
 	done := make(chan error, 1)
 	if len(configure) > 0 {
 		go func() { done <- s.RunWorker(ctx) }()

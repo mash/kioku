@@ -24,7 +24,7 @@ func TestRunnerStartupSelection(t *testing.T) {
 				if (err == nil) != wantOK {
 					t.Fatal(err)
 				}
-				if err == nil && (s.config.ManagedAgents != nil) != (mask == 7) {
+				if err == nil && (s.Runner != nil) != (mask == 7) {
 					t.Fatal("incorrect runner selection")
 				}
 			})

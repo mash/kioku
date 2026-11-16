@@ -52,9 +52,9 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runners := f.s.runners
+	r := f.s.runner
 	f.s = New(f.s.Config, stateStore, f.s.Blobs, cipher)
-	f.s.SetRunners(runners)
+	f.s.SetRunner(r)
 	f.stateStore = stateStore
 	access, refresh := connectorTokenPair(t, f, form)
 	assertConnectorAccess(t, f, access, true)

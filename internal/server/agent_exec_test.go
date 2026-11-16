@@ -156,13 +156,13 @@ func TestReconcileJobStopsWithShutdownContext(t *testing.T) {
 	f, token, p, _ := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	entered := make(chan struct{}, 1)
-	f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{
+	f.s.SetRunner(&testRunner{
 		inspect: func(ctx context.Context, _ runner.Attempt) (runner.Status, error) {
 			entered <- struct{}{}
 			<-ctx.Done()
 			return runner.Status{}, ctx.Err()
 		},
-	}})
+	})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	f.s.ReconcileJob(ctx, j.ID)

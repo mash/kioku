@@ -28,12 +28,9 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 		return err
 	}
 	defer unlock()
-	if s.runners == nil {
+	r := s.runner
+	if r == nil {
 		return s.failUnstartedJob(ctx, job.ID, runner.ErrNotConfigured)
-	}
-	r, err := s.runners.New()
-	if err != nil {
-		return s.failUnstartedJob(ctx, job.ID, err)
 	}
 	files, offline := r.(runner.FileRunner)
 	var archive []byte

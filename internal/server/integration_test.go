@@ -48,11 +48,6 @@ func setupWithWorker(t *testing.T, startWorker bool) *fixture {
 	}
 	// Lifecycle tests queue jobs explicitly, including fixtures that start a worker later.
 	s := New(Config{Prompts: defaultPrompts(t), GenerateDebounce: time.Hour, BaseURL: "http://127.0.0.1", Providers: map[string]auth.Provider{}}, stateStore, local.Store{Dir: dir + "/objects"}, key)
-	g, err := runners.Load(runners.Config{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.SetRunners(g)
 	s.Config.Providers["google"] = auth.Provider{Name: "google", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		uid := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var u model.User
@@ -412,7 +407,7 @@ func (f *fixture) setRunners() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.s.SetRunners(g)
+	f.s.SetRunner(g.Runner)
 	f.t.Cleanup(func() {
 		cancel()
 		if err := g.Close(context.Background()); err != nil {

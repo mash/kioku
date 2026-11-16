@@ -47,7 +47,7 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored.SetRunners(g)
+	restored.SetRunner(g.Runner)
 	if err := restored.Prepare(); err != nil {
 		t.Fatal(err)
 	}

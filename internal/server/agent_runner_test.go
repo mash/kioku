@@ -43,7 +43,7 @@ func TestConcurrentReconcileSerializesCleanup(t *testing.T) {
 	}))
 	entered, release := make(chan struct{}), make(chan struct{})
 	inspections, cleanups := 0, 0
-	f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{
+	f.s.SetRunner(&testRunner{
 		inspect: func(context.Context, runner.Attempt) (runner.Status, error) {
 			inspections++
 			return runner.Status{State: runner.StateStopped}, nil
@@ -60,7 +60,7 @@ func TestConcurrentReconcileSerializesCleanup(t *testing.T) {
 				return ctx.Err()
 			}
 		},
-	}})
+	})
 	done := make(chan error, 1)
 	go func() { done <- f.s.reconcileAgentJob(t.Context(), fixtureRow(j)) }()
 	<-entered
@@ -104,11 +104,11 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 	f, token, p, _ := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	inspections, stops := 0, 0
-	f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{inspect: func(context.Context, runner.Attempt) (runner.Status, error) {
+	f.s.SetRunner(&testRunner{inspect: func(context.Context, runner.Attempt) (runner.Status, error) {
 		inspections++
 		c := int64(999)
 		return runner.Status{State: runner.StateStopped, Usage: runner.UsageSample{CostCents: &c}}, errors.New("permanent failure")
-	}, stop: func(context.Context, runner.Attempt) error { stops++; return nil }, cleanup: func(context.Context, runner.Attempt) error { t.Fatal("unknown run must not be cleaned"); return nil }}})
+	}, stop: func(context.Context, runner.Attempt) error { stops++; return nil }, cleanup: func(context.Context, runner.Attempt) error { t.Fatal("unknown run must not be cleaned"); return nil }})
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-time.Minute)
@@ -154,10 +154,3 @@ func TestStoppedFailurePreservesCostAfterTokenExpiry(t *testing.T) {
 		t.Fatalf("confirmed cost lost: %+v", got)
 	}
 }
-
-type testRunners struct {
-	Runners
-	run runner.Runner
-}
-
-func (g testRunners) New() (runner.Runner, error) { return g.run, nil }

@@ -1,20 +1,13 @@
 package runners
 
 import (
-	"errors"
 	"testing"
-
-	"github.com/mash/kioku/internal/runner"
 )
 
 func TestNewWithoutOperatorConfiguration(t *testing.T) {
 	s, err := Load(Config{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := s.New()
-	if r != nil || !errors.Is(err, runner.ErrNotConfigured) {
-		t.Fatal(r, err)
+	if err != nil || s.Runner != nil {
+		t.Fatal(s, err)
 	}
 }
 

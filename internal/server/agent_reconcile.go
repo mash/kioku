@@ -54,13 +54,14 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 	if job.Data.Run == nil || agentRunFinished(job) && job.CleanupComplete {
 		return nil
 	}
-	r, err := s.runners.New()
-	if err != nil {
+	if s.runner == nil {
+		// A runner from an earlier process started this job.
 		if !agentRunFinished(job) && time.Now().UnixMilli() > job.Data.Run.Deadline {
 			return s.failAgentJobLocked(ctx, job, "managed agents unavailable; job timed out", nil)
 		}
-		return fmt.Errorf("%w: %v", runner.ErrTemporary, err)
+		return fmt.Errorf("%w: %w", runner.ErrTemporary, runner.ErrNotConfigured)
 	}
+	r := s.runner
 	status, inspectErr := r.Inspect(ctx, sqlAttempt(job))
 	if inspectErr != nil {
 		status = runner.Status{State: runner.StateUnknown}
@@ -285,9 +286,9 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job store.JobRo
 		s.notify()
 		return s.cleanupAgentJob(ctx, job, status)
 	}
-	r, err := s.runners.New()
-	if err != nil {
-		return fmt.Errorf("%w: %v", runner.ErrTemporary, err)
+	r := s.runner
+	if r == nil {
+		return fmt.Errorf("%w: %w", runner.ErrTemporary, runner.ErrNotConfigured)
 	}
 	if err = r.Stop(ctx, sqlAttempt(job)); err != nil {
 		return fmt.Errorf("%w: %w", runner.ErrTemporary, err)
@@ -303,9 +304,9 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job store.JobRow, status *
 	if job.Data.Run == nil || job.CleanupComplete || !agentRunFinished(job) {
 		return nil
 	}
-	r, err := s.runners.New()
-	if err != nil {
-		return fmt.Errorf("%w: %v", runner.ErrTemporary, err)
+	r := s.runner
+	if r == nil {
+		return fmt.Errorf("%w: %w", runner.ErrTemporary, runner.ErrNotConfigured)
 	}
 	if status == nil {
 		v, err := r.Inspect(ctx, sqlAttempt(job))

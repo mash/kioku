@@ -38,17 +38,13 @@ type Config struct {
 	MetricsToken               string
 }
 
-// Runners supplies configured runners.
-type Runners interface {
-	New() (runner.Runner, error)
-}
-
-// SetRunners injects generation services before serving requests or starting workers.
-func (s *Server) SetRunners(g Runners) { s.runners = g }
+// SetRunner injects the runner selected at startup before serving requests or
+// starting workers. A nil runner fails every generation job.
+func (s *Server) SetRunner(r runner.Runner) { s.runner = r }
 
 type Server struct {
 	mcpTools map[string]any
-	runners  Runners
+	runner   runner.Runner
 	Config   Config
 	Store    catalog
 	Blobs    blob.Store

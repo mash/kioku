@@ -208,8 +208,5 @@ func (s *Server) Prepare() error {
 	if s.Config.Prompts == nil {
 		return errors.New("prompts are not configured")
 	}
-	if s.runners == nil {
-		return errors.New("runners are not configured")
-	}
 	return s.Store.Read(context.Background(), func(q *store.Queries) error { return q.Healthy() })
 }

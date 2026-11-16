@@ -74,11 +74,6 @@ func TestExecModelOptionsWarnOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer set.Close(t.Context())
-			for range 2 {
-				if _, err := set.New(); err != nil {
-					t.Fatal(err)
-				}
-			}
 			want := 0
 			if fields != "" {
 				want = 1

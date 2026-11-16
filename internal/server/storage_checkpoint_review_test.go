@@ -34,7 +34,7 @@ func TestFileCheckpointPreservesDatabaseFailure(t *testing.T) {
 	j := managedJob(t, f, token, p.ID, true)
 	failure := errors.New("checkpoint failure")
 	d := &checkpointFailureCatalog{catalog: f.stateStore, failure: failure}
-	f.s.SetRunners(testRunners{Runners: f.s.runners, run: checkpointFileRunner{start: func(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
+	f.s.SetRunner(checkpointFileRunner{start: func(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 		// Input preparation succeeds; only the resource checkpoint fails.
 		f.s.Store, f.s.storage.db = d, d
 		return runner.StartFileSession(ctx, spec, func(context.Context, string, []byte) (string, error) {
@@ -44,7 +44,7 @@ func TestFileCheckpointPreservesDatabaseFailure(t *testing.T) {
 			t.Fatal("session started after a failed checkpoint")
 			return "", nil
 		})
-	}}})
+	}})
 	err := f.s.startAgentJob(t.Context(), fixtureRow(j))
 	if !errors.Is(err, failure) {
 		t.Fatalf("database failure was hidden: %v", err)

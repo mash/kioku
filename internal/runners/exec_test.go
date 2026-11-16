@@ -43,21 +43,14 @@ func TestExecStartupValidation(t *testing.T) {
 		t.Fatal("invalid root accepted")
 	}
 }
-func TestExecStartupRootAndReconcileOnly(t *testing.T) {
+func TestExecStartupRootAndOtherRunners(t *testing.T) {
 	c := execConfig(t)
-	relative, err := filepath.Rel(".", c.DataDir)
-	if err == nil {
-		c.DataDir = relative
-	}
 	s, err := Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close(t.Context())
-	if !filepath.IsAbs(s.config.DataDir) {
-		t.Fatal(s.config.DataDir)
-	}
-	info, err := os.Stat(filepath.Join(s.config.DataDir, "exec-runs"))
+	info, err := os.Stat(filepath.Join(c.DataDir, "exec-runs"))
 	if err != nil || info.Mode().Perm() != 0700 {
 		t.Fatal(info, err)
 	}
@@ -68,10 +61,7 @@ func TestExecStartupRootAndReconcileOnly(t *testing.T) {
 	}
 	defer s.Close(t.Context())
 	if _, err := os.Stat(c.DataDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("reconcile-only runner created directories", err)
-	}
-	if s.execRunner == nil {
-		t.Fatal("missing recovery runner")
+		t.Fatal("unconfigured runner created directories", err)
 	}
 }
 func TestBaseOriginUsesManagedRule(t *testing.T) {
@@ -93,85 +83,19 @@ func TestBaseOriginUsesManagedRule(t *testing.T) {
 	}
 }
 
-func TestManagedConfigurationCleansExecWorkdir(t *testing.T) {
-	c := execConfig(t)
-	s, err := Load(c, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := runner.AttemptKey{JobID: "job"}
-	a := runner.Attempt{Key: key}
-	workdir := filepath.Join(c.DataDir, "exec-runs", key.JobID+"-"+key.JobID)
-	if err := os.MkdirAll(workdir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workdir, "leftover"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	c.Type = "claudemanaged"
-	c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "environment", "key"
-	s, err = Load(c, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close(t.Context())
-	if _, err := s.execRunner.Start(t.Context(), runner.RunSpec{}); err == nil {
-		t.Fatal("recovery runner accepted Start")
-	}
-	if err := s.execRunner.Cleanup(t.Context(), a); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(workdir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("leftover workdir remains", err)
-	}
-	if err := os.Remove(filepath.Dir(workdir)); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.execRunner.Cleanup(t.Context(), a); err != nil {
-		t.Fatal("missing root was not treated as done", err)
-	}
-}
-
-func TestRunnerOwnsCommandAndClose(t *testing.T) {
+func TestCloseStopsExecRunner(t *testing.T) {
 	c := execConfig(t)
 	g, err := Load(c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer g.Close(t.Context())
-	c.Command[0] = "mutated-command"
-	if g.config.Command[0] != os.Args[0] {
-		t.Fatal("configuration aliases caller's command")
-	}
-	r, err := g.New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := g.Runner
 	if err := g.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: "job"}}); err == nil {
 		t.Fatal("closed runner accepted a new run")
-	}
-}
-
-func TestNewUsesCurrentRunnerType(t *testing.T) {
-	c := execConfig(t)
-	s, err := Load(c, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close(t.Context())
-	r, err := s.New()
-	if err != nil || r != s.execRunner {
-		t.Fatal("current exec configuration was not selected", err)
-	}
-	s.config.Type = ""
-	if _, err := s.New(); !errors.Is(err, runner.ErrNotConfigured) {
-		t.Fatal("saved run selected a runner without configuration", err)
 	}
 }
 

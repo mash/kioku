@@ -50,7 +50,7 @@ func TestFileOutputRechecksDeadlineAfterIO(t *testing.T) {
 				row.Data.Run.Deadline = start.Add(tc.deadline).UnixMilli()
 				return q.PutJob(row)
 			})
-			f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{cleanup: func(context.Context, runner.Attempt) error { return nil }}})
+			f.s.SetRunner(&testRunner{cleanup: func(context.Context, runner.Attempt) error { return nil }})
 			if tc.duringPut {
 				objects := &storageTestObjects{Store: f.s.Blobs, put: func(_ context.Context, key blob.Key, _ []byte) error {
 					if strings.Contains(string(key), "/output-") {

@@ -49,7 +49,7 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 			}
 			started := make(chan string, 2)
 			var confirmed atomic.Bool
-			f.s.SetRunners(testRunners{Runners: f.s.runners, run: &testRunner{
+			f.s.SetRunner(&testRunner{
 				start: func(_ context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 					started <- spec.Key.JobID
 					if spec.Key.ProjectID == p.ID {
@@ -65,7 +65,7 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 				},
 				stop:    func(context.Context, runner.Attempt) error { return nil },
 				cleanup: func(context.Context, runner.Attempt) error { return nil },
-			}})
+			})
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
 			go func() { done <- f.s.RunWorker(ctx) }()

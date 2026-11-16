@@ -130,7 +130,7 @@ func run() error {
 		}
 	}()
 
-	app.SetRunners(set)
+	app.SetRunner(set.Runner)
 	if err = app.Prepare(); err != nil {
 		return err
 	}

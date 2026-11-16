@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -142,37 +141,5 @@ func TestManagedWebhookDisabledAndTemporaryReconciliation(t *testing.T) {
 	ma.SetError("GET", "/v1/sessions/"+j.Run.Ref.ID, 0)
 	if got := reconcileManaged(t, f, j); got.Status != "completed" {
 		t.Fatal(got)
-	}
-}
-
-type webhookFailedCatalog struct {
-	catalog
-	err error
-}
-
-func (d *webhookFailedCatalog) Read(ctx context.Context, fn func(*store.Queries) error) error {
-	return d.err
-}
-
-func TestWebhookReportsFatalDatabaseFailure(t *testing.T) {
-	t.Parallel()
-	for _, fatal := range []bool{false, true} {
-		t.Run(strconv.FormatBool(fatal), func(t *testing.T) {
-			f, _, _, _ := managedFixture(t)
-			f.s.Config.AnthropicWebhookSigningKey = "whsec_" + base64.StdEncoding.EncodeToString(webhookTestSecret)
-			err := errors.New("injected read failure")
-			var failure error = err
-			if fatal {
-				failure = &store.FatalDatabaseError{Cause: err}
-			}
-			f.s.Store = &webhookFailedCatalog{catalog: f.stateStore, err: failure}
-			body := []byte(`{"data":{"type":"session.status_idled","id":"session"}}`)
-			if code := signedAgentWebhook(t, f, body, time.Now(), webhookTestSecret, nil); code != 204 {
-				t.Fatal(code)
-			}
-			if stopped := f.s.fatalError.Load() != nil; stopped != fatal {
-				t.Fatalf("fatal=%t: server stopped=%t", fatal, stopped)
-			}
-		})
 	}
 }

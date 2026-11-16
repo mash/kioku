@@ -196,22 +196,6 @@ func TestDatabaseFailureDoesNotPoisonOtherOperations(t *testing.T) {
 	}
 	catalogWrite(t, d, func(q *Queries) error { return q.PutUser(UserRow{ID: "other", Email: "ok"}) })
 }
-func TestCommittedRejectionIsDistinctFromRollback(t *testing.T) {
-	d := newCatalog(t)
-	reason := errors.New("business rejection")
-	err := d.Write(t.Context(), func(q *Queries) error {
-		if err := q.PutUser(UserRow{ID: "u", Email: "kept"}); err != nil {
-			return err
-		}
-		return RejectAfterCommit(reason)
-	})
-	if !errors.Is(err, reason) {
-		t.Fatal(err)
-	}
-	if err := d.Read(t.Context(), func(q *Queries) error { _, err := q.User("u"); return err }); err != nil {
-		t.Fatal(err)
-	}
-}
 func TestUsageInsertPreservesFirstNull(t *testing.T) {
 	d := newCatalog(t)
 	u := UsageRow{JobID: "j", ProjectID: "p", RecordedAt: 1, Data: model.UsageValues{OrgID: "o", UserID: "u"}}
@@ -362,48 +346,6 @@ func TestCatalogQueriesUseDeclaredIndexes(t *testing.T) {
 		if err != nil || !found {
 			t.Fatal(tc.index, err)
 		}
-	}
-}
-
-func TestCommitUnknownReadsTargetRow(t *testing.T) {
-	for _, committed := range []bool{false, true} {
-		t.Run(strconv.FormatBool(committed), func(t *testing.T) {
-			d := newCatalog(t)
-			d.commit = func(tx *sql.Tx) error {
-				if committed {
-					if err := tx.Commit(); err != nil {
-						return err
-					}
-				} else {
-					if err := tx.Rollback(); err != nil {
-						return err
-					}
-				}
-				return errors.New("response lost")
-			}
-			err := d.Write(t.Context(), func(q *Queries) error { return q.PutUser(UserRow{ID: "target", Email: "one"}) })
-			var unknown *UnknownCommit
-			if !errors.As(err, &unknown) {
-				t.Fatal(err)
-			}
-			calls := 0
-			if err := d.ResolveCommit(t.Context(), func(q *Queries) error {
-				calls++
-				_, err := q.User("target")
-				if committed {
-					return err
-				}
-				if !errors.Is(err, sql.ErrNoRows) {
-					t.Fatalf("unexpected commit: %v", err)
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if calls != 1 {
-				t.Fatal(calls)
-			}
-		})
 	}
 }
 

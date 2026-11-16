@@ -139,7 +139,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return err
 	}
 	validation.SetMaxOpenConns(1)
-	err = transact(ctx, validation, true, nil, func(q *Queries) error { return plan.apply(q, now.UnixMilli()) })
+	err = transact(ctx, validation, func(q *Queries) error { return plan.apply(q, now.UnixMilli()) })
 	closeErr := validation.Close()
 	if err = errors.Join(err, closeErr); err != nil {
 		return fmt.Errorf("migration validation failed: %w", err)
@@ -154,7 +154,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 	if _, err = db.ExecContext(ctx, "PRAGMA user_version=0"); err != nil {
 		return err
 	}
-	return transact(ctx, db, true, nil, func(q *Queries) error {
+	return transact(ctx, db, func(q *Queries) error {
 		if err := plan.apply(q, now.UnixMilli()); err != nil {
 			return err
 		}

@@ -12,14 +12,13 @@ func (s *Server) ReconcileJob(ctx context.Context, jobID string) {
 	}
 	job, err := s.loadJob(ctx, jobID)
 	if err != nil {
-		s.databaseError(ctx, err)
+		slog.Error("agent reconciliation deferred", "job", jobID, "error", err)
 		return
 	}
 	if !job.Running() {
 		return
 	}
 	if err := s.reconcileAgentJob(ctx, job); err != nil && ctx.Err() == nil {
-		s.databaseError(ctx, err)
 		slog.Error("agent reconciliation deferred", "job", jobID, "error", err)
 	}
 }

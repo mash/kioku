@@ -141,19 +141,24 @@ type sqliteResultError int
 
 func (e sqliteResultError) Error() string { return "injected SQLite result" }
 func (e sqliteResultError) Code() int     { return int(e) }
-func TestSQLiteCorruptionIsFatalButConstraintFailureIsLocal(t *testing.T) {
+
+// This test replaces exitProcess, so it must not run in parallel.
+func TestSQLiteCorruptionStopsButConstraintFailureIsLocal(t *testing.T) {
 	d := newCatalog(t)
-	for _, code := range []int{11, 11 | 256, 26, 19, 5, 10} {
+	exited := false
+	exitProcess = func(int) { exited = true }
+	t.Cleanup(func() { exitProcess = os.Exit })
+	for _, code := range []int{11, 11 | 256, 26, 10, 19, 5} {
+		exited = false
 		err := d.Write(t.Context(), func(q *Queries) error {
 			if e := q.PutUser(UserRow{ID: "rollback", Email: "rollback"}); e != nil {
 				return e
 			}
 			return sqliteResultError(code)
 		})
-		var fatal *FatalDatabaseError
-		want := code&255 == 11 || code&255 == 26
-		if errors.As(err, &fatal) != want {
-			t.Fatalf("code=%d error=%v", code, err)
+		want := code&255 == 11 || code&255 == 26 || code&255 == 10
+		if exited != want || err == nil {
+			t.Fatalf("code=%d exited=%t error=%v", code, exited, err)
 		}
 		if err := d.Read(t.Context(), func(q *Queries) error {
 			_, e := q.User("rollback")

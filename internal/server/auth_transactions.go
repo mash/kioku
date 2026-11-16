@@ -11,8 +11,8 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-// exchangeCLILogin consumes even an incorrect code/PKCE pair, but SQL failure
-// rolls back consumption and issuance together (A20).
+// exchangeCLILogin runs under writeConsuming: an incorrect code/PKCE pair still
+// consumes the login, but SQL failure rolls back consumption and issuance together.
 func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, now time.Time) (store.SessionRow, error) {
 	id := auth.Hash(device)
 	bad := fail(410, "login code expired or already used")
@@ -30,7 +30,7 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 				return store.SessionRow{}, err
 			}
 		}
-		return store.SessionRow{}, store.RejectAfterCommit(bad)
+		return store.SessionRow{}, bad
 	}
 	v, err := q.Session(id)
 	if err != nil {
@@ -41,11 +41,11 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 		return store.SessionRow{}, err
 	}
 	if v.UserID == "" || data.LoopbackCodeHash == nil || *data.LoopbackCodeHash != auth.Hash(code) || data.LoopbackChallenge == nil || *data.LoopbackChallenge != auth.Challenge(verifier) {
-		return store.SessionRow{}, store.RejectAfterCommit(bad)
+		return store.SessionRow{}, bad
 	}
 	if _, err = q.User(v.UserID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return store.SessionRow{}, store.RejectAfterCommit(bad)
+			return store.SessionRow{}, bad
 		}
 		return store.SessionRow{}, err
 	}
@@ -68,23 +68,20 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		}
 		return store.SessionRow{}, "", err
 	}
-	reject := func(e error) (store.SessionRow, string, error) {
-		return store.SessionRow{}, "", store.RejectAfterCommit(e)
-	}
 	name = strings.TrimSpace(name)
 	if len(name) < 1 || len(name) > 100 {
-		return reject(fail(400, "name must contain 1–100 bytes"))
+		return store.SessionRow{}, "", fail(400, "name must contain 1–100 bytes")
 	}
 	data, err := store.SessionData[store.LoginCodeData](v)
 	if err != nil {
 		return store.SessionRow{}, "", err
 	}
 	if v.ProjectID == nil {
-		return reject(fail(404, "project not found"))
+		return store.SessionRow{}, "", fail(404, "project not found")
 	}
 	grant, err := q.Session(data.GrantKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		return reject(fail(404, "project not found"))
+		return store.SessionRow{}, "", fail(404, "project not found")
 	}
 	if err != nil {
 		return store.SessionRow{}, "", err
@@ -94,13 +91,13 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		return store.SessionRow{}, "", err
 	}
 	if grant.Kind != "mcp" || grant.UserID != v.UserID || grant.Status != "active" || access.TokenKind != "access" || !slices.Contains(access.ProjectIDs, *v.ProjectID) {
-		return reject(fail(404, "project not found"))
+		return store.SessionRow{}, "", fail(404, "project not found")
 	}
 	p, err := sqlMember(q, *v.ProjectID, v.UserID)
 	if err != nil {
 		var api apiError
 		if errors.As(err, &api) {
-			return reject(err)
+			return store.SessionRow{}, "", err
 		}
 		return store.SessionRow{}, "", err
 	}
@@ -110,7 +107,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	}
 	resolved := org.Slug + "/" + p.Slug
 	if namespace != "" && namespace != resolved {
-		return reject(fail(409, "project does not match working directory"))
+		return store.SessionRow{}, "", fail(409, "project does not match working directory")
 	}
 	name = "connector:" + name
 	agents, err := q.ProjectSessions(p.ID, "agent")
@@ -137,7 +134,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		}
 	}
 	if active >= 100 {
-		return reject(fail(429, "too many active project agents"))
+		return store.SessionRow{}, "", fail(429, "too many active project agents")
 	}
 	raw := "kioku_agent." + agentID + "." + secret
 	payload, err := store.EncodeSessionData(store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: &agentID, Role: data.Role}, Name: name})
@@ -147,7 +144,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	issued := store.SessionRow{ID: auth.Hash(raw), Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: &p.ID, Expires: now.Add(24 * time.Hour).UnixMilli(), Created: now.UnixMilli(), Data: payload}
 	if err = q.InsertSession(issued, now.UnixMilli()); err != nil {
 		if errors.Is(err, store.ErrSessionCapacity) {
-			return reject(fail(429, "too many agent sessions"))
+			return store.SessionRow{}, "", fail(429, "too many agent sessions")
 		}
 		return store.SessionRow{}, "", err
 	}

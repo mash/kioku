@@ -352,13 +352,14 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 		if adapter.failure != nil {
 			return adapter.failure
 		}
-		if problem != nil && adapter.replay {
-			return store.RejectAfterCommit(problem)
+		if adapter.replay {
+			// Commit the family revocation and still reject the replay.
+			return nil
 		}
 		return problem
 	})
 	if err != nil && (problem == nil || !errors.Is(err, problem)) {
-		return s.resolveExchange(r.Context(), err, 400)
+		return err
 	}
 	if errors.Is(problem, store.ErrSessionCapacity) {
 		problem = fosite.ErrTemporarilyUnavailable

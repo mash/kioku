@@ -81,7 +81,7 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 	token := auth.Token()
 	var account store.UserRow
 	var provider string
-	err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+	err := writeConsuming(r.Context(), s.Store, func(q *store.Queries) error {
 		verifier := req.Verifier
 		if !validVerifier(verifier) {
 			verifier = ""
@@ -103,7 +103,7 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 		if errors.As(err, &api) && api.status == 410 {
 			return fail(410, "login request expired; run kioku login again")
 		}
-		return s.resolveExchange(r.Context(), err, 410)
+		return err
 	}
 	jsonOut(w, 200, map[string]string{"token": token, "provider": provider, "name": account.Data.Name, "email": account.Email})
 	return nil

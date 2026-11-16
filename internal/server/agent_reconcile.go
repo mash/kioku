@@ -26,10 +26,6 @@ func (s *Server) reconcileAgentJobs(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if err := s.reconcileAgentJob(ctx, job); err != nil {
-			s.databaseError(ctx, err)
-			if fatal := s.fatalError.Load(); fatal != nil {
-				return fatal
-			}
 			slog.Error("agent reconciliation deferred", "job", job.ID, "error", err)
 		}
 	}

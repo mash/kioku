@@ -77,7 +77,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	key := auth.Hash(raw)
 	valid := false
 	if err := s.Store.Read(r.Context(), func(q *store.Queries) error { var err error; _, valid, err = connectorGrant(q, key); return err }); err != nil {
-		s.requestError(w, r, err)
+		writeError(w, err)
 		return
 	}
 	if !bearer || !valid {
@@ -124,7 +124,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			if e, ok := err.(apiError); ok {
 				result = mcpText(e.message, true)
 			} else {
-				s.requestError(w, r, err)
+				writeError(w, err)
 				return
 			}
 			break
@@ -185,12 +185,12 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	raw := "kioku_agent." + id + "." + secret
 	var row store.SessionRow
 	var namespace string
-	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
+	if err := writeConsuming(r.Context(), s.Store, func(q *store.Queries) error {
 		var err error
 		row, namespace, err = exchangeAgentLogin(q, req.Code, req.Name, req.Namespace, id, secret, time.Now())
 		return err
 	}); err != nil {
-		return s.resolveExchange(r.Context(), err, 401)
+		return err
 	}
 	data, err := store.SessionData[store.AgentSessionData](row)
 	if err != nil {

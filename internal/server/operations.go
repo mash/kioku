@@ -86,7 +86,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		s.requestError(w, r, err)
+		writeError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")

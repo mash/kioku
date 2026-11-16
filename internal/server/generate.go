@@ -156,9 +156,6 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 		})
 		if err != nil {
 			errs = append(errs, err)
-			if store.IsAbort(err) {
-				break
-			}
 		} else if added {
 			queued = true
 		}

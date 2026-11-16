@@ -121,7 +121,7 @@ func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
 		}
 		return q.PutSession(code)
 	})
-	err := d.Write(t.Context(), func(q *store.Queries) error {
+	err := writeConsuming(t.Context(), d, func(q *store.Queries) error {
 		_, _, err := exchangeAgentLogin(q, "code", "host", "", "new", "secret", now)
 		return err
 	})

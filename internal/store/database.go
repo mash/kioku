@@ -20,7 +20,6 @@ type Database struct {
 	writer *sql.DB
 	reader *sql.DB
 	path   string
-	commit func(*sql.Tx) error // injectable commit response boundary for crash tests
 }
 
 func init() {

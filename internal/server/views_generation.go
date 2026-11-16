@@ -44,7 +44,7 @@ func (s *Server) advanceViewGenerations(ctx context.Context, deferred map[string
 		if err := s.storage.advanceViews(ctx, j.ID); err != nil {
 			errs = append(errs, err)
 			deferred[j.ID] = true
-			if store.IsAbort(err) || ctx.Err() != nil {
+			if ctx.Err() != nil {
 				break
 			}
 		}

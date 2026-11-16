@@ -46,22 +46,19 @@ type Runners interface {
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
-	mcpTools   map[string]any
-	runners    Runners
-	Config     Config
-	Store      catalog
-	Blobs      blob.Store
-	Cipher     *auth.Cipher
-	wake       chan struct{}
-	mux        *http.ServeMux
-	storage    *storageOperations
-	fatal      chan struct{}
-	fatalOnce  sync.Once
-	fatalError atomic.Pointer[store.FatalDatabaseError]
-	rateMu     sync.Mutex
-	rates      map[string]rateWindow
-	requests   atomic.Uint64
-	failures   atomic.Uint64
+	mcpTools map[string]any
+	runners  Runners
+	Config   Config
+	Store    catalog
+	Blobs    blob.Store
+	Cipher   *auth.Cipher
+	wake     chan struct{}
+	mux      *http.ServeMux
+	storage  *storageOperations
+	rateMu   sync.Mutex
+	rates    map[string]rateWindow
+	requests atomic.Uint64
+	failures atomic.Uint64
 }
 type apiError struct {
 	status  int
@@ -89,7 +86,7 @@ func New(c Config, stateStore catalog, b blob.Store, key *auth.Cipher) *Server {
 	if c.RatePerMinute <= 0 {
 		c.RatePerMinute = 600
 	}
-	s := &Server{fatal: make(chan struct{}), Config: c, Store: stateStore, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
+	s := &Server{Config: c, Store: stateStore, Blobs: b, Cipher: key, wake: make(chan struct{}, 1), mux: http.NewServeMux()}
 	if c.Prompts != nil {
 		s.mcpTools = mcpTools(c.Prompts)
 	}
@@ -103,14 +100,6 @@ const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if fatal := s.fatalError.Load(); fatal != nil {
-			if r.URL.Path == "/healthz" {
-				writeError(w, fatal)
-			} else {
-				writeError(w, fail(503, "storage recovery failed"))
-			}
-			return
-		}
 		start := time.Now()
 		rec := &responseLog{ResponseWriter: w, status: 200}
 		w = rec
@@ -144,7 +133,7 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 		if err := checkClientVersion(r); err != nil {
-			s.requestError(w, r, err)
+			writeError(w, err)
 			return
 		}
 		s.mux.ServeHTTP(w, r)
@@ -190,7 +179,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.Store.Read(r.Context(), func(q *store.Queries) error { return q.Healthy() }); err != nil {
-			s.requestError(w, r, err)
+			writeError(w, err)
 			return
 		}
 		jsonOut(w, 200, map[string]string{"status": "ok"})
@@ -231,7 +220,7 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, principal, err := s.session(r)
 		if err != nil {
-			s.requestError(w, r, err)
+			writeError(w, err)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), authContextKey{}, requestIdentity{key: key, principal: principal}))
@@ -243,7 +232,7 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 		if strings.HasPrefix(r.URL.Path, "/api/projects/") && r.PathValue("slug") != "" && r.PathValue("org") != "" {
 			if uid == "" {
 				if err := s.authorizeAgent(r, principal); err != nil {
-					s.requestError(w, r, err)
+					writeError(w, err)
 					return
 				}
 				writeError(w, fail(401, "login required"))
@@ -276,12 +265,12 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 				return err
 			})
 			if err != nil {
-				s.requestError(w, r, err)
+				writeError(w, err)
 				return
 			}
 		}
 		if err := s.authorizeAgent(r, principal); err != nil {
-			s.requestError(w, r, err)
+			writeError(w, err)
 			return
 		}
 		if required && uid == "" {
@@ -290,7 +279,7 @@ func (s *Server) wrap(fn handler, required bool) http.HandlerFunc {
 		}
 		r = r.WithContext(context.WithValue(r.Context(), mutationRequestKey{}, r))
 		if err := fn(w, r, uid); err != nil {
-			s.requestError(w, r, err)
+			writeError(w, err)
 
 		}
 	}

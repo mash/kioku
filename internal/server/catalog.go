@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"net/http"
 
 	"github.com/mash/kioku/internal/store"
 )
@@ -12,41 +11,24 @@ import (
 type catalog interface {
 	Read(context.Context, func(*store.Queries) error) error
 	Write(context.Context, func(*store.Queries) error) error
-	ResolveCommit(context.Context, func(*store.Queries) error) error
 	Close() error
 }
 
-// resolveExchange never regenerates or returns a secret after an ambiguous commit.
-func (s *Server) resolveExchange(ctx context.Context, err error, status int) error {
-	return s.classifyStorageError(ctx, err, status, "exchange outcome unknown; sign in again")
-}
-
-func (s *Server) reportFatal(err error) {
-	var fatal *store.FatalDatabaseError
-	if errors.As(err, &fatal) {
-		s.fatalOnce.Do(func() { s.fatalError.Store(fatal); close(s.fatal) })
-	}
-}
-func (s *Server) databaseError(ctx context.Context, err error) error {
-	return s.classifyStorageError(ctx, err, 503, "storage commit outcome unknown; retry the request")
-}
-func (s *Server) classifyStorageError(ctx context.Context, err error, status int, message string) error {
-	var fatal *store.FatalDatabaseError
-	if errors.As(err, &fatal) {
-		s.reportFatal(err)
+// writeConsuming commits fn's writes even when fn rejects the request with an
+// apiError, so a single-use code stays consumed after a wrong attempt. Other
+// errors roll back the transaction.
+func writeConsuming(ctx context.Context, db catalog, fn func(*store.Queries) error) error {
+	var rejected error
+	if err := db.Write(ctx, func(q *store.Queries) error {
+		err := fn(q)
+		var api apiError
+		if errors.As(err, &api) {
+			rejected = err
+			return nil
+		}
+		return err
+	}); err != nil {
 		return err
 	}
-	var unknown *store.UnknownCommit
-	if errors.As(err, &unknown) {
-		if e := s.Store.ResolveCommit(ctx, func(q *store.Queries) error { return q.Healthy() }); e != nil {
-			err = e
-		} else {
-			return fail(status, message)
-		}
-	}
-	s.reportFatal(err)
-	return err
-}
-func (s *Server) requestError(w http.ResponseWriter, r *http.Request, err error) {
-	writeError(w, s.databaseError(r.Context(), err))
+	return rejected
 }

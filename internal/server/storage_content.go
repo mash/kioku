@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sync"
 	"time"
@@ -111,7 +110,7 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 			return err
 		}
 	}
-	err = o.db.Write(ctx, func(q *store.Queries) error {
+	return o.db.Write(ctx, func(q *store.Queries) error {
 		if err := check(q); err != nil {
 			return err
 		}
@@ -136,38 +135,6 @@ func (o *storageOperations) putInbox(ctx context.Context, item store.InboxRow, b
 		}
 		return nil
 	})
-	var unknown *store.UnknownCommit
-	if !errors.As(err, &unknown) {
-		return err
-	}
-	applied := false
-	var declined error
-	if e := o.db.ResolveCommit(ctx, func(q *store.Queries) error {
-		_, e := q.Inbox(item.ID)
-		if e == nil {
-			applied = true
-			return nil
-		}
-		if !errors.Is(e, sql.ErrNoRows) {
-			return e
-		}
-		e = check(q)
-		var api apiError
-		if errors.As(e, &api) {
-			declined = e
-			return nil
-		}
-		return e
-	}); e != nil {
-		return e
-	}
-	if applied {
-		return nil
-	}
-	if declined != nil {
-		return declined
-	}
-	return fail(503, "inbox commit was not applied; retry the request")
 }
 func sqlJobAuthorization(q *store.Queries, j store.JobRow, now int64) error {
 	if _, err := sqlMember(q, j.ProjectID, j.Data.UserID); err != nil {

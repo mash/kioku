@@ -39,3 +39,24 @@ func TestRateLimitOnlyTrustsConfiguredProxy(t *testing.T) {
 		})
 	}
 }
+
+func TestRateLimitFullTableStillAdmitsNewHosts(t *testing.T) {
+	t.Parallel()
+	s := &Server{Config: Config{RatePerMinute: 1}}
+	request := func(host string) bool {
+		r := httptest.NewRequest("GET", "/api/projects", nil)
+		r.RemoteAddr = host + ":1234"
+		return s.allow(r)
+	}
+	for i := range maxRateHosts + 10 {
+		if !request(net.IPv4(10, byte(i>>16), byte(i>>8), byte(i)).String()) {
+			t.Fatalf("host %d rejected while its own window is empty", i)
+		}
+	}
+	if len(s.rates) > maxRateHosts {
+		t.Fatalf("rate table grew past its bound: %d", len(s.rates))
+	}
+	if !request("192.0.2.1") || request("192.0.2.1") {
+		t.Fatal("a full table must still admit a new host and still limit it")
+	}
+}

@@ -28,6 +28,9 @@ func (w *responseLog) WriteHeader(status int) {
 }
 func (w *responseLog) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
+// maxRateHosts bounds the memory of the rate limiter.
+const maxRateHosts = 10000
+
 type rateWindow struct {
 	Start time.Time
 	Count int
@@ -60,14 +63,19 @@ func (s *Server) allow(r *http.Request) bool {
 		s.rates = map[string]rateWindow{}
 	}
 	now := time.Now()
-	if len(s.rates) > 10000 {
+	if _, ok := s.rates[host]; !ok && len(s.rates) >= maxRateHosts {
+		// A full table must not reject every client. Drop the expired windows,
+		// or else the oldest window, to make room for the new host.
+		oldest := ""
 		for k, v := range s.rates {
 			if now.Sub(v.Start) > time.Minute {
 				delete(s.rates, k)
+			} else if oldest == "" || v.Start.Before(s.rates[oldest].Start) {
+				oldest = k
 			}
 		}
-		if len(s.rates) > 10000 {
-			return false
+		if len(s.rates) >= maxRateHosts {
+			delete(s.rates, oldest)
 		}
 	}
 	v := s.rates[host]

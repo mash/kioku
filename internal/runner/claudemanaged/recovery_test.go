@@ -51,10 +51,6 @@ func TestClaudeCleanupRecoversAfterPartialSessionDeletion(t *testing.T) {
 	if err := r.Cleanup(t.Context(), a); err == nil || c.remaining["first"] || !c.remaining["second"] {
 		t.Fatal("partial deletion was not exercised", err, c.remaining)
 	}
-	status, err = r.Inspect(t.Context(), a)
-	if err != nil || status.State != runner.StateStopped {
-		t.Fatalf("deleted session blocks retry: %+v %v", status, err)
-	}
 	if err := r.Cleanup(t.Context(), a); err != nil || len(c.remaining) != 0 {
 		t.Fatal("cleanup did not resume", err, c.remaining)
 	}

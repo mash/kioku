@@ -45,7 +45,19 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 		})
 }
 
+// sessions returns the saved session, or discovers the sessions of an attempt
+// whose Start response was lost. Inspect and Stop use it on every pass, so a
+// known ID must not list the account.
 func (r *Runner) sessions(ctx context.Context, a runner.Attempt) ([]string, error) {
+	if a.Run.ID != "" {
+		return []string{a.Run.ID}, nil
+	}
+	return r.allSessions(ctx, a)
+}
+
+// allSessions discovers every session of the attempt, so that Cleanup also
+// stops and deletes an orphan that a retried Start created.
+func (r *Runner) allSessions(ctx context.Context, a runner.Attempt) ([]string, error) {
 	if a.Run.ID == "" && !a.Run.UploadStarted {
 		return nil, nil
 	}
@@ -79,7 +91,7 @@ func (r *Runner) Stop(ctx context.Context, a runner.Attempt) error {
 }
 
 func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
-	ids, err := r.sessions(ctx, a)
+	ids, err := r.allSessions(ctx, a)
 	if err != nil {
 		return err
 	}

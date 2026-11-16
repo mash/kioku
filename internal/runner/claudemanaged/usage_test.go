@@ -21,7 +21,9 @@ func TestClaudeDiscoveryIncludesArchivedAndDeduplicatesKnownIDs(t *testing.T) {
 	archived.Archived = true
 	f.SetSession(archived)
 	f.SetPageSize(1)
-	status, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: first})
+	// A lost Start response leaves no saved ID, so Inspect discovers.
+	lost := runner.RunRef{UsesProviderFiles: true, UploadStarted: true}
+	status, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: lost})
 	if err != nil || status.State != runner.StateStopped || !status.Failed || status.Reason != "multiple Claude sessions for one attempt" || status.Usage.CostCents == nil || *status.Usage.CostCents != 500 {
 		t.Fatalf("aggregate: %+v %v", status, err)
 	}
@@ -40,7 +42,7 @@ func TestClaudeDiscoveryIncludesArchivedAndDeduplicatesKnownIDs(t *testing.T) {
 	// One unknown sample makes only its cost unknown, not a known 412 cents.
 	archived.CostAmount = ""
 	f.SetSession(archived)
-	status, err = r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: first})
+	status, err = r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: lost})
 	if err != nil || status.Usage.CostCents != nil {
 		t.Fatal("unknown cost was omitted", err)
 	}
@@ -50,15 +52,27 @@ func TestUsageAggregatesOnlyAfterAllSessionsStop(t *testing.T) {
 	a := start(t, r, spec)
 	b := start(t, r, spec)
 	f.SetStatus(a.ID, "idle", "end_turn", 40)
-	status, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: a})
+	lost := runner.RunRef{UsesProviderFiles: true, UploadStarted: true}
+	status, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: lost})
 	if err != nil || status.State != runner.StateRunning {
 		t.Fatalf("published before all sessions stopped: %+v %v", status, err)
 	}
-	if err = r.Stop(t.Context(), runner.Attempt{Key: spec.Key, Run: a}); err != nil {
+	if err = r.Stop(t.Context(), runner.Attempt{Key: spec.Key, Run: lost}); err != nil {
 		t.Fatal(err)
 	}
 	if !f.Session(a.ID).Interrupted || !f.Session(b.ID).Interrupted {
 		t.Fatal("Stop omitted a discovered session")
+	}
+	// A saved ID makes Inspect and Stop act on that session only, without
+	// listing the account.
+	before := len(f.Requests())
+	if _, err = r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: a}); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range f.Requests()[before:] {
+		if request.Path == "/v1/sessions" {
+			t.Fatal("Inspect listed sessions although the session ID is known")
+		}
 	}
 }
 func TestClaudeUsageFieldValidation(t *testing.T) {

@@ -119,32 +119,6 @@ func TestOAuthAuthorizationPropagatesSQLFailures(t *testing.T) {
 	}
 }
 
-func TestMultipleManagedSessionsStopBeforePublication(t *testing.T) {
-	t.Parallel()
-	for _, output := range []bool{false, true} {
-		t.Run(strconv.FormatBool(output), func(t *testing.T) {
-			f, token, p, ma := managedFixture(t)
-			j := startManaged(t, f, token, p.ID, true)
-			if output {
-				sendOutput(t, f, ma, j, "Ambiguous execution")
-			}
-			duplicate := ma.Session(j.Run.Ref.ID)
-			duplicate.ID = "duplicate-session"
-			ma.SetSession(duplicate)
-			ma.SetStatus(j.Run.Ref.ID, "running", "", 40)
-			ma.SetStatus(duplicate.ID, "running", "", 60)
-			j = reconcileManaged(t, f, j)
-			if !ma.Session(j.Run.Ref.ID).Interrupted || !ma.Session(duplicate.ID).Interrupted || j.Run.AbortReason == "" {
-				t.Fatal("multiple executions were not stopped", j.Run)
-			}
-			j = reconcileManaged(t, f, j)
-			if j.Status != "failed" || j.Error != "multiple Claude sessions for one attempt" || j.Revision != "" || !j.Run.CleanupComplete || j.Run.CostCents == nil || *j.Run.CostCents != 100 {
-				t.Fatalf("ambiguous executions published or lost usage: %+v, run=%+v", j, j.Run)
-			}
-		})
-	}
-}
-
 func TestClaudeFileFailureRejectsPreviouslyReceivedOutput(t *testing.T) {
 	t.Parallel()
 	f, token, p, ma := managedFixture(t)

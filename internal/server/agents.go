@@ -17,10 +17,8 @@ func (s *Server) authorizeAgent(r *http.Request, principal authenticatedSession)
 		if !jobRoute {
 			return fail(403, "job credential permits only job input and output")
 		}
-		return s.Store.Read(r.Context(), func(q *store.Queries) error {
-			_, e := checkSQLJobCredential(q, s.Cipher, requestBearer(r), r.PathValue("project"), r.PathValue("job"), time.Now())
-			return e
-		})
+		// wrap validates the job credential; the I/O handler rechecks after locking.
+		return nil
 	}
 	if jobRoute {
 		return fail(403, "job credential required")

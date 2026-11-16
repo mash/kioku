@@ -3,9 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -265,38 +263,10 @@ func (s *Server) lockConnectorProject(ctx context.Context, key, namespace string
 	if err != nil {
 		return model.Project{}, nil, err
 	}
-	var current model.Project
-	err = s.Store.Read(ctx, func(q *store.Queries) error {
-		grant, ok, err := connectorGrant(q, key)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fail(401, "connector login required")
-		}
-		if !slices.Contains(grant.ProjectIDs, p.ID) {
-			return fail(404, "project not found")
-		}
-		row, err := q.Project(p.ID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fail(404, "project not found")
-		}
-		if err != nil {
-			return err
-		}
-		current, err = projectProjection(q, row)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fail(404, "project not found")
-		}
-		if err != nil {
-			return err
-		}
-		if current.Namespace != namespace {
-			return fail(404, "project not found")
-		}
-		_, err = sqlProjectMember(q, row, grant.UserID)
-		return err
-	})
+	current, err := resolve()
+	if err == nil && current.ID != p.ID {
+		err = fail(404, "project not found")
+	}
 	if err != nil {
 		unlock()
 		return model.Project{}, nil, err

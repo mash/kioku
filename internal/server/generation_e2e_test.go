@@ -155,7 +155,9 @@ func TestE2EExecGeneration(t *testing.T) {
 			if strings.Contains(job.Error, "stderr-private") {
 				t.Fatal("process stderr leaked")
 			}
-			e.expect(e.call("GET", base+"/jobs/"+job.ID+"/agent/input", token, nil), 403, nil)
+			for _, bearer := range []string{token, ""} {
+				e.expect(e.call("GET", base+"/jobs/"+job.ID+"/agent/input", bearer, nil), 403, nil)
+			}
 		})
 	}
 }

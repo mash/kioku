@@ -48,6 +48,9 @@ func TestExecRunnerHelper(t *testing.T) {
 			os.Exit(96)
 		}
 	}
+	if role == "success" && !view {
+		checkExecJobScope(t, in.InputURL, in.Token)
+	}
 	if role == "wait" {
 		for {
 			time.Sleep(time.Second)

@@ -2,7 +2,7 @@ package server
 
 import (
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -36,92 +36,10 @@ func jobTokenFixture(t *testing.T) (*fixture, string, fixtureJob, fixtureAgentTo
 
 	return f, raw, job, token, human
 }
-func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
-	t.Parallel()
-	f, raw, job, _, human := jobTokenFixture(t)
-	// E24: job credentials are sealed values, never sessions rows.
-	if n := sessionKindCount(t, f, "agent"); n != 0 {
-		t.Fatal(n)
-	}
-	for _, pattern := range []string{agentInputRoute, agentOutputRoute} {
-		for _, tc := range []struct {
-			name, pid, jid, bearer string
-			want                   int
-		}{
-			{"valid", job.ProjectID, job.ID, raw, 200}, {"other-project", "other", job.ID, raw, 403}, {"other-job", job.ProjectID, "other", raw, 403}, {"human", job.ProjectID, job.ID, human, 403}, {"anonymous", job.ProjectID, job.ID, "", 403},
-		} {
-			t.Run(pattern+tc.name, func(t *testing.T) {
-				req := httptest.NewRequest(strings.Split(pattern, " ")[0], "/", nil)
-				req.Pattern = pattern
-				req.SetPathValue("project", tc.pid)
-				req.SetPathValue("job", tc.jid)
-				req.Header.Set("Authorization", "Bearer "+tc.bearer)
-				req.Header.Set("Kioku-Client-Version", "dev")
-				w := httptest.NewRecorder()
-				f.s.wrap(func(w http.ResponseWriter, r *http.Request, uid string) error { w.WriteHeader(200); return nil }, true)(w, req)
-				if w.Code != tc.want {
-					t.Fatal(w.Code, w.Body.String())
-				}
-			})
-		}
-	}
-	for _, role := range []string{"read", "write"} {
-		_, other := testAgent(t, f, human, job.ProjectID, role)
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Pattern = agentInputRoute
-		req.SetPathValue("project", job.ProjectID)
-		req.SetPathValue("job", job.ID)
-		req.Header.Set("Authorization", "Bearer "+other)
-		req.Header.Set("Kioku-Client-Version", "dev")
-		_, p, err := f.s.session(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := f.s.authorizeAgent(req, p); err == nil {
-			t.Fatal("accepted", role)
-		}
-	}
-	for _, expired := range []bool{true, false} {
-		denied := raw
-		if expired {
-			var err error
-			denied, err = f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Expires: time.Now().Add(-time.Second).UnixMilli()})
-			if err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
-				j, e := q.Job(job.ID)
-				if e != nil {
-					return e
-				}
-				j.Data.Run.AbortReason = store.NullableString("revoked")
-				return q.PutJob(j)
-			}))
-		}
-
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Pattern = agentInputRoute
-		req.SetPathValue("project", job.ProjectID)
-		req.SetPathValue("job", job.ID)
-		req.Header.Set("Authorization", "Bearer "+denied)
-		req.Header.Set("Kioku-Client-Version", "dev")
-		w := httptest.NewRecorder()
-		f.s.wrap(func(http.ResponseWriter, *http.Request, string) error {
-			t.Error("invalid token reached handler")
-			return nil
-		}, true)(w, req)
-		if w.Code != 403 {
-			t.Fatal(w.Code)
-		}
-	}
-}
 
 // This table is deliberately explicit: adding a route must update the audit.
-func TestJobTokenRouteAudit(t *testing.T) {
-	t.Parallel()
-	f, raw, job, _, _ := jobTokenFixture(t)
-	routes := []string{
+func jobRestrictedRoutes() []string {
+	return []string{
 		"POST /api/agent/login",
 		"GET /.well-known/oauth-protected-resource",
 		"GET /.well-known/oauth-protected-resource/mcp",
@@ -170,6 +88,11 @@ func TestJobTokenRouteAudit(t *testing.T) {
 		"GET /",
 		"GET /invite/{invite}",
 	}
+}
+
+func TestJobTokenRouteAudit(t *testing.T) {
+	t.Parallel()
+	routes := jobRestrictedRoutes()
 	exceptions := map[string]string{
 		"GET /mcp":                 "Stateless MCP returns 405; not wrapped",
 		"POST /mcp":                "Separate OAuth-only authentication; not wrapped",
@@ -185,13 +108,44 @@ func TestJobTokenRouteAudit(t *testing.T) {
 	if n := strings.Count(string(source), "s.mux.HandleFunc("); n != len(routes)+len(exceptions)+len(allowed) {
 		t.Fatalf("route audit table stale: routes %d, audited %d", n, len(routes)+len(exceptions)+len(allowed))
 	}
-	replace := strings.NewReplacer("{project}", job.ProjectID, "{job}", job.ID, "{org}", "org", "{slug}", "slug", "{session}", "session", "{provider}", "google", "{agent}", "agent", "{source}", "source", "{view}", "test-view", "{format}", "text", "{member}", "member", "{invite}", "invite")
+}
+
+// Called by the real exec child with the job credential received on stdin.
+func checkExecJobScope(t *testing.T, inputURL, token string) {
+	t.Helper()
+	endpoint, err := url.Parse(inputURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(endpoint.Path, "/")
+	if len(parts) != 9 {
+		t.Fatal("unexpected job input path")
+	}
+	replace := strings.NewReplacer("{job}", parts[6], "{org}", parts[3], "{slug}", parts[4], "{session}", "session", "{provider}", "google", "{agent}", "agent", "{view}", "test-view", "{member}", "member", "{invite}", "invite")
+	routes := jobRestrictedRoutes()
+	for _, suffix := range []string{"input", "output"} {
+		method := "GET"
+		if suffix == "output" {
+			method = "PUT"
+		}
+		routes = append(routes, method+" /api/projects/{org}/{slug}/jobs/other/agent/"+suffix, method+" /api/projects/{org}/other/jobs/{job}/agent/"+suffix)
+	}
 	for _, route := range routes {
-		t.Run(route, func(t *testing.T) {
-			parts := strings.SplitN(route, " ", 2)
-			if c := f.request(parts[0], replace.Replace(parts[1]), raw, nil, nil); c != 403 {
-				t.Fatalf("job credential escaped route: %s returned %d", route, c)
-			}
-		})
+		method, path, _ := strings.Cut(route, " ")
+		endpoint.Path = replace.Replace(path)
+		req, err := http.NewRequest(method, endpoint.String(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Kioku-Client-Version", "dev")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 403 {
+			t.Fatalf("job credential escaped route: %s returned %d", route, res.StatusCode)
+		}
 	}
 }

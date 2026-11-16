@@ -60,8 +60,7 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 				if e != nil {
 					return e
 				}
-				parts := strings.Split(token, ".")
-				if len(parts) != 3 || parts[0] != "kioku_agent" || parts[1] != store.ValueString(agent.AgentID) || agent.RevokedAt != nil {
+				if agent.RevokedAt != nil {
 					return nil
 				}
 				if _, e = sqlMember(q, store.ValueString(row.ProjectID), row.UserID); e != nil {

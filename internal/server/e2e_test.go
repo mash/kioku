@@ -333,10 +333,43 @@ func TestE2EAgentScopeSingleUseAndRevocation(t *testing.T) {
 	e.tool(access, "cli_login_code", map[string]string{"project": project, "role": "read"}, false, &grant)
 	var issued struct{ Token string }
 	e.expect(e.call("POST", "/api/agent/login", "", map[string]string{"code": grant.Code, "name": "reader"}), 200, &issued)
+	e.expect(e.call("POST", "/api/projects/"+project+"/agents", human, map[string]string{"name": "reader", "role": "read"}), 405, nil)
+	var projects []model.Project
+	e.expect(e.call("GET", "/api/projects", issued.Token, nil), 200, &projects)
+	if len(projects) != 1 || projects[0].Namespace != project {
+		t.Fatal("agent enumerated another project", projects)
+	}
+	for _, changed := range []string{issued.Token + "bad", strings.Replace(issued.Token, "kioku_agent.", "kioku_agent.other", 1)} {
+		e.expect(e.call("GET", "/api/me", changed, nil), 401, nil)
+	}
+	for _, suffix := range []string{"/snapshot?manifest=1", "/usage", "/jobs/unknown"} {
+		e.expect(e.call("GET", "/api/projects/"+other+suffix, issued.Token, nil), 404, nil)
+	}
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/projects"}, {"GET", "/api/orgs"}, {"POST", "/api/account/revoke-all"},
+		{"POST", "/api/projects/" + project + "/invites"}, {"DELETE", "/api/projects/" + project},
+		{"POST", "/api/projects/" + project + "/put"},
+		{"GET", "/api/projects/" + project + "/jobs/unknown/agent/input"},
+	} {
+		e.expect(e.call(route.method, route.path, issued.Token, nil), 403, nil)
+	}
+	listed := e.call("GET", "/api/projects/"+project+"/agents", human, nil)
+	e.expect(listed, 200, nil)
+	if strings.Contains(listed.Body.String(), issued.Token) || strings.Contains(listed.Body.String(), "token_hash") {
+		t.Fatal("agent list exposed credentials")
+	}
+	e.tool(access, "view_list", map[string]string{"project": project}, false, nil)
+	e.tool(access, "view_list", map[string]string{"project": other}, true, nil)
 	e.expect(e.call("GET", "/api/projects/"+project+"/snapshot?manifest=1", issued.Token, nil), 200, nil)
 	e.expect(e.call("GET", "/api/projects/"+other+"/snapshot?manifest=1", issued.Token, nil), 404, nil)
 	e.expect(e.call("POST", "/api/projects/"+project+"/generate", issued.Token, nil), 403, nil)
 	e.expect(e.call("GET", "/api/account", issued.Token, nil), 403, nil)
+	e.expect(e.call("POST", "/api/logout", issued.Token, nil), 200, nil)
+	e.expect(e.call("GET", "/api/projects", issued.Token, nil), 401, nil)
+	e.expect(e.call("GET", "/api/me", human, nil), 200, nil)
+	e.tool(access, "cli_login_code", map[string]string{"project": project, "role": "write"}, false, &grant)
+	e.expect(e.call("POST", "/api/agent/login", "", map[string]string{"code": grant.Code, "name": "writer"}), 200, &issued)
+	e.expect(e.call("GET", "/api/projects/"+project+"/jobs/unknown/agent/input", issued.Token, nil), 403, nil)
 	e.expect(e.call("POST", "/api/account/revoke-all", human, nil), 200, nil)
 	e.expect(e.call("GET", "/api/me", issued.Token, nil), 401, nil)
 	e.expect(e.call("GET", "/api/me", human, nil), 401, nil)

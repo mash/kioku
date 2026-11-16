@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/atomicfile"
 )
 
 const sessionRetention = 30 * 24 * time.Hour
@@ -105,7 +105,7 @@ func saveSession(sid string, now time.Time, s *sessionState) error {
 	if err != nil {
 		return err
 	}
-	if err := store.AtomicWrite(path, append(b, '\n'), 0600); err != nil {
+	if err := atomicfile.Write(path, append(b, '\n'), 0600); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(dir)

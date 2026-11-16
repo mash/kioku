@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mash/kioku/internal/atomicfile"
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/store"
 )
 
 // loadCipherForStorage runs under the catalog process lock.
@@ -43,7 +43,7 @@ func loadCipherForStorage(dataDir, explicitKey string, create bool) (*auth.Ciphe
 		return nil, err
 	}
 	// Persist before use so credentials and OAuth signatures survive restarts.
-	if err := store.AtomicWrite(path, []byte(encoded+"\n"), 0600); err != nil {
+	if err := atomicfile.Write(path, []byte(encoded+"\n"), 0600); err != nil {
 		return nil, fmt.Errorf("save encryption key: %w", err)
 	}
 	return cipher, nil

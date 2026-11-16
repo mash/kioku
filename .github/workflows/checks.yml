@@ -71,3 +71,7 @@ jobs:
       - run: make test-codex-plugin
       - run: go vet ./...
       - run: go build ./cmd/...
+      - name: Keep server dependencies out of the CLI
+        run: |
+          ! go list -deps ./cmd/kioku | grep -E 'modernc.org/sqlite|ory/fosite|go-oidc|go-jose|golang.org/x/oauth2'
+      - run: go mod tidy -diff

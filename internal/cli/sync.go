@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/atomicfile"
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/wiki"
 )
 
@@ -168,7 +167,7 @@ func (a *App) syncWiki() (syncResult, error) {
 			continue
 		}
 		old, e := os.ReadFile(path)
-		if e == nil && auth.Hash(string(old)) == remote.Files[name].Hash {
+		if e == nil && hashText(string(old)) == remote.Files[name].Hash {
 			continue
 		}
 		var file model.SnapshotFile
@@ -177,11 +176,11 @@ func (a *App) syncWiki() (syncResult, error) {
 			continue
 		}
 		// A publish may have advanced after the manifest: accept verified current bytes.
-		if len(file.Body) > 64<<20 || total-remote.Files[name].Bytes+int64(len(file.Body)) > 64<<20 || auth.Hash(file.Body) != file.Hash {
+		if len(file.Body) > 64<<20 || total-remote.Files[name].Bytes+int64(len(file.Body)) > 64<<20 || hashText(file.Body) != file.Hash {
 			failures = append(failures, fmt.Errorf("%s: invalid body hash or size", name))
 			continue
 		}
-		if e = store.AtomicWrite(path, []byte(file.Body), 0400); e != nil {
+		if e = atomicfile.Write(path, []byte(file.Body), 0400); e != nil {
 			failures = append(failures, e)
 			continue
 		}

@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/atomicfile"
 )
 
 type agentCredentials struct {
@@ -22,7 +21,7 @@ type agentCredentials struct {
 }
 
 func (a *App) agentCredentialPath() string {
-	return filepath.Join(filepath.Dir(a.AuthDir), "agents", auth.Hash(a.Config.Server), filepath.FromSlash(a.Config.Namespace)+".json")
+	return filepath.Join(filepath.Dir(a.AuthDir), "agents", hashText(a.Config.Server), filepath.FromSlash(a.Config.Namespace)+".json")
 }
 
 func (a *App) loadAgentCredentials(allowExpired bool) error {
@@ -139,7 +138,7 @@ func (a *App) agentLogin(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err = store.AtomicWrite(path, b, 0600); err != nil {
+	if err = atomicfile.Write(path, b, 0600); err != nil {
 		return err
 	}
 	stored = true

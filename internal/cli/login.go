@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/mash/kioku/internal/auth"
 )
 
 func (a *App) login(args []string) error {
@@ -34,13 +32,13 @@ func (a *App) loopback(provider string) error {
 		return err
 	}
 	defer listener.Close()
-	verifier, state := auth.Token(), auth.Token()
+	verifier, state := newToken(), newToken()
 	// Keep the attempt's deadline and credential writes local to this flow.
 	attempt := *a
 	attempt.ctx = ctx
 	var device struct{ Device, URL string }
 	if _, err := attempt.request("POST", startPath, map[string]string{
-		"provider": provider, "code_challenge": auth.Challenge(verifier), "code_challenge_method": "S256",
+		"provider": provider, "code_challenge": challenge(verifier), "code_challenge_method": "S256",
 		"redirect_uri": "http://" + listener.Addr().String() + "/callback", "state": state,
 	}, &device); err != nil {
 		return err

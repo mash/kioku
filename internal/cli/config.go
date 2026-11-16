@@ -12,8 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/atomicfile"
 )
 
 const defaultServer = "https://kioku.magicians.ee"
@@ -124,7 +123,7 @@ func (a *App) saveProjectConfig() error {
 		if err != nil {
 			return err
 		}
-		if err := store.AtomicWrite(filepath.Join(a.metadataDir(), "config"), b, 0600); err != nil {
+		if err := atomicfile.Write(filepath.Join(a.metadataDir(), "config"), b, 0600); err != nil {
 			return err
 		}
 	}
@@ -141,7 +140,7 @@ type credentials struct {
 }
 
 func (a *App) credentialPath() string {
-	return filepath.Join(a.AuthDir, auth.Hash(a.Config.Server)+".json")
+	return filepath.Join(a.AuthDir, hashText(a.Config.Server)+".json")
 }
 func (a *App) loadCredentials() error {
 	if info, err := os.Lstat(a.AuthDir); err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
@@ -180,5 +179,5 @@ func (a *App) saveCredentials() error {
 	if err != nil {
 		return err
 	}
-	return store.AtomicWrite(a.credentialPath(), b, 0600)
+	return atomicfile.Write(a.credentialPath(), b, 0600)
 }

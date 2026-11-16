@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/atomicfile"
 )
 
 type projectEntry struct {
@@ -79,7 +79,7 @@ func (a *App) resolveProjectDir(origin, namespace string) (string, error) {
 	return dir, nil
 }
 
-// Call after localLock. Lock the directory so AtomicWrite cannot replace the
+// Call after localLock. Lock the directory so atomicfile.Write cannot replace the
 // locked inode, and no separate lock file is needed.
 func updateProjects(path string, change func(*projectsFile) bool) error {
 	if err := ensureDirectory(filepath.Dir(path)); err != nil {
@@ -101,7 +101,7 @@ func updateProjects(path string, change func(*projectsFile) bool) error {
 	if err != nil {
 		return err
 	}
-	return store.AtomicWrite(path, append(b, '\n'), 0600)
+	return atomicfile.Write(path, append(b, '\n'), 0600)
 }
 
 func (a *App) addProjectEntry(server, namespace, dir string, description *string) error {

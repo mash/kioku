@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/atomicfile"
 	"github.com/mattn/go-isatty"
 )
 
@@ -66,5 +66,5 @@ func (a *App) trustAuthenticationServer() error {
 	if err != nil {
 		return err
 	}
-	return store.AtomicWrite(path, b, 0600)
+	return atomicfile.Write(path, b, 0600)
 }

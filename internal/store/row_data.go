@@ -62,7 +62,6 @@ type ViewResultData struct {
 	Error  *string `json:"error"`
 }
 type GenerationData struct {
-	Pending   bool  `json:"pending"`
 	Remaining int64 `json:"remaining"`
 	Next      int   `json:"next"`
 }

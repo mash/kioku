@@ -595,14 +595,14 @@ func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
 				parent = queueTestViewGeneration(t, f, token, p)
 			}
 			parent = storedJob(t, f, parent.ID)
-			if parent.ViewGeneration == nil || parent.ViewGeneration.Pending {
+			if parent.ViewGeneration == nil {
 				t.Fatal("view list was not captured in SQL transaction", parent)
 			}
 			if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
 				t.Fatal(err)
 			}
 			parent = storedJob(t, f, parent.ID)
-			if len(parent.Views) != 2 || parent.Views[0].Slug != "zeta" || parent.Views[1].Slug != "alpha" || parent.Views[0].Status != "running" || parent.ViewGeneration.Pending {
+			if len(parent.Views) != 2 || parent.Views[0].Slug != "zeta" || parent.Views[1].Slug != "alpha" || parent.Views[0].Status != "running" {
 				t.Fatal(parent.Views)
 			}
 			child := startTestGeneration(t, f, parent.ViewGeneration.ChildID)

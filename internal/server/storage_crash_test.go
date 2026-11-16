@@ -50,11 +50,7 @@ func (d crashCatalog) Write(ctx context.Context, fn func(*store.Queries) error) 
 		case "view":
 			hit = je == nil && j.Status == "completed"
 		case "cleanup":
-			if strings.Contains(d.stage, "unreference") {
-				hit = je == nil && !j.InputReady
-			} else {
-				hit = je == nil && j.CleanupComplete
-			}
+			hit = je == nil && j.CleanupComplete
 		case "delete":
 			if strings.Contains(d.stage, "references") {
 				rows, e := q.ProjectWiki("p")
@@ -140,11 +136,10 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 				return err
 			}
 		}
-		j := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, Phase: store.NullableString("agent_running"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
+		j := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", Phase: store.NullableString("agent_running"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
 		switch strings.Split(stage, "/")[0] {
 		case "input":
 			j.Status = "queued"
-			j.InputReady = false
 			j.Phase = nil
 			j.CleanupComplete = false
 			j.Data.Run = nil
@@ -163,7 +158,6 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 			j.Data.ViewGeneration = &store.GenerationData{Remaining: 100}
 		case "delete":
 			j.Status = "completed"
-			j.InputReady = false
 			j.CleanupComplete = true
 		}
 		return q.PutJob(j)
@@ -249,7 +243,9 @@ func assertStoredReferences(t *testing.T, o *storageOperations) map[blob.Key]str
 			return err
 		}
 		for _, j := range jobs {
-			if j.InputReady {
+			// Job input and output are read only while the job runs and has
+			// not started its View phase; cleanup deletes them afterwards.
+			if j.Status == "running" && j.GenerationSnapshot == nil {
 				keys[sqlJobKey(j, "input.tar.gz")] = ""
 				if j.OutputHash != nil {
 					keys[sqlJobKey(j, "output-"+*j.OutputHash+".tar.gz")] = *j.OutputHash
@@ -270,7 +266,7 @@ func assertStoredReferences(t *testing.T, o *storageOperations) map[blob.Key]str
 }
 func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 	t.Parallel()
-	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/unreference-before", "cleanup/unreference-after", "cleanup/delete", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
+	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/delete", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {
 			root := t.TempDir()
@@ -307,7 +303,7 @@ func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 			switch part {
 			case "input":
 				if j.Data.Run != nil {
-					if j.Status != "running" || !j.InputReady {
+					if j.Status != "running" {
 						t.Fatal(j)
 					}
 					resume = false
@@ -328,7 +324,7 @@ func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := readSQLJob(t, o, "j")
-				if got.InputReady || !got.CleanupComplete || got.Data.ViewGeneration.Remaining != 60 {
+				if !got.CleanupComplete || got.Data.ViewGeneration.Remaining != 60 {
 					t.Fatal(got)
 				}
 				if err := db.Read(t.Context(), func(q *store.Queries) error {
@@ -366,7 +362,7 @@ func assertCrashCheckpoint(t *testing.T, db *store.Database, stage string, j sto
 			if err != nil {
 				return err
 			}
-			if (j.Data.Run != nil) != after || j.InputReady != after || (i.RunID != nil) != after {
+			if (j.Data.Run != nil) != after || (i.RunID != nil) != after {
 				t.Fatal("Run and assignment were not atomic", j, i)
 			}
 		case "output":
@@ -398,13 +394,12 @@ func assertCrashCheckpoint(t *testing.T, db *store.Database, stage string, j sto
 				t.Fatal("View and child completion were not atomic", v, j)
 			}
 		case "cleanup":
-			unreferenced := stage != "cleanup/usage" && stage != "cleanup/unreference-before"
 			complete := stage == "cleanup/final-after"
 			remaining := int64(100)
 			if complete {
 				remaining = 60
 			}
-			if j.InputReady == unreferenced || j.CleanupComplete != complete || j.Data.ViewGeneration.Remaining != remaining {
+			if j.CleanupComplete != complete || j.Data.ViewGeneration.Remaining != remaining {
 				t.Fatal("cleanup checkpoint", j)
 			}
 		case "delete":

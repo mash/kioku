@@ -169,7 +169,6 @@ type JobRow struct {
 	Created            int64
 	Kind               string
 	SessionID          *string
-	InputReady         bool
 	CleanupComplete    bool
 	Phase              *string
 	OutputHash         *string
@@ -181,7 +180,7 @@ type JobRow struct {
 func scanJob(s rowScanner) (JobRow, error) {
 	var v JobRow
 	var raw string
-	err := s.Scan(&v.ID, &v.ProjectID, &v.Status, &v.Created, &v.Kind, &v.SessionID, &v.InputReady, &v.CleanupComplete, &v.Phase, &v.OutputHash, &v.GenerationSnapshot, &v.ParentID, &raw)
+	err := s.Scan(&v.ID, &v.ProjectID, &v.Status, &v.Created, &v.Kind, &v.SessionID, &v.CleanupComplete, &v.Phase, &v.OutputHash, &v.GenerationSnapshot, &v.ParentID, &raw)
 	if err != nil {
 		return v, err
 	}

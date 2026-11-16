@@ -102,16 +102,6 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		return false, err
 	}
 	defer unlock()
-	if err = o.db.Write(ctx, func(q *store.Queries) error {
-		current, e := q.Job(id)
-		if e != nil {
-			return e
-		}
-		current.InputReady = false
-		return q.PutJob(current)
-	}); err != nil {
-		return false, err
-	}
 	ioCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	keys, err := o.objects.List(ioCtx, "projects/"+j.ProjectID+"/.kioku/jobs/"+id+"/")

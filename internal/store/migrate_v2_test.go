@@ -301,7 +301,7 @@ func TestMigrationUsageSurvivesHistoryCompaction(t *testing.T) {
 			}
 		}
 		for _, j := range jobs {
-			if j.InputReady || !j.CleanupComplete {
+			if !j.CleanupComplete {
 				t.Fatal(j)
 			}
 		}

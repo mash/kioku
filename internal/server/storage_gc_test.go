@@ -120,7 +120,6 @@ func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
 	j := storageRunning(t, o, "j")
 	j.Status = "completed"
 	j.CleanupComplete = true
-	j.InputReady = false
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if e := q.PutJob(j); e != nil {
 			return e

@@ -36,7 +36,7 @@ func testJob(id, project, status string, created int64) JobRow {
 }
 func pointer[T any](v T) *T { return &v }
 
-func TestCatalogSchemaHasExactlyFifteenTablesAndSeventyEightColumns(t *testing.T) {
+func TestCatalogSchemaHasExactlyFifteenTablesAndSeventySevenColumns(t *testing.T) {
 	d := newCatalog(t)
 	var tables, columns int
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables); err != nil {
@@ -45,7 +45,7 @@ func TestCatalogSchemaHasExactlyFifteenTablesAndSeventyEightColumns(t *testing.T
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'").Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
-	if tables != 15 || columns != 78 {
+	if tables != 15 || columns != 77 {
 		t.Fatalf("tables=%d columns=%d", tables, columns)
 	}
 	for _, tc := range []struct {
@@ -82,7 +82,6 @@ func TestSchemaRejectsInvalidRows(t *testing.T) {
 		func(j *JobRow) { j.Status = "running" },
 		func(j *JobRow) { j.Phase = pointer("preparing"); j.CleanupComplete = false },
 		func(j *JobRow) { j.Data.Run = &RunData{} },
-		func(j *JobRow) { j.InputReady = true },
 		func(j *JobRow) { j.SessionID = pointer("s") },
 		func(j *JobRow) { j.GenerationSnapshot = pointer("") },
 		func(j *JobRow) { j.Data.ViewTask = &ViewTaskData{} },
@@ -95,7 +94,7 @@ func TestSchemaRejectsInvalidRows(t *testing.T) {
 		}
 	}
 	// A missing JSON key must not pass a CHECK through SQL NULL.
-	_, err := d.writer.Exec(`INSERT INTO jobs(id,project_id,status,created,kind,input_ready,data) VALUES('missing','p','queued',0,'generate',0,'{}')`)
+	_, err := d.writer.Exec(`INSERT INTO jobs(id,project_id,status,created,kind,data) VALUES('missing','p','queued',0,'generate','{}')`)
 	if err == nil {
 		t.Fatal("missing null keys accepted")
 	}
@@ -355,7 +354,7 @@ func TestCleanupDefaultAndUnconsumedChildConstraints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.writer.Exec(`INSERT INTO jobs(id,project_id,status,created,kind,input_ready,data) VALUES('default','p','queued',0,'generate',0,?)`, raw); err != nil {
+	if _, err := d.writer.Exec(`INSERT INTO jobs(id,project_id,status,created,kind,data) VALUES('default','p','queued',0,'generate',?)`, raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Read(t.Context(), func(q *Queries) error {

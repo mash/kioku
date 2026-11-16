@@ -148,7 +148,6 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		j.Status = "running"
 		j.Phase = &phase
 		j.CleanupComplete = false
-		j.InputReady = true
 		j.Data.Run = &store.RunData{UsesProviderFiles: file, PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget}
 		if j.Data.WikiStatus != nil {
 			j.Data.WikiStatus = store.NullableString("running")
@@ -225,7 +224,7 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		if err != nil {
 			return err
 		}
-		if !current.InputReady || store.ValueString(current.Phase) == "finalizing" || current.GenerationSnapshot != nil {
+		if current.Phase == nil || store.ValueString(current.Phase) == "finalizing" || current.GenerationSnapshot != nil {
 			return fail(409, "job no longer accepts output")
 		}
 		j = current

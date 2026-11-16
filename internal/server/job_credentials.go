@@ -32,7 +32,7 @@ func checkSQLJobCredential(q *store.Queries, cipher *auth.Cipher, token, pid, id
 		}
 		return store.JobRow{}, err
 	}
-	if !job.InputReady || job.Data.Run.UsesProviderFiles || job.GenerationSnapshot != nil || job.Phase == nil || *job.Phase == "finalizing" {
+	if job.Data.Run.UsesProviderFiles || job.GenerationSnapshot != nil || job.Phase == nil || *job.Phase == "finalizing" {
 		return store.JobRow{}, fail(409, "job input and output are not available")
 	}
 	return job, nil

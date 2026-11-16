@@ -115,7 +115,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		}
 		if g := job.ViewGeneration; g != nil {
 			row.GenerationSnapshot = &g.Snapshot
-			row.Data.ViewGeneration = &GenerationData{Pending: g.Pending, Remaining: g.Remaining, Next: g.Next}
+			row.Data.ViewGeneration = &GenerationData{Remaining: g.Remaining, Next: g.Next}
 		}
 		// Only unconsumed children retain linkage in v3. Migration accepts
 		// terminal jobs only; keep their kind so HTTP history still hides them.

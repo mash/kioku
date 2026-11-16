@@ -50,7 +50,7 @@ func (o *storageOperations) collectGarbage(ctx context.Context, project string) 
 			return e
 		}
 		for _, j := range jobs {
-			if j.InputReady {
+			if j.Phase != nil && !j.CleanupComplete {
 				live[sqlJobKey(j, "input.tar.gz")] = true
 				if j.OutputHash != nil {
 					live[sqlJobKey(j, "output-"+*j.OutputHash+".tar.gz")] = true

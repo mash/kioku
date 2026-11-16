@@ -16,7 +16,7 @@ import (
 
 func storageRunning(t *testing.T, o *storageOperations, id string) store.JobRow {
 	t.Helper()
-	j := store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, CleanupComplete: false, Phase: store.NullableString("output_received"), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 1000}}}
+	j := store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", CleanupComplete: false, Phase: store.NullableString("output_received"), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 1000}}}
 	sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
 	return j
 }
@@ -202,7 +202,7 @@ func TestCleanupUnreferencesBeforeDelete(t *testing.T) {
 				return e
 			}
 			_, e = q.Usage("j")
-			if j.InputReady || j.CleanupComplete {
+			if j.CleanupComplete {
 				t.Fatal(j)
 			}
 			return e
@@ -218,7 +218,7 @@ func TestCleanupUnreferencesBeforeDelete(t *testing.T) {
 				return e
 			}
 			u, e := q.Usage("j")
-			if !j.InputReady || u.Data.CostCents == nil || *u.Data.CostCents != 40 {
+			if u.Data.CostCents == nil || *u.Data.CostCents != 40 {
 				t.Fatal(j, u)
 			}
 			return e
@@ -237,7 +237,6 @@ func TestParentConsumesChildCostOnce(t *testing.T) {
 		o, _ := storageFixture(t)
 		child := storageRunning(t, o, "child")
 		child.Status = "completed"
-		child.InputReady = false
 		child.CleanupComplete = true
 		child.ParentID = store.NullableString("parent")
 		child.Data.ViewTask = &store.ViewTaskData{ViewID: "v1"}
@@ -339,7 +338,7 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 	if done, e := o.cleanup(t.Context(), "j", status, nil); e == nil || done {
 		t.Fatal(done, e)
 	}
-	if got := readSQLJob(t, o, "j"); got.InputReady || got.CleanupComplete || got.Data.ViewGeneration.Remaining != 100 {
+	if got := readSQLJob(t, o, "j"); got.CleanupComplete || got.Data.ViewGeneration.Remaining != 100 {
 		t.Fatal(got)
 	}
 	// A new instance sees the stored usage and ignores a later known value.
@@ -402,7 +401,7 @@ func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
 		if done, err := resumed.cleanup(t.Context(), "j", runner.Status{State: runner.StateNone}, cleanup); err != nil || !done || cleaned != 1 {
 			t.Fatalf("cleanup delayed after session deletion: %v %v %d", done, err, cleaned)
 		}
-		if got := readSQLJob(t, resumed, "j"); got.InputReady || !got.CleanupComplete {
+		if got := readSQLJob(t, resumed, "j"); !got.CleanupComplete {
 			t.Fatal(got)
 		}
 		if err := o.db.Read(t.Context(), func(q *store.Queries) error {

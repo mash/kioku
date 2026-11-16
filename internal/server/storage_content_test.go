@@ -79,7 +79,7 @@ func TestInputPutBeforeRunCommit(t *testing.T) {
 		})
 	}
 	job, err := o.prepareInput(t.Context(), "j", false, func(context.Context, storageInput) ([]byte, error) { return []byte("archive"), nil })
-	if err != nil || job.Status != "running" || !job.InputReady || job.Data.Run == nil {
+	if err != nil || job.Status != "running" || job.Data.Run == nil {
 		t.Fatal(job, err)
 	}
 	if err = o.db.Read(t.Context(), func(q *store.Queries) error {
@@ -150,7 +150,7 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 				t.Fatalf("preparation error = %v", err)
 			}
 			j := readSQLJob(t, o, "j")
-			if j.Status != "failed" || store.ValueString(j.Data.WikiStatus) != "failed" || store.ValueString(j.Data.Error) != context.DeadlineExceeded.Error() || j.Data.Run != nil || j.InputReady {
+			if j.Status != "failed" || store.ValueString(j.Data.WikiStatus) != "failed" || store.ValueString(j.Data.Error) != context.DeadlineExceeded.Error() || j.Data.Run != nil {
 				t.Fatalf("timed-out preparation was left retryable: %+v", j)
 			}
 			fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error {
@@ -187,7 +187,7 @@ func TestInputPreparationCancellationKeepsJobQueued(t *testing.T) {
 		t.Fatalf("preparation error = %v", err)
 	}
 	j := readSQLJob(t, o, "j")
-	if j.Status != "queued" || j.Data.Run != nil || j.InputReady {
+	if j.Status != "queued" || j.Data.Run != nil {
 		t.Fatalf("shutdown cancellation changed unstarted job: %+v", j)
 	}
 }

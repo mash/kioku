@@ -186,19 +186,6 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 				g.Next = len(p.Data.Views)
 			}
 		}
-		if g.Pending {
-			views, e := q.ProjectViews(p.ProjectID)
-			if e != nil {
-				return e
-			}
-			p.Data.Views = []store.ViewResultData{}
-			for _, v := range views {
-				if v.Slug != "wiki" {
-					p.Data.Views = append(p.Data.Views, store.ViewResultData{ViewID: v.ID, Slug: v.Slug, Status: "pending"})
-				}
-			}
-			g.Pending = false
-		}
 		// A completed child must be consumed before checking authorization for
 		// the next one: its immutable cost is retained even after revocation.
 		if authErr := sqlJobAuthorization(q, p, o.now().UnixMilli()); authErr != nil {

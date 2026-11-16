@@ -30,12 +30,22 @@ func TestConcurrentPutReadPublishAndGC(t *testing.T) {
 		func(i int) error { _, err := readFixtureWikiFile(t.Context(), o, "wiki/index.md"); return err },
 		func(i int) error {
 			id := fmt.Sprintf("j-%d", i)
-			if err := o.db.Write(t.Context(), func(q *store.Queries) error {
-				return q.PutJob(store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", Phase: store.NullableString("output_received"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}})
-			}); err != nil {
+			// Upload the input and commit the job under the content gate, as
+			// prepareInput does.
+			unlock, err := o.lock(t.Context(), "p")
+			if err != nil {
 				return err
 			}
-			_, err := o.publishWiki(t.Context(), id, map[string]string{"wiki/index.md": fmt.Sprintf("wiki %d", i)})
+			j := store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", Phase: store.NullableString("output_received"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
+			err = o.objects.Put(t.Context(), sqlJobKey(j, "input.tar.gz"), []byte("input"))
+			if err == nil {
+				err = o.db.Write(t.Context(), func(q *store.Queries) error { return q.PutJob(j) })
+			}
+			unlock()
+			if err != nil {
+				return err
+			}
+			_, err = o.publishWiki(t.Context(), id, map[string]string{"wiki/index.md": fmt.Sprintf("wiki %d", i)})
 			return err
 		},
 		func(i int) error { _, err := o.collectGarbage(t.Context(), "p"); return err },

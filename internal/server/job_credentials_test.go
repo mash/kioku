@@ -19,7 +19,6 @@ func TestJobCipherChecksCurrentRun(t *testing.T) {
 		{"completed", func(j *store.JobRow) { j.Status = "completed" }, 403},
 		{"stopping", func(j *store.JobRow) { j.Data.Run.AbortReason = sqlTestPtr("revoked") }, 403},
 		{"finalizing", func(j *store.JobRow) { j.Phase = sqlTestPtr("finalizing") }, 409},
-		{"unprepared", func(j *store.JobRow) { j.InputReady = false }, 409},
 		{"file", func(j *store.JobRow) { j.Data.Run.UsesProviderFiles = true }, 409},
 		{"parent-wait", func(j *store.JobRow) {
 			j.GenerationSnapshot = sqlTestPtr("")
@@ -29,7 +28,6 @@ func TestJobCipherChecksCurrentRun(t *testing.T) {
 			j.Phase = nil
 			j.Data.Run = nil
 			j.CleanupComplete = false
-			j.InputReady = false
 			j.GenerationSnapshot = sqlTestPtr("")
 			j.Data.ViewGeneration = &store.GenerationData{}
 		}, 403},
@@ -37,7 +35,7 @@ func TestJobCipherChecksCurrentRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d, c := sqlAuthFixture(t)
 			now := time.UnixMilli(1000)
-			job := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", Phase: sqlTestPtr("preparing"), CleanupComplete: false, InputReady: true, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 2000}}}
+			job := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", Phase: sqlTestPtr("preparing"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 2000}}}
 			tc.mutate(&job)
 			sqlWrite(t, d, func(q *store.Queries) error { return q.PutJob(job) })
 			raw, err := c.SealJobCredential(auth.JobCredential{JobID: "j", Expires: 3000})

@@ -89,7 +89,6 @@ type fixtureAttempt struct {
 
 type fixtureViewGeneration struct {
 	Snapshot  string `json:"snapshot"`
-	Pending   bool   `json:"pending,omitempty"`
 	Remaining int64  `json:"remaining"`
 	Next      int    `json:"next"`
 	ChildID   string `json:"child_id,omitempty"`
@@ -214,7 +213,7 @@ func fixtureRow(j fixtureJob) store.JobRow {
 	if j.ViewGeneration != nil {
 		g := j.ViewGeneration
 		row.GenerationSnapshot = &g.Snapshot
-		row.Data.ViewGeneration = &store.GenerationData{Pending: g.Pending, Remaining: g.Remaining, Next: g.Next}
+		row.Data.ViewGeneration = &store.GenerationData{Remaining: g.Remaining, Next: g.Next}
 	}
 	if j.ViewTask != nil {
 		row.ParentID = &j.ViewTask.ParentID
@@ -228,7 +227,6 @@ func fixtureRow(j fixtureJob) store.JobRow {
 		}
 		row.Phase = &phase
 		row.CleanupComplete = r.CleanupComplete
-		row.InputReady = !r.CleanupComplete
 		row.SessionID = store.NullableString(r.Ref.ID)
 		row.OutputHash = store.NullableString(r.OutputHash)
 		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, UploadStarted: r.Ref.UploadStarted, InputFileID: store.NullableString(r.Ref.InputFileID), AbortReason: store.NullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: store.NullableString(r.OutputRejection), BudgetCents: r.BudgetCents}
@@ -270,7 +268,7 @@ func fixtureJobProjection(t testing.TB, q *store.Queries, row store.JobRow) fixt
 	fixtureCheck(t, err)
 	j := fixtureJob{ID: pub.ID, ProjectID: pub.ProjectID, Kind: pub.Kind, Status: pub.Status, Created: pub.Created, UserID: pub.UserID, AgentID: pub.AgentID, AgentBudgetCents: pub.AgentBudgetCents, Automatic: pub.Automatic, Error: pub.Error, Revision: pub.Revision, WikiStatus: pub.WikiStatus, Unchanged: pub.Unchanged, Views: pub.Views}
 	if g := row.Data.ViewGeneration; g != nil {
-		j.ViewGeneration = &fixtureViewGeneration{Snapshot: store.ValueString(row.GenerationSnapshot), Pending: g.Pending, Remaining: g.Remaining, Next: g.Next, ChildID: fixtureChildID(t, q, row.ID)}
+		j.ViewGeneration = &fixtureViewGeneration{Snapshot: store.ValueString(row.GenerationSnapshot), Remaining: g.Remaining, Next: g.Next, ChildID: fixtureChildID(t, q, row.ID)}
 	}
 	if v := row.Data.ViewTask; v != nil {
 		j.ViewTask = &fixtureViewTask{ParentID: store.ValueString(row.ParentID), ViewID: v.ViewID, Snapshot: fixtureParentSnapshot(t, q, row.ParentID)}

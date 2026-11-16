@@ -35,7 +35,7 @@ func TestRunnerStartupSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, change := range []func(*Config){func(c *Config) { c.MAAgentVersion = -1 }, func(c *Config) { c.BaseURL = "https://kioku.test/path" }, func(c *Config) { c.AgentMaxSessionCents = 49 }} {
+	for _, change := range []func(*Config){func(c *Config) { c.BaseURL = "https://kioku.test/path" }} {
 		c := Config{Prompts: defaultPrompts(t), Type: "claudemanaged", AnthropicAPIKey: "key", MAAgentID: "agent", MAEnvironmentID: "environment", BaseURL: "https://kioku.test"}
 		change(&c)
 		if _, err := Load(c, nil); err == nil {

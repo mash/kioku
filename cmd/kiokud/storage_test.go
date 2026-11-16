@@ -22,6 +22,9 @@ func TestOpenStorageEnvironment(t *testing.T) {
 	if _, ok := objects.(local.Store); !ok {
 		t.Fatalf("unexpected local backend %T", objects)
 	}
+	if err = objects.Put(context.Background(), "projects/p/wiki/index.md", []byte("wiki")); err != nil {
+		t.Fatal(err)
+	}
 	values = map[string]string{"S3_ENDPOINT": "https://storage.example.com", "S3_REGION": "eu-west-1", "S3_BUCKET": "kioku-projects", "S3_ACCESS_KEY_ID": "test", "S3_SECRET_ACCESS_KEY": "secret", "S3_SESSION_TOKEN": "session"}
 	objects, err = openStorage(blob.BackendS3, t.TempDir(), getenv)
 	if err != nil {

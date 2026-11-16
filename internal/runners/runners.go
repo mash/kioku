@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"time"
 
 	"github.com/mash/kioku/prompts"
 
@@ -18,22 +17,19 @@ import (
 )
 
 type Config struct {
-	Prompts              *prompts.Rendered
-	Type                 string
-	OpenAIAPIKey         string
-	OpenAIModel          string
-	Command              []string
-	DataDir              string
-	AnthropicAPIKey      string
-	MAAgentID            string
-	MAAgentVersion       int64
-	MAEnvironmentID      string
-	MABaseURL            string
-	ManagedAgents        claudemanaged.FileClient
-	BaseURL              string
-	AgentMaxSessions     int
-	AgentJobTimeout      time.Duration
-	AgentMaxSessionCents int64
+	Prompts         *prompts.Rendered
+	Type            string
+	OpenAIAPIKey    string
+	OpenAIModel     string
+	Command         []string
+	DataDir         string
+	AnthropicAPIKey string
+	MAAgentID       string
+	MAAgentVersion  int64
+	MAEnvironmentID string
+	MABaseURL       string
+	ManagedAgents   claudemanaged.FileClient
+	BaseURL         string
 }
 
 type Set struct {
@@ -43,15 +39,6 @@ type Set struct {
 }
 
 func Load(c Config, onExit func(string)) (*Set, error) {
-	if c.AgentMaxSessions == 0 {
-		c.AgentMaxSessions = 4
-	}
-	if c.AgentJobTimeout == 0 {
-		c.AgentJobTimeout = time.Hour
-	}
-	if c.AgentMaxSessionCents == 0 {
-		c.AgentMaxSessionCents = 1000
-	}
 	c.Command = slices.Clone(c.Command)
 	s := &Set{config: c}
 	if err := s.prepareRunner(onExit); err != nil {

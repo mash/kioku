@@ -29,9 +29,6 @@ func (s *Set) prepareManaged() error {
 	if count != 0 && count != 3 {
 		return errors.New("ANTHROPIC_API_KEY, KIOKU_MA_AGENT_ID and KIOKU_MA_ENVIRONMENT_ID must be configured together")
 	}
-	if c.MAAgentVersion < 0 || c.AgentMaxSessions < 1 || c.AgentJobTimeout <= 0 || c.AgentMaxSessionCents < 50 || c.AgentMaxSessionCents > 1_000_000 {
-		return errors.New("invalid managed agent limits")
-	}
 	if count == 3 {
 		if !validBaseOrigin(c.BaseURL) {
 			return errors.New("managed generation requires a valid KIOKU_BASE_URL origin")

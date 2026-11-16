@@ -99,7 +99,7 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 		if err != nil {
 			return runner.Status{}, err
 		}
-		if s.ID != id || s.Metadata["kioku_job_id"] != a.Key.JobID || s.Metadata["kioku_attempt_id"] != a.Key.JobID {
+		if s.ID != id || s.Metadata["kioku_job_id"] != a.Key.JobID {
 			return runner.Status{}, errors.New("Claude session does not match the generation attempt")
 		}
 		found++

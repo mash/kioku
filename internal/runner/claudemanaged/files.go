@@ -42,7 +42,7 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 				System: system, Model: r.model, MAAgentID: r.agentID, MAAgentVersion: version,
 				EnvironmentID: r.environmentID, InputFileID: id, BudgetCents: spec.BudgetCents,
 				Title: "Kioku wiki " + spec.Key.JobID, FirstMessage: spec.FirstMessage,
-				Metadata: map[string]string{"kioku_job_id": spec.Key.JobID, "kioku_attempt_id": spec.Key.JobID},
+				Metadata: map[string]string{"kioku_job_id": spec.Key.JobID},
 			})
 		})
 }

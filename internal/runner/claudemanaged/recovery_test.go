@@ -29,7 +29,7 @@ func (c *partialCleanupClient) GetSession(_ context.Context, id string) (Session
 	if !c.remaining[id] {
 		return Session{}, &APIError{Status: 404}
 	}
-	return Session{ID: id, Status: "idle", LastStopReason: "end_turn", Metadata: map[string]string{"kioku_job_id": "job", "kioku_attempt_id": "job"}}, nil
+	return Session{ID: id, Status: "idle", LastStopReason: "end_turn", Metadata: map[string]string{"kioku_job_id": "job"}}, nil
 }
 func (c *partialCleanupClient) DeleteSession(_ context.Context, id string) error {
 	if id == "second" && !c.failed {
@@ -75,7 +75,7 @@ func TestClaudeFileExecutionFailureSurvivesOutputReceipt(t *testing.T) {
 func TestClaudeDiscoveryRejectsEmptySessionID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"data":[{"id":"","metadata":{"kioku_job_id":"job","kioku_attempt_id":"job"}}]}`)
+		io.WriteString(w, `{"data":[{"id":"","metadata":{"kioku_job_id":"job"}}]}`)
 	}))
 	defer srv.Close()
 	a := NewAPI(srv.URL, "key", srv.Client())

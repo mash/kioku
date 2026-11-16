@@ -23,7 +23,7 @@ func newClient(t *testing.T) (*claudemanaged.API, *fake.Server) {
 }
 func createSession(t *testing.T, a *claudemanaged.API, job string) string {
 	t.Helper()
-	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", InputFileID: "input", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job, "kioku_attempt_id": job}, FirstMessage: "Input and output URLs"})
+	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", InputFileID: "input", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job}, FirstMessage: "Input and output URLs"})
 	if err != nil {
 		t.Fatal(err)
 	}

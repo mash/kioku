@@ -127,7 +127,8 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 	}
 	ioCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	body, err := build(ioCtx, input)
-	if err == nil {
+	if err == nil && !file {
+		// Provider-file runs receive the archive in memory; only HTTP runs read it back.
 		err = o.objects.Put(ioCtx, sqlJobKey(input.Job, "input.tar.gz"), body)
 	}
 	cancel()

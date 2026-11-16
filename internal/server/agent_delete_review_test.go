@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
@@ -69,10 +71,11 @@ func TestManagedDeleteDefersProviderRejections(t *testing.T) {
 func TestManagedDeleteStorageFailureRemainsInternalError(t *testing.T) {
 	t.Parallel()
 	f, token, p, ma := managedFixture(t)
-	j := startManaged(t, f, token, p.ID, true)
+	putFile(t, f, token, p.ID, "x.md", "evidence")
+	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	objects := f.s.Blobs
-	f.s.Blobs = unavailableCleanupStore{objects}
+	f.s.Blobs = unavailableDeleteStore{objects}
 	f.s.storage.objects = f.s.Blobs
 	path := "/api/projects/" + p.ID
 	if code := f.request("DELETE", path, token, nil, nil); code != 500 {
@@ -99,4 +102,10 @@ func TestRemovedSourceDeletionRouteLeavesGenerationRunning(t *testing.T) {
 	if ma.Session(j.Run.Ref.ID).Interrupted {
 		t.Error("404 interrupted session")
 	}
+}
+
+type unavailableDeleteStore struct{ blob.Store }
+
+func (unavailableDeleteStore) Delete(context.Context, blob.Key) error {
+	return errors.New("delete unavailable")
 }

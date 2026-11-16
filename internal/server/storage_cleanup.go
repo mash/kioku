@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"strings"
-	"time"
 
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
@@ -85,26 +83,8 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 			return false, err
 		}
 	}
-	unlock, err := o.lock(ctx, j.ProjectID)
-	if err != nil {
-		return false, err
-	}
-	defer unlock()
-	ioCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	keys, err := o.objects.List(ioCtx, "projects/"+j.ProjectID+"/.kioku/jobs/"+id+"/")
-	if err != nil {
-		return false, err
-	}
-	for _, key := range keys {
-		if strings.HasSuffix(string(key), ".tar.gz") {
-			if err = o.objects.Delete(ioCtx, key); err != nil {
-				return false, err
-			}
-		}
-	}
-	cancel()
-	err = o.db.Write(ctx, func(q *store.Queries) error {
+	// The hourly GC deletes the job archives once cleanup_complete is set.
+	err := o.db.Write(ctx, func(q *store.Queries) error {
 		current, e := q.Job(id)
 		if e != nil {
 			return e

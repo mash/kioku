@@ -244,7 +244,7 @@ func assertStoredReferences(t *testing.T, o *storageOperations) map[blob.Key]str
 		}
 		for _, j := range jobs {
 			// Job input and output are read only while the job runs and has
-			// not started its View phase; cleanup deletes them afterwards.
+			// not started its View phase; GC deletes them after cleanup.
 			if j.Status == "running" && j.GenerationSnapshot == nil {
 				keys[sqlJobKey(j, "input.tar.gz")] = ""
 				if j.OutputHash != nil {
@@ -266,7 +266,7 @@ func assertStoredReferences(t *testing.T, o *storageOperations) map[blob.Key]str
 }
 func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 	t.Parallel()
-	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/delete", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
+	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {
 			root := t.TempDir()

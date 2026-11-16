@@ -107,11 +107,7 @@ func TestUserOverrideKeepsJOBMetadata(t *testing.T) {
 	if !found {
 		t.Fatal("session not created")
 	}
-	data, err := f.s.Blobs.Get(t.Context(), fixtureJobKey(j, "input.tar.gz"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := readInput(t, data)
+	files := readInput(t, ma.Input(storedJob(t, f, j.ID).Run.Ref.InputFileID))
 	want := agentgen.JobMetadata(agentgen.InputSpec{JobID: j.ID, Namespace: p.Namespace})
 	if files["JOB.md"] != want || strings.Contains(files["JOB.md"], "Read ") {
 		t.Fatal(files["JOB.md"])

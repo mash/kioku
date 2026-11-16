@@ -332,8 +332,8 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 	}
 	cost := int64(40)
 	status := runner.Status{State: runner.StateStopped, Usage: runner.UsageSample{CostCents: &cost}}
-	b.del = func(context.Context, blob.Key) error { return errors.New("delete unavailable") }
-	if done, e := o.cleanup(t.Context(), "j", status, nil); e == nil || done {
+	unavailable := func(context.Context, runner.Attempt) error { return errors.New("provider cleanup unavailable") }
+	if done, e := o.cleanup(t.Context(), "j", status, unavailable); e == nil || done {
 		t.Fatal(done, e)
 	}
 	if got := readSQLJob(t, o, "j"); got.CleanupComplete || got.Data.ViewGeneration.Remaining != 100 {
@@ -342,7 +342,6 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 	// A new instance sees the stored usage and ignores a later known value.
 	resumed := newStorageOperations(o.db, b, o.config)
 	resumed.now = o.now
-	b.del = nil
 	late := int64(88)
 	status.Usage.CostCents = &late
 	if done, e := resumed.cleanup(t.Context(), "j", status, nil); e != nil || !done {

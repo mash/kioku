@@ -164,6 +164,9 @@ func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob)
 	if !ma.Session(j.Run.Ref.ID).Deleted || ma.FileExists(j.Run.Ref.InputFileID) {
 		t.Error("remote resources remain active")
 	}
+	if _, err := f.s.storage.collectGarbage(context.Background(), j.ProjectID); err != nil {
+		t.Error(err)
+	}
 	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(j))
 	if err != nil || len(keys) != 0 {
 		t.Error(keys, err)

@@ -9,15 +9,16 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/runner/claudemanaged/fake"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
-func wikiInputArchive(t *testing.T, f *fixture, job fixtureJob) []byte {
+func wikiInputArchive(t *testing.T, f *fixture, ma *fake.Server, job fixtureJob) []byte {
 	t.Helper()
-	data, err := f.s.Blobs.Get(t.Context(), fixtureJobKey(job, "input.tar.gz"))
-	if err != nil {
-		t.Fatal(err)
+	data := ma.Input(storedJob(t, f, job.ID).Run.Ref.InputFileID)
+	if len(data) == 0 {
+		t.Fatal("missing uploaded input")
 	}
 	return data
 }
@@ -50,7 +51,7 @@ func TestWikiPromptGeneration(t *testing.T) {
 			}
 			putFile(t, f, token, p.ID, "source.md", "Evidence")
 			parent := queueTestViewGeneration(t, f, token, p)
-			archive := wikiInputArchive(t, f, parent)
+			archive := wikiInputArchive(t, f, ma, parent)
 			input := readInput(t, archive)
 			if input["WIKI.md"] != want {
 				t.Fatalf("WIKI.md = %q, want %q", input["WIKI.md"], want)
@@ -75,7 +76,7 @@ func TestWikiPromptGeneration(t *testing.T) {
 			if code := f.request("PATCH", api, token, map[string]string{"prompt": "次回から変更する。"}, nil); code != 200 {
 				t.Fatal(code)
 			}
-			if !bytes.Equal(archive, wikiInputArchive(t, f, parent)) {
+			if !bytes.Equal(archive, wikiInputArchive(t, f, ma, parent)) {
 				t.Fatal("PATCH changed the running input archive")
 			}
 			sendOutput(t, f, ma, parent, "Published Wiki")
@@ -94,7 +95,7 @@ func TestWikiPromptGeneration(t *testing.T) {
 				t.Fatal(err)
 			}
 			child := nextTestViewTask(t, f, parent)
-			childInput := readInput(t, wikiInputArchive(t, f, child))
+			childInput := readInput(t, wikiInputArchive(t, f, ma, child))
 			if _, ok := childInput["WIKI.md"]; ok {
 				t.Fatal("View input contains WIKI.md")
 			}

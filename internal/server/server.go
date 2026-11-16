@@ -39,7 +39,7 @@ type Config struct {
 
 // Runners supplies configured runners.
 type Runners interface {
-	New(store.JobRow) (runner.Runner, error)
+	New() (runner.Runner, error)
 }
 
 // SetRunners injects generation services before serving requests or starting workers.

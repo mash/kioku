@@ -130,7 +130,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			row.Phase = &run.Phase
 			row.SessionID = NullableString(run.Ref.ID)
 			row.OutputHash = NullableString(run.OutputHash)
-			row.Data.Run = &RunData{UsesProviderFiles: run.Ref.UsesProviderFiles, Provider: NullableString(run.Ref.Resources["provider"]), UploadStarted: run.Ref.Resources["upload_started"] == "true", InputFileID: NullableString(run.Ref.Resources["input_file_id"]), AbortReason: NullableString(run.AbortReason), PreparedAt: migrationCreated(run.PreparedAt), Deadline: migrationCreated(run.Deadline), OutputWaitSince: migrationOptionalTime(run.OutputWaitSince), OutputRejection: NullableString(run.OutputRejection), BudgetCents: run.BudgetCents}
+			row.Data.Run = &RunData{UsesProviderFiles: run.Ref.UsesProviderFiles, UploadStarted: run.Ref.Resources["upload_started"] == "true", InputFileID: NullableString(run.Ref.Resources["input_file_id"]), AbortReason: NullableString(run.AbortReason), PreparedAt: migrationCreated(run.PreparedAt), Deadline: migrationCreated(run.Deadline), OutputWaitSince: migrationOptionalTime(run.OutputWaitSince), OutputRejection: NullableString(run.OutputRejection), BudgetCents: run.BudgetCents}
 			cost := run.CostCents
 			if cost != nil && *cost < 0 {
 				cost = nil

@@ -114,7 +114,7 @@ func TestClaudeFileGenerationRecoversAndValidatesSessionOutput(t *testing.T) {
 				}
 				return
 			}
-			if !j.Run.Ref.UsesProviderFiles || j.Run.Ref.Resources["input_file_id"] != "input" {
+			if !j.Run.Ref.UsesProviderFiles || j.Run.Ref.InputFileID != "input" {
 				t.Fatal(j.Run)
 			}
 			// Recover the saved session ID as if kiokud stopped before recording

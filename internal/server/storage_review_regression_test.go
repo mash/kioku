@@ -175,7 +175,6 @@ func TestClaudeFileFailureRejectsPreviouslyReceivedOutput(t *testing.T) {
 			return err
 		}
 		row.Data.Run.UsesProviderFiles = true
-		row.Data.Run.Provider = store.NullableString("claudemanaged")
 		return q.PutJob(row)
 	}))
 	f.runnerConfig.ManagedAgents = claudemanaged.NewAPI(ma.URL(), "synthetic", ma.HTTP.Client())

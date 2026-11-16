@@ -191,13 +191,6 @@ func TestReconcileJobStopsWithShutdownContext(t *testing.T) {
 	}
 }
 
-type observingRunners struct {
-	Runners
-	newRun func(store.JobRow) (runner.Runner, error)
-}
-
-func (r observingRunners) New(job store.JobRow) (runner.Runner, error) { return r.newRun(job) }
-
 func TestExecPromptOverridesOnWire(t *testing.T) {
 	t.Parallel()
 	f, token, p := execFixture(t, "custom")

@@ -31,18 +31,14 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 	if s.runners == nil {
 		return s.failUnstartedJob(ctx, job.ID, runner.ErrNotConfigured)
 	}
-	r, err := s.runners.New(job)
+	r, err := s.runners.New()
 	if err != nil {
 		return s.failUnstartedJob(ctx, job.ID, err)
 	}
 	files, offline := r.(runner.FileRunner)
-	provider := ""
-	if offline {
-		provider = files.Provider()
-	}
 	var archive []byte
 	var spec agentgen.InputSpec
-	job, err = s.storage.prepareInput(ctx, job.ID, offline, provider, func(ctx context.Context, in storageInput) ([]byte, error) {
+	job, err = s.storage.prepareInput(ctx, job.ID, offline, func(ctx context.Context, in storageInput) ([]byte, error) {
 		spec = agentgen.InputSpec{JobID: in.Job.ID}
 		if err := s.Store.Read(ctx, func(q *store.Queries) error {
 			org, err := q.Organization(in.Project.OrgID)

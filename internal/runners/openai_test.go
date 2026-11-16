@@ -9,7 +9,6 @@ import (
 
 	"github.com/mash/kioku/internal/runner"
 	openairunner "github.com/mash/kioku/internal/runner/openai"
-	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -20,7 +19,7 @@ func TestOpenAISelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(t.Context())
-	r, err := s.New(store.JobRow{})
+	r, err := s.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +75,7 @@ func TestOpenAIPromptOverridesOnWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer set.Close(t.Context())
-	r, err := set.New(store.JobRow{})
+	r, err := set.New()
 	if err != nil {
 		t.Fatal(err)
 	}

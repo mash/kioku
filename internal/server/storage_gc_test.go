@@ -90,7 +90,7 @@ func TestProjectLockProtectsInputSelectionAndRead(t *testing.T) {
 	selected, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, e := o.prepareInput(t.Context(), "j", false, "", func(context.Context, storageInput) ([]byte, error) {
+		_, e := o.prepareInput(t.Context(), "j", false, func(context.Context, storageInput) ([]byte, error) {
 			close(selected)
 			<-release
 			return []byte("input"), nil

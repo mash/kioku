@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/runner"
-	"github.com/mash/kioku/internal/store"
 )
 
 func TestNewWithoutOperatorConfiguration(t *testing.T) {
@@ -13,7 +12,7 @@ func TestNewWithoutOperatorConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.New(store.JobRow{})
+	r, err := s.New()
 	if r != nil || !errors.Is(err, runner.ErrNotConfigured) {
 		t.Fatal(r, err)
 	}

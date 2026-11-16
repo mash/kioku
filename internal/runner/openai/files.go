@@ -14,8 +14,6 @@ import (
 	"github.com/mash/kioku/internal/runner"
 )
 
-func (*Runner) Provider() string { return "openai" }
-
 const openAIOutputPath = "/workspace/outputs/" + runner.OutputArchiveName
 
 func (*Runner) FilePaths() (string, string) { return "/workspace/input.tar.gz", openAIOutputPath }
@@ -35,7 +33,7 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 	if spec.BudgetCents < 1 || r.config.APIKey == "" || r.config.Model == "" || strings.TrimSpace(system) == "" {
 		return runner.RunRef{}, errors.New("invalid OpenAI runner configuration or job")
 	}
-	return runner.StartFileSession(ctx, spec, r.Provider(), r.uploadInput,
+	return runner.StartFileSession(ctx, spec, r.uploadInput,
 		func(ctx context.Context, id string, saveSession func(string) error) (string, error) {
 			if !spec.Deadline.IsZero() && time.Now().After(spec.Deadline) {
 				return "", errors.New("OpenAI job deadline exceeded")
@@ -183,7 +181,7 @@ func (r *Runner) CollectOutput(ctx context.Context, a runner.Attempt, status run
 }
 
 func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
-	if a.Run.Resources["upload_started"] != "true" && a.Run.ID == "" {
+	if !a.Run.UploadStarted && a.Run.ID == "" {
 		return nil
 	}
 	sessions, err := r.sessions(ctx, a)
@@ -213,9 +211,9 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 		}
 	}
 	var inputs []string
-	if id := a.Run.Resources["input_file_id"]; id != "" {
+	if id := a.Run.InputFileID; id != "" {
 		inputs = []string{id}
-	} else if a.Run.Resources["upload_started"] == "true" {
+	} else if a.Run.UploadStarted {
 		name := runner.InputArchiveName(a.Key)
 		err = r.listFiles(ctx, "/files", func(file fileResource) error {
 			if file.Filename == name && file.ID != "" {

@@ -504,7 +504,7 @@ func TestFailedInputNeverCreatesRunOrUsage(t *testing.T) {
 		return q.PutInbox(store.InboxRow{ID: "i", ProjectID: "p", SourceURL: "s"})
 	})
 	b.put = func(context.Context, blob.Key, []byte) error { return errors.New("upload failed") }
-	if _, e := o.prepareInput(t.Context(), "j", false, "", func(context.Context, storageInput) ([]byte, error) { return []byte("in"), nil }); e == nil {
+	if _, e := o.prepareInput(t.Context(), "j", false, func(context.Context, storageInput) ([]byte, error) { return []byte("in"), nil }); e == nil {
 		t.Fatal("missing failure")
 	}
 	j := readSQLJob(t, o, "j")

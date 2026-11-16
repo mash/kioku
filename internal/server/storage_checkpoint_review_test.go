@@ -14,7 +14,6 @@ type checkpointFileRunner struct {
 	start func(context.Context, runner.RunSpec) (runner.RunRef, error)
 }
 
-func (r checkpointFileRunner) Provider() string            { return "anthropic" }
 func (r checkpointFileRunner) FilePaths() (string, string) { return "input.tar.gz", "output.tar.gz" }
 func (r checkpointFileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 	return r.start(ctx, spec)
@@ -38,7 +37,7 @@ func TestFileCheckpointPreservesDatabaseFailure(t *testing.T) {
 	f.s.SetRunners(testRunners{Runners: f.s.runners, run: checkpointFileRunner{start: func(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 		// Input preparation succeeds; only the resource checkpoint fails.
 		f.s.Store, f.s.storage.db = d, d
-		return runner.StartFileSession(ctx, spec, "anthropic", func(context.Context, string, []byte) (string, error) {
+		return runner.StartFileSession(ctx, spec, func(context.Context, string, []byte) (string, error) {
 			t.Fatal("upload ran after a failed checkpoint")
 			return "", nil
 		}, func(context.Context, string, func(string) error) (string, error) {
@@ -51,7 +50,7 @@ func TestFileCheckpointPreservesDatabaseFailure(t *testing.T) {
 		t.Fatalf("database failure was hidden: %v", err)
 	}
 	got := storedJob(t, f, j.ID)
-	if got.Status != "running" || got.Run == nil || got.Run.Ref.Resources["upload_started"] == "true" {
+	if got.Status != "running" || got.Run == nil || got.Run.Ref.UploadStarted {
 		t.Fatalf("checkpoint failure changed durable run state: %+v", got)
 	}
 }

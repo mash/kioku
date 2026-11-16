@@ -233,7 +233,7 @@ func fixtureRow(j fixtureJob) store.JobRow {
 		row.InputReady = !r.CleanupComplete
 		row.SessionID = store.NullableString(r.Ref.ID)
 		row.OutputHash = store.NullableString(r.OutputHash)
-		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, Provider: store.NullableString(r.Ref.Resources["provider"]), UploadStarted: r.Ref.Resources["upload_started"] == "true", InputFileID: store.NullableString(r.Ref.Resources["input_file_id"]), AbortReason: store.NullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: store.NullableString(r.OutputRejection), BudgetCents: r.BudgetCents}
+		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, UploadStarted: r.Ref.UploadStarted, InputFileID: store.NullableString(r.Ref.InputFileID), AbortReason: store.NullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: store.NullableString(r.OutputRejection), BudgetCents: r.BudgetCents}
 		if r.OutputWaitSince != nil {
 			n := r.OutputWaitSince.UnixMilli()
 			row.Data.Run.OutputWaitSince = &n

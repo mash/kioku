@@ -94,7 +94,7 @@ func TestCleanupWaitsForSessionDeletion(t *testing.T) {
 		t.Error("must not delete input while session deletion is pending")
 		w.WriteHeader(500)
 	})
-	err := r.Cleanup(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session", Resources: map[string]string{"input_file_id": "input"}}})
+	err := r.Cleanup(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session", InputFileID: "input"}})
 	if !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}

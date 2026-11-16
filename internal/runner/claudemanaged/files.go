@@ -9,8 +9,6 @@ import (
 	"github.com/mash/kioku/internal/runner"
 )
 
-func (*Runner) Provider() string { return "claudemanaged" }
-
 func (*Runner) FilePaths() (string, string) {
 	return "/mnt/session/uploads/input.tar.gz", "/mnt/session/outputs/" + runner.OutputArchiveName
 }
@@ -30,7 +28,7 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 	if system == "" {
 		system = r.system
 	}
-	return runner.StartFileSession(ctx, spec, r.Provider(), r.files.UploadInput,
+	return runner.StartFileSession(ctx, spec, r.files.UploadInput,
 		func(ctx context.Context, id string, _ func(string) error) (string, error) {
 			if !spec.Deadline.IsZero() && time.Now().After(spec.Deadline) {
 				return "", errors.New("Claude job deadline exceeded")
@@ -48,7 +46,7 @@ func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef,
 }
 
 func (r *Runner) sessions(ctx context.Context, a runner.Attempt) ([]string, error) {
-	if a.Run.ID == "" && a.Run.Resources["upload_started"] != "true" {
+	if a.Run.ID == "" && !a.Run.UploadStarted {
 		return nil, nil
 	}
 	return discoverSessions(ctx, r.files, a)
@@ -94,9 +92,9 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 		}
 	}
 	var files []string
-	if id := a.Run.Resources["input_file_id"]; id != "" {
+	if id := a.Run.InputFileID; id != "" {
 		files = []string{id}
-	} else if a.Run.Resources["upload_started"] == "true" {
+	} else if a.Run.UploadStarted {
 		files, err = r.files.FindInputs(ctx, runner.InputArchiveName(a.Key))
 		if err != nil {
 			return err

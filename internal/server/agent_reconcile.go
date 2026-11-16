@@ -54,7 +54,7 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 	if job.Data.Run == nil || agentRunFinished(job) && job.CleanupComplete {
 		return nil
 	}
-	r, err := s.runners.New(job)
+	r, err := s.runners.New()
 	if err != nil {
 		if !agentRunFinished(job) && time.Now().UnixMilli() > job.Data.Run.Deadline {
 			return s.failAgentJobLocked(ctx, job, "managed agents unavailable; job timed out", nil)
@@ -285,7 +285,7 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job store.JobRo
 		s.notify()
 		return s.cleanupAgentJob(ctx, job, status)
 	}
-	r, err := s.runners.New(job)
+	r, err := s.runners.New()
 	if err != nil {
 		return fmt.Errorf("%w: %v", runner.ErrTemporary, err)
 	}
@@ -303,7 +303,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job store.JobRow, status *
 	if job.Data.Run == nil || job.CleanupComplete || !agentRunFinished(job) {
 		return nil
 	}
-	r, err := s.runners.New(job)
+	r, err := s.runners.New()
 	if err != nil {
 		return fmt.Errorf("%w: %v", runner.ErrTemporary, err)
 	}

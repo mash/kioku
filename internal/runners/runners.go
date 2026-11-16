@@ -3,13 +3,11 @@ package runners
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/mash/kioku/prompts"
 
 	execrunner "github.com/mash/kioku/internal/runner/exec"
-	"github.com/mash/kioku/internal/store"
 
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
@@ -49,33 +47,12 @@ func Load(c Config, onExit func(string)) (*Set, error) {
 
 func (s *Set) Close(ctx context.Context) error { return s.execRunner.Close(ctx) }
 
-// Select the recorded provider before the configured default.
-func (s *Set) New(job store.JobRow) (runner.Runner, error) {
-	if job.Data.Run != nil {
-		provider := ""
-		if job.Data.Run.Provider != nil {
-			provider = *job.Data.Run.Provider
-		}
-		switch provider {
-		case "openai":
-			if s.openaiRunner == nil {
-				return nil, errors.New("OpenAI runner unavailable")
-			}
-			return s.openaiRunner, nil
-		case "claudemanaged":
-			if s.config.ManagedAgents == nil {
-				return nil, errors.New("Claude file runner unavailable")
-			}
-			return s.claudeRunner(), nil
-		}
-	}
-	if s.config.Type == "openai" {
-		if job.Data.Run != nil && job.SessionID != nil {
-			return nil, errors.New("cannot use OpenAI credentials for an existing non-OpenAI run")
-		}
+// New returns the configured runner.
+func (s *Set) New() (runner.Runner, error) {
+	switch s.config.Type {
+	case "openai":
 		return s.openaiRunner, nil
-	}
-	if s.config.Type == "exec" {
+	case "exec":
 		return s.execRunner, nil
 	}
 	if s.config.ManagedAgents == nil {

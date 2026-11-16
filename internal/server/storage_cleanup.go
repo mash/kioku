@@ -13,29 +13,22 @@ import (
 )
 
 func sqlAttempt(j store.JobRow) runner.Attempt {
-	ref := runner.RunRef{ID: store.ValueString(j.SessionID), Resources: map[string]string{}}
+	ref := runner.RunRef{ID: store.ValueString(j.SessionID)}
 	if run := j.Data.Run; run != nil {
-		ref.UsesProviderFiles = run.UsesProviderFiles
-		ref.Resources["provider"] = store.ValueString(run.Provider)
-		if run.UploadStarted {
-			ref.Resources["upload_started"] = "true"
-		}
-		if run.InputFileID != nil {
-			ref.Resources["input_file_id"] = *run.InputFileID
-		}
+		ref.UsesProviderFiles, ref.UploadStarted, ref.InputFileID = run.UsesProviderFiles, run.UploadStarted, store.ValueString(run.InputFileID)
 	}
 	return runner.Attempt{Key: runner.AttemptKey{JobID: j.ID, ProjectID: j.ProjectID}, Run: ref}
 }
 func runRefChanged(j store.JobRow, ref runner.RunRef) bool {
-	run := j.Data.Run
-	if run == nil {
+	if j.Data.Run == nil {
 		return false
 	}
-	return ref.ID != "" && (store.ValueString(j.SessionID) != ref.ID || store.ValueString(j.Phase) == "preparing") ||
-		run.UsesProviderFiles != ref.UsesProviderFiles ||
-		!equalOptional(run.Provider, store.NullableString(ref.Resources["provider"])) ||
-		run.UploadStarted != (ref.Resources["upload_started"] == "true") ||
-		!equalOptional(run.InputFileID, store.NullableString(ref.Resources["input_file_id"]))
+	current := sqlAttempt(j).Run
+	if ref.ID != "" && (current.ID != ref.ID || store.ValueString(j.Phase) == "preparing") {
+		return true
+	}
+	ref.ID = current.ID
+	return ref != current
 }
 
 func applyRunRef(j *store.JobRow, ref runner.RunRef) {
@@ -46,9 +39,8 @@ func applyRunRef(j *store.JobRow, ref runner.RunRef) {
 		}
 	}
 	j.Data.Run.UsesProviderFiles = ref.UsesProviderFiles
-	j.Data.Run.Provider = store.NullableString(ref.Resources["provider"])
-	j.Data.Run.UploadStarted = ref.Resources["upload_started"] == "true"
-	j.Data.Run.InputFileID = store.NullableString(ref.Resources["input_file_id"])
+	j.Data.Run.UploadStarted = ref.UploadStarted
+	j.Data.Run.InputFileID = store.NullableString(ref.InputFileID)
 }
 func (o *storageOperations) cleanup(ctx context.Context, id string, status runner.Status, providerCleanup func(context.Context, runner.Attempt) error) (bool, error) {
 	// The caller holds the project generation gate across inspection and

@@ -46,7 +46,6 @@ type JobData struct {
 }
 type RunData struct {
 	UsesProviderFiles bool    `json:"uses_provider_files"`
-	Provider          *string `json:"provider"`
 	UploadStarted     bool    `json:"upload_started"`
 	InputFileID       *string `json:"input_file_id"`
 	AbortReason       *string `json:"abort_reason"`

@@ -110,7 +110,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 		t.Fatalf("first View timeout = %s, want %s", got, f.s.Config.AgentJobTimeout)
 	}
 
-	body := ma.Input(first.Run.Ref.Resources["input_file_id"])
+	body := ma.Input(first.Run.Ref.InputFileID)
 	input := readInput(t, body)
 	if input["VIEW.md"] != projectMap.Prompt || !strings.Contains(input["wiki/index.md"], "Complete Wiki") {
 		t.Fatal("View did not receive its prompt and completed Wiki")
@@ -411,7 +411,7 @@ func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
 			checkPrompt := func(child fixtureJob, wantNew bool) {
 				t.Helper()
 
-				body := ma.Input(child.Run.Ref.Resources["input_file_id"])
+				body := ma.Input(child.Run.Ref.InputFileID)
 				prompt := readInput(t, body)["VIEW.md"]
 				if (prompt == edited.Prompt) != wantNew || prompt == "" {
 					t.Fatalf("prompt = %q, want new = %v", prompt, wantNew)
@@ -607,7 +607,7 @@ func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
 			}
 			child := startTestGeneration(t, f, parent.ViewGeneration.ChildID)
 
-			body := ma.Input(child.Run.Ref.Resources["input_file_id"])
+			body := ma.Input(child.Run.Ref.InputFileID)
 			if readInput(t, body)["VIEW.md"] != "zeta" {
 				t.Fatalf("first child input: %s", body)
 			}

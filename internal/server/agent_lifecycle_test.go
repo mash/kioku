@@ -161,7 +161,7 @@ func reconcileManaged(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 }
 func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob) {
 	t.Helper()
-	if !ma.Session(j.Run.Ref.ID).Deleted || ma.FileExists(j.Run.Ref.Resources["input_file_id"]) {
+	if !ma.Session(j.Run.Ref.ID).Deleted || ma.FileExists(j.Run.Ref.InputFileID) {
 		t.Error("remote resources remain active")
 	}
 	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(j))

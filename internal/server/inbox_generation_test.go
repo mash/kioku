@@ -22,7 +22,7 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 	}
 	j := startManaged(t, f, token, p.ID, false)
 
-	b := ma.Input(j.Run.Ref.Resources["input_file_id"])
+	b := ma.Input(j.Run.Ref.InputFileID)
 	input := readInput(t, b)
 	if !strings.Contains(input["inbox/"+first.ID+".md"], "First body") || input["CHANGES.md"] != "" {
 		t.Fatal(input)
@@ -41,7 +41,7 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 		return nil
 	})
 	next := startManaged(t, f, token, p.ID, false)
-	b = ma.Input(next.Run.Ref.Resources["input_file_id"])
+	b = ma.Input(next.Run.Ref.InputFileID)
 	input = readInput(t, b)
 	if input["wiki/index.md"] == "" || input["wiki/log.md"] == "" || input["inbox/"+first.ID+".md"] != "" {
 		t.Fatal(input)

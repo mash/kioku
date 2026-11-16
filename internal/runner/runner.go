@@ -13,9 +13,11 @@ type AttemptKey struct{ JobID, ProjectID string }
 // RunRef points at a run and the resources needed for cleanup.
 type RunRef struct {
 	// UsesProviderFiles distinguishes file-based managed runs from HTTP runs.
-	UsesProviderFiles bool              `json:"uses_provider_files,omitempty"`
-	ID                string            `json:"id,omitempty"`
-	Resources         map[string]string `json:"resources,omitempty"`
+	UsesProviderFiles bool
+	ID                string
+	// UploadStarted records that an input upload may exist before its ID is known.
+	UploadStarted bool
+	InputFileID   string
 }
 
 type Attempt struct {
@@ -42,7 +44,6 @@ func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil
 
 type FileRunner interface {
 	Runner
-	Provider() string
 	FilePaths() (input, output string)
 	CollectOutput(context.Context, Attempt, Status, int64) ([]byte, error)
 }

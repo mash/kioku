@@ -79,8 +79,8 @@ func TestFileSessionUsesOnlyCompletedTurnArtifacts(t *testing.T) {
 	var saved []runner.RunRef
 	ref, err := r.Start(t.Context(), runner.RunSpec{Key: key, BudgetCents: 50, FirstMessage: "test",
 		InputArchive: []byte("input"), SaveRef: func(ref runner.RunRef) error { saved = append(saved, ref); return nil }})
-	if err != nil || len(saved) != 3 || saved[0].Resources["input_file_id"] != "" ||
-		saved[1].Resources["input_file_id"] != "input" || saved[2].ID != "session" {
+	if err != nil || len(saved) != 3 || saved[0].InputFileID != "" ||
+		saved[1].InputFileID != "input" || saved[2].ID != "session" {
 		t.Fatal(ref, saved, err)
 	}
 	a := runner.Attempt{Key: key, Run: ref}

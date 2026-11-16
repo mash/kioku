@@ -174,7 +174,7 @@ func crashOperation(ctx context.Context, o *storageOperations, stage string) err
 	case "inbox":
 		return o.putInbox(ctx, store.InboxRow{ID: "new", ProjectID: "p", SourceURL: "https://example.com/new", Data: store.InboxData{Submitter: "u"}}, []byte("new"))
 	case "input":
-		_, err := o.prepareInput(ctx, "j", false, "", func(context.Context, storageInput) ([]byte, error) { return []byte("archive"), nil })
+		_, err := o.prepareInput(ctx, "j", false, func(context.Context, storageInput) ([]byte, error) { return []byte("archive"), nil })
 		return err
 	case "output":
 		_, err := o.saveOutput(ctx, "j", []byte("output"), nil)

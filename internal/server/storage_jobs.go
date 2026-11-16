@@ -22,7 +22,7 @@ type storageInput struct {
 	View    *store.ViewRow
 }
 
-func (o *storageOperations) prepareInput(ctx context.Context, id string, file bool, provider string, build func(context.Context, storageInput) ([]byte, error), deferred ...string) (store.JobRow, error) {
+func (o *storageOperations) prepareInput(ctx context.Context, id string, file bool, build func(context.Context, storageInput) ([]byte, error), deferred ...string) (store.JobRow, error) {
 	var input storageInput
 	if err := o.db.Read(ctx, func(q *store.Queries) error { var err error; input.Job, err = q.Job(id); return err }); err != nil {
 		return store.JobRow{}, err
@@ -149,7 +149,7 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		j.Phase = &phase
 		j.CleanupComplete = false
 		j.InputReady = true
-		j.Data.Run = &store.RunData{UsesProviderFiles: file, Provider: store.NullableString(provider), PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget}
+		j.Data.Run = &store.RunData{UsesProviderFiles: file, PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget}
 		if j.Data.WikiStatus != nil {
 			j.Data.WikiStatus = store.NullableString("running")
 		}

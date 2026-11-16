@@ -42,7 +42,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	publish(startManaged(t, f, token, p.ID, false))
 	putText(urls[0], "# Title\nFirst\nUpdated from same URL")
 	j := startManaged(t, f, token, p.ID, false)
-	b := ma.Input(j.Run.Ref.Resources["input_file_id"])
+	b := ma.Input(j.Run.Ref.InputFileID)
 	input := readInput(t, b)
 	for name, body := range pages {
 		if input[name] != body {

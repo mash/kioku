@@ -160,4 +160,4 @@ type testRunners struct {
 	run runner.Runner
 }
 
-func (g testRunners) New(store.JobRow) (runner.Runner, error) { return g.run, nil }
+func (g testRunners) New() (runner.Runner, error) { return g.run, nil }

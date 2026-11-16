@@ -78,7 +78,7 @@ func TestInputPutBeforeRunCommit(t *testing.T) {
 			return nil
 		})
 	}
-	job, err := o.prepareInput(t.Context(), "j", false, "", func(context.Context, storageInput) ([]byte, error) { return []byte("archive"), nil })
+	job, err := o.prepareInput(t.Context(), "j", false, func(context.Context, storageInput) ([]byte, error) { return []byte("archive"), nil })
 	if err != nil || job.Status != "running" || !job.InputReady || job.Data.Run == nil {
 		t.Fatal(job, err)
 	}
@@ -137,7 +137,7 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 					return context.DeadlineExceeded
 				}
 			}
-			_, err := o.prepareInput(t.Context(), "j", false, "", func(ctx context.Context, _ storageInput) ([]byte, error) {
+			_, err := o.prepareInput(t.Context(), "j", false, func(ctx context.Context, _ storageInput) ([]byte, error) {
 				if stage == "build" {
 					if _, ok := ctx.Deadline(); !ok {
 						t.Fatal("unbounded build")
@@ -179,7 +179,7 @@ func TestInputPreparationCancellationKeepsJobQueued(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	_, err := o.prepareInput(ctx, "j", false, "", func(context.Context, storageInput) ([]byte, error) {
+	_, err := o.prepareInput(ctx, "j", false, func(context.Context, storageInput) ([]byte, error) {
 		cancel()
 		return nil, ctx.Err()
 	})

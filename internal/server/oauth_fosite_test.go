@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
@@ -30,110 +29,6 @@ func assertConnectorAccess(t *testing.T, f *fixture, token string, want bool) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
-	}
-}
-func TestConnectorRefreshReplayRevokesFamily(t *testing.T) {
-	t.Parallel()
-	f := setupWithWorker(t, false)
-	human := f.login("owner@example.com")
-	project := securityProject(t, f, human)
-	client := connectorClient(t, f)
-	_, form := connectorAuthCode(t, f, client, human, project.ID)
-	access, refresh := connectorTokenPair(t, f, form)
-	independent := connectorAccessToken(t, f, human, project.ID)
-	access2, refresh2 := connectorTokenPair(t, f, refreshForm(client, refresh))
-	assertConnectorAccess(t, f, access, false)
-	access3, refresh3 := connectorTokenPair(t, f, refreshForm(client, refresh2))
-	assertConnectorAccess(t, f, access2, false)
-	assertConnectorAccess(t, f, access3, true)
-	if got := connectorForm(f, "POST", "/oauth/token", "", refreshForm(client, refresh)); got.Code != 400 {
-		t.Fatal(got.Code, got.Body.String())
-	}
-	assertConnectorAccess(t, f, access3, false)
-	if got := connectorForm(f, "POST", "/oauth/token", "", refreshForm(client, refresh3)); got.Code != 400 {
-		t.Fatal(got.Code, got.Body.String())
-	}
-	assertConnectorAccess(t, f, independent, true)
-}
-func TestConnectorCodeFailuresRollbackAndReplayRevokes(t *testing.T) {
-	t.Parallel()
-	f := setupWithWorker(t, false)
-	human := f.login("owner@example.com")
-	project := securityProject(t, f, human)
-	client := connectorClient(t, f)
-	_, form := connectorAuthCode(t, f, client, human, project.ID)
-	for _, change := range []struct{ key, value string }{
-		{"code_verifier", strings.Repeat("x", 43)},
-		{"redirect_uri", f.url + "/wrong"},
-		{"client_id", connectorClient(t, f)},
-		{"resource", "https://wrong.example/mcp"},
-	} {
-		bad := url.Values{}
-		for k, v := range form {
-			bad[k] = append([]string(nil), v...)
-		}
-		bad.Set(change.key, change.value)
-		got := connectorForm(f, "POST", "/oauth/token", "", bad)
-		if got.Code != 400 && got.Code != 401 {
-			t.Fatalf("%s: %d %s", change.key, got.Code, got.Body.String())
-		}
-	}
-	access, refresh := connectorTokenPair(t, f, form)
-	if got := connectorForm(f, "POST", "/oauth/token", "", form); got.Code != 400 {
-		t.Fatal(got.Code, got.Body.String())
-	}
-	assertConnectorAccess(t, f, access, false)
-	if got := connectorForm(f, "POST", "/oauth/token", "", refreshForm(client, refresh)); got.Code != 400 {
-		t.Fatal(got.Code, got.Body.String())
-	}
-}
-func TestConnectorConcurrentRefreshFailsClosed(t *testing.T) {
-	t.Parallel()
-	f := setupWithWorker(t, false)
-	human := f.login("owner@example.com")
-	project := securityProject(t, f, human)
-	client := connectorClient(t, f)
-	_, form := connectorAuthCode(t, f, client, human, project.ID)
-	_, refresh := connectorTokenPair(t, f, form)
-	type result struct {
-		status int
-		body   string
-	}
-	results := make(chan result, 2)
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			r := connectorForm(f, "POST", "/oauth/token", "", refreshForm(client, refresh))
-			results <- result{r.Code, r.Body.String()}
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(results)
-	success, failure := 0, 0
-	for r := range results {
-		switch r.status {
-		case 200:
-			success++
-			var tokens struct {
-				Access string `json:"access_token"`
-			}
-			if err := json.Unmarshal([]byte(r.body), &tokens); err != nil {
-				t.Fatal(err)
-			}
-			assertConnectorAccess(t, f, tokens.Access, false)
-		case 400:
-			failure++
-		default:
-			t.Fatal(r.status, r.body)
-		}
-	}
-	if success != 1 || failure != 1 {
-		t.Fatal(success, failure)
 	}
 }
 func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {

@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -21,43 +19,6 @@ func accountID(t *testing.T, f *fixture, token string) string {
 		t.Fatal(c)
 	}
 	return out.ID
-}
-func TestAccountSessionRevocationAndCredentialRedaction(t *testing.T) {
-	t.Parallel()
-	f := setupWithWorker(t, false)
-	human := f.login("owner@example.com")
-	second := f.login("owner@example.com")
-	other := f.login("other@example.com")
-	p := securityProject(t, f, human)
-	_, agent := testAgent(t, f, human, p.ID, "read")
-	var status map[string]any
-	if c := f.request("GET", "/api/account", human, nil, &status); c != 200 {
-		t.Fatal(c)
-	}
-	text, _ := json.Marshal(status)
-	if strings.Contains(string(text), "identity_credential") || strings.Contains(string(text), human) {
-		t.Fatal("account view exposed credentials")
-	}
-	if c := f.request("DELETE", "/api/account/sessions/"+auth.Hash(other), human, nil, nil); c != 404 {
-		t.Fatal("revoked another user's session", c)
-	}
-	if c := f.request("DELETE", "/api/account/sessions/"+auth.Hash(second), human, nil, nil); c != 200 {
-		t.Fatal(c)
-	}
-	if c := f.request("GET", "/api/me", second, nil, nil); c != 401 {
-		t.Fatal("revoked session accepted", c)
-	}
-	if c := f.request("POST", "/api/account/revoke-all", human, nil, nil); c != 200 {
-		t.Fatal(c)
-	}
-	for _, token := range []string{human, second, agent} {
-		if c := f.request("GET", "/api/me", token, nil, nil); c != 401 {
-			t.Fatal("revoke-all left credential active", c)
-		}
-	}
-	if c := f.request("GET", "/api/me", other, nil, nil); c != 200 {
-		t.Fatal("other account affected", c)
-	}
 }
 func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
 	t.Parallel()

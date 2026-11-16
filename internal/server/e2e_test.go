@@ -375,3 +375,56 @@ func TestE2EAgentScopeSingleUseAndRevocation(t *testing.T) {
 	e.expect(e.call("GET", "/api/me", human, nil), 401, nil)
 	e.ping(access, 401)
 }
+
+func TestE2EOAuthRotationAndRejectedExchanges(t *testing.T) {
+	t.Parallel()
+	e := newE2E(t)
+	human := e.login("owner")
+	ns := e.project(human, "rotation")
+	form := e.oauthCode(human, ns)
+	independentForm := e.oauthCode(human, ns)
+	for _, change := range []struct{ key, value string }{
+		{"code_verifier", auth.Token()}, {"redirect_uri", e.url + "/wrong"},
+		{"client_id", independentForm.Get("client_id")}, {"resource", "https://wrong.example/mcp"},
+	} {
+		bad := url.Values{}
+		for k, v := range form {
+			bad[k] = slices.Clone(v)
+		}
+		bad.Set(change.key, change.value)
+		res := e.call("POST", "/oauth/token", "", bad)
+		if res.Code != 400 && res.Code != 401 {
+			t.Fatalf("%s: %d %s", change.key, res.Code, res.Body.String())
+		}
+	}
+	independent, _ := e.tokens(independentForm)
+	access, refresh := e.tokens(form)
+	access2, refresh2 := e.tokens(refreshForm(form.Get("client_id"), refresh))
+	e.ping(access, 401)
+	access3, refresh3 := e.tokens(refreshForm(form.Get("client_id"), refresh2))
+	e.ping(access2, 401)
+	e.ping(access3, 200)
+	e.expect(e.call("POST", "/oauth/token", "", refreshForm(form.Get("client_id"), refresh)), 400, nil)
+	e.ping(access3, 401)
+	e.expect(e.call("POST", "/oauth/token", "", refreshForm(form.Get("client_id"), refresh3)), 400, nil)
+	e.ping(independent, 200)
+}
+
+func TestE2EAccountSessionRevocation(t *testing.T) {
+	t.Parallel()
+	e := newE2E(t)
+	human, second, other := e.login("owner"), e.login("owner"), e.login("other")
+	res := e.call("GET", "/api/account", human, nil)
+	e.expect(res, 200, nil)
+	for _, secret := range []string{human, second, "identity_access_token", "identity_refresh_token"} {
+		if strings.Contains(res.Body.String(), secret) {
+			t.Fatal("account exposed credential")
+		}
+	}
+	e.expect(e.call("DELETE", "/api/account/sessions/"+auth.Hash(other), human, nil), 404, nil)
+	e.expect(e.call("DELETE", "/api/account/sessions/"+auth.Hash(second), human, nil), 200, nil)
+	e.expect(e.call("GET", "/api/me", second, nil), 401, nil)
+	e.expect(e.call("POST", "/api/account/revoke-all", human, nil), 200, nil)
+	e.expect(e.call("GET", "/api/me", human, nil), 401, nil)
+	e.expect(e.call("GET", "/api/me", other, nil), 200, nil)
+}

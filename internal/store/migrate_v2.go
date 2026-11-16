@@ -149,24 +149,28 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 			return err
 		}
 	}
-	if err = transact(ctx, db, true, nil, func(q *Queries) error { return plan.apply(q, now.UnixMilli()) }); err != nil {
+	// Persist an incomplete marker before deleting any old objects. A crash or
+	// rollback requires restoration, never automatic migration resumption.
+	if _, err = db.ExecContext(ctx, "PRAGMA user_version=0"); err != nil {
 		return err
 	}
-	for _, key := range plan.obsolete {
-		if err = objects.Delete(ctx, key); err != nil {
-			return fmt.Errorf("migration cleanup failed; restore verified DB, objects and key: %w", err)
-		}
-	}
 	return transact(ctx, db, true, nil, func(q *Queries) error {
-		_, e := q.exec(`UPDATE schema_state SET data='{"ready":true}' WHERE id=1`)
-		return e
+		if err := plan.apply(q, now.UnixMilli()); err != nil {
+			return err
+		}
+		// This is the stopped, one-time migration: no live writer or GC runs.
+		// Keep readiness and all migrated rows atomic even if cleanup fails.
+		for _, key := range plan.obsolete {
+			if err := objects.Delete(ctx, key); err != nil {
+				return fmt.Errorf("migration cleanup failed; restore verified DB, objects and key: %w", err)
+			}
+		}
+		_, err := q.exec("PRAGMA user_version=3")
+		return err
 	})
 }
 func (p *migrationPlan) apply(q *Queries, now int64) error {
 	if _, err := q.exec(catalogSchema); err != nil {
-		return err
-	}
-	if _, err := q.exec(`INSERT INTO schema_state VALUES(1,'{"ready":false}')`); err != nil {
 		return err
 	}
 	for _, v := range p.organizations {
@@ -278,6 +282,6 @@ func (p *migrationPlan) apply(q *Queries, now int64) error {
 	if usages != len(p.usage) {
 		return errors.New("migration history lost usage")
 	}
-	_, err := q.exec("DROP TABLE IF EXISTS records; DROP TABLE IF EXISTS pending; DROP TABLE IF EXISTS usage_ledger; PRAGMA user_version=3")
+	_, err := q.exec("DROP TABLE IF EXISTS records; DROP TABLE IF EXISTS pending; DROP TABLE IF EXISTS usage_ledger")
 	return err
 }

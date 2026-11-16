@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -76,9 +75,10 @@ func OpenStorage(ctx context.Context, dir string, objects blob.Store, loadKey fu
 			if e = migrateV2(ctx, path, objects, cipher, time.Now().UTC()); e != nil {
 				return nil, nil, e
 			}
-		case 3:
 		default:
-			return nil, nil, fmt.Errorf("unsupported SQLite schema %d", version)
+			if e = catalogReady(version); e != nil {
+				return nil, nil, e
+			}
 		}
 	}
 	db, err := OpenDatabase(path, create)

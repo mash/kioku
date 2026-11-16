@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sort"
 
@@ -41,89 +40,32 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 	}
 	sort.Strings(names)
 	rev, started := o.id(), o.now().UnixMilli()
-	if err = o.db.Write(ctx, func(q *store.Queries) error {
-		j, e := o.runningJob(q, id)
-		if e != nil {
-			return e
+	check := func(q *store.Queries) error {
+		j, err := o.runningJob(q, id)
+		if err != nil {
+			return err
 		}
 		if j.ParentID != nil || j.GenerationSnapshot != nil {
 			return fail(409, "job no longer accepts Wiki publication")
 		}
-		p, e := q.Project(j.ProjectID)
-		if e != nil {
-			return e
-		}
-		current, e := q.ProjectWiki(p.ID)
-		if e != nil {
-			return e
-		}
-		if p.Data.WikiCompleteBytes == nil {
-			size, e := wikiBytes(current)
-			if e != nil {
-				return e
-			}
-			p.Data.WikiCompleteBytes = &size
-		}
-		if !p.WikiIncomplete && p.Data.WikiCompleteRevision == nil {
-			p.Data.WikiCompleteRevision = p.WikiRevision
-		}
-		p.WikiIncomplete = true
-		j.Phase = store.NullableString("finalizing")
-		if e = q.PutProject(p); e != nil {
-			return e
-		}
-		return q.PutJob(j)
-	}); err != nil {
+		return nil
+	}
+	if err = o.db.Read(ctx, check); err != nil {
 		return "", err
 	}
+	rows := make([]store.WikiFileRow, 0, len(names))
 	for _, name := range names {
 		body := []byte(files[name])
 		hash := string(model.HashContent(body))
-		changed := true
-		if err = o.db.Read(ctx, func(q *store.Queries) error {
-			if _, e := o.runningJob(q, id); e != nil {
-				return e
-			}
-			f, e := q.WikiFile(initial.ProjectID, name)
-			if errors.Is(e, sql.ErrNoRows) {
-				return nil
-			}
-			if e != nil {
-				return e
-			}
-			changed = f.Hash != hash
-			return nil
-		}); err != nil {
+		if err = o.objects.Put(ctx, model.WikiContentKey(initial.ProjectID, model.ContentHash(hash)), body); err != nil {
 			return "", err
 		}
-		if changed {
-			if err = o.objects.Put(ctx, model.WikiContentKey(initial.ProjectID, model.ContentHash(hash)), body); err != nil {
-				return "", err
-			}
-		}
-		if err = o.db.Write(ctx, func(q *store.Queries) error {
-			j, e := o.runningJob(q, id)
-			if e != nil {
-				return e
-			}
-			p, e := q.Project(j.ProjectID)
-			if e != nil {
-				return e
-			}
-			if e = q.PutWikiFile(store.WikiFileRow{ProjectID: p.ID, Path: name, Hash: hash, Data: store.WikiFileData{Bytes: int64(len(body))}}); e != nil {
-				return e
-			}
-			p.WikiRevision = &rev
-			if changed {
-				now := o.now().UnixMilli()
-				p.Data.WikiUpdatedAt = &now
-			}
-			return q.PutProject(p)
-		}); err != nil {
-			return "", err
-		}
+		rows = append(rows, store.WikiFileRow{ProjectID: initial.ProjectID, Path: name, Hash: hash, Data: store.WikiFileData{Bytes: int64(len(body))}})
 	}
 	err = o.db.Write(ctx, func(q *store.Queries) error {
+		if err := check(q); err != nil {
+			return err
+		}
 		j, e := o.runningJob(q, id)
 		if e != nil {
 			return e
@@ -143,6 +85,11 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 				}
 			}
 		}
+		for _, row := range rows {
+			if e = q.PutWikiFile(row); e != nil {
+				return e
+			}
+		}
 		items, e := q.ProjectInbox(p.ID)
 		if e != nil {
 			return e
@@ -157,15 +104,12 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 			}
 		}
 		if removed {
-			epoch := o.id()
-			p.ViewEpoch = &epoch
 			views, e := q.ProjectViews(p.ID)
 			if e != nil {
 				return e
 			}
 			for _, v := range views {
 				v.BundleHash = nil
-				v.ViewEpoch = nil
 				v.Data.JobID = nil
 				v.Data.WikiSnapshotID = nil
 				v.Data.GeneratedAt = nil
@@ -176,14 +120,12 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 		}
 		now := o.now().UnixMilli()
 		p.WikiRevision = &rev
-		p.Data.WikiCompleteRevision = &rev
-		p.Data.WikiCompleteBytes = nil
 		p.Data.WikiCreated = &started
 		p.Data.WikiUpdatedAt = &now
-		p.WikiIncomplete = false
 		if e = q.PutProject(p); e != nil {
 			return e
 		}
+		j.Phase = store.NullableString("finalizing")
 		j.Status = "completed"
 		j.Data.Revision = &rev
 		if e = beginSQLViews(q, &j, p, j.Data.Run.BudgetCents); e != nil {
@@ -243,11 +185,14 @@ func (o *storageOperations) publishView(ctx context.Context, id string, bundle *
 		}
 		now := o.now().UnixMilli()
 		v.BundleHash = &hash
-		v.ViewEpoch = p.ViewEpoch
 		v.Data.Status = store.NullableString("completed")
 		v.Data.Error = nil
 		v.Data.JobID = j.ParentID
-		v.Data.WikiSnapshotID = &j.Data.ViewTask.Snapshot
+		parent, e := q.Job(*j.ParentID)
+		if e != nil {
+			return e
+		}
+		v.Data.WikiSnapshotID = parent.GenerationSnapshot
 		v.Data.GeneratedAt = &now
 		if e = q.PutView(v); e != nil {
 			return e

@@ -36,7 +36,7 @@ func testJob(id, project, status string, created int64) JobRow {
 }
 func pointer[T any](v T) *T { return &v }
 
-func TestCatalogSchemaHasExactlySixteenTablesAndEightyFiveColumns(t *testing.T) {
+func TestCatalogSchemaHasExactlyFifteenTablesAndSeventyEightColumns(t *testing.T) {
 	d := newCatalog(t)
 	var tables, columns int
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables); err != nil {
@@ -45,7 +45,7 @@ func TestCatalogSchemaHasExactlySixteenTablesAndEightyFiveColumns(t *testing.T) 
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'").Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
-	if tables != 16 || columns != 85 {
+	if tables != 15 || columns != 78 {
 		t.Fatalf("tables=%d columns=%d", tables, columns)
 	}
 	for _, tc := range []struct {
@@ -68,13 +68,11 @@ func TestSchemaRejectsInvalidRows(t *testing.T) {
 	for _, query := range []string{
 		`INSERT INTO users VALUES('u','a','[]')`,
 		`INSERT INTO organization_members VALUES('o','u','admin')`,
-		`INSERT INTO projects VALUES('p','o','p',0,2,NULL,0,NULL,NULL,'{}')`,
+		`INSERT INTO projects VALUES('p','o','p',0,2,NULL,NULL,'{}')`,
 		`INSERT INTO sessions VALUES('s','web','pending','u',NULL,10,0,'{}')`,
 		`INSERT INTO sessions VALUES('s','agent','active','',NULL,10,0,'{}')`,
-		`INSERT INTO usage VALUES('a','p','j',0,'{}')`,
+		`INSERT INTO usage VALUES('p',NULL,0,'{}')`,
 		`INSERT INTO wiki_files VALUES('p','wiki/a','bad','{"bytes":1}')`,
-		`INSERT INTO schema_state VALUES(2,'{"ready":true}')`,
-		`UPDATE schema_state SET data='{}'`,
 	} {
 		if _, err := d.writer.Exec(query); err == nil {
 			t.Errorf("accepted %s", query)
@@ -82,13 +80,13 @@ func TestSchemaRejectsInvalidRows(t *testing.T) {
 	}
 	for _, mutate := range []func(*JobRow){
 		func(j *JobRow) { j.Status = "running" },
-		func(j *JobRow) { j.Phase = pointer("preparing"); j.CleanupComplete = pointer(false) },
+		func(j *JobRow) { j.Phase = pointer("preparing"); j.CleanupComplete = false },
 		func(j *JobRow) { j.Data.Run = &RunData{} },
 		func(j *JobRow) { j.InputReady = true },
 		func(j *JobRow) { j.SessionID = pointer("s") },
 		func(j *JobRow) { j.GenerationSnapshot = pointer("") },
 		func(j *JobRow) { j.Data.ViewTask = &ViewTaskData{} },
-		func(j *JobRow) { j.ChildID = pointer("c") },
+		func(j *JobRow) { j.ParentID = pointer("p") },
 	} {
 		j := testJob("j", "p", "queued", 0)
 		mutate(&j)
@@ -216,7 +214,7 @@ func TestCommittedRejectionIsDistinctFromRollback(t *testing.T) {
 }
 func TestUsageInsertPreservesFirstNull(t *testing.T) {
 	d := newCatalog(t)
-	u := UsageRow{AttemptID: "j", JobID: "j", ProjectID: "p", RecordedAt: 1, Data: model.UsageValues{OrgID: "o", UserID: "u"}}
+	u := UsageRow{JobID: "j", ProjectID: "p", RecordedAt: 1, Data: model.UsageValues{OrgID: "o", UserID: "u"}}
 	catalogWrite(t, d, func(q *Queries) error { return q.RecordUsage(u) })
 	u.RecordedAt = 2
 	u.Data.CostCents = pointer(int64(40))
@@ -245,25 +243,27 @@ func TestHistoryKeepsPendingCleanupAndUnconsumedChildren(t *testing.T) {
 					if err := q.PutAudit(AuditRow{ID: id, ProjectID: "p", Created: int64(i)}); err != nil {
 						return err
 					}
-					if err := q.RecordUsage(UsageRow{AttemptID: id, JobID: id, ProjectID: "p", RecordedAt: 1}); err != nil {
+					if err := q.RecordUsage(UsageRow{JobID: id, ProjectID: "p", RecordedAt: 1}); err != nil {
 						return err
 					}
 				}
 				cleanup := testJob("cleanup", "p", "failed", 0)
 				cleanup.Phase = pointer("preparing")
-				cleanup.CleanupComplete = pointer(false)
+				cleanup.CleanupComplete = false
 				cleanup.Data.Run = &RunData{InboxIDs: []string{}}
 				if err := q.PutJob(cleanup); err != nil {
 					return err
 				}
 				parent := testJob("parent", "p", "running", 0)
 				parent.GenerationSnapshot = pointer("")
-				parent.ChildID = pointer("child")
 				parent.Data.ViewGeneration = &GenerationData{}
 				if err := q.PutJob(parent); err != nil {
 					return err
 				}
-				if err := q.PutJob(testJob("child", "p", "completed", 0)); err != nil {
+				child := testJob("child", "p", "completed", 0)
+				child.ParentID = pointer("parent")
+				child.Data.ViewTask = &ViewTaskData{ViewID: "v"}
+				if err := q.PutJob(child); err != nil {
 					return err
 				}
 				if err := q.PutJob(testJob("other", "p2", "completed", 0)); err != nil {
@@ -402,6 +402,70 @@ func TestCommitUnknownReadsTargetRow(t *testing.T) {
 			}
 			if calls != 1 {
 				t.Fatal(calls)
+			}
+		})
+	}
+}
+
+func TestCleanupDefaultAndUnconsumedChildConstraints(t *testing.T) {
+	d := newCatalog(t)
+	raw, err := marshalData(JobData{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.writer.Exec(`INSERT INTO jobs(id,project_id,status,created,kind,input_ready,data) VALUES('default','p','queued',0,'generate',0,?)`, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Read(t.Context(), func(q *Queries) error {
+		j, err := q.Job("default")
+		if j.CleanupComplete {
+			t.Fatal("cleanup default is not false")
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"NULL", "2", "1"} {
+		if _, err := d.writer.Exec("UPDATE jobs SET cleanup_complete=" + value + " WHERE id='default'"); err == nil {
+			t.Fatalf("accepted cleanup_complete=%s without Run", value)
+		}
+	}
+	child := testJob("child", "p", "queued", 0)
+	child.ParentID = pointer("parent")
+	child.Data.ViewTask = &ViewTaskData{ViewID: "v"}
+	catalogWrite(t, d, func(q *Queries) error { return q.PutJob(child) })
+	other := child
+	other.ID = "other"
+	if err := d.Write(t.Context(), func(q *Queries) error { return q.PutJob(other) }); err == nil {
+		t.Fatal("accepted two unconsumed children")
+	}
+	catalogWrite(t, d, func(q *Queries) error {
+		child.Status = "completed"
+		child.ParentID = nil
+		child.Data.ViewTask = nil
+		if err := q.PutJob(child); err != nil {
+			return err
+		}
+		return q.PutJob(other)
+	})
+}
+
+func TestReadinessUsesVersionForStartupHealthAndBackup(t *testing.T) {
+	for _, version := range []int{0, 2, 3, 4} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			d := newCatalog(t)
+			if _, err := d.writer.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+				t.Fatal(err)
+			}
+			want := version == 3
+			if err := d.validateCatalog(); (err == nil) != want {
+				t.Fatal("startup", err)
+			}
+			if err := d.Read(t.Context(), func(q *Queries) error { return q.Healthy() }); (err == nil) != want {
+				t.Fatal("health", err)
+			}
+			if err := d.Backup(filepath.Join(t.TempDir(), "backup")); (err == nil) != want {
+				t.Fatal("backup", err)
 			}
 		})
 	}

@@ -42,7 +42,6 @@ func (o *storageOperations) lock(ctx context.Context, project string) (func(), e
 	}
 }
 
-func valueBool(b *bool) bool { return b != nil && *b }
 func equalOptional(a, b *string) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
@@ -64,9 +63,6 @@ func wikiBytes(files []store.WikiFileRow) (int64, error) {
 	return total, nil
 }
 func wikiCapacity(q *store.Queries, p store.ProjectRow) (int64, error) {
-	if p.Data.WikiCompleteBytes != nil {
-		return *p.Data.WikiCompleteBytes, nil
-	}
 	files, err := q.ProjectWiki(p.ID)
 	if err != nil {
 		return 0, err
@@ -221,7 +217,7 @@ func checkJobParent(q *store.Queries, j store.JobRow) (store.JobRow, error) {
 		if err != nil {
 			return j, err
 		}
-		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != j.ID || p.WikiIncomplete || store.ValueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
+		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ProjectID != j.ProjectID || parent.GenerationSnapshot == nil || !equalOptional(p.WikiRevision, parent.GenerationSnapshot) {
 			return j, fail(409, "Wiki または生成ジョブが変更されました")
 		}
 	}

@@ -45,7 +45,7 @@ func TestConnectorWikiRechecksGrantAfterSelection(t *testing.T) {
 					}
 					switch change {
 					case "inactive":
-						data.Active = false
+						row.Status = "revoked"
 					case "expired":
 						row.Expires = 0
 					case "ungranted":

@@ -34,7 +34,7 @@ func TestWikiViewPage(t *testing.T) {
 		t.Fatalf("saved settings: %d %+v", code, detail)
 	}
 	updated := time.Date(2026, 11, 15, 7, 30, 0, 0, time.UTC)
-	for _, state := range []string{"unpublished", "published", "incomplete"} {
+	for _, state := range []string{"unpublished", "published"} {
 		t.Run(state, func(t *testing.T) {
 			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 				project := fixtureProjectsGet(t, st, p.ID)
@@ -42,7 +42,6 @@ func TestWikiViewPage(t *testing.T) {
 				if state == "unpublished" {
 					project.WikiUpdatedAt = time.Time{}
 				}
-				project.WikiIncomplete = state == "incomplete"
 				fixtureProjectsPut(t, st, p.ID, project)
 				return nil
 			}); err != nil {

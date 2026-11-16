@@ -214,7 +214,11 @@ func TestMigrationKeepsUsedAuthenticationAndDropsJobRows(t *testing.T) {
 			if e != nil {
 				return e
 			}
-			if s.Kind != kind || s.Status != "active" {
+			status := "active"
+			if id == "refresh" {
+				status = "revoked"
+			}
+			if s.Kind != kind || s.Status != status {
 				t.Fatal(id, s)
 			}
 		}
@@ -291,12 +295,12 @@ func TestMigrationUsageSurvivesHistoryCompaction(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if u.AttemptID != u.JobID || u.RecordedAt != 5000 || u.Data.UserID != "deleted-user" || u.Data.Model != nil || u.Data.CostCents == nil {
+			if u.JobID != fmt.Sprintf("j%03d", i) || u.RecordedAt != 5000 || u.Data.UserID != "deleted-user" || u.Data.Model != nil || u.Data.CostCents == nil {
 				t.Fatal(u)
 			}
 		}
 		for _, j := range jobs {
-			if j.InputReady || j.CleanupComplete == nil || !*j.CleanupComplete {
+			if j.InputReady || !j.CleanupComplete {
 				t.Fatal(j)
 			}
 		}
@@ -305,7 +309,7 @@ func TestMigrationUsageSurvivesHistoryCompaction(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestMigrationKeepsReadyFalseAfterDeleteFailure(t *testing.T) {
+func TestMigrationKeepsIncompleteVersionAfterDeleteFailure(t *testing.T) {
 	path, b, c, _ := migrationFixture(t)
 	b.beforeDelete = func(blob.Key) error { return errors.New("delete failed") }
 	if e := migrateV2(t.Context(), path, b, c, time.UnixMilli(5000)); e == nil {
@@ -324,7 +328,7 @@ func TestMigrationKeepsReadyFalseAfterDeleteFailure(t *testing.T) {
 	}
 }
 
-func TestMigrationPutsBeforeSingleSQLCommitAndDeletesAfterReferences(t *testing.T) {
+func TestMigrationCommitsRowsAndReadyVersionAfterPutsAndCleanup(t *testing.T) {
 	path, b, c, content := migrationFixture(t)
 	body := []byte("# Wiki\n")
 	hash := string(model.HashContent(body))
@@ -353,18 +357,15 @@ func TestMigrationPutsBeforeSingleSQLCommitAndDeletesAfterReferences(t *testing.
 		}
 		defer db.Close()
 		var version int
-		var state, stored string
+		var tables int
 		if e = db.QueryRow("PRAGMA user_version").Scan(&version); e != nil {
 			return e
 		}
-		if e = db.QueryRow("SELECT data FROM schema_state").Scan(&state); e != nil {
+		if e = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='wiki_files'").Scan(&tables); e != nil {
 			return e
 		}
-		if e = db.QueryRow("SELECT hash FROM wiki_files WHERE project_id='p' AND path='wiki/index.md'").Scan(&stored); e != nil {
-			return e
-		}
-		if version != 3 || state != `{"ready":false}` || stored != hash {
-			t.Fatal("deletion preceded reference commit", version, state, stored)
+		if version != 0 || tables != 0 {
+			t.Fatal("migration became visible before cleanup completed", version, tables)
 		}
 		if !bytes.Equal(b.values[model.WikiContentKey("p", model.ContentHash(hash))], body) {
 			t.Fatal("missing immutable Wiki")
@@ -412,5 +413,39 @@ func TestMigrationTimePreservesNullAndTruncatesSubMilliseconds(t *testing.T) {
 		if err != nil || string(b) != strconv.FormatInt(ms, 10) {
 			t.Fatalf("JSON: %s %v", b, err)
 		}
+	}
+}
+
+func TestMigrationDropsConsumedViewChildState(t *testing.T) {
+	path, objects, cipher, content := migrationFixture(t)
+	content.Jobs["parent"] = legacyV2Job{ID: "parent", ProjectID: "p", Kind: "generate", Status: "completed", ViewGeneration: &legacyV2ViewGeneration{Snapshot: "wiki", Next: 2, ChildID: "second"}}
+	for _, id := range []string{"first", "second"} {
+		content.Jobs[id] = legacyV2Job{ID: id, ProjectID: "p", Kind: "generate-view", Status: "completed", ViewTask: &legacyV2ViewTask{ParentID: "parent", ViewID: id, Snapshot: "wiki"}}
+	}
+	objects.set(t, "projects/p/.kioku/state.json", content)
+	if err := migrateV2(t.Context(), path, objects, cipher, time.UnixMilli(5000)); err != nil {
+		t.Fatal(err)
+	}
+	db, err := OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Read(t.Context(), func(q *Queries) error {
+		if _, err := q.GenerationChild("parent"); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal("completed parent retained child linkage", err)
+		}
+		for _, id := range []string{"first", "second"} {
+			job, err := q.Job(id)
+			if err != nil {
+				return err
+			}
+			if job.Kind != "view" || job.ParentID != nil || job.Data.ViewTask != nil || job.CleanupComplete {
+				t.Fatal(job)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

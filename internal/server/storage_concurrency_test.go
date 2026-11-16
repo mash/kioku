@@ -30,7 +30,7 @@ func TestConcurrentPutReadPublishAndGC(t *testing.T) {
 		func(i int) error {
 			id := fmt.Sprintf("j-%d", i)
 			if err := o.db.Write(t.Context(), func(q *store.Queries) error {
-				return q.PutJob(store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", Phase: store.NullableString("output_received"), CleanupComplete: boolPointer(false), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}})
+				return q.PutJob(store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", Phase: store.NullableString("output_received"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}})
 			}); err != nil {
 				return err
 			}
@@ -149,7 +149,7 @@ func TestViewContinuationRechecksAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	j := readSQLJob(t, o, "parent")
-	if j.Status != "failed" || j.ChildID != nil || j.Data.Views[0].Status != "skipped" {
+	if j.Status != "failed" || readSQLChildID(t, o, j.ID) != "" || j.Data.Views[0].Status != "skipped" {
 		t.Fatal(j)
 	}
 	if err := o.db.Read(t.Context(), func(q *store.Queries) error {
@@ -169,12 +169,12 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 	child.Status = "completed"
 	child.Kind = "view"
 	child.ParentID = store.NullableString("parent")
-	child.Data.ViewTask = &store.ViewTaskData{ViewID: "v1", Snapshot: "w"}
+	child.Data.ViewTask = &store.ViewTaskData{ViewID: "v1"}
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if err := q.PutJob(child); err != nil {
 			return err
 		}
-		return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: store.NullableString("child"), GenerationSnapshot: store.NullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
+		return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", GenerationSnapshot: store.NullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
 	})
 	cost := int64(40)
 	status := runner.Status{State: runner.StateStopped, Usage: runner.UsageSample{CostCents: &cost}}
@@ -195,7 +195,7 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent := readSQLJob(t, o, "parent")
-	if parent.Data.ViewGeneration.Remaining != 100 || store.ValueString(parent.ChildID) != "child" {
+	if parent.Data.ViewGeneration.Remaining != 100 || readSQLChildID(t, o, parent.ID) != "child" {
 		t.Fatal("charged before cleanup", parent)
 	}
 	expectSQLStatus(t, o.deleteProject(t.Context(), "p", cleanup), 503)

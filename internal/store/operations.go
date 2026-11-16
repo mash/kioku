@@ -1,25 +1,26 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 )
 
+// catalogReady is the only readiness predicate for startup, health and backup.
+func catalogReady(version int) error {
+	if version == 3 {
+		return nil
+	}
+	if version == 0 {
+		return errors.New("migration incomplete; restore verified DB, objects and key")
+	}
+	return fmt.Errorf("unsupported SQLite schema %d", version)
+}
 func (q *Queries) Healthy() error {
-	var raw string
-	if err := q.row("SELECT data FROM schema_state WHERE id=1").Scan(&raw); err != nil {
+	var version int
+	if err := q.row("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	var s struct {
-		Ready bool `json:"ready"`
-	}
-	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		return err
-	}
-	if !s.Ready {
-		return errors.New("migration incomplete")
-	}
-	return nil
+	return catalogReady(version)
 }
 func (q *Queries) Metrics() (projects, queued, running, failed int, err error) {
 	err = q.row("SELECT (SELECT count(*) FROM projects),(SELECT count(*) FROM jobs WHERE status='queued'),(SELECT count(*) FROM jobs WHERE status='running'),(SELECT count(*) FROM jobs WHERE status='failed')").Scan(&projects, &queued, &running, &failed)

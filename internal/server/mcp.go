@@ -42,7 +42,7 @@ func connectorGrant(q *store.Queries, key string) (connectorAccess, bool, error)
 	} else if err != nil {
 		return connectorAccess{}, false, err
 	}
-	return connectorAccess{row.UserID, data}, data.Active && data.TokenKind == "access" && len(data.ProjectIDs) > 0, nil
+	return connectorAccess{row.UserID, data}, data.TokenKind == "access" && len(data.ProjectIDs) > 0, nil
 }
 func connectorProject(q *store.Queries, key, namespace string) (model.Project, string, error) {
 	grant, ok, err := connectorGrant(q, key)

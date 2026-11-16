@@ -13,7 +13,7 @@ func TestPendingAgentCleanupRemainsUntilEligibleForHistory(t *testing.T) {
 		j := testJob("pending", "p", "completed", 0)
 		j.Data.Run = &RunData{}
 		j.Phase = pointer("finalizing")
-		j.CleanupComplete = pointer(false)
+		j.CleanupComplete = false
 		if e := q.PutJob(j); e != nil {
 			return e
 		}
@@ -29,7 +29,7 @@ func TestPendingAgentCleanupRemainsUntilEligibleForHistory(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		j.CleanupComplete = pointer(true)
+		j.CleanupComplete = true
 		if e = q.PutJob(j); e != nil {
 			return e
 		}

@@ -8,13 +8,11 @@ type UserData struct {
 	Name string `json:"name"`
 }
 type ProjectData struct {
-	Name                 string  `json:"name"`
-	StorageBucket        *string `json:"storage_bucket"`
-	WikiCreated          *int64  `json:"wiki_created"`
-	WikiCompleteBytes    *int64  `json:"wiki_complete_bytes"`
-	WikiCompleteRevision *string `json:"wiki_complete_revision"`
-	WikiUpdatedAt        *int64  `json:"wiki_updated_at"`
-	ViewsInitialized     bool    `json:"views_initialized"`
+	Name             string  `json:"name"`
+	StorageBucket    *string `json:"storage_bucket"`
+	WikiCreated      *int64  `json:"wiki_created"`
+	WikiUpdatedAt    *int64  `json:"wiki_updated_at"`
+	ViewsInitialized bool    `json:"views_initialized"`
 }
 type InviteData struct {
 	Email *string `json:"email"`
@@ -74,8 +72,7 @@ type GenerationData struct {
 	Next      int   `json:"next"`
 }
 type ViewTaskData struct {
-	ViewID   string `json:"view_id"`
-	Snapshot string `json:"snapshot"`
+	ViewID string `json:"view_id"`
 }
 type ViewData struct {
 	Title          *string `json:"title"`

@@ -147,7 +147,7 @@ func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
 		if err := q.PutSession(old); err != nil {
 			return err
 		}
-		if err := q.PutSession(store.SessionRow{ID: "grant", Kind: "mcp", Status: "active", UserID: "u", Expires: 2000, Data: sqlJSON(t, store.MCPData{Active: true, TokenKind: "access", ProjectIDs: []string{"p"}})}); err != nil {
+		if err := q.PutSession(store.SessionRow{ID: "grant", Kind: "mcp", Status: "active", UserID: "u", Expires: 2000, Data: sqlJSON(t, store.MCPData{TokenKind: "access", ProjectIDs: []string{"p"}})}); err != nil {
 			return err
 		}
 		// Fill the kind-wide limit without hitting this project's active limit.
@@ -291,7 +291,7 @@ func TestConcurrentOAuthExchangeRevokesReplayFamily(t *testing.T) {
 				if err = json.Unmarshal(v.Data, &data); err != nil {
 					return err
 				}
-				if data.Active {
+				if v.Status == "active" {
 					t.Fatal("replay did not revoke refresh")
 				}
 				return nil
@@ -332,7 +332,7 @@ func TestOAuthOrdinaryRejectionRollsBackCode(t *testing.T) {
 func TestExpiredAccessSurvivesWhileLoginCodeReferencesIt(t *testing.T) {
 	d, _ := sqlAuthFixture(t)
 	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.InsertSession(store.SessionRow{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 100, Data: sqlJSON(t, store.MCPData{TokenKind: "access", Active: true, ProjectIDs: []string{"p"}})}, 0); err != nil {
+		if err := q.InsertSession(store.SessionRow{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 100, Data: sqlJSON(t, store.MCPData{TokenKind: "access", ProjectIDs: []string{"p"}})}, 0); err != nil {
 			return err
 		}
 		if err := q.InsertSession(store.SessionRow{ID: "code", Kind: "login_code", Status: "pending", UserID: "u", Expires: 200, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "access"})}, 0); err != nil {

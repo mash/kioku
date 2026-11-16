@@ -51,18 +51,12 @@ func (d *Database) backup(ctx context.Context, dest string, afterSnapshot func()
 		return err
 	}
 	defer conn.ExecContext(context.Background(), "ROLLBACK")
-	var ready string
-	if err = conn.QueryRowContext(ctx, "SELECT data FROM schema_state WHERE id=1").Scan(&ready); err != nil {
+	var version int
+	if err = conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	var state struct {
-		Ready bool `json:"ready"`
-	}
-	if err = json.Unmarshal([]byte(ready), &state); err != nil {
+	if err = catalogReady(version); err != nil {
 		return err
-	}
-	if !state.Ready {
-		return errors.New("cannot back up an incomplete migration")
 	}
 	captured := time.Now().UTC()
 	if afterSnapshot != nil {

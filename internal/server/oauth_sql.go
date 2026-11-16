@@ -274,7 +274,7 @@ func (s *oauthSQL) createToken(key, kind string, r fosite.Requester) error {
 	if kind == "refresh" {
 		tokenType = fosite.RefreshToken
 	}
-	data, err := store.EncodeSessionData(store.MCPData{TokenKind: kind, Active: true, ClientID: r.GetClient().GetID(), RequestID: r.GetID(), ProjectIDs: session.ProjectIDs, Request: request})
+	data, err := store.EncodeSessionData(store.MCPData{TokenKind: kind, ClientID: r.GetClient().GetID(), RequestID: r.GetID(), ProjectIDs: session.ProjectIDs, Request: request})
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -296,7 +296,7 @@ func (s *oauthSQL) getToken(key, kind string) (fosite.Requester, error) {
 	if err != nil {
 		return nil, s.storageError(err)
 	}
-	if !data.Active {
+	if v.Status != "active" {
 		if kind == "refresh" {
 			if err = s.q.RevokeOAuthFamily(v.UserID, data.RequestID); err != nil {
 				return nil, s.storageError(err)
@@ -332,15 +332,7 @@ func (s *oauthSQL) DeleteRefreshTokenSession(_ context.Context, key string) erro
 	if err != nil {
 		return s.storageError(err)
 	}
-	data, err := store.SessionData[store.MCPData](v)
-	if err != nil {
-		return s.storageError(err)
-	}
-	data.Active = false
-	v.Data, err = store.EncodeSessionData(data)
-	if err != nil {
-		return s.storageError(err)
-	}
+	v.Status = "revoked"
 	return s.storageError(s.q.PutSession(v))
 }
 func (s *oauthSQL) RevokeRefreshToken(_ context.Context, id string) error {
@@ -358,7 +350,7 @@ func (s *oauthSQL) RotateRefreshToken(_ context.Context, id, key string) error {
 	if err != nil {
 		return s.storageError(err)
 	}
-	if data.TokenKind != "refresh" || !data.Active || data.RequestID != id {
+	if data.TokenKind != "refresh" || v.Status != "active" || data.RequestID != id {
 		return fosite.ErrInactiveToken
 	}
 	return s.storageError(s.q.RevokeOAuthFamily(v.UserID, id))

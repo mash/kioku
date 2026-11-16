@@ -23,34 +23,29 @@ import (
 // not reconstruct a State snapshot or read any legacy stored representation.
 
 type fixtureProject struct {
-	StorageBucket        string            `json:"storage_bucket,omitempty"`
-	WikiIncomplete       bool              `json:"wiki_incomplete,omitempty"`
-	WikiCompleteRevision string            `json:"wiki_complete_revision,omitempty"`
-	ViewEpoch            string            `json:"view_epoch,omitempty"`
-	WikiUpdatedAt        time.Time         `json:"wiki_updated_at,omitempty"`
-	NextGenerateAt       time.Time         `json:"next_generate_at,omitempty"`
-	OrgID                string            `json:"org_id"`
-	Slug                 string            `json:"slug"`
-	Namespace            string            `json:"namespace"`
-	ID                   string            `json:"id"`
-	Name                 string            `json:"name"`
-	Members              map[string]string `json:"members"`
-	Revision             string            `json:"revision"`
-	Created              time.Time         `json:"created"`
-	Deleting             bool              `json:"deleting,omitempty"`
+	StorageBucket  string            `json:"storage_bucket,omitempty"`
+	WikiIncomplete bool              `json:"wiki_incomplete,omitempty"`
+	WikiUpdatedAt  time.Time         `json:"wiki_updated_at,omitempty"`
+	NextGenerateAt time.Time         `json:"next_generate_at,omitempty"`
+	OrgID          string            `json:"org_id"`
+	Slug           string            `json:"slug"`
+	Namespace      string            `json:"namespace"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Members        map[string]string `json:"members"`
+	Revision       string            `json:"revision"`
+	Created        time.Time         `json:"created"`
+	Deleting       bool              `json:"deleting,omitempty"`
 }
 
 type fixtureRevision struct {
-	// CompleteBytes retains the last completed tree's size during publication.
-	// StoredBytes still accounts for the current, possibly partial tree.
-	CompleteBytes *int64              `json:"complete_bytes,omitempty"`
-	FileBytes     map[string]int64    `json:"file_bytes,omitempty"`
-	FileHashes    map[string]string   `json:"file_hashes,omitempty"`
-	StoredBytes   int64               `json:"stored_bytes"`
-	ID            string              `json:"id"`
-	ProjectID     string              `json:"project_id"`
-	Created       time.Time           `json:"created"`
-	Files         map[string]blob.Key `json:"files"` // relative filename -> current object key
+	FileBytes   map[string]int64    `json:"file_bytes,omitempty"`
+	FileHashes  map[string]string   `json:"file_hashes,omitempty"`
+	StoredBytes int64               `json:"stored_bytes"`
+	ID          string              `json:"id"`
+	ProjectID   string              `json:"project_id"`
+	Created     time.Time           `json:"created"`
+	Files       map[string]blob.Key `json:"files"` // relative filename -> current object key
 }
 
 type fixtureJob struct {
@@ -223,12 +218,11 @@ func fixtureRow(j fixtureJob) store.JobRow {
 	if j.ViewGeneration != nil {
 		g := j.ViewGeneration
 		row.GenerationSnapshot = &g.Snapshot
-		row.ChildID = store.NullableString(g.ChildID)
 		row.Data.ViewGeneration = &store.GenerationData{Pending: g.Pending, Remaining: g.Remaining, Next: g.Next}
 	}
 	if j.ViewTask != nil {
 		row.ParentID = &j.ViewTask.ParentID
-		row.Data.ViewTask = &store.ViewTaskData{ViewID: j.ViewTask.ViewID, Snapshot: j.ViewTask.Snapshot}
+		row.Data.ViewTask = &store.ViewTaskData{ViewID: j.ViewTask.ViewID}
 	}
 	if j.Run != nil {
 		r := j.Run
@@ -237,7 +231,7 @@ func fixtureRow(j fixtureJob) store.JobRow {
 			phase = "preparing"
 		}
 		row.Phase = &phase
-		row.CleanupComplete = &r.CleanupComplete
+		row.CleanupComplete = r.CleanupComplete
 		row.InputReady = !r.CleanupComplete
 		row.SessionID = store.NullableString(r.Ref.ID)
 		row.OutputHash = store.NullableString(r.OutputHash)
@@ -281,13 +275,13 @@ func fixtureJobProjection(t testing.TB, q *store.Queries, row store.JobRow) fixt
 	fixtureCheck(t, err)
 	j := fixtureJob{ID: pub.ID, ProjectID: pub.ProjectID, Kind: pub.Kind, Status: pub.Status, Created: pub.Created, UserID: pub.UserID, AgentID: pub.AgentID, AgentBudgetCents: pub.AgentBudgetCents, Automatic: pub.Automatic, Error: pub.Error, Revision: pub.Revision, WikiStatus: pub.WikiStatus, Unchanged: pub.Unchanged, Views: pub.Views}
 	if g := row.Data.ViewGeneration; g != nil {
-		j.ViewGeneration = &fixtureViewGeneration{Snapshot: store.ValueString(row.GenerationSnapshot), Pending: g.Pending, Remaining: g.Remaining, Next: g.Next, ChildID: store.ValueString(row.ChildID)}
+		j.ViewGeneration = &fixtureViewGeneration{Snapshot: store.ValueString(row.GenerationSnapshot), Pending: g.Pending, Remaining: g.Remaining, Next: g.Next, ChildID: fixtureChildID(t, q, row.ID)}
 	}
 	if v := row.Data.ViewTask; v != nil {
-		j.ViewTask = &fixtureViewTask{ParentID: store.ValueString(row.ParentID), ViewID: v.ViewID, Snapshot: v.Snapshot}
+		j.ViewTask = &fixtureViewTask{ParentID: store.ValueString(row.ParentID), ViewID: v.ViewID, Snapshot: fixtureParentSnapshot(t, q, row.ParentID)}
 	}
 	if r := row.Data.Run; r != nil {
-		j.Run = &fixtureAgentRun{InboxIDs: r.InboxIDs, Ref: sqlAttempt(row).Run, Phase: model.ManagedPhase(store.ValueString(row.Phase)), CostCents: pub.Run.CostCents, CleanupComplete: valueBool(row.CleanupComplete), AbortReason: store.ValueString(r.AbortReason), PreparedAt: storageDate(r.PreparedAt), Deadline: storageDate(r.Deadline), Attempt: fixtureAttempt{ID: row.ID}, BudgetCents: r.BudgetCents, OutputHash: store.ValueString(row.OutputHash), OutputRejection: store.ValueString(r.OutputRejection)}
+		j.Run = &fixtureAgentRun{InboxIDs: r.InboxIDs, Ref: sqlAttempt(row).Run, Phase: model.ManagedPhase(store.ValueString(row.Phase)), CostCents: pub.Run.CostCents, CleanupComplete: row.CleanupComplete, AbortReason: store.ValueString(r.AbortReason), PreparedAt: storageDate(r.PreparedAt), Deadline: storageDate(r.Deadline), Attempt: fixtureAttempt{ID: row.ID}, BudgetCents: r.BudgetCents, OutputHash: store.ValueString(row.OutputHash), OutputRejection: store.ValueString(r.OutputRejection)}
 		if row.OutputHash != nil {
 			j.Run.OutputKey = sqlJobKey(row, "output-"+*row.OutputHash+".tar.gz")
 		}
@@ -336,7 +330,7 @@ func fixtureProjectsFind(t testing.TB, source any, id string) (fixtureProject, b
 	fixtureCheck(t, err)
 	p, err := projectProjection(q, row)
 	fixtureCheck(t, err)
-	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiCompleteRevision: p.WikiCompleteRevision, WikiUpdatedAt: p.WikiUpdatedAt, ViewEpoch: p.ViewEpoch, NextGenerateAt: optionalDate(row.NextGenerateAt), StorageBucket: store.ValueString(row.Data.StorageBucket)}, true
+	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: optionalDate(row.NextGenerateAt), StorageBucket: store.ValueString(row.Data.StorageBucket)}, true
 }
 func fixtureProjectsGet(t testing.TB, source any, id string) fixtureProject {
 	if f, ok := source.(*fixture); ok {
@@ -363,15 +357,12 @@ func fixtureProjectsPut(t testing.TB, q *store.Queries, id string, p fixtureProj
 	}
 	row.Deleting = p.Deleting
 	row.WikiRevision = store.NullableString(p.Revision)
-	row.WikiIncomplete = p.WikiIncomplete
-	row.ViewEpoch = store.NullableString(p.ViewEpoch)
 	row.NextGenerateAt = nil
 	if !p.NextGenerateAt.IsZero() {
 		n := p.NextGenerateAt.UnixMilli()
 		row.NextGenerateAt = &n
 	}
 	row.Data.Name = p.Name
-	row.Data.WikiCompleteRevision = store.NullableString(p.WikiCompleteRevision)
 	row.Data.StorageBucket = store.NullableString(p.StorageBucket)
 	row.Data.WikiUpdatedAt = nil
 	if !p.WikiUpdatedAt.IsZero() {
@@ -519,7 +510,7 @@ func fixtureRevisionsList(t testing.TB, source any, pids ...string) map[string]f
 		}
 		r, err := wikiProjection(q, p)
 		fixtureCheck(t, err)
-		out[r.ID] = fixtureRevision{ID: r.ID, ProjectID: r.ProjectID, Files: r.Files, FileHashes: r.FileHashes, FileBytes: r.FileBytes, StoredBytes: r.StoredBytes, CompleteBytes: p.Data.WikiCompleteBytes, Created: optionalDate(p.Data.WikiCreated)}
+		out[r.ID] = fixtureRevision{ID: r.ID, ProjectID: r.ProjectID, Files: r.Files, FileHashes: r.FileHashes, FileBytes: r.FileBytes, StoredBytes: r.StoredBytes, Created: optionalDate(p.Data.WikiCreated)}
 	}
 	return out
 }
@@ -699,10 +690,14 @@ func fixtureOAuthTokensGet(t testing.TB, source any, id string) fixtureOAuthGran
 	fixtureCheck(t, err)
 	var d store.MCPData
 	fixtureCheck(t, json.Unmarshal(row.Data, &d))
-	return fixtureOAuthGrant{Kind: d.TokenKind, ClientID: d.ClientID, UserID: row.UserID, ProjectIDs: d.ProjectIDs, Expires: storageDate(row.Expires), Active: d.Active, RequestID: d.RequestID, Request: d.Request}
+	return fixtureOAuthGrant{Kind: d.TokenKind, ClientID: d.ClientID, UserID: row.UserID, ProjectIDs: d.ProjectIDs, Expires: storageDate(row.Expires), Active: row.Status == "active", RequestID: d.RequestID, Request: d.Request}
 }
 func fixtureOAuthTokensPut(t testing.TB, q *store.Queries, id string, v fixtureOAuthGrant) {
-	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: "mcp", Status: "active", UserID: v.UserID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, store.MCPData{TokenKind: v.Kind, ClientID: v.ClientID, ProjectIDs: v.ProjectIDs, Active: v.Active, RequestID: v.RequestID, Request: v.Request})}))
+	status := "active"
+	if !v.Active {
+		status = "revoked"
+	}
+	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: "mcp", Status: status, UserID: v.UserID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, store.MCPData{TokenKind: v.Kind, ClientID: v.ClientID, ProjectIDs: v.ProjectIDs, RequestID: v.RequestID, Request: v.Request})}))
 }
 func fixtureOAuthTokensList(t testing.TB, source any, uid string) map[string]fixtureOAuthGrant {
 	if f, ok := source.(*fixture); ok {
@@ -826,11 +821,6 @@ func fixtureRevisionsPut(t testing.TB, q *store.Queries, id string, v fixtureRev
 		n = 0
 	}
 	p.Data.WikiCreated = &n
-	if v.CompleteBytes != nil {
-		p.Data.WikiCompleteBytes = v.CompleteBytes
-	} else {
-		p.Data.WikiCompleteBytes = &v.StoredBytes
-	}
 	fixtureCheck(t, q.PutProject(p))
 	old, err := q.ProjectWiki(v.ProjectID)
 	fixtureCheck(t, err)
@@ -885,12 +875,11 @@ func fixtureViewBundle(t testing.TB, f *fixture, pid, id, jid, snapshot string, 
 		if err != nil {
 			return err
 		}
-		p, err := q.Project(pid)
+		_, err = q.Project(pid)
 		if err != nil {
 			return err
 		}
 		v.BundleHash = store.NullableString(string(hash))
-		v.ViewEpoch = p.ViewEpoch
 		n := time.Now().UnixMilli()
 		v.Data.Status = store.NullableString("completed")
 		v.Data.JobID = &jid
@@ -906,4 +895,42 @@ func viewsKey(pid string, suffix string) blob.Key {
 
 func viewKey(pid, id, name string) blob.Key {
 	return viewsKey(pid, id+"/"+name)
+}
+
+func fixtureChildID(t testing.TB, q *store.Queries, parent string) string {
+	t.Helper()
+	child, err := q.GenerationChild(parent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ""
+	}
+	fixtureCheck(t, err)
+	return child.ID
+}
+func fixtureParentSnapshot(t testing.TB, q *store.Queries, parent *string) string {
+	t.Helper()
+	if parent == nil {
+		return ""
+	}
+	row, err := q.Job(*parent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ""
+	}
+	fixtureCheck(t, err)
+	return store.ValueString(row.GenerationSnapshot)
+}
+func readSQLChildID(t *testing.T, o *storageOperations, parent string) string {
+	t.Helper()
+	var id string
+	fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error { id = fixtureChildID(t, q, parent); return nil }))
+	return id
+}
+
+func fixtureOversizedWiki(t testing.TB, f *fixture, q *store.Queries, pid, revision string) {
+	t.Helper()
+	f.s.Config.MaxWikiBytes = 32 << 10
+	body := []byte(strings.Repeat("x", int(f.s.Config.MaxWikiBytes)+1))
+	hash := model.HashContent(body)
+	key := model.WikiContentKey(pid, hash)
+	fixtureCheck(t, f.s.Blobs.Put(context.Background(), key, body))
+	fixtureRevisionsPut(t, q, revision, fixtureRevision{ID: revision, ProjectID: pid, Files: map[string]blob.Key{"wiki/index.md": key}, FileHashes: map[string]string{"wiki/index.md": string(hash)}, FileBytes: map[string]int64{"wiki/index.md": int64(len(body))}})
 }

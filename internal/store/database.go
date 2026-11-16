@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"database/sql/driver"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -103,7 +102,7 @@ func OpenDatabase(path string, create bool) (*Database, error) {
 			if _, err = tx.Exec(catalogSchema); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(`INSERT INTO schema_state VALUES(1,'{"ready":true}'); PRAGMA user_version=3`); err != nil {
+			if _, err = tx.Exec(`PRAGMA user_version=3`); err != nil {
 				return err
 			}
 			return tx.Commit()
@@ -137,30 +136,18 @@ func (d *Database) Close() error {
 }
 func (d *Database) validateCatalog() error {
 	var version int
-	var check, raw string
+	var check string
 	if err := d.writer.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 3 {
-		return fmt.Errorf("unsupported SQLite schema %d", version)
+	if err := catalogReady(version); err != nil {
+		return err
 	}
 	if err := d.writer.QueryRow("PRAGMA quick_check").Scan(&check); err != nil {
 		return err
 	}
 	if check != "ok" {
 		return errors.New("SQLite integrity check failed")
-	}
-	if err := d.writer.QueryRow("SELECT data FROM schema_state WHERE id=1").Scan(&raw); err != nil {
-		return err
-	}
-	var state struct {
-		Ready bool `json:"ready"`
-	}
-	if err := json.Unmarshal([]byte(raw), &state); err != nil {
-		return err
-	}
-	if !state.Ready {
-		return errors.New("migration incomplete; restore verified DB, objects and key")
 	}
 	// Compare sqlite_master definitions: this verifies column types, NOT NULL,
 	// primary/unique keys, checks, and partial-index predicates together.

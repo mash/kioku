@@ -55,7 +55,7 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 		return err
 	}
 	job = current
-	if job.Data.Run == nil || agentRunFinished(job) && valueBool(job.CleanupComplete) {
+	if job.Data.Run == nil || agentRunFinished(job) && job.CleanupComplete {
 		return nil
 	}
 	r, err := s.runners.New(job)
@@ -304,7 +304,7 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job store.JobRow, status *
 		return err
 	}
 	job = current
-	if job.Data.Run == nil || valueBool(job.CleanupComplete) || !agentRunFinished(job) {
+	if job.Data.Run == nil || job.CleanupComplete || !agentRunFinished(job) {
 		return nil
 	}
 	r, err := s.runners.New(job)

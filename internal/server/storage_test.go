@@ -122,11 +122,11 @@ func TestInterruptedImmutableWikiCanBeRetried(t *testing.T) {
 	sendOutput(t, f, f.auto, j, "Generated")
 	f.auto.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
 	deferredPublication(t, f, j)
-	if p := fixtureProjectsGet(t, f, p.ID); !p.WikiIncomplete {
+	if p := fixtureProjectsGet(t, f, p.ID); p.WikiIncomplete || p.Revision != "" {
 		t.Fatal(p)
 	}
-	if f.readWiki("/api/projects/"+p.ID, token)["wiki/index.md"] == "" {
-		t.Fatal("partial progress unavailable")
+	if len(f.readWiki("/api/projects/"+p.ID, token)) != 0 {
+		t.Fatal("partially uploaded Wiki became visible")
 	}
 	objects.fail = false
 	if got := reconcileManaged(t, f, j); got.Status != "completed" {

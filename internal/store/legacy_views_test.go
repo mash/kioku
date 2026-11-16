@@ -79,7 +79,7 @@ func TestMigrationSelectsCommittedViewResultAndSettings(t *testing.T) {
 						t.Fatal(v)
 					}
 				case "stale epoch clears references":
-					if v.BundleHash != nil || v.ViewEpoch != nil || v.Data.JobID != nil || v.Data.WikiSnapshotID != nil || v.Data.GeneratedAt != nil || ValueString(v.Data.Status) != "failed" || ValueString(v.Data.Error) != "latest failure" {
+					if v.BundleHash != nil || v.Data.JobID != nil || v.Data.WikiSnapshotID != nil || v.Data.GeneratedAt != nil || ValueString(v.Data.Status) != "failed" || ValueString(v.Data.Error) != "latest failure" {
 						t.Fatal(v)
 					}
 				}

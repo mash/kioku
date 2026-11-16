@@ -27,7 +27,7 @@ func TestJobCipherChecksCurrentRun(t *testing.T) {
 		{"no-run", func(j *store.JobRow) {
 			j.Phase = nil
 			j.Data.Run = nil
-			j.CleanupComplete = nil
+			j.CleanupComplete = false
 			j.InputReady = false
 			j.GenerationSnapshot = sqlTestPtr("")
 			j.Data.ViewGeneration = &store.GenerationData{}
@@ -36,7 +36,7 @@ func TestJobCipherChecksCurrentRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d, c := sqlAuthFixture(t)
 			now := time.UnixMilli(1000)
-			job := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", Phase: sqlTestPtr("preparing"), CleanupComplete: sqlTestPtr(false), InputReady: true, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 2000}}}
+			job := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", Phase: sqlTestPtr("preparing"), CleanupComplete: false, InputReady: true, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 2000}}}
 			tc.mutate(&job)
 			sqlWrite(t, d, func(q *store.Queries) error { return q.PutJob(job) })
 			raw, err := c.SealJobCredential(auth.JobCredential{JobID: "j", Attempt: "j", Expires: 3000})

@@ -92,11 +92,6 @@ func (s *Server) viewProjection(row store.ViewRow, p model.Project) viewDefiniti
 		t := storageDate(*row.Data.GeneratedAt)
 		v.GeneratedAt = &t
 	}
-	if row.BundleHash != nil && store.ValueString(row.ViewEpoch) != p.ViewEpoch {
-		v.JobID = ""
-		v.WikiSnapshotID = ""
-		v.GeneratedAt = nil
-	}
 	return v
 }
 func (s *Server) listViewsLocked(ctx context.Context, pid string) ([]viewDefinition, error) {
@@ -274,11 +269,10 @@ func (s *Server) readViewBundleLocked(ctx context.Context, pid string, v viewDef
 		if err != nil {
 			return err
 		}
-		p, err := q.Project(pid)
-		if err != nil {
+		if _, err := q.Project(pid); err != nil {
 			return err
 		}
-		if row.BundleHash == nil || store.ValueString(row.Data.JobID) != v.JobID || !equalOptional(row.ViewEpoch, p.ViewEpoch) {
+		if row.BundleHash == nil || store.ValueString(row.Data.JobID) != v.JobID {
 			return fail(404, "view result not found")
 		}
 		return nil

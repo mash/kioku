@@ -88,6 +88,9 @@ func TestProjectPageShowsFiveRecentGenerations(t *testing.T) {
 		if err := q.PutJob(store.JobRow{ID: "view-child", ProjectID: p.ID, Status: "completed", Kind: "view", Created: 10, ParentID: store.NullableString("latest-b"), Data: store.JobData{ViewTask: &store.ViewTaskData{}}}); err != nil {
 			return err
 		}
+		if err := q.PutJob(store.JobRow{ID: "view-consumed", ProjectID: p.ID, Status: "completed", Kind: "view", Created: 10}); err != nil {
+			return err
+		}
 		return q.PutJob(store.JobRow{ID: "unrelated", ProjectID: "other", Status: "completed", Kind: "generate", Created: 10})
 	}))
 	req := httptest.NewRequest("GET", "/"+p.Namespace, nil)
@@ -101,6 +104,11 @@ func TestProjectPageShowsFiveRecentGenerations(t *testing.T) {
 	if got := strings.Count(body, ">生成ジョブ</a>"); got != 5 {
 		t.Fatalf("recent job count = %d", got)
 	}
+	for _, id := range []string{"view-child", "view-consumed"} {
+		if code := f.request("GET", "/api/projects/"+p.Namespace+"/jobs/"+id, token, nil, nil); code != 404 {
+			t.Fatalf("child job %s became public: %d", id, code)
+		}
+	}
 	previous := -1
 	for _, id := range []string{"latest-b", "latest-a", "fifth", "fourth", "third"} {
 		index := strings.Index(body, "/jobs/"+id+`"`)
@@ -109,7 +117,7 @@ func TestProjectPageShowsFiveRecentGenerations(t *testing.T) {
 		}
 		previous = index
 	}
-	for _, id := range []string{"oldest", "older", "view-child", "unrelated"} {
+	for _, id := range []string{"oldest", "older", "view-child", "view-consumed", "unrelated"} {
 		if strings.Contains(body, "/jobs/"+id+`"`) {
 			t.Fatalf("unexpected recent job %q", id)
 		}

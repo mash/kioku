@@ -102,7 +102,7 @@ func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
 		q := fixtureProjectsGet(t, st, p.ID)
 		q.Revision = "r"
 		fixtureProjectsPut(t, st, p.ID, q)
-		fixtureRevisionsPut(t, st, "r", fixtureRevision{ID: "r", ProjectID: p.ID, StoredBytes: f.s.Config.MaxWikiBytes + 1})
+		fixtureOversizedWiki(t, f, st, p.ID, "r")
 		return nil
 	})
 	j = startManaged(t, f, token, p.ID, false)
@@ -150,7 +150,7 @@ func TestInterruptedPublicationKeepsInbox(t *testing.T) {
 		t.Fatal(j)
 	}
 	f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if !fixtureProjectsGet(t, st, p.ID).WikiIncomplete || fixtureInboxGet(t, st, item.ID).ID == "" || fixtureInboxGet(t, st, item.ID).RunID != j.ID {
+		if fixtureProjectsGet(t, st, p.ID).WikiIncomplete || fixtureInboxGet(t, st, item.ID).ID == "" || fixtureInboxGet(t, st, item.ID).RunID != j.ID {
 			t.Fatal(fixtureProjectsGet(t, st, p.ID), fixtureInboxList(t, st, p.ID))
 		}
 		return nil
@@ -191,7 +191,7 @@ func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
 				}
 				if tc.over {
 					p.Revision = "large"
-					fixtureRevisionsPut(t, st, "large", fixtureRevision{ID: "large", ProjectID: p.ID, StoredBytes: f.s.Config.MaxWikiBytes + 1})
+					fixtureOversizedWiki(t, f, st, p.ID, "large")
 				}
 				fixtureProjectsPut(t, st, p.ID, p)
 				if tc.item {
@@ -375,8 +375,8 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 			restartManagedFixture(t, f)
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 				p := fixtureProjectsGet(t, st, p.ID)
-				if !p.WikiIncomplete || fixtureRevisionsGet(t, st, p.ID, p.Revision).StoredBytes <= f.s.Config.MaxWikiBytes {
-					t.Fatal("publication did not stop over quota", p)
+				if p.WikiIncomplete || p.Revision != "" || len(fixtureRevisionsList(t, st, p.ID)) != 0 {
+					t.Fatal("failed upload changed published Wiki", p)
 				}
 				return nil
 			}); err != nil {
@@ -399,7 +399,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 				if automatic {
 					want = 1
 				}
-				if project.WikiIncomplete || project.Data.WikiCompleteBytes != nil || len(items) != want {
+				if len(items) != want {
 					t.Fatal("recovery lost inbox boundaries", project, items)
 				}
 				return err
@@ -516,7 +516,7 @@ func TestRejectedPutKeepsDeadline(t *testing.T) {
 				p := fixtureProjectsGet(t, st, p.ID)
 				p.Deleting, p.Revision = deleting, "large"
 				fixtureProjectsPut(t, st, p.ID, p)
-				fixtureRevisionsPut(t, st, "large", fixtureRevision{ID: "large", ProjectID: p.ID, StoredBytes: f.s.Config.MaxWikiBytes + 1})
+				fixtureOversizedWiki(t, f, st, p.ID, "large")
 				return nil
 			}); err != nil {
 				t.Fatal(err)

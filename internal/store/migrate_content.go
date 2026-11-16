@@ -37,7 +37,10 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 	if content.Inbox == nil || content.Jobs == nil || content.Audit == nil {
 		return errors.New("missing legacy project content collection")
 	}
-	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), WikiIncomplete: content.Incomplete, NextGenerateAt: migrationTime(content.NextGenerateAt), ViewEpoch: NullableString(content.ViewEpoch), Data: ProjectData{Name: old.Name, StorageBucket: NullableString(old.StorageBucket), WikiCompleteRevision: NullableString(content.WikiCompleteRevision), WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
+	if content.Incomplete {
+		return errors.New("complete Wiki publication before migration")
+	}
+	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), NextGenerateAt: migrationTime(content.NextGenerateAt), Data: ProjectData{Name: old.Name, StorageBucket: NullableString(old.StorageBucket), WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
 	if content.NextGenerateAt.After(time.Time{}) && !content.NextGenerateAt.IsZero() {
 		return errors.New("complete scheduled generation before migration")
 	}
@@ -67,13 +70,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			return errors.New("legacy Wiki identity mismatch")
 		}
 		project.WikiRevision = &w.ID
-		// v2 used the current revision when a completed Wiki had no explicit
-		// complete revision. Resolve that once, before dropping the old state.
-		if !content.Incomplete && project.Data.WikiCompleteRevision == nil {
-			project.Data.WikiCompleteRevision = &w.ID
-		}
 		project.Data.WikiCreated = migrationTime(w.Created)
-		project.Data.WikiCompleteBytes = w.CompleteBytes
 		var total int64
 		for name, key := range w.Files {
 			if !wiki.ValidFile(name) || !blob.ValidKey(key) || !strings.HasPrefix(string(key), prefix) {
@@ -119,19 +116,18 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		}
 		if g := job.ViewGeneration; g != nil {
 			row.GenerationSnapshot = &g.Snapshot
-			row.ChildID = NullableString(g.ChildID)
 			row.Data.ViewGeneration = &GenerationData{Pending: g.Pending, Remaining: g.Remaining, Next: g.Next}
 		}
-		if task := job.ViewTask; task != nil {
-			row.ParentID = &task.ParentID
-			row.Data.ViewTask = &ViewTaskData{ViewID: task.ViewID, Snapshot: task.Snapshot}
+		// Only unconsumed children retain linkage in v3. Migration accepts
+		// terminal jobs only; keep their kind so HTTP history still hides them.
+		if job.ViewTask != nil {
+			row.Kind = "view"
 		}
 		if run := job.Run; run != nil {
 			if !run.CleanupComplete {
 				return errors.New("complete all runner cleanup before migration")
 			}
-			complete := true
-			row.CleanupComplete = &complete
+			row.CleanupComplete = true
 			row.Phase = &run.Phase
 			row.SessionID = NullableString(run.Ref.ID)
 			row.OutputHash = NullableString(run.OutputHash)
@@ -140,7 +136,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			if cost != nil && *cost < 0 {
 				cost = nil
 			}
-			p.usage = append(p.usage, UsageRow{AttemptID: id, ProjectID: old.ID, JobID: id, RecordedAt: now.UnixMilli(), Data: model.UsageValues{OrgID: old.OrgID, UserID: job.UserID, UsageMeasurements: model.UsageMeasurements{CostCents: cost}}})
+			p.usage = append(p.usage, UsageRow{ProjectID: old.ID, JobID: id, RecordedAt: now.UnixMilli(), Data: model.UsageValues{OrgID: old.OrgID, UserID: job.UserID, UsageMeasurements: model.UsageMeasurements{CostCents: cost}}})
 		}
 		p.jobs = append(p.jobs, row)
 	}
@@ -150,7 +146,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		}
 		p.audit = append(p.audit, AuditRow{ID: id, ProjectID: old.ID, Created: migrationCreated(a.Created), Data: AuditData{UserID: a.UserID, Action: a.Action, Detail: a.Detail}})
 	}
-	if err = p.readViews(ctx, project, objects, keys, now); err != nil {
+	if err = p.readViews(ctx, project, content.ViewEpoch, objects, keys, now); err != nil {
 		return err
 	}
 	p.projects = append(p.projects, project)

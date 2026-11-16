@@ -151,7 +151,7 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request, uid string) error {
 		if err != nil {
 			return err
 		}
-		if j.ProjectID != pid || j.ParentID != nil {
+		if j.ProjectID != pid || j.ParentID != nil || j.Kind == "view" {
 			return fail(404, "job not found")
 		}
 		job, err = jobProjection(q, j)

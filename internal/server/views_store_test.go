@@ -51,11 +51,11 @@ func (s *viewFaultStore) Delete(ctx context.Context, key blob.Key) error {
 	return s.Store.Delete(ctx, key)
 }
 
-func setCompleteViewWiki(t *testing.T, f *fixture, pid, wiki, epoch string) {
+func setCompleteViewWiki(t *testing.T, f *fixture, pid, wiki string) {
 	t.Helper()
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		project := fixtureProjectsGet(t, st, pid)
-		project.WikiCompleteRevision, project.ViewEpoch = wiki, epoch
+		project.Revision = wiki
 		fixtureProjectsPut(t, st, pid, project)
 		return nil
 	}); err != nil {
@@ -69,7 +69,7 @@ func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
 		t.Run(boundary, func(t *testing.T) {
 			f, _, p := orgProject(t)
 			ctx := t.Context()
-			setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
+			setCompleteViewWiki(t, f, p.ID, "wiki-1")
 			v, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
 			fixtureCheck(t, err)
 			fixtureViewBundle(t, f, p.ID, v.ID, "old-job", "wiki-1", []byte("old bundle"))
@@ -129,10 +129,10 @@ func fixtureViewJob(t *testing.T, f *fixture, pid, vid, parent, snapshot string)
 				uid = id
 			}
 		}
-		if err = q.PutJob(store.JobRow{ID: parent, Kind: "generate", ProjectID: pid, Status: "running", ChildID: &child, GenerationSnapshot: &snapshot, Data: store.JobData{UserID: uid, ViewGeneration: &store.GenerationData{}, Views: []store.ViewResultData{{ViewID: vid, Slug: "project-map", Status: "running"}}}}); err != nil {
+		if err = q.PutJob(store.JobRow{ID: parent, Kind: "generate", ProjectID: pid, Status: "running", GenerationSnapshot: &snapshot, Data: store.JobData{UserID: uid, ViewGeneration: &store.GenerationData{}, Views: []store.ViewResultData{{ViewID: vid, Slug: "project-map", Status: "running"}}}}); err != nil {
 			return err
 		}
-		j := fixtureJob{ID: child, Kind: "generate-view", ProjectID: pid, Status: "running", UserID: uid, ViewTask: &fixtureViewTask{ParentID: parent, ViewID: vid, Snapshot: snapshot}, Run: &fixtureAgentRun{Phase: model.PhaseFinalizing, PreparedAt: now, Deadline: now.Add(time.Hour)}}
+		j := fixtureJob{ID: child, Kind: "view", ProjectID: pid, Status: "running", UserID: uid, ViewTask: &fixtureViewTask{ParentID: parent, ViewID: vid, Snapshot: snapshot}, Run: &fixtureAgentRun{Phase: model.PhaseFinalizing, PreparedAt: now, Deadline: now.Add(time.Hour)}}
 		return q.PutJob(fixtureRow(j))
 	}))
 	return child
@@ -140,7 +140,7 @@ func fixtureViewJob(t *testing.T, f *fixture, pid, vid, parent, snapshot string)
 func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	f, token, p := orgProject(t)
 	ctx := t.Context()
-	setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
+	setCompleteViewWiki(t, f, p.ID, "wiki-1")
 	v, err := f.s.viewBySlugLocked(ctx, p.ID, "project-map")
 	fixtureCheck(t, err)
 	fixtureViewBundle(t, f, p.ID, v.ID, "old-job", "wiki-1", []byte("published"))
@@ -153,7 +153,16 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	}
 	// A settings edit does not invalidate an already running job.
 	fixtureCheck(t, f.s.storage.publishView(ctx, child, &viewBundle{files: map[string][]byte{"index.html": []byte("late")}}))
-	setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-2")
+	actor := storedJob(t, f, child).UserID
+	fixtureCheck(t, f.stateStore.Write(ctx, func(q *store.Queries) error {
+		j := store.JobRow{ID: "remove-source", ProjectID: p.ID, Status: "running", Kind: "generate", Phase: store.NullableString("finalizing"), Data: store.JobData{UserID: actor, Run: &store.RunData{BudgetCents: 100}}}
+		if err := q.PutJob(j); err != nil {
+			return err
+		}
+		return q.PutInbox(store.InboxRow{ID: "remove", ProjectID: p.ID, SourceURL: "https://example.com/source", Remove: true, RunID: &j.ID})
+	}))
+	_, err = f.s.storage.publishWiki(ctx, "remove-source", map[string]string{"wiki/index.md": "updated"})
+	fixtureCheck(t, err)
 	if _, err := readFixtureViewBundle(ctx, f.s, p.ID, v.Slug); err == nil {
 		t.Fatal("obsolete bundle visible")
 	}

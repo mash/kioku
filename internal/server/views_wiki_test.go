@@ -20,10 +20,10 @@ func TestWikiViewDetail(t *testing.T) {
 	path := "/api/projects/" + p.ID + "/views/wiki"
 	updated := time.Date(2026, 11, 15, 7, 30, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		name                  string
-		published, incomplete bool
+		name      string
+		published bool
 	}{
-		{"unpublished", false, false}, {"published", true, false}, {"incomplete", true, true},
+		{"unpublished", false}, {"published", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -32,7 +32,6 @@ func TestWikiViewDetail(t *testing.T) {
 				if tc.published {
 					project.WikiUpdatedAt = updated
 				}
-				project.WikiIncomplete = tc.incomplete
 				fixtureProjectsPut(t, st, p.ID, project)
 				return nil
 			}); err != nil {
@@ -43,7 +42,7 @@ func TestWikiViewDetail(t *testing.T) {
 				t.Fatal(code, got)
 			}
 			want := map[string]any{"view_id": "vw_" + auth.Hash(p.ID + "/wiki")[:20], "slug": "wiki", "title": "Wiki", "prompt": prompts.DefaultWikiPrompt(), "created_at": p.Created.Format(time.RFC3339Nano), "status": "pending", "wiki_updated_since_run": nil}
-			if tc.published && !tc.incomplete {
+			if tc.published {
 				want["status"] = "completed"
 				want["generated_at"] = updated.Format(time.RFC3339Nano)
 			}
@@ -83,7 +82,7 @@ func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 		t.Fatalf("title-only = %+v", got)
 	}
 	row := fixtureViewRow(t, f, p.ID, id)
-	if row.CreatedAt != nil || row.BundleHash != nil || row.ViewEpoch != nil || store.ValueString(row.Data.Title) != "Notes" || row.Data.Prompt != nil {
+	if row.CreatedAt != nil || row.BundleHash != nil || store.ValueString(row.Data.Title) != "Notes" || row.Data.Prompt != nil {
 		t.Fatal(row)
 	}
 	if got := patch(map[string]string{"prompt": "Saved"}); got.Title != "Notes" || got.Prompt != "Saved" {

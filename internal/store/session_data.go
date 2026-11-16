@@ -34,7 +34,6 @@ type AgentSessionData struct {
 }
 type MCPData struct {
 	TokenKind  string          `json:"token_kind"`
-	Active     bool            `json:"active"`
 	ClientID   string          `json:"client_id"`
 	RequestID  string          `json:"request_id"`
 	ProjectIDs []string        `json:"project_ids"`
@@ -107,11 +106,7 @@ func (q *Queries) RevokeOAuthFamily(user, id string) error {
 				return err
 			}
 		} else {
-			data.Active = false
-			v.Data, err = json.Marshal(data)
-			if err != nil {
-				return err
-			}
+			v.Status = "revoked"
 			if err := q.PutSession(v); err != nil {
 				return err
 			}

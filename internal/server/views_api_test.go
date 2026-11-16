@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
+	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -90,7 +91,7 @@ func TestViewSettingsAuthorizationAndShape(t *testing.T) {
 func TestViewDetailComparesWithFullyPublishedWiki(t *testing.T) {
 	f, owner, p := orgProject(t)
 	ctx := t.Context()
-	setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
+	setCompleteViewWiki(t, f, p.ID, "wiki-1")
 	unlock, err := f.s.storage.lock(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -103,20 +104,14 @@ func TestViewDetailComparesWithFullyPublishedWiki(t *testing.T) {
 		}
 		fixtureViewBundle(t, f, p.ID, view.ID, "view-job", "wiki-1", []byte("bundle"))
 	}()
-	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		p := fixtureProjectsGet(t, st, p.ID)
-		p.Revision, p.WikiIncomplete = "wiki-2", true
-		fixtureProjectsPut(t, st, p.ID, p)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	body := []byte("unpublished Wiki")
+	fixtureCheck(t, f.s.Blobs.Put(ctx, model.WikiContentKey(p.ID, model.HashContent(body)), body))
 	path := "/api/projects/" + p.ID + "/views/project-map"
 	var detail viewDetail
 	if code := f.request("GET", path, owner, nil, &detail); code != 200 || detail.WikiUpdatedSinceRun == nil || *detail.WikiUpdatedSinceRun {
-		t.Fatalf("incomplete Wiki was counted as an update, response %d: %+v", code, detail)
+		t.Fatalf("unreferenced Wiki was counted as an update, response %d: %+v", code, detail)
 	}
-	setCompleteViewWiki(t, f, p.ID, "wiki-2", "epoch-1")
+	setCompleteViewWiki(t, f, p.ID, "wiki-2")
 	if code := f.request("GET", path, owner, nil, &detail); code != 200 || detail.WikiUpdatedSinceRun == nil || !*detail.WikiUpdatedSinceRun {
 		t.Fatalf("completed Wiki was not counted as an update, response %d: %+v", code, detail)
 	}

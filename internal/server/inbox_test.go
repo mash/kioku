@@ -72,7 +72,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		q := fixtureProjectsGet(t, st, p.ID)
 		q.Revision = "r"
 		fixtureProjectsPut(t, st, p.ID, q)
-		fixtureRevisionsPut(t, st, "r", fixtureRevision{ID: "r", ProjectID: p.ID, StoredBytes: f.s.Config.MaxWikiBytes + 1})
+		fixtureOversizedWiki(t, f, st, p.ID, "r")
 		return nil
 	})
 	if c := f.request("POST", base+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/a", "Source body")}}, nil); c != 413 {

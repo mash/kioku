@@ -177,7 +177,11 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if v.ProjectIDs == nil {
 				v.ProjectIDs = []string{}
 			}
-			if e = p.addSession(SessionRow{ID: r.id, Kind: "mcp", Status: "active", UserID: v.UserID, Expires: migrationCreated(v.Expires), Created: created}, MCPData{TokenKind: v.Kind, Active: v.Active, ClientID: v.ClientID, RequestID: v.RequestID, ProjectIDs: v.ProjectIDs, Request: request}); e != nil {
+			status := "active"
+			if !v.Active {
+				status = "revoked"
+			}
+			if e = p.addSession(SessionRow{ID: r.id, Kind: "mcp", Status: status, UserID: v.UserID, Expires: migrationCreated(v.Expires), Created: created}, MCPData{TokenKind: v.Kind, ClientID: v.ClientID, RequestID: v.RequestID, ProjectIDs: v.ProjectIDs, Request: request}); e != nil {
 				return e
 			}
 		case "login_codes":

@@ -29,7 +29,7 @@ func (f *fixture) readWiki(base, token string) map[string]string {
 	return pages
 }
 
-func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T) {
+func TestSyncManifestAndFileRespectMembershipAndPublishedReferences(t *testing.T) {
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	other := f.login("other@example.com")
@@ -49,7 +49,6 @@ func TestSyncManifestAndFileRespectMembershipAndPartialPublication(t *testing.T)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		current := fixtureProjectsGet(t, st, p.ID)
 		current.Revision = "revision"
-		current.WikiIncomplete = true
 		fixtureProjectsPut(t, st, p.ID, current)
 		fixtureRevisionsPut(t, st, "revision", fixtureRevision{
 			ID: "revision", ProjectID: p.ID,

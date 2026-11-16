@@ -23,9 +23,6 @@ func beginSQLViews(q *store.Queries, j *store.JobRow, p store.ProjectRow, budget
 	} else if e != nil {
 		return e
 	}
-	if p.WikiIncomplete {
-		snapshot = ""
-	}
 	if snapshot == "" {
 		j.Data.WikiStatus = store.NullableString("unavailable")
 	}
@@ -57,10 +54,10 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			return err
 		}
 		g := initial.Data.ViewGeneration
-		if initial.Status != "running" || g == nil || initial.ChildID == nil || g.Next < 0 || g.Next >= len(initial.Data.Views) {
+		if initial.Status != "running" || g == nil || g.Next < 0 || g.Next >= len(initial.Data.Views) {
 			return nil
 		}
-		child, err := q.Job(*initial.ChildID)
+		child, err := q.GenerationChild(initial.ID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -74,7 +71,7 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		if !project.Deleting && initial.Data.Run != nil && valueBool(initial.CleanupComplete) {
+		if !project.Deleting && initial.Data.Run != nil && initial.CleanupComplete {
 			if _, err = q.Usage(initial.ID); err != nil {
 				return err
 			}
@@ -114,14 +111,14 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			return nil
 		}
 		if p.Data.Run != nil {
-			if !valueBool(p.CleanupComplete) {
+			if !p.CleanupComplete {
 				return nil
 			}
 			if _, e = q.Usage(p.ID); e != nil {
 				return e
 			}
 		}
-		if g.Next < 0 || g.Next > len(p.Data.Views) || p.ChildID != nil && g.Next == len(p.Data.Views) {
+		if g.Next < 0 || g.Next > len(p.Data.Views) {
 			return errors.New("inconsistent View generation checkpoint")
 		}
 		setStatus := func(result *store.ViewResultData, status, reason string) error {
@@ -140,17 +137,23 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			v.Data.Error = store.NullableString(reason)
 			return q.PutView(v)
 		}
-		if p.ChildID != nil {
-			child, e := q.Job(*p.ChildID)
-			if e != nil {
-				return e
+		child, e := q.GenerationChild(p.ID)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		if errors.Is(e, sql.ErrNoRows) && g.Next < len(p.Data.Views) && p.Data.Views[g.Next].Status == "running" {
+			return sql.ErrNoRows
+		}
+		if e == nil {
+			if g.Next == len(p.Data.Views) {
+				return errors.New("inconsistent View generation checkpoint")
 			}
 			if child.Status == "queued" || child.Status == "running" {
 				return nil
 			}
 			var cost *int64
 			if child.Data.Run != nil {
-				if !valueBool(child.CleanupComplete) {
+				if !child.CleanupComplete {
 					return nil
 				}
 				usage, e := q.Usage(child.ID)
@@ -169,7 +172,11 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			}
 			g.Remaining = remainingViewBudget(g.Remaining, cost)
 			g.Next++
-			p.ChildID = nil
+			child.ParentID = nil
+			child.Data.ViewTask = nil
+			if e = q.PutJob(child); e != nil {
+				return e
+			}
 			if result.Status == "failed" {
 				for i := g.Next; i < len(p.Data.Views); i++ {
 					if e = setStatus(&p.Data.Views[i], "skipped", viewPreviousFailed); e != nil {
@@ -239,14 +246,13 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 				continue
 			}
 			childID := o.id()
-			child := store.JobRow{ID: childID, ProjectID: p.ProjectID, Status: "queued", Kind: "view", Created: o.now().UnixMilli(), ParentID: &p.ID, Data: store.JobData{UserID: p.Data.UserID, AgentID: p.Data.AgentID, AgentBudgetCents: g.Remaining, ViewTask: &store.ViewTaskData{ViewID: result.ViewID, Snapshot: *p.GenerationSnapshot}}}
+			child := store.JobRow{ID: childID, ProjectID: p.ProjectID, Status: "queued", Kind: "view", Created: o.now().UnixMilli(), ParentID: &p.ID, Data: store.JobData{UserID: p.Data.UserID, AgentID: p.Data.AgentID, AgentBudgetCents: g.Remaining, ViewTask: &store.ViewTaskData{ViewID: result.ViewID}}}
 			if e = q.PutJob(child); e != nil {
 				return e
 			}
-			p.ChildID = &childID
 			break
 		}
-		if p.ChildID == nil {
+		if g.Next == len(p.Data.Views) {
 			p.Status = "completed"
 			p.GenerationSnapshot = nil
 			p.Data.ViewGeneration = nil

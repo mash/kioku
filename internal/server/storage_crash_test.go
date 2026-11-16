@@ -47,19 +47,14 @@ func (d crashCatalog) Write(ctx context.Context, fn func(*store.Queries) error) 
 		case "output":
 			hit = je == nil && j.OutputHash != nil
 		case "wiki":
-			if strings.Contains(d.stage, "page") {
-				_, e := q.WikiFile("p", "wiki/a.md")
-				hit = e == nil
-			} else {
-				hit = pe == nil && !p.WikiIncomplete && je == nil && j.Status == "completed"
-			}
+			hit = pe == nil && je == nil && j.Status == "completed"
 		case "view":
 			hit = je == nil && j.Status == "completed"
 		case "cleanup":
 			if strings.Contains(d.stage, "unreference") {
 				hit = je == nil && !j.InputReady
 			} else {
-				hit = je == nil && valueBool(j.CleanupComplete)
+				hit = je == nil && j.CleanupComplete
 			}
 		case "delete":
 			if strings.Contains(d.stage, "references") {
@@ -146,22 +141,22 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 				return err
 			}
 		}
-		j := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, Phase: store.NullableString("agent_running"), CleanupComplete: boolPointer(false), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
+		j := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, Phase: store.NullableString("agent_running"), CleanupComplete: false, Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
 		switch strings.Split(stage, "/")[0] {
 		case "input":
 			j.Status = "queued"
 			j.InputReady = false
 			j.Phase = nil
-			j.CleanupComplete = nil
+			j.CleanupComplete = false
 			j.Data.Run = nil
 		case "view":
 			j.Kind = "view"
 			j.ParentID = store.NullableString("parent")
-			j.Data.ViewTask = &store.ViewTaskData{ViewID: "v", Snapshot: "old"}
+			j.Data.ViewTask = &store.ViewTaskData{ViewID: "v"}
 			if e := q.PutView(store.ViewRow{ID: "v", ProjectID: "p", Slug: "map", Data: sqlTestViewData()}); e != nil {
 				return e
 			}
-			if e := q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: store.NullableString("j"), GenerationSnapshot: store.NullableString("old"), Data: store.JobData{UserID: "u", ViewGeneration: &store.GenerationData{Remaining: 100}, Views: []store.ViewResultData{{ViewID: "v"}}}}); e != nil {
+			if e := q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", GenerationSnapshot: store.NullableString("old"), Data: store.JobData{UserID: "u", ViewGeneration: &store.GenerationData{Remaining: 100}, Views: []store.ViewResultData{{ViewID: "v"}}}}); e != nil {
 				return e
 			}
 		case "cleanup":
@@ -170,7 +165,7 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 		case "delete":
 			j.Status = "completed"
 			j.InputReady = false
-			j.CleanupComplete = boolPointer(true)
+			j.CleanupComplete = true
 		}
 		return q.PutJob(j)
 	})
@@ -275,7 +270,7 @@ func assertStoredReferences(t *testing.T, o *storageOperations) map[blob.Key]str
 	return keys
 }
 func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
-	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/page-before", "wiki/page-after", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/unreference-before", "cleanup/unreference-after", "cleanup/delete", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
+	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/unreference-before", "cleanup/unreference-after", "cleanup/delete", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {
 			root := t.TempDir()
@@ -333,7 +328,7 @@ func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := readSQLJob(t, o, "j")
-				if got.InputReady || !valueBool(got.CleanupComplete) || got.Data.ViewGeneration.Remaining != 60 {
+				if got.InputReady || !got.CleanupComplete || got.Data.ViewGeneration.Remaining != 60 {
 					t.Fatal(got)
 				}
 				if err := db.Read(t.Context(), func(q *store.Queries) error {
@@ -401,15 +396,16 @@ func assertCrashCheckpoint(t *testing.T, db *store.Database, stage string, j sto
 			if err != nil {
 				return err
 			}
-			complete := stage == "wiki/final-after"
-			if p.WikiIncomplete == complete || (j.Status == "completed") != complete {
+			complete := after
+			if (j.Status == "completed") != complete {
 				t.Fatal("Wiki completion boundary", p, j)
 			}
-			if strings.Contains(stage, "page") {
-				_, err := q.WikiFile("p", "wiki/a.md")
-				if (err == nil) != after {
-					t.Fatal("partial Wiki reference boundary", err)
-				}
+			_, err = q.WikiFile("p", "wiki/a.md")
+			if (err == nil) != complete {
+				t.Fatal("Wiki rows were not atomic", err)
+			}
+			if (store.ValueString(p.WikiRevision) != "old") != complete {
+				t.Fatal("Wiki revision was not atomic", p)
 			}
 		case "view":
 			v, err := q.View("p", "v")
@@ -426,7 +422,7 @@ func assertCrashCheckpoint(t *testing.T, db *store.Database, stage string, j sto
 			if complete {
 				remaining = 60
 			}
-			if j.InputReady == unreferenced || valueBool(j.CleanupComplete) != complete || j.Data.ViewGeneration.Remaining != remaining {
+			if j.InputReady == unreferenced || j.CleanupComplete != complete || j.Data.ViewGeneration.Remaining != remaining {
 				t.Fatal("cleanup checkpoint", j)
 			}
 		case "delete":

@@ -57,7 +57,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 	if err := o.db.Read(ctx, func(q *store.Queries) error { var e error; j, e = q.Job(id); return e }); err != nil {
 		return false, err
 	}
-	if j.Data.Run == nil || valueBool(j.CleanupComplete) {
+	if j.Data.Run == nil || j.CleanupComplete {
 		return true, nil
 	}
 	if j.Status == "queued" || j.Status == "running" && j.GenerationSnapshot == nil {
@@ -96,7 +96,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 			return e
 		}
 		data.OrgID = p.OrgID
-		return q.RecordUsage(store.UsageRow{AttemptID: id, ProjectID: j.ProjectID, JobID: id, RecordedAt: o.now().UnixMilli(), Data: data})
+		return q.RecordUsage(store.UsageRow{ProjectID: j.ProjectID, JobID: id, RecordedAt: o.now().UnixMilli(), Data: data})
 	}); err != nil {
 		return false, err
 	}
@@ -139,7 +139,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		if e != nil {
 			return e
 		}
-		if valueBool(current.CleanupComplete) {
+		if current.CleanupComplete {
 			return nil
 		}
 		usage, e := q.Usage(id)
@@ -149,8 +149,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		if current.Data.ViewGeneration != nil {
 			current.Data.ViewGeneration.Remaining = remainingViewBudget(current.Data.ViewGeneration.Remaining, usage.Data.CostCents)
 		}
-		complete := true
-		current.CleanupComplete = &complete
+		current.CleanupComplete = true
 		if e = q.PutJob(current); e != nil {
 			return e
 		}

@@ -181,7 +181,7 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 		return err
 	}
 	for _, j := range jobs {
-		if j.Data.Run != nil && !valueBool(j.CleanupComplete) {
+		if j.Data.Run != nil && !j.CleanupComplete {
 			if reconcile == nil {
 				return fail(503, "project generation cleanup pending")
 			}
@@ -206,7 +206,7 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 			return e
 		}
 		for _, j := range jobs {
-			if j.Status == "running" || j.Status == "queued" || j.Data.Run != nil && !valueBool(j.CleanupComplete) {
+			if j.Status == "running" || j.Status == "queued" || j.Data.Run != nil && !j.CleanupComplete {
 				return fail(503, "project generation cleanup pending")
 			}
 		}

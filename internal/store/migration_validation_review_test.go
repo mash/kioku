@@ -165,15 +165,15 @@ func TestMigrationRejectsMalformedOAuthRequestBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestMigrationPreservesCompletedWikiRevision(t *testing.T) {
+func TestMigrationUsesCurrentWikiAndRejectsIncompletePublication(t *testing.T) {
 	for _, tc := range []struct {
-		name, complete, want string
-		incomplete           bool
+		name, complete string
+		incomplete     bool
 	}{
-		{name: "implicit", want: "wiki-revision"},
-		{name: "explicit", complete: "completed-revision", want: "completed-revision"},
+		{name: "implicit"},
+		{name: "explicit", complete: "completed-revision"},
 		{name: "incomplete without prior", incomplete: true},
-		{name: "incomplete with prior", incomplete: true, complete: "prior-revision", want: "prior-revision"},
+		{name: "incomplete with prior", incomplete: true, complete: "prior-revision"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, objects, cipher, content := migrationFixture(t)
@@ -181,7 +181,14 @@ func TestMigrationPreservesCompletedWikiRevision(t *testing.T) {
 			content.WikiCompleteRevision = tc.complete
 			content.Wiki = &legacyV2Revision{ID: "wiki-revision", ProjectID: "p", Files: map[string]blob.Key{}}
 			objects.set(t, "projects/p/.kioku/state.json", content)
-			if err := migrateV2(t.Context(), path, objects, cipher, time.UnixMilli(5000)); err != nil {
+			err := migrateV2(t.Context(), path, objects, cipher, time.UnixMilli(5000))
+			if tc.incomplete {
+				if err == nil || objects.puts != 0 || objects.deletes != 0 {
+					t.Fatal("incomplete Wiki migrated", err)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			db, err := OpenDatabase(path, false)
@@ -194,8 +201,8 @@ func TestMigrationPreservesCompletedWikiRevision(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if got := ValueString(p.Data.WikiCompleteRevision); got != tc.want {
-					t.Fatalf("completed Wiki revision = %q, want %q", got, tc.want)
+				if got := ValueString(p.WikiRevision); got != "wiki-revision" {
+					t.Fatalf("completed Wiki revision = %q, want %q", got, "wiki-revision")
 				}
 				return nil
 			}); err != nil {

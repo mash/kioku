@@ -489,7 +489,7 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				}
 				child.Run.CleanupComplete = true
 				fixtureJobsPut(t, st, child.ID, child)
-				if e := st.RecordUsage(store.UsageRow{AttemptID: child.ID, JobID: child.ID, ProjectID: p.ID, Data: model.UsageValues{UserID: child.UserID}}); e != nil {
+				if e := st.RecordUsage(store.UsageRow{JobID: child.ID, ProjectID: p.ID, Data: model.UsageValues{UserID: child.UserID}}); e != nil {
 					return e
 				}
 				return nil
@@ -501,7 +501,7 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				if err := f.s.storage.advanceViews(t.Context(), parent.ID); !errors.Is(err, sql.ErrNoRows) {
 					t.Fatal("missing child must be unavailable", err)
 				}
-				if got := storedJob(t, f, parent.ID); got.ViewGeneration.ChildID != child.ID {
+				if got := storedJob(t, f, parent.ID); got.ViewGeneration.Next != parent.ViewGeneration.Next || got.ViewGeneration.Remaining != parent.ViewGeneration.Remaining || got.Views[0].Status != "running" {
 					t.Fatal("missing child checkpoint lost", got)
 				}
 				return

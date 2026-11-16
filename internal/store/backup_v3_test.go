@@ -34,7 +34,7 @@ func TestBackupCapturesAllTablesInOneSnapshot(t *testing.T) {
 			func() error { return q.PutJob(testJob("j", "p", "completed", 1000)) },
 			func() error { return q.PutAudit(AuditRow{ID: "a", ProjectID: "p"}) },
 			func() error { return q.PutView(ViewRow{ID: "v", ProjectID: "p", Slug: "wiki"}) },
-			func() error { return q.RecordUsage(UsageRow{AttemptID: "j", ProjectID: "p", JobID: "j"}) },
+			func() error { return q.RecordUsage(UsageRow{ProjectID: "p", JobID: "j"}) },
 		}
 		for _, write := range writes {
 			if e := write(); e != nil {
@@ -62,7 +62,7 @@ func TestBackupCapturesAllTablesInOneSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	for _, table := range append(tables, "schema_state") {
+	for _, table := range tables {
 		var n int
 		if e := restored.reader.QueryRow("SELECT count(*) FROM " + table).Scan(&n); e != nil || n != 1 {
 			t.Fatal(table, n, e)
@@ -110,7 +110,7 @@ func TestBackupCapturesAllTablesInOneSnapshot(t *testing.T) {
 }
 func TestBackupRejectsUnreadyCatalog(t *testing.T) {
 	d := newCatalog(t)
-	if _, err := d.writer.Exec(`UPDATE schema_state SET data='{"ready":false}'`); err != nil {
+	if _, err := d.writer.Exec(`PRAGMA user_version=0`); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Backup(filepath.Join(t.TempDir(), "backup")); err == nil {

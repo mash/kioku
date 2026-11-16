@@ -115,13 +115,13 @@ func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.Status = "completed"
-	j.CleanupComplete = boolPointer(true)
+	j.CleanupComplete = true
 	j.InputReady = false
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if e := q.PutJob(j); e != nil {
 			return e
 		}
-		if e := q.RecordUsage(store.UsageRow{AttemptID: "j", JobID: "j", ProjectID: "p"}); e != nil {
+		if e := q.RecordUsage(store.UsageRow{JobID: "j", ProjectID: "p"}); e != nil {
 			return e
 		}
 		if e := q.InsertSession(store.SessionRow{ID: "agent", UserID: "u", Kind: "agent", Status: "active", ProjectID: store.NullableString("p"), Expires: 999999, Data: json.RawMessage(`{}`)}, 0); e != nil {

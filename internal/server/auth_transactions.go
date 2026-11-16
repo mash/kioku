@@ -93,7 +93,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	if err != nil {
 		return store.SessionRow{}, "", err
 	}
-	if grant.Kind != "mcp" || grant.UserID != v.UserID || !access.Active || access.TokenKind != "access" || !slices.Contains(access.ProjectIDs, *v.ProjectID) {
+	if grant.Kind != "mcp" || grant.UserID != v.UserID || grant.Status != "active" || access.TokenKind != "access" || !slices.Contains(access.ProjectIDs, *v.ProjectID) {
 		return reject(fail(404, "project not found"))
 	}
 	p, err := sqlMember(q, *v.ProjectID, v.UserID)

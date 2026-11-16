@@ -33,7 +33,7 @@ func projectProjection(q *store.Queries, row store.ProjectRow) (model.Project, e
 	return projectValue(row, org.Slug, members), nil
 }
 func projectValue(row store.ProjectRow, orgSlug string, members map[string]string) model.Project {
-	return model.Project{ID: row.ID, OrgID: row.OrgID, Slug: row.Slug, Namespace: orgSlug + "/" + row.Slug, Name: row.Data.Name, Members: members, Created: storageDate(row.Created), Deleting: row.Deleting, Revision: store.ValueString(row.WikiRevision), WikiIncomplete: row.WikiIncomplete, WikiCompleteRevision: store.ValueString(row.Data.WikiCompleteRevision), WikiUpdatedAt: optionalDate(row.Data.WikiUpdatedAt), ViewEpoch: store.ValueString(row.ViewEpoch)}
+	return model.Project{ID: row.ID, OrgID: row.OrgID, Slug: row.Slug, Namespace: orgSlug + "/" + row.Slug, Name: row.Data.Name, Members: members, Created: storageDate(row.Created), Deleting: row.Deleting, Revision: store.ValueString(row.WikiRevision), WikiCompleteRevision: store.ValueString(row.WikiRevision), WikiUpdatedAt: optionalDate(row.Data.WikiUpdatedAt)}
 }
 func projectProjections(q *store.Queries, rows []store.ProjectRow) ([]model.Project, error) {
 	out := make([]model.Project, 0, len(rows))
@@ -100,7 +100,7 @@ func jobProjections(q *store.Queries, rows []store.JobRow) ([]model.Job, error) 
 			return nil, err
 		}
 		for _, u := range usage {
-			costs[u.AttemptID] = u.Data.CostCents
+			costs[u.JobID] = u.Data.CostCents
 		}
 	}
 	out := make([]model.Job, 0, len(rows))
@@ -116,7 +116,7 @@ func jobValue(row store.JobRow, cost *int64) model.Job {
 	}
 	if row.Data.Run != nil {
 		run := row.Data.Run
-		j.Run = &model.AgentRun{Phase: model.ManagedPhase(store.ValueString(row.Phase)), BudgetCents: run.BudgetCents, PreparedAt: storageDate(run.PreparedAt), Deadline: storageDate(run.Deadline), CleanupComplete: valueBool(row.CleanupComplete)}
+		j.Run = &model.AgentRun{Phase: model.ManagedPhase(store.ValueString(row.Phase)), BudgetCents: run.BudgetCents, PreparedAt: storageDate(run.PreparedAt), Deadline: storageDate(run.Deadline), CleanupComplete: row.CleanupComplete}
 		j.Run.CostCents = cost
 	}
 	return j

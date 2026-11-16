@@ -56,7 +56,7 @@ type legacyViewPublication struct {
 	NextHash  string           `json:"next_hash"`
 }
 
-func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objects blob.Store, keys []blob.Key, now time.Time) error {
+func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, epoch string, objects blob.Store, keys []blob.Key, now time.Time) error {
 	prefix := "projects/" + project.ID + "/.kioku/views/"
 	existing := map[string][]byte{}
 	for _, key := range keys {
@@ -178,7 +178,7 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			return errors.New("legacy View result disagrees with index")
 		}
 		title, prompt, status := v.Title, v.Prompt, v.Status
-		row := ViewRow{ProjectID: project.ID, ID: entry.ID, Slug: slug, CreatedAt: migrationOptionalTime(v.CreatedAt), BundleHash: NullableString(entry.Hash), ViewEpoch: NullableString(entry.Epoch), Data: ViewData{Title: &title, Prompt: &prompt, Status: &status, Error: NullableString(v.Error), JobID: NullableString(v.JobID), WikiSnapshotID: NullableString(v.WikiSnapshotID), GeneratedAt: migrationOptionalTime(v.GeneratedAt)}}
+		row := ViewRow{ProjectID: project.ID, ID: entry.ID, Slug: slug, CreatedAt: migrationOptionalTime(v.CreatedAt), BundleHash: NullableString(entry.Hash), Data: ViewData{Title: &title, Prompt: &prompt, Status: &status, Error: NullableString(v.Error), JobID: NullableString(v.JobID), WikiSnapshotID: NullableString(v.WikiSnapshotID), GeneratedAt: migrationOptionalTime(v.GeneratedAt)}}
 		if entry.Result != "" {
 			if _, e := model.ParseContentHash(entry.Hash); e != nil {
 				return e
@@ -203,15 +203,14 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			if e := validateLegacyViewZIP(selected); e != nil {
 				return e
 			}
-			if entry.Epoch == ValueString(project.ViewEpoch) {
+			if entry.Epoch == epoch {
 				p.copies[model.ViewContentKey(project.ID, entry.ID, model.ContentHash(entry.Hash))] = selected
 			}
 		} else if entry.Hash != "" {
 			return errors.New("legacy View hash without result")
 		}
-		if entry.Epoch != ValueString(project.ViewEpoch) {
+		if entry.Epoch != epoch {
 			row.BundleHash = nil
-			row.ViewEpoch = nil
 			row.Data.JobID = nil
 			row.Data.WikiSnapshotID = nil
 			row.Data.GeneratedAt = nil

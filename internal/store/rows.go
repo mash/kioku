@@ -49,16 +49,14 @@ type ProjectRow struct {
 	Created        int64
 	Deleting       bool
 	WikiRevision   *string
-	WikiIncomplete bool
 	NextGenerateAt *int64
-	ViewEpoch      *string
 	Data           ProjectData
 }
 
 func scanProject(s rowScanner) (ProjectRow, error) {
 	var v ProjectRow
 	var raw string
-	err := s.Scan(&v.ID, &v.OrgID, &v.Slug, &v.Created, &v.Deleting, &v.WikiRevision, &v.WikiIncomplete, &v.NextGenerateAt, &v.ViewEpoch, &raw)
+	err := s.Scan(&v.ID, &v.OrgID, &v.Slug, &v.Created, &v.Deleting, &v.WikiRevision, &v.NextGenerateAt, &raw)
 	if err != nil {
 		return v, err
 	}
@@ -172,11 +170,10 @@ type JobRow struct {
 	Kind               string
 	SessionID          *string
 	InputReady         bool
-	CleanupComplete    *bool
+	CleanupComplete    bool
 	Phase              *string
 	OutputHash         *string
 	GenerationSnapshot *string
-	ChildID            *string
 	ParentID           *string
 	Data               JobData
 }
@@ -184,7 +181,7 @@ type JobRow struct {
 func scanJob(s rowScanner) (JobRow, error) {
 	var v JobRow
 	var raw string
-	err := s.Scan(&v.ID, &v.ProjectID, &v.Status, &v.Created, &v.Kind, &v.SessionID, &v.InputReady, &v.CleanupComplete, &v.Phase, &v.OutputHash, &v.GenerationSnapshot, &v.ChildID, &v.ParentID, &raw)
+	err := s.Scan(&v.ID, &v.ProjectID, &v.Status, &v.Created, &v.Kind, &v.SessionID, &v.InputReady, &v.CleanupComplete, &v.Phase, &v.OutputHash, &v.GenerationSnapshot, &v.ParentID, &raw)
 	if err != nil {
 		return v, err
 	}
@@ -216,14 +213,13 @@ type ViewRow struct {
 	Slug       string
 	CreatedAt  *int64
 	BundleHash *string
-	ViewEpoch  *string
 	Data       ViewData
 }
 
 func scanView(s rowScanner) (ViewRow, error) {
 	var v ViewRow
 	var raw string
-	err := s.Scan(&v.ProjectID, &v.ID, &v.Slug, &v.CreatedAt, &v.BundleHash, &v.ViewEpoch, &raw)
+	err := s.Scan(&v.ProjectID, &v.ID, &v.Slug, &v.CreatedAt, &v.BundleHash, &raw)
 	if err != nil {
 		return v, err
 	}
@@ -232,7 +228,6 @@ func scanView(s rowScanner) (ViewRow, error) {
 }
 
 type UsageRow struct {
-	AttemptID  string
 	ProjectID  string
 	JobID      string
 	RecordedAt int64
@@ -242,7 +237,7 @@ type UsageRow struct {
 func scanUsage(s rowScanner) (UsageRow, error) {
 	var v UsageRow
 	var raw string
-	err := s.Scan(&v.AttemptID, &v.ProjectID, &v.JobID, &v.RecordedAt, &raw)
+	err := s.Scan(&v.ProjectID, &v.JobID, &v.RecordedAt, &raw)
 	if err != nil {
 		return v, err
 	}

@@ -85,7 +85,7 @@ func TestMigrationFailureRequiresVerifiedRestore(t *testing.T) {
 				db, _, err := OpenStorage(t.Context(), filepath.Dir(path), objects, func(bool) (*auth.Cipher, error) { return cipher, nil })
 				if err == nil {
 					db.Close()
-					t.Fatal("ready=false accepted after crash")
+					t.Fatal("incomplete user_version accepted after crash")
 				}
 				if !strings.Contains(err.Error(), "migration incomplete") {
 					t.Fatal(err)

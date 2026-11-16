@@ -52,7 +52,7 @@ func (q *Queries) NextQueued(maxSessions int, deferred ...string) (JobRow, error
 // CompactHistory is part of the state-changing transaction. Cleanup and
 // unconsumed child results are protected independently from public history.
 func (q *Queries) CompactHistory(project string, now *int64) error {
-	eligible := `project_id=? AND status IN ('completed','failed','skipped') AND (phase IS NULL OR cleanup_complete=1) AND NOT EXISTS(SELECT 1 FROM jobs AS parent WHERE parent.child_id=jobs.id)`
+	eligible := `project_id=? AND status IN ('completed','failed','skipped') AND (phase IS NULL OR cleanup_complete=1) AND parent_id IS NULL`
 
 	query := `SELECT id FROM (SELECT id FROM jobs WHERE ` + eligible + ` ORDER BY created DESC,id DESC LIMIT -1 OFFSET 256)`
 	args := []any{project}
@@ -95,5 +95,11 @@ func (q *Queries) UsageForJobs(ids []string) ([]UsageRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	return listRows(q, "SELECT "+usageColumns+" FROM usage WHERE attempt_id IN (SELECT value FROM json_each(?))", scanUsage, raw)
+	return listRows(q, "SELECT "+usageColumns+" FROM usage WHERE job_id IN (SELECT value FROM json_each(?))", scanUsage, raw)
+}
+
+// GenerationChild finds the unconsumed child. Consumption clears parent_id and
+// view_task in the same transaction as the parent's progress and budget.
+func (q *Queries) GenerationChild(parent string) (JobRow, error) {
+	return scanJob(q.row("SELECT "+jobsColumns+" FROM jobs WHERE parent_id=? AND status IN ('queued','running','completed','failed','skipped')", parent))
 }

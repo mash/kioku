@@ -73,9 +73,6 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 		x.Run.Phase = model.PhaseFinalizing
 		x.Run.Deadline = time.Now().Add(-time.Minute)
 		fixtureJobsPut(t, st, x.ID, x)
-		p := fixtureProjectsGet(t, st, p.ID)
-		p.WikiIncomplete = true
-		fixtureProjectsPut(t, st, p.ID, p)
 		return nil
 	})
 	restartManagedFixture(t, f)

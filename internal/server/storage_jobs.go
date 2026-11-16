@@ -59,7 +59,7 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 			if err != nil {
 				return err
 			}
-			if parent.Status != "running" || store.ValueString(parent.ChildID) != id || j.Data.ViewTask == nil || p.WikiIncomplete || store.ValueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
+			if parent.Status != "running" || parent.ProjectID != j.ProjectID || j.Data.ViewTask == nil || parent.GenerationSnapshot == nil || !equalOptional(p.WikiRevision, parent.GenerationSnapshot) {
 				return fail(409, "Wiki または生成ジョブが変更されました")
 			}
 			v, err := q.View(p.ID, j.Data.ViewTask.ViewID)
@@ -84,14 +84,9 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 			return err
 		}
 		if input.Job.ParentID == nil {
-			var size int64
-			if input.Project.Data.WikiCompleteBytes != nil {
-				size = *input.Project.Data.WikiCompleteBytes
-			} else {
-				size, err = wikiBytes(input.Wiki)
-				if err != nil {
-					return err
-				}
+			size, err := wikiBytes(input.Wiki)
+			if err != nil {
+				return err
 			}
 			input.Inbox, err = q.AvailableInbox(input.Project.ID, size > o.config.MaxWikiBytes)
 			if err != nil {
@@ -147,16 +142,15 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		if err := check(q); err != nil {
 			return err
 		}
-		if !equalOptional(input.Project.WikiRevision, selected.Project.WikiRevision) || input.Project.WikiIncomplete != selected.Project.WikiIncomplete {
+		if !equalOptional(input.Project.WikiRevision, selected.Project.WikiRevision) {
 			return fail(409, "Wiki または生成ジョブが変更されました")
 		}
 		j := input.Job
 		now := o.now()
 		phase := "preparing"
-		complete := false
 		j.Status = "running"
 		j.Phase = &phase
-		j.CleanupComplete = &complete
+		j.CleanupComplete = false
 		j.InputReady = true
 		j.Data.Run = &store.RunData{UsesProviderFiles: file, Provider: store.NullableString(provider), PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget, InboxIDs: []string{}}
 		if j.Data.WikiStatus != nil {

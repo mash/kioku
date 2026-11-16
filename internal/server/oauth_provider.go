@@ -108,9 +108,6 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request, _ string)
 	}
 	client := store.OAuthClientRow{ClientID: auth.Token(), Data: store.OAuthClientData{ClientName: req.Name, RedirectURIs: req.RedirectURIs, Created: time.Now().UnixMilli()}}
 	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
-			return err
-		}
 		return q.InsertOAuthClient(client)
 	}); err != nil {
 		if errors.Is(err, store.ErrSessionCapacity) {
@@ -282,9 +279,6 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 	var request fosite.AuthorizeRequester
 	var response fosite.AuthorizeResponder
 	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
-			return err
-		}
 		current, err := q.Session(key)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -346,9 +340,6 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 	var response fosite.AccessResponder
 	var problem error
 	err := s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
-			return err
-		}
 		var adapter *oauthSQL
 		provider, adapter = newSQLOAuth(q, s.Cipher, s.Config.BaseURL+"/mcp", time.Now())
 		problem = s.oauthResource(r.PostForm)

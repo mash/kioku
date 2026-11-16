@@ -57,9 +57,9 @@ func (SessionRow) GoString() string             { return "[redacted session]" }
 func (SessionRow) LogValue() slog.Value         { return slog.StringValue("[redacted session]") }
 func (SessionRow) MarshalJSON() ([]byte, error) { return []byte(`"[redacted session]"`), nil }
 
-func (q *Queries) InsertSession(v SessionRow) error {
+func (q *Queries) InsertSession(v SessionRow, now int64) error {
 	var count int
-	if err := q.row("SELECT count(*) FROM sessions WHERE kind=?", v.Kind).Scan(&count); err != nil {
+	if err := q.row("SELECT count(*) FROM sessions WHERE kind=? AND expires>? AND NOT (kind='cli_login' AND status='active')", v.Kind, now).Scan(&count); err != nil {
 		return err
 	}
 	if count >= 10000 {

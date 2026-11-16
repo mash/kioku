@@ -91,10 +91,7 @@ func (r *FileRunner) Stop(ctx context.Context, a runner.Attempt) error {
 	}
 	var errs []error
 	for _, id := range ids {
-		err = r.files.Interrupt(ctx, id)
-		if !isNotFound(err) {
-			errs = append(errs, err)
-		}
+		errs = append(errs, r.files.Interrupt(ctx, id))
 	}
 	return errors.Join(errs...)
 }

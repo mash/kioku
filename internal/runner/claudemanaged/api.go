@@ -146,7 +146,11 @@ func (a *API) FindJobVaults(ctx context.Context, jobID, attemptID string) ([]str
 }
 func (a *API) ArchiveVault(ctx context.Context, id string) error {
 	_, err := a.sdk.Vaults.Archive(ctx, id, anthropic.BetaVaultArchiveParams{})
-	return apiError(err)
+	err = apiError(err)
+	if isNotFound(err) {
+		return nil
+	}
+	return err
 }
 func (a *API) CreateSession(ctx context.Context, in SessionInput) (string, error) {
 	if in.BudgetCents < 50 {
@@ -232,11 +236,19 @@ func (a *API) GetSession(ctx context.Context, id string) (Session, error) {
 }
 func (a *API) Interrupt(ctx context.Context, id string) error {
 	_, err := a.sdk.Sessions.Events.Send(ctx, id, anthropic.BetaSessionEventSendParams{Events: []anthropic.BetaManagedAgentsEventParamsUnion{{OfUserInterrupt: &anthropic.BetaManagedAgentsUserInterruptEventParams{}}}})
-	return apiError(err)
+	err = apiError(err)
+	if isNotFound(err) {
+		return nil
+	}
+	return err
 }
 func (a *API) ArchiveSession(ctx context.Context, id string) error {
 	_, err := a.sdk.Sessions.Archive(ctx, id, anthropic.BetaSessionArchiveParams{})
-	return apiError(err)
+	err = apiError(err)
+	if isNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // VerifyWebhook uses the SDK's Standard Webhooks verifier, including its five

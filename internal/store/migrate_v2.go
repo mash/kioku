@@ -139,7 +139,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return err
 	}
 	validation.SetMaxOpenConns(1)
-	err = transact(ctx, validation, true, nil, plan.apply)
+	err = transact(ctx, validation, true, nil, func(q *Queries) error { return plan.apply(q, now.UnixMilli()) })
 	closeErr := validation.Close()
 	if err = errors.Join(err, closeErr); err != nil {
 		return fmt.Errorf("migration validation failed: %w", err)
@@ -149,7 +149,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 			return err
 		}
 	}
-	if err = transact(ctx, db, true, nil, plan.apply); err != nil {
+	if err = transact(ctx, db, true, nil, func(q *Queries) error { return plan.apply(q, now.UnixMilli()) }); err != nil {
 		return err
 	}
 	for _, key := range plan.obsolete {
@@ -162,7 +162,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return e
 	})
 }
-func (p *migrationPlan) apply(q *Queries) error {
+func (p *migrationPlan) apply(q *Queries, now int64) error {
 	if _, err := q.exec(catalogSchema); err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (p *migrationPlan) apply(q *Queries) error {
 		}
 	}
 	for _, v := range p.sessions {
-		if e := q.InsertSession(v); e != nil {
+		if e := q.InsertSession(v, now); e != nil {
 			return e
 		}
 	}

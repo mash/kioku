@@ -23,7 +23,7 @@ func TestBackupCapturesAllTablesInOneSnapshot(t *testing.T) {
 			func() error { return q.PutProject(ProjectRow{ID: "p", OrgID: "o", Slug: "project"}) },
 			func() error { return q.PutProjectMember("p", "u", "owner") },
 			func() error {
-				return q.InsertSession(SessionRow{ID: "s", Kind: "web", Status: "active", UserID: "u", Data: json.RawMessage(`{}`)})
+				return q.InsertSession(SessionRow{ID: "s", Kind: "web", Status: "active", UserID: "u", Data: json.RawMessage(`{}`)}, 0)
 			},
 			func() error { return q.PutInvite(InviteRow{ID: "i", ProjectID: "p", CreatedBy: "u", TokenHash: "h"}) },
 			func() error { return q.PutOAuthClient(OAuthClientRow{ClientID: "c"}) },

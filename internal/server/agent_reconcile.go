@@ -324,10 +324,10 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job store.JobRow, status *
 		}
 		return runner.ErrTemporary
 	}
-	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	complete, err := s.storage.cleanup(cleanupCtx, job.ID, *status, func(ctx context.Context, a runner.Attempt) error {
-		if err := r.Cleanup(ctx, a); err != nil {
+	complete, err := s.storage.cleanup(ctx, job.ID, *status, func(ctx context.Context, a runner.Attempt) error {
+		cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := r.Cleanup(cleanupCtx, a); err != nil {
 			return fmt.Errorf("%w: %w", runner.ErrTemporary, err)
 		}
 		return nil

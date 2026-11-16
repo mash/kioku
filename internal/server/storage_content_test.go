@@ -128,20 +128,22 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 			})
 			if stage == "put" {
 				objects.put = func(ctx context.Context, _ blob.Key, _ []byte) error {
-					<-ctx.Done()
-					return ctx.Err()
+					if _, ok := ctx.Deadline(); !ok {
+						t.Fatal("unbounded upload")
+					}
+					return context.DeadlineExceeded
 				}
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-			_, err := o.prepareInput(ctx, "j", false, "", func(ctx context.Context, _ storageInput) ([]byte, error) {
+			_, err := o.prepareInput(t.Context(), "j", false, "", func(ctx context.Context, _ storageInput) ([]byte, error) {
 				if stage == "build" {
-					<-ctx.Done()
-					return nil, ctx.Err()
+					if _, ok := ctx.Deadline(); !ok {
+						t.Fatal("unbounded build")
+					}
+					return nil, context.DeadlineExceeded
 				}
 				return []byte("archive"), nil
 			})
-			if !errors.Is(err, context.DeadlineExceeded) {
+			if !errors.Is(err, errPreparationRecorded) {
 				t.Fatalf("preparation error = %v", err)
 			}
 			j := readSQLJob(t, o, "j")

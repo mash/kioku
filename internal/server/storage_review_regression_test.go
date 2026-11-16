@@ -75,7 +75,7 @@ func TestJoinRechecksCallerAtCommit(t *testing.T) {
 	}
 }
 
-func TestBrowserLoginPrunesExpiredSessionsAtCapacity(t *testing.T) {
+func TestBrowserLoginIgnoresExpiredSessionsAtCapacity(t *testing.T) {
 	f := setupLoopback(t)
 	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
 		INSERT INTO sessions(id,kind,status,user_id,project_id,created,expires,data)
@@ -84,8 +84,8 @@ func TestBrowserLoginPrunesExpiredSessionsAtCapacity(t *testing.T) {
 	if resp := finishLoopbackOAuth(t, f, req); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expired sessions prevent browser login: %d", resp.StatusCode)
 	}
-	if n := sessionKindCount(t, f, "web"); n != 1 {
-		t.Fatalf("expired web sessions remain: %d", n)
+	if n := sessionKindCount(t, f, "web"); n != 10001 {
+		t.Fatalf("browser login pruned sessions outside maintenance: %d", n)
 	}
 
 }

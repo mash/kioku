@@ -12,6 +12,8 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
+var errPreparationRecorded = errors.New("input preparation failure recorded")
+
 type storageInput struct {
 	Job     store.JobRow
 	Project store.ProjectRow
@@ -129,10 +131,12 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 	if budget < 50 {
 		return input.Job, o.failPreparation(ctx, id, errAgentBudgetTooSmall)
 	}
-	body, err := build(ctx, input)
+	ioCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	body, err := build(ioCtx, input)
 	if err == nil {
-		err = o.objects.Put(ctx, sqlJobKey(input.Job, "input.tar.gz"), body)
+		err = o.objects.Put(ioCtx, sqlJobKey(input.Job, "input.tar.gz"), body)
 	}
+	cancel()
 	if err != nil {
 		return input.Job, o.failPreparation(ctx, id, err)
 	}
@@ -182,13 +186,6 @@ func (o *storageOperations) jobBudget(j store.JobRow) int64 {
 	return o.config.AgentMaxSessionCents
 }
 func (o *storageOperations) failPreparation(ctx context.Context, id string, cause error) error {
-	// The preparation deadline must not also prevent recording its failure.
-	// Shutdown cancellation still leaves unstarted work available on restart.
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-	}
 	if err := o.db.Write(ctx, func(q *store.Queries) error {
 		j, err := q.Job(id)
 		if err != nil {
@@ -209,7 +206,7 @@ func (o *storageOperations) failPreparation(ctx context.Context, id string, caus
 	}); err != nil {
 		return err
 	}
-	return cause
+	return errPreparationRecorded
 }
 func (o *storageOperations) saveRunRef(ctx context.Context, id string, ref runner.RunRef) error {
 	return o.db.Write(ctx, func(q *store.Queries) error {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
@@ -107,17 +108,20 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 	}); err != nil {
 		return false, err
 	}
-	keys, err := o.objects.List(ctx, "projects/"+j.ProjectID+"/.kioku/jobs/"+id+"/")
+	ioCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	keys, err := o.objects.List(ioCtx, "projects/"+j.ProjectID+"/.kioku/jobs/"+id+"/")
 	if err != nil {
 		return false, err
 	}
 	for _, key := range keys {
 		if strings.HasSuffix(string(key), ".tar.gz") {
-			if err = o.objects.Delete(ctx, key); err != nil {
+			if err = o.objects.Delete(ioCtx, key); err != nil {
 				return false, err
 			}
 		}
 	}
+	cancel()
 	err = o.db.Write(ctx, func(q *store.Queries) error {
 		current, e := q.Job(id)
 		if e != nil {

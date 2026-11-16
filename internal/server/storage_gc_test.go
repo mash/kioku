@@ -124,7 +124,7 @@ func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
 		if e := q.RecordUsage(store.UsageRow{AttemptID: "j", JobID: "j", ProjectID: "p"}); e != nil {
 			return e
 		}
-		if e := q.InsertSession(store.SessionRow{ID: "agent", UserID: "u", Kind: "agent", Status: "active", ProjectID: store.NullableString("p"), Expires: 999999, Data: json.RawMessage(`{}`)}); e != nil {
+		if e := q.InsertSession(store.SessionRow{ID: "agent", UserID: "u", Kind: "agent", Status: "active", ProjectID: store.NullableString("p"), Expires: 999999, Data: json.RawMessage(`{}`)}, 0); e != nil {
 			return e
 		}
 		if e := q.PutWikiFile(store.WikiFileRow{ProjectID: "p", Path: "wiki/index.md", Hash: string(model.HashContent([]byte("x")))}); e != nil {

@@ -370,7 +370,7 @@ func TestLoopbackExpiredRequest(t *testing.T) {
 	}
 }
 
-func TestLoopbackLimitsAndPruning(t *testing.T) {
+func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -398,8 +398,17 @@ func TestLoopbackLimitsAndPruning(t *testing.T) {
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 201 {
 		t.Fatal(status)
 	}
+	if loopbackCount(t, f) != 10001 {
+		t.Fatal("login pruned consumed rows outside maintenance")
+	}
+	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
+		t.Fatal("active capacity not enforced", status)
+	}
+	if err := f.stateStore.Write(t.Context(), func(q *store.Queries) error { return q.PruneSessions(time.Now().UnixMilli()) }); err != nil {
+		t.Fatal(err)
+	}
 	if loopbackCount(t, f) != 10000 {
-		t.Fatal("capacity not enforced")
+		t.Fatal("maintenance did not prune consumed row")
 	}
 	s := &Server{Config: Config{RatePerMinute: 100}}
 	for i := range 21 {

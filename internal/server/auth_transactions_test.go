@@ -73,7 +73,7 @@ func TestLoopbackMismatchConsumesCodeAfterCommit(t *testing.T) {
 	now := time.UnixMilli(1000)
 	data := store.CLILoginData{LoopbackCodeHash: sqlTestPtr(auth.Hash("correct")), LoopbackChallenge: sqlTestPtr(auth.Challenge("verifier"))}
 	sqlWrite(t, d, func(q *store.Queries) error {
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)})
+		return q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}, 0)
 	})
 	for _, code := range []string{"wrong", "correct"} {
 		err := d.Write(t.Context(), func(q *store.Queries) error {
@@ -97,10 +97,10 @@ func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
 	now := time.UnixMilli(1000)
 	data := store.CLILoginData{LoopbackCodeHash: sqlTestPtr(auth.Hash("code")), LoopbackChallenge: sqlTestPtr(auth.Challenge("verifier"))}
 	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}); err != nil {
+		if err := q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}, 0); err != nil {
 			return err
 		}
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("collision"), Kind: "web", Status: "active", UserID: "u", Expires: 2000, Data: json.RawMessage(`{}`)})
+		return q.InsertSession(store.SessionRow{ID: auth.Hash("collision"), Kind: "web", Status: "active", UserID: "u", Expires: 2000, Data: json.RawMessage(`{}`)}, 0)
 	})
 	err := d.Write(t.Context(), func(q *store.Queries) error {
 		_, err := exchangeCLILogin(q, "device", "code", "verifier", "collision", now)
@@ -124,7 +124,7 @@ func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
 func TestAgentLoginRejectionConsumesCode(t *testing.T) {
 	d, _ := sqlAuthFixture(t)
 	sqlWrite(t, d, func(q *store.Queries) error {
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("code"), Kind: "login_code", Status: "pending", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "g", Role: sqlTestPtr("read")})})
+		return q.InsertSession(store.SessionRow{ID: auth.Hash("code"), Kind: "login_code", Status: "pending", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "g", Role: sqlTestPtr("read")})}, 0)
 	})
 	err := d.Write(t.Context(), func(q *store.Queries) error {
 		_, _, err := exchangeAgentLogin(q, "code", " ", "", "a", "secret", time.UnixMilli(1000))
@@ -332,10 +332,10 @@ func TestOAuthOrdinaryRejectionRollsBackCode(t *testing.T) {
 func TestExpiredAccessSurvivesWhileLoginCodeReferencesIt(t *testing.T) {
 	d, _ := sqlAuthFixture(t)
 	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.InsertSession(store.SessionRow{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 100, Data: sqlJSON(t, store.MCPData{TokenKind: "access", Active: true, ProjectIDs: []string{"p"}})}); err != nil {
+		if err := q.InsertSession(store.SessionRow{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 100, Data: sqlJSON(t, store.MCPData{TokenKind: "access", Active: true, ProjectIDs: []string{"p"}})}, 0); err != nil {
 			return err
 		}
-		if err := q.InsertSession(store.SessionRow{ID: "code", Kind: "login_code", Status: "pending", UserID: "u", Expires: 200, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "access"})}); err != nil {
+		if err := q.InsertSession(store.SessionRow{ID: "code", Kind: "login_code", Status: "pending", UserID: "u", Expires: 200, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "access"})}, 0); err != nil {
 			return err
 		}
 		if err := q.PruneSessions(100); err != nil {

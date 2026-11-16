@@ -84,7 +84,7 @@ func (r *Runner) Stop(ctx context.Context, a runner.Attempt) error {
 	}
 	var errs []error
 	for _, id := range ids {
-		if err := client.Interrupt(ctx, id); err != nil && !isNotFound(err) {
+		if err := client.Interrupt(ctx, id); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -111,10 +111,7 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 		return err
 	}
 	for _, id := range ids {
-		err := client.ArchiveSession(ctx, id)
-		if !isNotFound(err) {
-			record("agent session archive failed", err)
-		}
+		record("agent session archive failed", client.ArchiveSession(ctx, id))
 	}
 	vaults := []string{a.Run.Resources["vault_id"]}
 	if vaults[0] == "" {
@@ -122,9 +119,7 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 		record("agent vault discovery failed", err)
 	}
 	for _, id := range vaults {
-		if err := client.ArchiveVault(ctx, id); !isNotFound(err) {
-			record("agent vault archive failed", err)
-		}
+		record("agent vault archive failed", client.ArchiveVault(ctx, id))
 	}
 	return errors.Join(errs...)
 }

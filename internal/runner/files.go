@@ -26,7 +26,7 @@ func StartFileSession(ctx context.Context, spec RunSpec, provider string,
 	}
 	save := func() error {
 		if err := spec.SaveRef(RunRef{ID: ref.ID, UsesProviderFiles: ref.UsesProviderFiles, Resources: maps.Clone(ref.Resources)}); err != nil {
-			return fmt.Errorf("%w: could not record file runner resources", ErrTemporary)
+			return fmt.Errorf("%w: could not record file runner resources: %w", ErrTemporary, err)
 		}
 		return nil
 	}

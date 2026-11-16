@@ -200,3 +200,21 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 		t.Fatal("credential followed redirect")
 	}
 }
+
+func TestClientCleanupTreatsOnlyNotFoundAsSuccess(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden} {
+		f := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"not_found_error","message":"missing"}}`))
+		}))
+		a := claudemanaged.NewAPI(f.URL, "test-key", f.Client())
+		for _, operation := range []func(context.Context, string) error{a.ArchiveVault, a.ArchiveSession, a.Interrupt} {
+			err := operation(t.Context(), "missing")
+			if (err == nil) != (status == http.StatusNotFound) {
+				t.Errorf("HTTP %d: %v", status, err)
+			}
+		}
+		f.Close()
+	}
+}

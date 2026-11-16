@@ -58,10 +58,7 @@ func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string)
 		return err
 	}
 	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if e := q.PruneSessions(time.Now().UnixMilli()); e != nil {
-			return e
-		}
-		return q.InsertSession(store.SessionRow{ID: auth.Hash(id), Kind: "cli_login", Status: "pending", Expires: time.Now().Add(10 * time.Minute).UnixMilli(), Data: data})
+		return q.InsertSession(store.SessionRow{ID: auth.Hash(id), Kind: "cli_login", Status: "pending", Expires: time.Now().Add(10 * time.Minute).UnixMilli(), Data: data}, time.Now().UnixMilli())
 	})
 	if errors.Is(err, store.ErrSessionCapacity) {
 		return fail(429, "too many login attempts")
@@ -210,9 +207,6 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	loopbackURL := ""
 	expired := false
 	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
-			return err
-		}
 		var login store.SessionRow
 		var loginData store.CLILoginData
 		if device != "" {
@@ -260,7 +254,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		if e != nil {
 			return e
 		}
-		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "web", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw})
+		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "web", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw}, time.Now().UnixMilli())
 	})
 	if err != nil {
 		return err

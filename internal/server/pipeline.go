@@ -86,9 +86,7 @@ func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
-		jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err = s.startAgentJob(jobCtx, job, deferredStarts...)
-		cancel()
+		err = s.startAgentJob(ctx, job, deferredStarts...)
 		if ctx.Err() != nil {
 			return nil
 		}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
@@ -103,11 +104,10 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 		archive = buf.Bytes()
 		return archive, nil
 	}, deferred...)
+	if errors.Is(err, errPreparationRecorded) {
+		return nil
+	}
 	if err != nil {
-		current, readErr := s.loadJob(ctx, job.ID)
-		if readErr == nil && current.Status == "failed" && current.Data.Run == nil {
-			return nil
-		}
 		return err
 	}
 	job, err = s.loadJob(ctx, job.ID)
@@ -127,14 +127,12 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 	}
 	runSpec := runner.RunSpec{Key: sqlAttempt(job).Key, InputURL: spec.InputURL, OutputURL: spec.OutputURL, Token: runner.Secret(raw), BudgetCents: job.Data.Run.BudgetCents, Deadline: storageDate(job.Data.Run.Deadline)}
 	vars := prompts.JobVariables{JobID: spec.JobID, Namespace: spec.Namespace, InputURL: spec.InputURL, OutputURL: spec.OutputURL}
-	var saveRefErr error
 	if offline {
 		vars.InputURL, vars.OutputURL = files.FilePaths()
 		runSpec.InputArchive = archive
 		runSpec.FirstMessage = s.Config.Prompts.FileUser(vars)
 		runSpec.SaveRef = func(ref runner.RunRef) error {
-			saveRefErr = s.storage.saveRunRef(ctx, job.ID, ref)
-			return saveRefErr
+			return s.storage.saveRunRef(ctx, job.ID, ref)
 		}
 	} else {
 		runSpec.FirstMessage = s.Config.Prompts.User(vars)
@@ -143,12 +141,9 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 		runSpec.System = viewRunnerSystem
 		runSpec.FirstMessage = viewRunnerMessage(vars.InputURL, vars.OutputURL, offline)
 	}
-	ref, err := r.Start(ctx, runSpec)
-	// Runners sanitize checkpoint failures as temporary provider errors. Keep
-	// the database cause so the worker can resolve commits or stop on corruption.
-	if saveRefErr != nil {
-		return saveRefErr
-	}
+	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ref, err := r.Start(startCtx, runSpec)
+	cancel()
 	if errors.Is(err, runner.ErrTemporary) {
 		return err
 	}
@@ -174,7 +169,7 @@ func inboxProjection(row store.InboxRow) model.InboxItem {
 
 func (s *Server) failUnstartedJob(ctx context.Context, id string, cause error) error {
 	err := s.storage.failPreparation(ctx, id, cause)
-	if err == cause {
+	if errors.Is(err, errPreparationRecorded) {
 		return nil
 	}
 	return err

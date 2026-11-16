@@ -155,9 +155,6 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 	raw := "kioku_code." + auth.Token()
 	expires := storageDate(time.Now().Add(time.Minute).UnixMilli())
 	err := s.Store.Write(context.Background(), func(q *store.Queries) error {
-		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
-			return err
-		}
 		project, uid, err := connectorProject(q, grantKey, namespace)
 		if err != nil {
 			return err
@@ -166,7 +163,7 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 		if err != nil {
 			return err
 		}
-		err = q.InsertSession(store.SessionRow{ID: auth.Hash(raw), Kind: "login_code", Status: "pending", UserID: uid, ProjectID: &project.ID, Expires: expires.UnixMilli(), Created: time.Now().UnixMilli(), Data: data})
+		err = q.InsertSession(store.SessionRow{ID: auth.Hash(raw), Kind: "login_code", Status: "pending", UserID: uid, ProjectID: &project.ID, Expires: expires.UnixMilli(), Created: time.Now().UnixMilli(), Data: data}, time.Now().UnixMilli())
 		if errors.Is(err, store.ErrSessionCapacity) {
 			return fail(429, "too many login codes")
 		}
@@ -189,9 +186,6 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	var row store.SessionRow
 	var namespace string
 	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if err := q.PruneSessions(time.Now().UnixMilli()); err != nil {
-			return err
-		}
 		var err error
 		row, namespace, err = exchangeAgentLogin(q, req.Code, req.Name, req.Namespace, id, secret, time.Now())
 		return err

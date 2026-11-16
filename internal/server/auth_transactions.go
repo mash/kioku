@@ -54,7 +54,7 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 		return store.SessionRow{}, err
 	}
 	issued := store.SessionRow{ID: auth.Hash(token), Kind: "cli", Status: "active", UserID: v.UserID, Expires: now.Add(30 * 24 * time.Hour).UnixMilli(), Created: now.UnixMilli(), Data: raw}
-	if err = q.InsertSession(issued); err != nil {
+	if err = q.InsertSession(issued, now.UnixMilli()); err != nil {
 		return store.SessionRow{}, err
 	}
 	return issued, nil
@@ -145,7 +145,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		return store.SessionRow{}, "", err
 	}
 	issued := store.SessionRow{ID: auth.Hash(raw), Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: &p.ID, Expires: now.Add(24 * time.Hour).UnixMilli(), Created: now.UnixMilli(), Data: payload}
-	if err = q.InsertSession(issued); err != nil {
+	if err = q.InsertSession(issued, now.UnixMilli()); err != nil {
 		if errors.Is(err, store.ErrSessionCapacity) {
 			return reject(fail(429, "too many agent sessions"))
 		}

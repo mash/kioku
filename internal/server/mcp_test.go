@@ -59,6 +59,7 @@ func connectorCode(t *testing.T, f *fixture, token, namespace string) string {
 }
 
 func TestConnectorLoginEndToEnd(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -130,6 +131,7 @@ func TestConnectorLoginEndToEnd(t *testing.T) {
 }
 
 func TestConnectorCodeExpiryMembershipAndRevocation(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -164,6 +166,7 @@ func TestConnectorCodeExpiryMembershipAndRevocation(t *testing.T) {
 }
 
 func TestConnectorBindingMismatchPreservesExistingAgent(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)

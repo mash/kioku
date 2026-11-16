@@ -9,6 +9,7 @@ import (
 )
 
 func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	p := securityProject(t, f, owner)

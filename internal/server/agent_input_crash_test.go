@@ -20,6 +20,7 @@ func (b crashAfterInputWrite) Put(ctx context.Context, key blob.Key, body []byte
 	return nil
 }
 func TestManagedInputWriteCrashLeavesNoRunAndDeletesOrphan(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "must be erased")
 	j := managedJob(t, f, token, p.ID, false)

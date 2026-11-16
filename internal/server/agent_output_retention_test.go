@@ -10,6 +10,7 @@ import (
 )
 
 func TestAgentOutputResendsRetainAtMostSelectedAndCandidate(t *testing.T) {
+	t.Parallel()
 	f, raw, j, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, j, model.PhaseAgentRunning, "running")
 	for i := range 6 {
@@ -32,6 +33,7 @@ func TestAgentOutputResendsRetainAtMostSelectedAndCandidate(t *testing.T) {
 }
 
 func TestAgentOutputCleanupFailureBoundsResends(t *testing.T) {
+	t.Parallel()
 	f, raw, j, _, _ := jobTokenFixture(t)
 	setManagedPhase(t, f, j, model.PhaseAgentRunning, "running")
 	upload := func(i int) int {

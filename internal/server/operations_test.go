@@ -12,6 +12,7 @@ import (
 )
 
 func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	token := f.login("owner@example.com")
 
@@ -99,6 +100,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	}
 }
 func TestRateLimit(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.s.Config.RatePerMinute = 2
 	for i := 0; i < 3; i++ {
@@ -114,6 +116,7 @@ func TestRateLimit(t *testing.T) {
 	}
 }
 func TestRenderedMarkdownIsSafe(t *testing.T) {
+	t.Parallel()
 	body := markdownView("# Heading\n[Link](topic.md)\n<script>alert(1)</script>\n[bad](javascript:alert(2))", "wiki/index.md", []string{"wiki/topic.md"})
 	if strings.Contains(string(body), "<script>") || strings.Contains(string(body), "javascript:") || !strings.Contains(string(body), "?file=wiki%2Ftopic.md") {
 		t.Fatal(body)

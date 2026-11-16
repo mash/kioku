@@ -12,6 +12,7 @@ import (
 )
 
 func TestStorageContractExamplesAreComplete(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile("testdata/storage/contract.json")
 	if err != nil {
 		t.Fatal(err)
@@ -32,6 +33,7 @@ func TestStorageContractExamplesAreComplete(t *testing.T) {
 	}
 }
 func TestJobResponseDoesNotExposeStorageFields(t *testing.T) {
+	t.Parallel()
 	job := model.Job{ID: "j1", ProjectID: "private-project", Run: &model.AgentRun{}}
 	b, err := json.Marshal(publicapi.Value(job))
 	if err != nil {

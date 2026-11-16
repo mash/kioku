@@ -14,6 +14,7 @@ import (
 )
 
 func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	const jobID = "public-job"
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -65,6 +66,7 @@ func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 }
 
 func TestPublicProjectAPIRejectsIDSelectors(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	req := httptest.NewRequest("GET", "/api/projects/"+p.ID+"/snapshot?manifest=1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -77,6 +79,7 @@ func TestPublicProjectAPIRejectsIDSelectors(t *testing.T) {
 }
 
 func TestProjectPageShowsFiveRecentGenerations(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
 		for i, id := range []string{"oldest", "older", "third", "fourth", "fifth", "latest-a", "latest-b"} {

@@ -47,6 +47,7 @@ func expectProjectDenied(t *testing.T, f *fixture, access, namespace string) {
 }
 
 func TestConnectorConsentProjectSelection(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("member@example.com")
 	params := connectorAuthorizeParams(f, connectorClient(t, f), auth.Token())
@@ -75,6 +76,7 @@ func TestConnectorConsentProjectSelection(t *testing.T) {
 }
 
 func TestConnectorRefreshPreservesSelectedProjects(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	a := consentProject(t, f, human, "alpha")
@@ -94,6 +96,7 @@ func TestConnectorRefreshPreservesSelectedProjects(t *testing.T) {
 }
 
 func TestConnectorConsentRequiresTheDisplayedAccount(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	alice := f.login("alice@example.com")
 	bob := f.login("bob@example.com")
@@ -121,6 +124,7 @@ func TestConnectorConsentRequiresTheDisplayedAccount(t *testing.T) {
 }
 
 func TestConnectorCodeExchangeRechecksProject(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	human := f.login("member@example.com")
@@ -158,6 +162,7 @@ func TestConnectorCodeExchangeRechecksProject(t *testing.T) {
 }
 
 func TestConnectorCodeKeepsItsLifetimeAcrossAccessExpiry(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -182,6 +187,7 @@ func TestConnectorCodeKeepsItsLifetimeAcrossAccessExpiry(t *testing.T) {
 }
 
 func TestConnectorCredentialsWithoutProjectSelectionRequireConsent(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -222,6 +228,7 @@ func TestConnectorCredentialsWithoutProjectSelectionRequireConsent(t *testing.T)
 }
 
 func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	human := f.login("member@example.com")
@@ -285,6 +292,7 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 }
 
 func TestConnectorConsentLimitsSelectedProjects(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	alice := f.login("alice@example.com")
 	p := consentProject(t, f, alice, "alpha")

@@ -50,6 +50,7 @@ func storageFixture(t *testing.T) (*storageOperations, *storageTestObjects) {
 	return o, objects
 }
 func TestInputPutBeforeRunCommit(t *testing.T) {
+	t.Parallel()
 	o, objects := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if err := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u"}}); err != nil {
@@ -92,6 +93,7 @@ func TestInputPutBeforeRunCommit(t *testing.T) {
 	}
 }
 func TestInboxPutCommitsOnlyAfterObjectSuccess(t *testing.T) {
+	t.Parallel()
 	o, objects := storageFixture(t)
 	objects.put = func(context.Context, blob.Key, []byte) error { return errors.New("object store unavailable") }
 	item := store.InboxRow{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", Data: store.InboxData{Submitter: "u"}}
@@ -117,6 +119,7 @@ func TestInboxPutCommitsOnlyAfterObjectSuccess(t *testing.T) {
 }
 
 func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"build", "put"} {
 		t.Run(stage, func(t *testing.T) {
 			o, objects := storageFixture(t)
@@ -166,6 +169,7 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 }
 
 func TestInputPreparationCancellationKeepsJobQueued(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if err := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u"}}); err != nil {

@@ -15,6 +15,7 @@ import (
 )
 
 func TestGCDoesNothingOnReferenceOrListFailure(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"list", "reference"} {
 		t.Run(failure, func(t *testing.T) {
 			o, b := storageFixture(t)
@@ -39,6 +40,7 @@ func TestGCDoesNothingOnReferenceOrListFailure(t *testing.T) {
 	}
 }
 func TestGCProtectsEveryContentReference(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.OutputHash = store.NullableString(strings.Repeat("a", 64))
@@ -77,6 +79,7 @@ func TestGCProtectsEveryContentReference(t *testing.T) {
 	}
 }
 func TestProjectLockProtectsInputSelectionAndRead(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if e := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u"}}); e != nil {
@@ -112,6 +115,7 @@ func TestProjectLockProtectsInputSelectionAndRead(t *testing.T) {
 	}
 }
 func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.Status = "completed"

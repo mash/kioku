@@ -10,6 +10,7 @@ import (
 )
 
 func TestViewSettingsAuthorizationAndShape(t *testing.T) {
+	t.Parallel()
 	f, owner, project := orgProject(t)
 	readMember := f.login("reader@example.com")
 	outsider := f.login("outsider@example.com")
@@ -89,6 +90,7 @@ func TestViewSettingsAuthorizationAndShape(t *testing.T) {
 }
 
 func TestViewDetailComparesWithFullyPublishedWiki(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	ctx := t.Context()
 	setCompleteViewWiki(t, f, p.ID, "wiki-1")

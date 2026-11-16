@@ -12,6 +12,7 @@ import (
 )
 
 func TestServerGenerationBudget(t *testing.T) {
+	t.Parallel()
 	for _, budget := range []int64{0, 50, 100} {
 		t.Run(strconv.FormatInt(budget, 10), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
@@ -50,6 +51,7 @@ func TestServerGenerationBudget(t *testing.T) {
 }
 
 func TestRemovedRetryEndpointLeavesFailedJobUnchanged(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	j := managedJob(t, f, token, p.ID, true)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -71,6 +73,7 @@ func TestRemovedRetryEndpointLeavesFailedJobUnchanged(t *testing.T) {
 }
 
 func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	req, _ := http.NewRequest("GET", f.url+"/"+p.Namespace, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -123,6 +126,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 }
 
 func TestPersonalKeyRoutesRemoved(t *testing.T) {
+	t.Parallel()
 	f, token, _, _ := managedFixture(t)
 	for _, route := range []struct{ method, path string }{
 		{"GET", "/settings/anthropic"},

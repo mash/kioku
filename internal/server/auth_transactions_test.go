@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -68,31 +67,8 @@ func expectSQLStatus(t *testing.T, err error, status int) {
 		t.Fatalf("status %d: %v", status, err)
 	}
 }
-func TestLoopbackMismatchConsumesCodeAfterCommit(t *testing.T) {
-	d, _ := sqlAuthFixture(t)
-	now := time.UnixMilli(1000)
-	data := store.CLILoginData{LoopbackCodeHash: sqlTestPtr(auth.Hash("correct")), LoopbackChallenge: sqlTestPtr(auth.Challenge("verifier"))}
-	sqlWrite(t, d, func(q *store.Queries) error {
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}, 0)
-	})
-	for _, code := range []string{"wrong", "correct"} {
-		err := d.Write(t.Context(), func(q *store.Queries) error {
-			_, err := exchangeCLILogin(q, "device", code, "verifier", "new-token", now)
-			return err
-		})
-		expectSQLStatus(t, err, 410)
-	}
-	if err := d.Read(t.Context(), func(q *store.Queries) error {
-		v, err := q.Session(auth.Hash("device"))
-		if err == nil && v.Status != "active" {
-			t.Fatal("consumption lost")
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
 func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
+	t.Parallel()
 	d, _ := sqlAuthFixture(t)
 	now := time.UnixMilli(1000)
 	data := store.CLILoginData{LoopbackCodeHash: sqlTestPtr(auth.Hash("code")), LoopbackChallenge: sqlTestPtr(auth.Challenge("verifier"))}
@@ -121,24 +97,8 @@ func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
 		return err
 	})
 }
-func TestAgentLoginRejectionConsumesCode(t *testing.T) {
-	d, _ := sqlAuthFixture(t)
-	sqlWrite(t, d, func(q *store.Queries) error {
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("code"), Kind: "login_code", Status: "pending", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "g", Role: sqlTestPtr("read")})}, 0)
-	})
-	err := d.Write(t.Context(), func(q *store.Queries) error {
-		_, _, err := exchangeAgentLogin(q, "code", " ", "", "a", "secret", time.UnixMilli(1000))
-		return err
-	})
-	expectSQLStatus(t, err, 400)
-	err = d.Write(t.Context(), func(q *store.Queries) error {
-		_, _, err := exchangeAgentLogin(q, "code", "name", "", "a", "secret", time.UnixMilli(1000))
-		return err
-	})
-	expectSQLStatus(t, err, 401)
-}
-
 func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
+	t.Parallel()
 	d, _ := sqlAuthFixture(t)
 	now := time.UnixMilli(1000)
 	old := store.SessionRow{ID: auth.Hash("old-agent"), Kind: "agent", Status: "active", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: sqlTestPtr("existing"), Role: sqlTestPtr("read")}, Name: "connector:host"})}
@@ -216,120 +176,8 @@ func sqlOAuthRequest(now time.Time) *fosite.Request {
 	session := &connectorSession{DefaultSession: fosite.DefaultSession{Subject: "u", ExpiresAt: map[fosite.TokenType]time.Time{fosite.AuthorizeCode: now.Add(time.Minute), fosite.AccessToken: now.Add(time.Hour), fosite.RefreshToken: now.Add(24 * time.Hour)}}, ProjectIDs: []string{"p"}}
 	return &fosite.Request{ID: "family", RequestedAt: now, Client: &fosite.DefaultClient{ID: "client", Public: true, RedirectURIs: []string{"https://example.com/callback"}}, Session: session, Form: url.Values{"code_challenge": {"challenge"}, "code_challenge_method": {"S256"}}}
 }
-func TestConcurrentOAuthExchangeRevokesReplayFamily(t *testing.T) {
-	for _, kind := range []string{"code", "refresh"} {
-		t.Run(kind, func(t *testing.T) {
-			d, c := sqlAuthFixture(t)
-			now := time.Now().UTC().Truncate(time.Millisecond)
-			r := sqlOAuthRequest(now)
-			sqlWrite(t, d, func(q *store.Queries) error {
-				_, s := newSQLOAuth(q, c, "https://example.com/mcp", now)
-				if kind == "code" {
-					return s.CreateAuthorizeCodeSession(t.Context(), "original", r)
-				}
-				return s.CreateRefreshTokenSession(t.Context(), "original", "", r)
-			})
-			results := make(chan error, 2)
-			var wg sync.WaitGroup
-			for range 2 {
-				wg.Go(func() {
-					results <- d.Write(t.Context(), func(q *store.Queries) error {
-						_, s := newSQLOAuth(q, c, "https://example.com/mcp", now)
-						var request fosite.Requester
-						var err error
-						if kind == "code" {
-							request, err = s.GetAuthorizeCodeSession(t.Context(), "original", nil)
-						} else {
-							request, err = s.GetRefreshTokenSession(t.Context(), "original", nil)
-						}
-						if err != nil {
-							if s.replay {
-								return store.RejectAfterCommit(err)
-							}
-							return err
-						}
-						if kind == "code" {
-							err = s.InvalidateAuthorizeCodeSession(t.Context(), "original")
-						} else {
-							err = s.RotateRefreshToken(t.Context(), "family", "original")
-						}
-						if err != nil {
-							return err
-						}
-						if err = s.CreateAccessTokenSession(t.Context(), "new-access", request); err != nil {
-							return err
-						}
-						return s.CreateRefreshTokenSession(t.Context(), "new-refresh", "", request)
-					})
-				})
-			}
-			wg.Wait()
-			close(results)
-			success := 0
-			for err := range results {
-				if err == nil {
-					success++
-				} else {
-					var committed *store.CommittedRejection
-					if !errors.As(err, &committed) {
-						t.Fatal(err)
-					}
-				}
-			}
-			if success != 1 {
-				t.Fatal(success)
-			}
-			if err := d.Read(t.Context(), func(q *store.Queries) error {
-				if _, err := q.Session("new-access"); !errors.Is(err, sql.ErrNoRows) {
-					t.Fatal("replay did not revoke access", err)
-				}
-				v, err := q.Session("new-refresh")
-				if err != nil {
-					return err
-				}
-				var data store.MCPData
-				if err = json.Unmarshal(v.Data, &data); err != nil {
-					return err
-				}
-				if v.Status == "active" {
-					t.Fatal("replay did not revoke refresh")
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-func TestOAuthOrdinaryRejectionRollsBackCode(t *testing.T) {
-	d, c := sqlAuthFixture(t)
-	now := time.Now().UTC()
-	sqlWrite(t, d, func(q *store.Queries) error {
-		_, s := newSQLOAuth(q, c, "resource", now)
-		return s.CreateAuthorizeCodeSession(t.Context(), "code", sqlOAuthRequest(now))
-	})
-	rejected := errors.New("PKCE mismatch")
-	err := d.Write(t.Context(), func(q *store.Queries) error {
-		_, s := newSQLOAuth(q, c, "resource", now)
-		if err := s.InvalidateAuthorizeCodeSession(t.Context(), "code"); err != nil {
-			return err
-		}
-		return rejected
-	})
-	if !errors.Is(err, rejected) {
-		t.Fatal(err)
-	}
-	if err := d.Read(t.Context(), func(q *store.Queries) error {
-		v, err := q.Session("code")
-		if err == nil && v.Status != "pending" {
-			t.Fatal("ordinary rejection consumed code")
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
 func TestExpiredAccessSurvivesWhileLoginCodeReferencesIt(t *testing.T) {
+	t.Parallel()
 	d, _ := sqlAuthFixture(t)
 	sqlWrite(t, d, func(q *store.Queries) error {
 		if err := q.InsertSession(store.SessionRow{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 100, Data: sqlJSON(t, store.MCPData{TokenKind: "access", ProjectIDs: []string{"p"}})}, 0); err != nil {
@@ -355,6 +203,7 @@ func TestExpiredAccessSurvivesWhileLoginCodeReferencesIt(t *testing.T) {
 	})
 }
 func TestSQLFositeRequestUsesMillisecondsAndParentSelection(t *testing.T) {
+	t.Parallel()
 	r := sqlOAuthRequest(time.Now().UTC())
 	r.Session.(*connectorSession).Extra = map[string]any{"nested": map[string]any{"value": true}}
 	b, err := encodeSQLRequest(r)

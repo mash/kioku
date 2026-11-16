@@ -33,6 +33,7 @@ func assertConnectorAccess(t *testing.T, f *fixture, token string, want bool) {
 	}
 }
 func TestConnectorRefreshReplayRevokesFamily(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -55,6 +56,7 @@ func TestConnectorRefreshReplayRevokesFamily(t *testing.T) {
 	assertConnectorAccess(t, f, independent, true)
 }
 func TestConnectorCodeFailuresRollbackAndReplayRevokes(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -86,6 +88,7 @@ func TestConnectorCodeFailuresRollbackAndReplayRevokes(t *testing.T) {
 	}
 }
 func TestConnectorConcurrentRefreshFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -134,6 +137,7 @@ func TestConnectorConcurrentRefreshFailsClosed(t *testing.T) {
 	}
 }
 func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -182,6 +186,7 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 }
 
 func TestConnectorFositeAuthorizationValidation(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	client := connectorClient(t, f)

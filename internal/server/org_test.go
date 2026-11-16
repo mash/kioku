@@ -31,6 +31,7 @@ func orgProject(t *testing.T) (*fixture, string, fixtureProject) {
 }
 
 func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	other := f.login("other@example.com")
@@ -59,6 +60,7 @@ func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testi
 	}
 }
 func TestMissingRunnerFailsGeneration(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")
 	j := managedJob(t, f, token, p.ID, false)
@@ -71,6 +73,7 @@ func TestMissingRunnerFailsGeneration(t *testing.T) {
 	}
 }
 func TestManagedBudgetCapsTheSession(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "Evidence")
 	j := startManaged(t, f, token, p.ID, false)

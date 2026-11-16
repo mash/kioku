@@ -270,6 +270,7 @@ func assertStoredReferences(t *testing.T, o *storageOperations) map[blob.Key]str
 	return keys
 }
 func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
+	t.Parallel()
 	stages := []string{"inbox/put", "inbox/sql-before", "inbox/sql-after", "input/put", "input/sql-before", "input/sql-after", "output/put", "output/sql-before", "output/sql-after", "wiki/put", "wiki/final-before", "wiki/final-after", "view/put", "view/sql-before", "view/sql-after", "cleanup/usage", "cleanup/unreference-before", "cleanup/unreference-after", "cleanup/delete", "cleanup/final-before", "cleanup/final-after", "delete/references-before", "delete/references-after", "delete/delete", "delete/final-before", "delete/final-after"}
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {

@@ -83,6 +83,7 @@ func completeTestViewTask(t *testing.T, f *fixture, ma *fake.Server, child fixtu
 }
 
 func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	var projectMap viewDefinition
 	if code := f.request("GET", "/api/projects/"+p.ID+"/views/project-map", token, nil, &projectMap); code != 200 {
@@ -219,6 +220,7 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 }
 
 func TestRemainingViewBudgetUsesReportedCosts(t *testing.T) {
+	t.Parallel()
 	known, tooHigh, negative := int64(37), int64(210), int64(-1)
 	for _, tc := range []struct {
 		cost *int64
@@ -231,6 +233,7 @@ func TestRemainingViewBudgetUsesReportedCosts(t *testing.T) {
 }
 
 func TestViewGenerationUsesRemainingBudgetWhenWikiCostIsUnknown(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	createTestView(t, f, token, p, "delivery", "Show decisions")
 	putFile(t, f, token, p.ID, "decision.md", "Decide on Friday.")
@@ -259,6 +262,7 @@ func TestViewGenerationUsesRemainingBudgetWhenWikiCostIsUnknown(t *testing.T) {
 }
 
 func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	viewAPI := "/api/projects/" + p.ID + "/views/project-map"
 	source := "https://example.com/view-evidence"
@@ -383,6 +387,7 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 }
 
 func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
+	t.Parallel()
 	for _, beforeStart := range []bool{false, true} {
 		t.Run(fmt.Sprint("before-start=", beforeStart), func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -443,6 +448,7 @@ func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
 }
 
 func TestViewGenerationStopsAfterFailure(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"failed", "missing", "failed-deleted", "remaining-deleted", "skipped-deleted", "write-retry"} {
 		t.Run(scenario, func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -555,6 +561,7 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 }
 
 func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"captured", "empty-inbox", "publish"} {
 		t.Run(stage, func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -619,6 +626,7 @@ func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
 }
 
 func TestViewGenerationCapturedEmptyListDoesNotRecapture(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	if code := f.request("DELETE", "/api/projects/"+p.ID+"/views/project-map", token, nil, nil); code != 204 {
 		t.Fatal(code)

@@ -64,6 +64,7 @@ type connectorSearchResult struct {
 }
 
 func TestConnectorWikiReadAndSearch(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, true)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -158,6 +159,7 @@ func TestConnectorWikiReadAndSearch(t *testing.T) {
 }
 
 func TestConnectorWikiArgumentsAndMembership(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -224,6 +226,7 @@ func TestConnectorWikiArgumentsAndMembership(t *testing.T) {
 }
 
 func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
+	t.Parallel()
 	for _, role := range []string{"owner", "member"} {
 		t.Run(role, func(t *testing.T) {
 			f := setupWithWorker(t, true)
@@ -308,6 +311,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 }
 
 func TestConnectorSourcePutValidation(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -338,6 +342,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 }
 
 func TestSourcePutSetsDeadline(t *testing.T) {
+	t.Parallel()
 	f, human, p, _ := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	access := connectorAccessToken(t, f, human, p.ID)
@@ -359,6 +364,7 @@ func TestSourcePutSetsDeadline(t *testing.T) {
 }
 
 func TestConnectorWikiView(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	access := connectorAccessToken(t, f, owner, p.ID)
 	if code := f.request("PATCH", "/api/projects/"+p.Namespace+"/views/wiki", owner, map[string]string{"prompt": "決定事項は decisions ページに日付の新しい順で並べる。"}, nil); code != 200 {

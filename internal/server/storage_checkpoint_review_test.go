@@ -36,6 +36,7 @@ func (d *checkpointFailureCatalog) ResolveCommit(ctx context.Context, fn func(*s
 }
 
 func TestFileCheckpointPreservesDatabaseFailure(t *testing.T) {
+	t.Parallel()
 	for _, fatal := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fatal=%t", fatal), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)

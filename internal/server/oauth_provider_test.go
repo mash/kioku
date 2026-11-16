@@ -136,6 +136,7 @@ func connectorTokenPair(t *testing.T, f *fixture, form url.Values) (string, stri
 	return tokens.Access, tokens.Refresh
 }
 func TestConnectorOAuthPKCEAndSingleUse(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -160,6 +161,7 @@ func TestConnectorOAuthPKCEAndSingleUse(t *testing.T) {
 }
 
 func TestConnectorOAuthConsentWithCLISession(t *testing.T) {
+	t.Parallel()
 	f, human, project := orgProject(t)
 	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
 		session, err := q.Session(auth.Hash(human))
@@ -173,6 +175,7 @@ func TestConnectorOAuthConsentWithCLISession(t *testing.T) {
 	connectorTokenPair(t, f, form)
 }
 func TestConnectorRejectsUnregisteredRedirect(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	client := connectorClient(t, f)
 	form := url.Values{"client_id": {client}, "redirect_uri": {"https://attacker.example/callback"}, "response_type": {"code"}, "state": {"test-client-state"}, "code_challenge_method": {"S256"}, "code_challenge": {auth.Challenge(auth.Token())}}
@@ -183,6 +186,7 @@ func TestConnectorRejectsUnregisteredRedirect(t *testing.T) {
 }
 
 func TestConnectorBrowserConsentPolicy(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	project := securityProject(t, f, human)
@@ -228,6 +232,7 @@ func TestConnectorBrowserConsentPolicy(t *testing.T) {
 }
 
 func TestConnectorRejectsNonliteralCallbackHosts(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	for _, uri := range []string{"https://*.example.com/cb", "https://one.example;script-src/cb", "https://one.example,two.example/cb"} {
 		if status := f.request("POST", "/oauth/register", "", map[string]any{"redirect_uris": []string{uri}}, nil); status != 400 {
@@ -237,6 +242,7 @@ func TestConnectorRejectsNonliteralCallbackHosts(t *testing.T) {
 }
 
 func TestConnectorRegistrationIgnoresAdditionalMetadata(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	var client map[string]any
 	metadata := map[string]any{
@@ -254,6 +260,7 @@ func TestConnectorRegistrationIgnoresAdditionalMetadata(t *testing.T) {
 }
 
 func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	client := connectorClient(t, f)
 	human := f.login("owner@example.com")

@@ -47,6 +47,7 @@ func overridePrompts(t *testing.T, f *fixture, system, user, mcp string) {
 	f.setRunners()
 }
 func TestMCPPromptOverridesOnWire(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -89,6 +90,7 @@ func TestMCPPromptOverridesOnWire(t *testing.T) {
 	}
 }
 func TestUserOverrideKeepsJOBMetadata(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	overridePrompts(t, f, "", "Read {{.InputURL}} and write {{.OutputURL}} for {{.JobID}} / {{.Namespace}}", "")
 	j := startManaged(t, f, token, p.ID, true)
@@ -118,6 +120,7 @@ func TestUserOverrideKeepsJOBMetadata(t *testing.T) {
 }
 
 func TestMCPUnknownNamesStopLoading(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"tools: {private-secret: {description: hi}}",
 		"tools: {private-secret: []}",

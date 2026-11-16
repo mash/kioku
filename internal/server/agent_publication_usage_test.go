@@ -19,6 +19,7 @@ func (b failWikiPublication) Put(ctx context.Context, key blob.Key, body []byte)
 	return b.Store.Put(ctx, key, body)
 }
 func TestManagedPublicationFailurePreservesFinalUsage(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

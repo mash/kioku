@@ -23,6 +23,7 @@ func accountID(t *testing.T, f *fixture, token string) string {
 	return out.ID
 }
 func TestAccountSessionRevocationAndCredentialRedaction(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	second := f.login("owner@example.com")
@@ -59,6 +60,7 @@ func TestAccountSessionRevocationAndCredentialRedaction(t *testing.T) {
 	}
 }
 func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	uid := accountID(t, f, human)
@@ -92,6 +94,7 @@ func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
 	}
 }
 func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	other := f.login("member@example.com")

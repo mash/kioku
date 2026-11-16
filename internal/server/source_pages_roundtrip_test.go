@@ -12,6 +12,7 @@ import (
 // The fake supplies model output. This verifies the archive/publication contract,
 // not whether a real model follows the prompt's filename rules.
 func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	urls := []string{"https://example.com/a", "https://example.com/b"}
 	putText := func(url, body string) {

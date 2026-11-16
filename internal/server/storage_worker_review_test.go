@@ -23,6 +23,7 @@ func (d *workerFailureCatalog) Write(ctx context.Context, fn func(*store.Queries
 }
 
 func TestWorkerFailureDoesNotBlockOtherProjects(t *testing.T) {
+	t.Parallel()
 	for _, continuation := range []bool{false, true} {
 		t.Run(strconv.FormatBool(continuation), func(t *testing.T) {
 			f, human, bad, _ := managedFixture(t)

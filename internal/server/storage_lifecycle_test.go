@@ -29,6 +29,7 @@ func readSQLJob(t *testing.T, o *storageOperations, id string) store.JobRow {
 	return j
 }
 func TestWikiPutFailureKeepsAllPublishedReferences(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	storageRunning(t, o, "j")
 	old := []byte("old content")
@@ -98,6 +99,7 @@ func TestWikiPutFailureKeepsAllPublishedReferences(t *testing.T) {
 	}
 }
 func TestViewAndChildCompletionCommitTogether(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	child := storageRunning(t, o, "child")
 	sqlWrite(t, o.db, func(q *store.Queries) error {
@@ -185,6 +187,7 @@ func TestViewAndChildCompletionCommitTogether(t *testing.T) {
 	}
 }
 func TestCleanupUnreferencesBeforeDelete(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.Status = "completed"
@@ -229,6 +232,7 @@ func TestCleanupUnreferencesBeforeDelete(t *testing.T) {
 	}
 }
 func TestParentConsumesChildCostOnce(t *testing.T) {
+	t.Parallel()
 	for _, cost := range []*int64{nil, new(int64), func() *int64 { v := int64(40); return &v }()} {
 		o, _ := storageFixture(t)
 		child := storageRunning(t, o, "child")
@@ -289,6 +293,7 @@ func TestParentConsumesChildCostOnce(t *testing.T) {
 	}
 }
 func TestFileOutputWaitSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.Data.Run.UsesProviderFiles = true
@@ -305,6 +310,7 @@ func TestFileOutputWaitSurvivesRestart(t *testing.T) {
 	}
 }
 func TestHTTPOutputWinsBeforeNoOutputFailure(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	storageRunning(t, o, "j")
 	wins, e := o.failJob(t.Context(), "j", "stopped without output", &runner.Status{State: runner.StateStopped}, true)
@@ -318,6 +324,7 @@ func sqlTestViewData() store.ViewData {
 }
 
 func TestCleanupRestartNeverChargesTwice(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.GenerationSnapshot = store.NullableString("w")
@@ -362,6 +369,7 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 }
 
 func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
+	t.Parallel()
 	for _, cost := range []*int64{nil, sqlTestPtr(int64(40))} {
 		o, b := storageFixture(t)
 		j := storageRunning(t, o, "j")
@@ -410,6 +418,7 @@ func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
 }
 
 func TestCleanupLockStateDoesNotGrowWithJobHistory(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	locks := 0
 	for i := range 32 {
@@ -435,6 +444,7 @@ func TestCleanupLockStateDoesNotGrowWithJobHistory(t *testing.T) {
 }
 
 func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.Phase = store.NullableString("agent_running")
@@ -485,6 +495,7 @@ func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
 	}
 }
 func TestFailedInputNeverCreatesRunOrUsage(t *testing.T) {
+	t.Parallel()
 	o, b := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if e := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Kind: "generate", Status: "queued", Data: store.JobData{UserID: "u"}}); e != nil {
@@ -514,6 +525,7 @@ func TestFailedInputNeverCreatesRunOrUsage(t *testing.T) {
 	}
 }
 func TestAbortDeadlineWaitsStrictlyPastTenMinutes(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	o.now = func() time.Time { return time.UnixMilli(j.Data.Run.Deadline + 600000) }

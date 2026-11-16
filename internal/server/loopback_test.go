@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,40 +16,14 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
-	"github.com/mash/kioku/internal/authtest"
 	"github.com/mash/kioku/internal/store"
 )
 
 func setupLoopback(t *testing.T) *fixture {
 	t.Helper()
 	f := setupWithWorker(t, false)
-	google := authtest.NewGoogle(t)
 	f.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	f.s.Config.Providers["google"] = auth.Provider{Name: "google", ClientID: "id", ClientSecret: "secret", RedirectURL: f.url + "/auth/google/callback", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
-		var payload any
-		switch r.URL.Host {
-		case "oauth2.googleapis.com":
-			if err := r.ParseForm(); err != nil {
-				return nil, err
-			}
-			if r.Form.Get("code") == "exchange-error" {
-				return nil, errors.New("exchange failed")
-			}
-			payload = map[string]any{"access_token": r.Form.Get("code"), "expires_in": 3600, "id_token": google.Token(t, r.Form.Get("code"), r.Form.Get("code_verifier"))}
-		case "www.googleapis.com":
-			payload = google.JWKS()
-		case "openidconnect.googleapis.com":
-			id := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if id == "identity-error" {
-				return nil, errors.New("identity failed")
-			}
-			payload = map[string]any{"sub": id, "name": id, "email": id + "@example.com", "email_verified": true}
-		default:
-			return nil, fmt.Errorf("unexpected host %s", r.URL.Host)
-		}
-		b, _ := json.Marshal(payload)
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(b))}, nil
-	})}}
+	f.s.Config.Providers["google"] = testOIDCProvider(t, f.url)
 	return f
 }
 
@@ -136,6 +109,7 @@ func loopbackSnapshot(t *testing.T, f *fixture) string {
 func loopbackCount(t *testing.T, f *fixture) int { return sessionKindCount(t, f, "cli_login") }
 
 func TestLoopbackStartValidation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ field, value string }{
 		{"provider", "unknown"},
 		{"redirect_uri", "http://localhost:5000/callback"},
@@ -177,6 +151,7 @@ func TestLoopbackStartValidation(t *testing.T) {
 }
 
 func TestLoopbackExchangeConsumesFailures(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"missing code", "wrong code", "wrong verifier", "short verifier", "long verifier", "invalid verifier", "expired", "unissued", "non-loopback"} {
 		t.Run(failure, func(t *testing.T) {
 			f := setupLoopback(t)
@@ -241,6 +216,7 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 }
 
 func TestLoopbackCallbackFailure(t *testing.T) {
+	t.Parallel()
 	for _, reason := range []string{"denied", "exchange-error", "identity-error"} {
 		for _, unusable := range []string{"", "expired", "used", "bound", "missing"} {
 			t.Run(reason+"/"+unusable, func(t *testing.T) {
@@ -304,6 +280,7 @@ func TestLoopbackCallbackFailure(t *testing.T) {
 }
 
 func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
+	t.Parallel()
 	for _, revoke := range []bool{false, true} {
 		t.Run(fmt.Sprint(revoke), func(t *testing.T) {
 			f := setupLoopback(t)
@@ -350,6 +327,7 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 }
 
 func TestLoopbackExpiredRequest(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -371,6 +349,7 @@ func TestLoopbackExpiredRequest(t *testing.T) {
 }
 
 func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -422,6 +401,7 @@ func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
 }
 
 func TestLoopbackTokenInvalidJSON(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	for _, body := range []string{"{", "null", "[]", `{"device":42}`, `{"unknown":true}`, `{} {}`} {
 		req, err := http.NewRequest("POST", f.url+"/api/auth/loopback/token", strings.NewReader(body))
@@ -444,6 +424,7 @@ func TestLoopbackTokenInvalidJSON(t *testing.T) {
 }
 
 func TestLoopbackConcurrentExchange(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
 	callback := finishLoopbackOAuth(t, f, startLoopbackOAuth(t, f, a))
@@ -479,6 +460,7 @@ func TestLoopbackConcurrentExchange(t *testing.T) {
 }
 
 func TestLoopbackOAuthCookieMismatch(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
 	req := startLoopbackOAuth(t, f, a)

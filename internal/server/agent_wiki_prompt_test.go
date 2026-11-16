@@ -23,6 +23,7 @@ func wikiInputArchive(t *testing.T, f *fixture, job fixtureJob) []byte {
 }
 
 func TestWikiPromptGeneration(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"saved", "default", "override", "saved-over-override"} {
 		t.Run(scenario, func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -126,6 +127,7 @@ func (b *wikiPromptReadCounter) Get(ctx context.Context, key blob.Key) ([]byte, 
 }
 
 func TestEmptyInboxDoesNotReadWikiPrompt(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "source.md", "Evidence")
 	parent := queueTestViewGeneration(t, f, token, p)
@@ -167,6 +169,7 @@ func TestEmptyInboxDoesNotReadWikiPrompt(t *testing.T) {
 
 // E13: input preparation failure precedes Run creation and inbox assignment.
 func TestMissingInboxBodyFailsBeforeStartingRun(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	item := putFile(t, f, token, p.ID, "source.md", "Evidence")
 	body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())

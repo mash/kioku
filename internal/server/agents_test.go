@@ -31,6 +31,7 @@ func testAgent(t *testing.T, f *fixture, user, pid, role string) (string, string
 }
 
 func TestCreateAgentRouteRemoved(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -45,6 +46,7 @@ func TestCreateAgentRouteRemoved(t *testing.T) {
 	})
 }
 func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	a := securityProject(t, f, human)
@@ -104,6 +106,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 	}
 }
 func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -140,6 +143,7 @@ func TestWriteAgentAcceptsURLsAndRevocationStopsQueuedWork(t *testing.T) {
 	}
 }
 func TestMembershipRemovalPermanentlyRevokesDelegatedTokens(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	memberToken := f.login("member@example.com")
@@ -180,6 +184,7 @@ func TestMembershipRemovalPermanentlyRevokesDelegatedTokens(t *testing.T) {
 }
 
 func TestRevokingAgentDuringRequestCannotBroadenItsIdentity(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)

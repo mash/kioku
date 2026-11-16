@@ -65,6 +65,7 @@ func setCompleteViewWiki(t *testing.T, f *fixture, pid, wiki string) {
 
 // E9: ZIP PUT precedes the one SQL transaction for publication and child result.
 func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"bundle", "SQL"} {
 		t.Run(boundary, func(t *testing.T) {
 			f, _, p := orgProject(t)
@@ -138,6 +139,7 @@ func fixtureViewJob(t *testing.T, f *fixture, pid, vid, parent, snapshot string)
 	return child
 }
 func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	ctx := t.Context()
 	setCompleteViewWiki(t, f, p.ID, "wiki-1")
@@ -186,6 +188,7 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	}
 }
 func TestViewEditSQLFailurePreservesSettings(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	api := "/api/projects/" + p.ID + "/views/project-map"
 	var before, after viewDefinition
@@ -202,6 +205,7 @@ func TestViewEditSQLFailurePreservesSettings(t *testing.T) {
 	}
 }
 func TestWikiViewPatchUsesSQLWithoutObjectReads(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	api := "/api/projects/" + p.ID + "/views/wiki"
 	var v viewDefinition

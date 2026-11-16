@@ -9,6 +9,7 @@ import (
 )
 
 func TestGenerationSignalsOnlyPersistedChanges(t *testing.T) {
+	t.Parallel()
 	for _, queue := range []bool{false, true} {
 		t.Run(fmt.Sprint(queue), func(t *testing.T) {
 			f := setupWithWorker(t, false)

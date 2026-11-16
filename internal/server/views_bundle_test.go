@@ -64,6 +64,7 @@ func viewTarFixture(t *testing.T, files map[string][]byte) []byte {
 }
 
 func TestViewBundleRoundTripAndRendering(t *testing.T) {
+	t.Parallel()
 	var raster bytes.Buffer
 	if err := png.Encode(&raster, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
 		t.Fatal(err)
@@ -129,6 +130,7 @@ func TestViewBundleRoundTripAndRendering(t *testing.T) {
 }
 
 func TestViewBundleRejectsInvalidEntriesAndReferences(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, html string
 		file, body string
@@ -165,6 +167,7 @@ func TestViewBundleRejectsInvalidEntriesAndReferences(t *testing.T) {
 }
 
 func TestViewBundleBounds(t *testing.T) {
+	t.Parallel()
 	t.Run("compressed size", func(t *testing.T) {
 		oversized := make([]byte, maxViewArchiveBytes+1)
 		if _, err := readViewBundle(oversized); !errors.Is(err, errViewLimit) {

@@ -13,6 +13,7 @@ import (
 )
 
 func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
+	t.Parallel()
 	f, human, p, ma := managedFixture(t)
 	id, token := testAgent(t, f, human, p.ID, "write")
 	putFile(t, f, token, p.ID, "evidence.md", "Evidence")
@@ -40,6 +41,7 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 }
 
 func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
+	t.Parallel()
 	for _, state := range []runner.State{runner.StateStopped, runner.StateNone} {
 		t.Run(fmt.Sprint(state), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)

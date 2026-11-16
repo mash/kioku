@@ -49,6 +49,7 @@ func webhookBody(j fixtureJob) []byte {
 	return []byte(fmt.Sprintf(`{"id":"event_test","type":"event","data":{"type":"session.status_idled","id":%q}}`, j.Run.Ref.ID))
 }
 func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.AnthropicWebhookSigningKey = "whsec_" + base64.StdEncoding.EncodeToString(webhookTestSecret)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
@@ -121,6 +122,7 @@ func TestManagedWebhookSignaturesAndReplay(t *testing.T) {
 	})
 }
 func TestManagedWebhookDisabledAndTemporaryReconciliation(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -158,6 +160,7 @@ func (d *webhookFailedCatalog) Read(ctx context.Context, fn func(*store.Queries)
 }
 
 func TestWebhookReportsFatalDatabaseFailure(t *testing.T) {
+	t.Parallel()
 	for _, fatal := range []bool{false, true} {
 		t.Run(strconv.FormatBool(fatal), func(t *testing.T) {
 			f, _, _, _ := managedFixture(t)

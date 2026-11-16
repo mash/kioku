@@ -15,6 +15,7 @@ import (
 )
 
 func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
@@ -84,6 +85,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 }
 
 func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
@@ -111,6 +113,7 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 }
 
 func TestInboxOrphanGC(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
@@ -125,6 +128,7 @@ func TestInboxOrphanGC(t *testing.T) {
 }
 
 func TestClientVersionGate(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		v, path, auth string
 		want          int
@@ -148,6 +152,7 @@ func TestClientVersionGate(t *testing.T) {
 }
 
 func TestConnectorAndAgentInboxPuts(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)

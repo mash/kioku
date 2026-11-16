@@ -14,6 +14,7 @@ import (
 )
 
 func TestConcurrentPutReadPublishAndGC(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	body := []byte("initial")
 	if err := o.objects.Put(t.Context(), model.WikiContentKey("p", model.HashContent(body)), body); err != nil {
@@ -90,6 +91,7 @@ func (d *queueFailureCatalog) Read(ctx context.Context, fn func(*store.Queries) 
 	return err
 }
 func TestReconcileDoesNotSpinOnTemporaryFailure(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	putFile(t, f, token, p.ID, "input.md", "source")
 	var j fixtureJob
@@ -135,6 +137,7 @@ func TestReconcileDoesNotSpinOnTemporaryFailure(t *testing.T) {
 }
 
 func TestViewContinuationRechecksAuthorization(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if err := q.PutView(store.ViewRow{ID: "v", ProjectID: "p", Slug: "map", Data: sqlTestViewData()}); err != nil {
@@ -164,6 +167,7 @@ func TestViewContinuationRechecksAuthorization(t *testing.T) {
 }
 
 func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	child := storageRunning(t, o, "child")
 	child.Status = "completed"
@@ -230,6 +234,7 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 }
 
 func TestProjectDeletionRechecksSessionAfterObjectIO(t *testing.T) {
+	t.Parallel()
 	f, token, p := orgProject(t)
 	putFile(t, f, token, p.ID, "source.md", "deletion evidence")
 	objects := &storageTestObjects{Store: f.s.Blobs}

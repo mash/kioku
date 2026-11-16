@@ -11,6 +11,7 @@ import (
 )
 
 func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -58,6 +59,7 @@ func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
 }
 
 func TestInboxRejectsExternalFileProvenance(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)
@@ -84,6 +86,7 @@ func TestInboxRejectsExternalFileProvenance(t *testing.T) {
 }
 
 func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)

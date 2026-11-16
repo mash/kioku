@@ -24,6 +24,7 @@ func (c *crashAfterVaultCreate) CreateJobVault(ctx context.Context, in claudeman
 }
 
 func TestManagedVaultCreationCrashRecoversCleanup(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := managedJob(t, f, token, p.ID, false)

@@ -261,6 +261,7 @@ func (f *fixture) generate(pid, token string, _ bool) fixtureJob {
 }
 
 func TestProjectSharingPutAndIsolation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	alice, bob, eve := f.login("alice@example.com"), f.login("bob@example.com"), f.login("eve@example.com")
 	var p fixtureProject
@@ -336,6 +337,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 	}
 }
 func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	token := f.login("owner@example.com")
 	var p fixtureProject
@@ -369,6 +371,7 @@ func TestConcurrentSubmissionsAreNotLost(t *testing.T) {
 	}
 }
 func TestCSRFAndOAuthState(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	token := f.login("owner@example.com")
 	req, _ := http.NewRequest("POST", f.url+"/api/projects", strings.NewReader(`{"name":"bad"}`))
@@ -393,6 +396,7 @@ func TestCSRFAndOAuthState(t *testing.T) {
 }
 
 func TestNoUnauthenticatedEmailLogin(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	code := f.request("POST", "/api/auth/dev", "", map[string]string{"email": "owner@example.com"}, nil)
 	if code != http.StatusNotFound && code != http.StatusMethodNotAllowed {

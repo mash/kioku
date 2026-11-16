@@ -9,6 +9,7 @@ import (
 )
 
 func TestMaintenancePrunesSessionsAndPreservesPendingLogin(t *testing.T) {
+	t.Parallel()
 	o, _ := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		for _, row := range []store.SessionRow{

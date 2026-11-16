@@ -26,6 +26,7 @@ func securityProject(t *testing.T, f *fixture, token string) fixtureProject {
 	return p
 }
 func TestEmailInviteUsesCurrentProviderProof(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	owner := f.login("owner@example.com")
 	token := f.login("former@company.example")
@@ -62,6 +63,7 @@ func TestEmailInviteUsesCurrentProviderProof(t *testing.T) {
 	}
 }
 func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"legacy session", "provider failure", "wrong identity", "unverified email"} {
 		t.Run(mode, func(t *testing.T) {
 			f := setup(t)
@@ -131,6 +133,7 @@ func (r *pausedReader) Read([]byte) (int, error) {
 }
 func (*pausedReader) Close() error { return nil }
 func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	owner := f.login("owner@example.com")
 	attacker := f.login("attacker@example.com")
@@ -160,6 +163,7 @@ func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
 	}
 }
 func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
@@ -184,6 +188,7 @@ func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
 	<-done
 }
 func TestProjectGatesAreIndependentAndCancelable(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	unlock, err := f.s.storage.lock(context.Background(), "one")
 	if err != nil {
@@ -221,6 +226,7 @@ func (w *pausedWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 func TestSlowHTTPResponseDoesNotHoldDatabaseMutex(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	token := f.login("owner@example.com")
 	securityProject(t, f, token)

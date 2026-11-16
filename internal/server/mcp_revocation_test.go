@@ -25,6 +25,7 @@ func (d *afterReadCatalog) Read(ctx context.Context, fn func(*store.Queries) err
 }
 
 func TestConnectorWikiRechecksGrantAfterSelection(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"deleted", "inactive", "expired", "ungranted"} {
 		t.Run(change, func(t *testing.T) {
 			f, human, p := orgProject(t)

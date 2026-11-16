@@ -14,6 +14,7 @@ import (
 )
 
 func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	first := putFile(t, f, token, p.ID, "a.md", "First body")
 	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/private", "Source body")}}, nil); c != 202 {
@@ -54,6 +55,7 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 }
 
 func TestInboxFailureReleasesForNewGeneration(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	first := putFile(t, f, token, p.ID, "a.md", "First body")
 	j := startManaged(t, f, token, p.ID, false)
@@ -86,6 +88,7 @@ func TestInboxFailureReleasesForNewGeneration(t *testing.T) {
 }
 
 func TestInboxEmptyAndOverLimitSelection(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	j := managedJob(t, f, token, p.ID, false)
 	before := len(ma.Requests())
@@ -138,6 +141,7 @@ func (b *failWikiWrite) Put(ctx context.Context, key blob.Key, data []byte) erro
 	return b.Store.Put(ctx, key, data)
 }
 func TestInterruptedPublicationKeepsInbox(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	item := putFile(t, f, token, p.ID, "a.md", "Body")
 	j := startManaged(t, f, token, p.ID, false)
@@ -161,6 +165,7 @@ func TestInterruptedPublicationKeepsInbox(t *testing.T) {
 }
 
 func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                                          string
 		item, remove, pinned, over, noOwner, deleting bool
@@ -225,6 +230,7 @@ func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
 }
 
 func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
+	t.Parallel()
 	for _, offset := range []time.Duration{0, -time.Second} {
 		t.Run(offset.String(), func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -275,6 +281,7 @@ func (b *failAfterWikiDelete) Delete(ctx context.Context, key blob.Key) error {
 }
 
 func TestInterruptedSourceDeletionCanGenerateAgain(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "a.md", "Body")
 	j := startManaged(t, f, token, p.ID, false)
@@ -317,6 +324,7 @@ func (b unavailableWikiRead) Get(context.Context, blob.Key) ([]byte, error) {
 
 // E1: missing immutable bodies are failures, including incomplete publication.
 func TestGenerationWikiRejectsMissingImmutableFiles(t *testing.T) {
+	t.Parallel()
 	f, _, p, _ := managedFixture(t)
 	rev := model.Revision{Files: map[string]blob.Key{"wiki/source-missing.md": model.WikiContentKey(p.ID, model.ContentHash(strings.Repeat("a", 64)))}}
 	if _, err := f.s.generationWiki(t.Context(), rev); err == nil {
@@ -339,6 +347,7 @@ func (b failAfterLargeWikiWrite) Put(ctx context.Context, key blob.Key, data []b
 }
 
 func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
+	t.Parallel()
 	for _, automatic := range []bool{false, true} {
 		name := "manual"
 		if automatic {
@@ -409,6 +418,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 }
 
 func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.MaxWikiBytes = 1 << 20
 	j := startManaged(t, f, token, p.ID, true)
@@ -475,6 +485,7 @@ func generationTick(t *testing.T, f *fixture, now time.Time) {
 }
 
 func TestPutSetsDeadlineFromSaveTime(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	objects := &deadlineSaveBlob{Store: f.s.Blobs}
@@ -505,6 +516,7 @@ func TestPutSetsDeadlineFromSaveTime(t *testing.T) {
 }
 
 func TestRejectedPutKeepsDeadline(t *testing.T) {
+	t.Parallel()
 	for _, deleting := range []bool{false, true} {
 		t.Run(fmt.Sprint(deleting), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
@@ -537,6 +549,7 @@ func TestRejectedPutKeepsDeadline(t *testing.T) {
 }
 
 func TestDebounceChangeAppliesFromNextPut(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	putFile(t, f, token, p.ID, "a.md", "Body")
@@ -565,6 +578,7 @@ func TestDebounceChangeAppliesFromNextPut(t *testing.T) {
 }
 
 func TestDeadlineQueuesOnceAndClears(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	putFile(t, f, token, p.ID, "a.md", "Body")
@@ -597,6 +611,7 @@ func TestDeadlineQueuesOnceAndClears(t *testing.T) {
 }
 
 func TestDeadlineWaitsForJob(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"queued", "running"} {
 		t.Run(status, func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
@@ -656,6 +671,7 @@ func TestDeadlineWaitsForJob(t *testing.T) {
 }
 
 func TestFailedAutomaticJobIsNotRequeued(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	first := putFile(t, f, token, p.ID, "a.md", "Body")
@@ -697,6 +713,7 @@ func TestFailedAutomaticJobIsNotRequeued(t *testing.T) {
 }
 
 func TestZeroDebounceQueuesOnNextTick(t *testing.T) {
+	t.Parallel()
 	for _, debounce := range []time.Duration{0, time.Nanosecond} {
 		t.Run(debounce.String(), func(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
@@ -717,6 +734,7 @@ func TestZeroDebounceQueuesOnNextTick(t *testing.T) {
 }
 
 func TestStoredFixedDeadlineFiresOnce(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	putFile(t, f, token, p.ID, "a.md", "Body")
 	deadline := time.Now().UTC().Truncate(time.Millisecond).Add(time.Hour)
@@ -751,6 +769,7 @@ func TestStoredFixedDeadlineFiresOnce(t *testing.T) {
 }
 
 func TestFullInboxLetsDeadlinePass(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	putFile(t, f, token, p.ID, "a.md", "Body")
@@ -777,6 +796,7 @@ func TestFullInboxLetsDeadlinePass(t *testing.T) {
 }
 
 func TestIdleTickUsesSQLAndPreservesDeadlines(t *testing.T) {
+	t.Parallel()
 	f, _, p, _ := managedFixture(t)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	for _, tc := range []struct {

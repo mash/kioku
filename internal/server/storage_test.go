@@ -53,6 +53,7 @@ func runGeneration(t *testing.T, f *fixture, token, pid string) fixtureJob {
 }
 
 func TestRestoringSQLiteSelectsBackupContentReferences(t *testing.T) {
+	t.Parallel()
 	root, remote := t.TempDir(), t.TempDir()
 	objects := local.Store{Dir: remote}
 	f := objectFixture(t, root, objects)
@@ -112,6 +113,7 @@ func (b *failCurrentWiki) Put(ctx context.Context, key blob.Key, body []byte) er
 	return b.Store.Put(ctx, key, body)
 }
 func TestInterruptedImmutableWikiCanBeRetried(t *testing.T) {
+	t.Parallel()
 	objects := &failCurrentWiki{Store: local.Store{Dir: t.TempDir()}, fail: true}
 	f := objectFixture(t, t.TempDir(), objects)
 	token := f.login("owner@example.com")

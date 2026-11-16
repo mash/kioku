@@ -78,6 +78,7 @@ func setManagedPhase(t *testing.T, f *fixture, job fixtureJob, phase model.Manag
 	}
 }
 func TestAgentIOPhasesAndResend(t *testing.T) {
+	t.Parallel()
 	f, raw, job, _, human := jobTokenFixture(t)
 	input := []byte("saved input archive")
 	if err := f.s.Blobs.Put(context.Background(), fixtureJobKey(job, "input.tar.gz"), input); err != nil {
@@ -137,6 +138,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 	}
 }
 func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
+	t.Parallel()
 	f, raw, job, _, _ := jobTokenFixture(t)
 	f.s.Config.MaxWikiBytes = 4096
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
@@ -160,6 +162,7 @@ func TestAgentOutputRejectsBeforeStorage(t *testing.T) {
 	})
 }
 func TestAgentOutputExpandedSizeLimit(t *testing.T) {
+	t.Parallel()
 	f, raw, job, _, _ := jobTokenFixture(t)
 	f.s.Config.MaxWikiBytes = 4096
 	setManagedPhase(t, f, job, model.PhasePreparing, "running")
@@ -174,6 +177,7 @@ func TestAgentOutputExpandedSizeLimit(t *testing.T) {
 }
 
 func TestAgentIORejectsTerminalStatusIndependently(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"completed", "failed"} {
 		t.Run(status, func(t *testing.T) {
 			f, raw, job, _, _ := jobTokenFixture(t)

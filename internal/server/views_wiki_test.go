@@ -16,6 +16,7 @@ import (
 )
 
 func TestWikiViewDetail(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	path := "/api/projects/" + p.ID + "/views/wiki"
 	updated := time.Date(2026, 11, 15, 7, 30, 0, 0, time.UTC)
@@ -54,6 +55,7 @@ func TestWikiViewDetail(t *testing.T) {
 }
 
 func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	path := "/api/projects/" + p.ID + "/views"
 	id := newWikiViewRow(p.ID).ID
@@ -106,6 +108,7 @@ func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 }
 
 func TestWikiViewAuthorization(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	reader := f.login("wiki-reader@example.com")
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -141,6 +144,7 @@ func TestWikiViewAuthorization(t *testing.T) {
 
 // E8: Wiki settings are optional SQL rows; obsolete object records are never read.
 func TestWikiViewDoesNotReadObsoleteRecords(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	api := "/api/projects/" + p.ID + "/views/wiki"
 	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
@@ -174,6 +178,7 @@ func TestWikiViewDoesNotReadObsoleteRecords(t *testing.T) {
 }
 
 func TestWikiViewListCreationOrder(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	ctx := t.Context()
 	path := "/api/projects/" + p.ID + "/views"
@@ -222,6 +227,7 @@ func TestWikiViewListCreationOrder(t *testing.T) {
 }
 
 func TestWikiViewUsesConfiguredDefaultUntilPromptSaved(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	const override = "Organize decisions by date.\n"
 	rendered, err := loadPrompts(t, prompts.Variables{}, map[string]string{prompts.DefaultPromptFile: override})

@@ -9,6 +9,7 @@ import (
 )
 
 func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -38,6 +39,7 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 }
 
 func TestManagedDeleteDefersProviderRejections(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"stop", "cleanup"} {
 		t.Run(operation, func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -72,6 +74,7 @@ func TestManagedDeleteDefersProviderRejections(t *testing.T) {
 }
 
 func TestManagedDeleteStorageFailureRemainsInternalError(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
@@ -90,6 +93,7 @@ func TestManagedDeleteStorageFailureRemainsInternalError(t *testing.T) {
 }
 
 func TestRemovedSourceDeletionRouteLeavesGenerationRunning(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

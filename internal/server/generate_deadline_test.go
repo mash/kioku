@@ -10,6 +10,7 @@ import (
 
 // E2: selection uses persisted millisecond deadlines, including exact equality.
 func TestDeadlineStage(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 11, 15, 10, 0, 15, 0, time.UTC)
 	for _, tc := range []struct {
 		name           string
@@ -44,6 +45,7 @@ func TestDeadlineStage(t *testing.T) {
 	}
 }
 func TestDeadlineAction(t *testing.T) {
+	t.Parallel()
 	for _, busy := range []bool{false, true} {
 		for _, eligible := range []bool{false, true} {
 			for _, hasOwner := range []bool{false, true} {

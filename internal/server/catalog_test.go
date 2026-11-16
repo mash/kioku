@@ -60,6 +60,7 @@ func installUncertainCatalog(f *fixture, apply bool) *uncertainCatalog {
 	return d
 }
 func TestInboxUnknownCommitResolvesWithoutRepeatingMutation(t *testing.T) {
+	t.Parallel()
 	for _, which := range []string{"applied", "not applied", "revoked", "fatal"} {
 		t.Run(which, func(t *testing.T) {
 			f, token, p := orgProject(t)
@@ -114,6 +115,7 @@ func TestInboxUnknownCommitResolvesWithoutRepeatingMutation(t *testing.T) {
 	}
 }
 func TestCLIExchangeUnknownCommitRequiresNewLogin(t *testing.T) {
+	t.Parallel()
 	for _, applied := range []bool{true, false} {
 		t.Run(fmt.Sprint(applied), func(t *testing.T) {
 			f := setupLoopback(t)
@@ -141,6 +143,7 @@ func TestCLIExchangeUnknownCommitRequiresNewLogin(t *testing.T) {
 	}
 }
 func TestOAuthSQLFailureRollsBackCodeExchange(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	human := f.login("owner@example.com")
 	p := securityProject(t, f, human)

@@ -184,6 +184,7 @@ func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob)
 	}
 }
 func TestManagedStopReasonsAndTimeout(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, status, reason                string
 		output, timeout, success, interrupt bool
@@ -247,6 +248,7 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 	}
 }
 func TestManagedRegenerationAndUnknownUsage(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

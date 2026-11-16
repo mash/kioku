@@ -9,6 +9,7 @@ import (
 )
 
 func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	first := startManaged(t, f, token, p.ID, false)

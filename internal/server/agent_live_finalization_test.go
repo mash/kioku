@@ -9,6 +9,7 @@ import (
 )
 
 func TestManagedLiveSessionCannotPublish(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"running", "rescheduling"} {
 		t.Run(status, func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)

@@ -131,6 +131,7 @@ func waitExecJob(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 	return j
 }
 func TestExecGenerationLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, role := range []string{"success", "failure", "upload-failure", "view-failure"} {
 		t.Run(role, func(t *testing.T) {
 			f, token, p := execFixture(t, role)
@@ -161,6 +162,7 @@ func TestExecGenerationLifecycle(t *testing.T) {
 	}
 }
 func TestExecTimeoutAndStaleExit(t *testing.T) {
+	t.Parallel()
 	f, token, p := execFixture(t, "wait")
 	j := startManaged(t, f, token, p.ID, true)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
@@ -184,6 +186,7 @@ func TestExecTimeoutAndStaleExit(t *testing.T) {
 	}
 }
 func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []model.ManagedPhase{model.PhasePreparing, model.PhaseAgentRunning, model.PhaseOutputReceived, model.PhaseFinalizing} {
 		for _, abort := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/aborted=%v", phase, abort), func(t *testing.T) {
@@ -281,6 +284,7 @@ func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
 }
 
 func TestReconcileJobStopsWithShutdownContext(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	entered := make(chan struct{}, 1)
@@ -327,6 +331,7 @@ type observingRunners struct {
 func (r observingRunners) New(job store.JobRow) (runner.Runner, error) { return r.newRun(job) }
 
 func TestExecPromptOverridesOnWire(t *testing.T) {
+	t.Parallel()
 	f, token, p := execFixture(t, "custom")
 	overridePrompts(t, f, "---\nmodel: {id: custom-model, effort: high}\n---\nCustom system", "Fetch {{.InputURL}} then upload {{.OutputURL}}", "")
 	j := startManaged(t, f, token, p.ID, true)

@@ -30,6 +30,7 @@ func browserPage(t *testing.T, f *fixture, path, token string) *httptest.Respons
 }
 
 func TestWikiBrowserAccess(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	outsider := f.login("outsider@example.com")
 	expired := f.login("expired@example.com")
@@ -120,6 +121,7 @@ func TestWikiBrowserAccess(t *testing.T) {
 }
 
 func TestLoginReturnPaths(t *testing.T) {
+	t.Parallel()
 	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/u-abc/project", "/oauth/wiki", "/oauth/token"} {
 		if got, err := authorizeReturn(value); err != nil || got != value {
 			t.Errorf("valid %q: %q %v", value, got, err)
@@ -133,6 +135,7 @@ func TestLoginReturnPaths(t *testing.T) {
 }
 
 func TestWikiLoginRoundTrip(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	target := "/acme/platform?file=wiki%2Ftopic.md&q=a%26b"
 	page := browserPage(t, f, target, "")
@@ -201,6 +204,7 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 }
 
 func TestOAuthNamespaceLoginReturn(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
 	createTestOrg(t, f, owner, "oauth")

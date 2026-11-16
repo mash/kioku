@@ -21,6 +21,7 @@ func (c *failSecondSessionLookup) GetSession(ctx context.Context, id string) (cl
 	return c.Client.GetSession(ctx, id)
 }
 func TestManagedRetainsObservedTerminalUsage(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

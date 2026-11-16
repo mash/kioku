@@ -7,6 +7,7 @@ import (
 )
 
 func TestRateLimitOnlyTrustsConfiguredProxy(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, cidr, remote, first, second string
 		separate                          bool

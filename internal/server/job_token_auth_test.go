@@ -37,6 +37,7 @@ func jobTokenFixture(t *testing.T) (*fixture, string, fixtureJob, fixtureAgentTo
 	return f, raw, job, token, human
 }
 func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
+	t.Parallel()
 	f, raw, job, _, human := jobTokenFixture(t)
 	// E24: job credentials are sealed values, never sessions rows.
 	if n := sessionKindCount(t, f, "agent"); n != 0 {
@@ -118,6 +119,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 
 // This table is deliberately explicit: adding a route must update the audit.
 func TestJobTokenRouteAudit(t *testing.T) {
+	t.Parallel()
 	f, raw, job, _, _ := jobTokenFixture(t)
 	routes := []string{
 		"POST /api/agent/login",

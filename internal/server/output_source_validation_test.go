@@ -11,6 +11,7 @@ import (
 )
 
 func TestOutputEndpointReportsEachSourceRule(t *testing.T) {
+	t.Parallel()
 	page := "---\nsource_url: https://example.com/a\n---\nBody"
 	for _, rule := range []string{"a", "b", "c", "d", "e"} {
 		t.Run(rule, func(t *testing.T) {

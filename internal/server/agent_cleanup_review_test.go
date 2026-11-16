@@ -63,6 +63,7 @@ func restartManagedFixture(t *testing.T, f *fixture) {
 	restored.Config.BaseURL = ts.URL
 }
 func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	for _, success := range []bool{true, false} {
 		t.Run(fmt.Sprint(success), func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -106,6 +107,7 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 }
 
 func TestManagedPendingCleanupPreservesDeletionAndAllowsNewGeneration(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

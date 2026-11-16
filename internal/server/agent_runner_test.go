@@ -31,6 +31,7 @@ func (r *testRunner) Stop(ctx context.Context, a runner.Attempt) error    { retu
 func (r *testRunner) Cleanup(ctx context.Context, a runner.Attempt) error { return r.cleanup(ctx, a) }
 
 func TestConcurrentReconcileSerializesCleanup(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
@@ -79,6 +80,7 @@ func TestConcurrentReconcileSerializesCleanup(t *testing.T) {
 }
 
 func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                                        string
 		state                                       runner.State
@@ -173,6 +175,7 @@ func TestReconcileDecisionTableAndSingleInspection(t *testing.T) {
 	}
 }
 func TestReconcileUnavailableRunner(t *testing.T) {
+	t.Parallel()
 	f, token, p, _ := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	f.runnerConfig = runners.Config{}
@@ -193,6 +196,7 @@ func TestReconcileUnavailableRunner(t *testing.T) {
 	}
 }
 func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
@@ -232,6 +236,7 @@ func TestInspectFailureExpiresAtTokenDeadline(t *testing.T) {
 }
 
 func TestRunRefSaveFailureRecoversByKey(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	var restore func()
 	j := managedJob(t, f, token, p.ID, true)
@@ -268,6 +273,7 @@ func TestRunRefSaveFailureRecoversByKey(t *testing.T) {
 }
 
 func TestStoppedFailurePreservesCostAfterTokenExpiry(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	ma.SetStatus(j.Run.Ref.ID, "terminated", "", 137)

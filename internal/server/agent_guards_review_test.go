@@ -10,6 +10,7 @@ import (
 )
 
 func TestManagedStoredOutputHashRejectsReplacement(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -31,6 +32,7 @@ func TestManagedStoredOutputHashRejectsReplacement(t *testing.T) {
 	})
 }
 func TestManagedOldFailureCannotStopNewAttempt(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	old := startManaged(t, f, token, p.ID, false)
@@ -52,6 +54,7 @@ func TestManagedOldFailureCannotStopNewAttempt(t *testing.T) {
 	}
 }
 func TestManagedPreparingGracePreservesUnknownCreation(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	ma.SetError("POST", "/v1/sessions", 503)

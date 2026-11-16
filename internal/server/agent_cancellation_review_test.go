@@ -26,6 +26,7 @@ func (b *cancelOutputRead) Get(ctx context.Context, key blob.Key) ([]byte, error
 	return b.Store.Get(ctx, key)
 }
 func TestManagedCancellationPreservesFinalizingForRestart(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -63,6 +64,7 @@ func TestManagedCancellationPreservesFinalizingForRestart(t *testing.T) {
 }
 
 func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

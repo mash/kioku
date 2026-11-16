@@ -11,6 +11,7 @@ import (
 )
 
 func TestWikiViewPage(t *testing.T) {
+	t.Parallel()
 	f, owner, p := orgProject(t)
 	reader := f.login("wiki-reader@example.com")
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {

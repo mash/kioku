@@ -30,6 +30,7 @@ func (f *fixture) readWiki(base, token string) map[string]string {
 }
 
 func TestSyncManifestAndFileRespectMembershipAndPublishedReferences(t *testing.T) {
+	t.Parallel()
 	f := setupWithWorker(t, false)
 	token := f.login("owner@example.com")
 	other := f.login("other@example.com")

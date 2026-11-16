@@ -6,6 +6,7 @@ import (
 )
 
 func TestHomeProjectOnboardingUsesCurrentCLI(t *testing.T) {
+	t.Parallel()
 	if !strings.Contains(homeTemplate, "kioku project create &lt;name&gt;") {
 		t.Fatal("new users have no create instruction")
 	}

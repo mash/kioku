@@ -32,6 +32,7 @@ func (d *beforeWriteCatalog) Write(ctx context.Context, fn func(*store.Queries) 
 }
 
 func TestJoinRechecksCallerAtCommit(t *testing.T) {
+	t.Parallel()
 	for _, deleted := range []bool{false, true} {
 		t.Run(strconv.FormatBool(deleted), func(t *testing.T) {
 			f, owner, p := orgProject(t)
@@ -76,6 +77,7 @@ func TestJoinRechecksCallerAtCommit(t *testing.T) {
 }
 
 func TestBrowserLoginIgnoresExpiredSessionsAtCapacity(t *testing.T) {
+	t.Parallel()
 	f := setupLoopback(t)
 	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
 		INSERT INTO sessions(id,kind,status,user_id,project_id,created,expires,data)
@@ -91,6 +93,7 @@ func TestBrowserLoginIgnoresExpiredSessionsAtCapacity(t *testing.T) {
 }
 
 func TestConnectorProjectSQLFailureIsNotNotFound(t *testing.T) {
+	t.Parallel()
 	f, human, p := orgProject(t)
 	access := connectorAccessToken(t, f, human, p.ID)
 	fixtureSQL(t, f, "ALTER TABLE projects RENAME TO unavailable_projects")
@@ -109,6 +112,7 @@ func TestConnectorProjectSQLFailureIsNotNotFound(t *testing.T) {
 }
 
 func TestOAuthAuthorizationPropagatesSQLFailures(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"registration", "selection"} {
 		t.Run(stage, func(t *testing.T) {
 			f, human, p := orgProject(t)
@@ -133,6 +137,7 @@ func TestOAuthAuthorizationPropagatesSQLFailures(t *testing.T) {
 }
 
 func TestMultipleManagedSessionsStopBeforePublication(t *testing.T) {
+	t.Parallel()
 	for _, output := range []bool{false, true} {
 		t.Run(strconv.FormatBool(output), func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -158,6 +163,7 @@ func TestMultipleManagedSessionsStopBeforePublication(t *testing.T) {
 }
 
 func TestClaudeFileFailureRejectsPreviouslyReceivedOutput(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	j := startManaged(t, f, token, p.ID, true)
 	sendOutput(t, f, ma, j, "Output before provider failure")
@@ -182,6 +188,7 @@ func TestClaudeFileFailureRejectsPreviouslyReceivedOutput(t *testing.T) {
 }
 
 func TestScheduledProjectFailureDoesNotBlockOtherProjects(t *testing.T) {
+	t.Parallel()
 	f, human, bad := orgProject(t)
 	good := consentProject(t, f, human, "other")
 	for _, p := range []fixtureProject{bad, good} {
@@ -231,6 +238,7 @@ func TestScheduledProjectFailureDoesNotBlockOtherProjects(t *testing.T) {
 }
 
 func TestOAuthRegistrationCapacityKeepsTooManyRequestsResponse(t *testing.T) {
+	t.Parallel()
 	f, _, _ := orgProject(t)
 	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
 		INSERT INTO oauth_clients(client_id,data) SELECT 'client-'||x,'{}' FROM n`)

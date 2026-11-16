@@ -17,6 +17,7 @@ import (
 )
 
 func TestManagedRestartEveryPhase(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []model.ManagedPhase{model.PhasePreparing, model.PhaseAgentRunning, model.PhaseOutputReceived, model.PhaseFinalizing} {
 		t.Run(string(phase), func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
@@ -101,6 +102,7 @@ func (b *pauseOutputRead) Get(ctx context.Context, key blob.Key) ([]byte, error)
 	return b.Store.Get(ctx, key)
 }
 func TestManagedFinalizingPinsOutputHash(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
@@ -127,6 +129,7 @@ func TestManagedFinalizingPinsOutputHash(t *testing.T) {
 	}
 }
 func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	ma.SetError("POST", "/v1/sessions", 503)
@@ -158,6 +161,7 @@ func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	}
 }
 func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.AgentMaxSessions = 2
 	putFile(t, f, token, p.ID, "x.md", "evidence")

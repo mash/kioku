@@ -19,6 +19,7 @@ func (c *pauseSessionClient) GetSession(ctx context.Context, id string) (claudem
 	return c.Client.GetSession(ctx, id)
 }
 func TestManagedOutputArrivingDuringSessionInspectionIsPublished(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)

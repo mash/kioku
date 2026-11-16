@@ -8,6 +8,7 @@ import (
 )
 
 func TestManagedAcceptedLargeOutputCanPublish(t *testing.T) {
+	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	f.s.Config.MaxWikiBytes = 1 << 20
 	f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://example.com/missing", "Source body")}}, nil)

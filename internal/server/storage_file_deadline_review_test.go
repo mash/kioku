@@ -22,6 +22,7 @@ func (r delayedOutputRunner) CollectOutput(context.Context, runner.Attempt, runn
 }
 
 func TestFileOutputRechecksDeadlineAfterIO(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name               string
 		deadline, elapsed  time.Duration

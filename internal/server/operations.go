@@ -47,6 +47,10 @@ func (s *Server) allow(r *http.Request) bool {
 			host = ip.String()
 		}
 	}
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		// One IPv6 host owns a whole /64, so key IPv6 clients by their /64.
+		host = ip.Mask(net.CIDRMask(64, 128)).String()
+	}
 	limit := s.Config.RatePerMinute
 	if strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/api/auth/") {
 		host += "/auth"

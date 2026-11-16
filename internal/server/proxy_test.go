@@ -1,9 +1,15 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/mash/kioku/internal/runners"
 )
 
 func TestRateLimitOnlyTrustsConfiguredProxy(t *testing.T) {
@@ -18,7 +24,8 @@ func TestRateLimitOnlyTrustsConfiguredProxy(t *testing.T) {
 		{"last value wins", "172.30.83.0/24", "172.30.83.2:1234", "1.1.1.1, 203.0.113.1", "8.8.8.8, 203.0.113.1", false},
 		{"last clients differ", "172.30.83.0/24", "172.30.83.2:1234", "1.1.1.1, 203.0.113.1", "1.1.1.1, 203.0.113.2", true},
 		{"invalid fallback", "172.30.83.0/24", "172.30.83.2:1234", "fake", "", false},
-		{"ipv6", "fd00::/64", "[fd00::2]:1234", "2001:db8::1", "2001:db8::2", true},
+		{"ipv6", "fd00::/64", "[fd00::2]:1234", "2001:db8:0:1::1", "2001:db8:0:2::1", true},
+		{"ipv6 same /64", "fd00::/64", "[fd00::2]:1234", "2001:db8::1", "2001:db8::2", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var network *net.IPNet
@@ -58,5 +65,33 @@ func TestRateLimitFullTableStillAdmitsNewHosts(t *testing.T) {
 	}
 	if !request("192.0.2.1") || request("192.0.2.1") {
 		t.Fatal("a full table must still admit a new host and still limit it")
+	}
+}
+
+func TestRegisterRateLimitKeysIPv6ByPrefix(t *testing.T) {
+	t.Parallel()
+	e := newE2E(t, func(s *Server, _ *runners.Config) {
+		_, s.Config.TrustedProxy, _ = net.ParseCIDR("127.0.0.0/8")
+	})
+	register := func(client string) int {
+		body, _ := json.Marshal(map[string]any{"client_name": "Test connector", "redirect_uris": []string{e.url + "/callback"}})
+		req, err := http.NewRequest("POST", e.url+"/oauth/register", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", client)
+		return e.do(req).Code
+	}
+	for i := 1; i <= 10; i++ {
+		if code := register(fmt.Sprintf("2001:db8:1:2::%x", i)); code != 201 {
+			t.Fatalf("registration %d: HTTP %d", i, code)
+		}
+	}
+	if code := register("2001:db8:1:2:ffff::1"); code != 429 {
+		t.Fatalf("11th registration from one /64: HTTP %d, want 429", code)
+	}
+	if code := register("2001:db8:1:3::1"); code != 201 {
+		t.Fatalf("registration from another /64: HTTP %d", code)
 	}
 }

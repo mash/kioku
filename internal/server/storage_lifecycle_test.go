@@ -201,7 +201,7 @@ func TestCleanupUnreferencesBeforeDelete(t *testing.T) {
 			if e != nil {
 				return e
 			}
-			_, e = q.Usage("j")
+			_, e = jobUsage(q, "j")
 			if j.CleanupComplete {
 				t.Fatal(j)
 			}
@@ -217,8 +217,8 @@ func TestCleanupUnreferencesBeforeDelete(t *testing.T) {
 			if e != nil {
 				return e
 			}
-			u, e := q.Usage("j")
-			if u.Data.CostCents == nil || *u.Data.CostCents != 40 {
+			u, e := jobUsage(q, "j")
+			if u.CostCents == nil || *u.CostCents != 40 {
 				t.Fatal(j, u)
 			}
 			return e
@@ -254,10 +254,8 @@ func TestParentConsumesChildCostOnce(t *testing.T) {
 					return e
 				}
 			}
+			child.Data.Run.Usage = &model.UsageMeasurements{CostCents: cost}
 			if e = q.PutJob(child); e != nil {
-				return e
-			}
-			if e = q.RecordUsage(store.UsageRow{JobID: "child", ProjectID: "p", Data: model.UsageValues{UsageMeasurements: model.UsageMeasurements{CostCents: cost}}}); e != nil {
 				return e
 			}
 			return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", GenerationSnapshot: store.NullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}, {ViewID: "v2"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
@@ -357,8 +355,8 @@ func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 		t.Fatal(got)
 	}
 	if e := o.db.Read(t.Context(), func(q *store.Queries) error {
-		u, e := q.Usage("j")
-		if u.Data.CostCents == nil || *u.Data.CostCents != 40 {
+		u, e := jobUsage(q, "j")
+		if u.CostCents == nil || *u.CostCents != 40 {
 			t.Fatal(u)
 		}
 		return e
@@ -405,9 +403,9 @@ func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
 			t.Fatal(got)
 		}
 		if err := o.db.Read(t.Context(), func(q *store.Queries) error {
-			u, err := q.Usage("j")
-			if (u.Data.CostCents == nil) != (cost == nil) || cost != nil && *u.Data.CostCents != *cost {
-				t.Fatalf("cleanup changed the first usage: %#v", u.Data)
+			u, err := jobUsage(q, "j")
+			if (u.CostCents == nil) != (cost == nil) || cost != nil && *u.CostCents != *cost {
+				t.Fatalf("cleanup changed the first usage: %#v", u)
 			}
 			return err
 		}); err != nil {
@@ -511,7 +509,7 @@ func TestFailedInputNeverCreatesRunOrUsage(t *testing.T) {
 		t.Fatal(j)
 	}
 	if e := o.db.Read(t.Context(), func(q *store.Queries) error {
-		if _, e := q.Usage("j"); !errors.Is(e, sql.ErrNoRows) {
+		if _, e := jobUsage(q, "j"); !errors.Is(e, sql.ErrNoRows) {
 			t.Fatal(e)
 		}
 		i, e := q.Inbox("i")

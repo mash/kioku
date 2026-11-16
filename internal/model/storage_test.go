@@ -39,7 +39,7 @@ func TestStorageMeasurementsKeepUnknownZeroAndOverflow(t *testing.T) {
 			t.Fatalf("sum: %v want %v", got, tc.want)
 		}
 	}
-	b, err := json.Marshal(UsageValues{})
+	b, err := json.Marshal(UsageMeasurements{})
 	if err != nil || !strings.Contains(string(b), `"cost_cents":null`) {
 		t.Fatalf("unknown JSON: %s %v", b, err)
 	}

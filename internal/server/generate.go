@@ -61,8 +61,8 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 		if err != nil {
 			return err
 		}
-		job, err = jobProjection(q, row)
-		return err
+		job = jobValue(row)
+		return nil
 	})
 	if err != nil {
 		return err

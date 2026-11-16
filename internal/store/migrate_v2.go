@@ -32,7 +32,6 @@ type migrationPlan struct {
 	jobs                []JobRow
 	audit               []AuditRow
 	views               []ViewRow
-	usage               []UsageRow
 	copies              map[blob.Key][]byte
 	obsolete            []blob.Key
 	migratedRecords     int
@@ -243,11 +242,6 @@ func (p *migrationPlan) apply(q *Queries) error {
 			return e
 		}
 	}
-	for _, v := range p.usage {
-		if e := q.RecordUsage(v); e != nil {
-			return e
-		}
-	}
 	// Historical actors may have been deleted, but live ownership and membership
 	// must resolve before any legacy objects can be replaced or removed.
 	var missingPrincipal bool
@@ -260,7 +254,7 @@ func (p *migrationPlan) apply(q *Queries) error {
 	if missingPrincipal {
 		return errors.New("missing legacy organization or member")
 	}
-	counts := map[string]int{"organizations": len(p.organizations), "organization_members": len(p.organizationMembers), "users": len(p.users), "user_identities": len(p.identities), "projects": len(p.projects), "project_members": len(p.projectMembers), "sessions": len(p.sessions), "invites": len(p.invites), "oauth_clients": len(p.clients), "inbox": len(p.inbox), "wiki_files": len(p.wiki), "jobs": len(p.jobs), "audit": len(p.audit), "views": len(p.views), "usage": len(p.usage)}
+	counts := map[string]int{"organizations": len(p.organizations), "organization_members": len(p.organizationMembers), "users": len(p.users), "user_identities": len(p.identities), "projects": len(p.projects), "project_members": len(p.projectMembers), "sessions": len(p.sessions), "invites": len(p.invites), "oauth_clients": len(p.clients), "inbox": len(p.inbox), "wiki_files": len(p.wiki), "jobs": len(p.jobs), "audit": len(p.audit), "views": len(p.views)}
 	for table, want := range counts {
 		var n int
 		if e := q.row("SELECT count(*) FROM " + table).Scan(&n); e != nil {
@@ -274,13 +268,6 @@ func (p *migrationPlan) apply(q *Queries) error {
 		if e := q.CompactHistory(project.ID, nil); e != nil {
 			return e
 		}
-	}
-	var usages int
-	if e := q.row("SELECT count(*) FROM usage").Scan(&usages); e != nil {
-		return e
-	}
-	if usages != len(p.usage) {
-		return errors.New("migration history lost usage")
 	}
 	_, err := q.exec("DROP TABLE IF EXISTS records; DROP TABLE IF EXISTS pending; DROP TABLE IF EXISTS usage_ledger")
 	return err

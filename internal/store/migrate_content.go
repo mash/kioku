@@ -135,7 +135,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			if cost != nil && *cost < 0 {
 				cost = nil
 			}
-			p.usage = append(p.usage, UsageRow{ProjectID: old.ID, JobID: id, RecordedAt: now.UnixMilli(), Data: model.UsageValues{OrgID: old.OrgID, UserID: job.UserID, UsageMeasurements: model.UsageMeasurements{CostCents: cost}}})
+			row.Data.Run.Usage = &model.UsageMeasurements{CostCents: cost}
 		}
 		p.jobs = append(p.jobs, row)
 	}

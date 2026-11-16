@@ -62,13 +62,6 @@ func TestManagedDeleteDefersProviderRejections(t *testing.T) {
 			if code := f.request("DELETE", path, token, nil, nil); code != 200 {
 				t.Fatalf("deletion did not resume after provider recovery: %d", code)
 			}
-			fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
-				usage, err := q.Usage(j.ID)
-				if err == nil && (usage.Data.CostCents == nil || *usage.Data.CostCents != 123) {
-					t.Fatal("deletion lost usage", usage)
-				}
-				return err
-			}))
 		})
 	}
 }

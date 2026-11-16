@@ -485,9 +485,6 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				}
 				child.Run.CleanupComplete = true
 				fixtureJobsPut(t, st, child.ID, child)
-				if e := st.RecordUsage(store.UsageRow{JobID: child.ID, ProjectID: p.ID, Data: model.UsageValues{UserID: child.UserID}}); e != nil {
-					return e
-				}
 				return nil
 			}); err != nil {
 				t.Fatal(err)

@@ -92,14 +92,6 @@ func (q *Queries) ProjectAudit(project string) ([]AuditRow, error) {
 	return q.listAudit("WHERE id IN (SELECT id FROM audit WHERE project_id=? ORDER BY created DESC,id DESC LIMIT 256) ORDER BY created,id", project)
 }
 
-func (q *Queries) UsageForJobs(ids []string) ([]UsageRow, error) {
-	raw, err := marshalData(ids)
-	if err != nil {
-		return nil, err
-	}
-	return listRows(q, "SELECT "+usageColumns+" FROM usage WHERE job_id IN (SELECT value FROM json_each(?))", scanUsage, raw)
-}
-
 // GenerationChild finds the unconsumed child. Consumption clears parent_id and
 // view_task in the same transaction as the parent's progress and budget.
 func (q *Queries) GenerationChild(parent string) (JobRow, error) {

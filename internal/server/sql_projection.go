@@ -75,41 +75,14 @@ func userProjection(q *store.Queries, row store.UserRow) (model.User, error) {
 	ids, err := q.Identities(row.ID)
 	return model.User{ID: row.ID, Name: row.Data.Name, Email: row.Email, Identities: ids}, err
 }
-func jobProjection(q *store.Queries, row store.JobRow) (model.Job, error) {
-	var cost *int64
-	if row.Data.Run != nil {
-		usage, err := q.Usage(row.ID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return model.Job{}, err
-		}
-		cost = usage.Data.CostCents
-	}
-	return jobValue(row, cost), nil
-}
-func jobProjections(q *store.Queries, rows []store.JobRow) ([]model.Job, error) {
-	ids := []string{}
-	for _, row := range rows {
-		if row.Data.Run != nil {
-			ids = append(ids, row.ID)
-		}
-	}
-	costs := map[string]*int64{}
-	if len(ids) > 0 {
-		usage, err := q.UsageForJobs(ids)
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range usage {
-			costs[u.JobID] = u.Data.CostCents
-		}
-	}
+func jobProjections(rows []store.JobRow) []model.Job {
 	out := make([]model.Job, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, jobValue(row, costs[row.ID]))
+		out = append(out, jobValue(row))
 	}
-	return out, nil
+	return out
 }
-func jobValue(row store.JobRow, cost *int64) model.Job {
+func jobValue(row store.JobRow) model.Job {
 	j := model.Job{ID: row.ID, ProjectID: row.ProjectID, Kind: row.Kind, Status: row.Status, Created: storageDate(row.Created), UserID: row.Data.UserID, AgentID: store.ValueString(row.Data.AgentID), AgentBudgetCents: row.Data.AgentBudgetCents, Automatic: row.Data.Automatic, Error: store.ValueString(row.Data.Error), Revision: store.ValueString(row.Data.Revision), WikiStatus: store.ValueString(row.Data.WikiStatus), Unchanged: row.Data.Unchanged, Views: []model.ViewJobResult{}}
 	for _, v := range row.Data.Views {
 		j.Views = append(j.Views, model.ViewJobResult{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: store.ValueString(v.Error)})
@@ -117,7 +90,9 @@ func jobValue(row store.JobRow, cost *int64) model.Job {
 	if row.Data.Run != nil {
 		run := row.Data.Run
 		j.Run = &model.AgentRun{Phase: model.ManagedPhase(store.ValueString(row.Phase)), BudgetCents: run.BudgetCents, PreparedAt: storageDate(run.PreparedAt), Deadline: storageDate(run.Deadline), CleanupComplete: row.CleanupComplete}
-		j.Run.CostCents = cost
+		if run.Usage != nil {
+			j.Run.CostCents = run.Usage.CostCents
+		}
 	}
 	return j
 }

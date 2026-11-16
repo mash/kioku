@@ -158,7 +158,7 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				usage, err := q.Usage("j")
+				usage, err := jobUsage(q, "j")
 				if len(items) != 1 || !errors.Is(err, sql.ErrNoRows) {
 					t.Fatalf("unstarted job assigned input or recorded usage: items=%v usage=%v", items, usage)
 				}

@@ -196,11 +196,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		if err != nil {
 			return err
 		}
-		projected, err := jobProjections(q, jobs)
-		if err != nil {
-			return err
-		}
-		for _, j := range projected {
+		for _, j := range jobProjections(jobs) {
 			j.Error = strings.ReplaceAll(j.Error, p.ID, "[project]")
 			data.RecentJobs = append(data.RecentJobs, j)
 		}

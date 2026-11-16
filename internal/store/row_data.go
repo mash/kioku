@@ -1,5 +1,7 @@
 package store
 
+import "github.com/mash/kioku/internal/model"
+
 type OrganizationData struct {
 	Name    string `json:"name"`
 	Created int64  `json:"created"`
@@ -54,6 +56,9 @@ type RunData struct {
 	OutputWaitSince   *int64  `json:"output_wait_since"`
 	OutputRejection   *string `json:"output_rejection"`
 	BudgetCents       int64   `json:"budget_cents"`
+	// Usage is set once, after the attempt stops and before its resources
+	// are deleted. Its presence means that the attempt has stopped.
+	Usage *model.UsageMeasurements `json:"usage"`
 }
 type ViewResultData struct {
 	ViewID string  `json:"view_id"`

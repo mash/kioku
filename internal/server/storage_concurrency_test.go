@@ -176,7 +176,7 @@ func TestViewContinuationRechecksAuthorization(t *testing.T) {
 	}
 }
 
-func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
+func TestProjectDeletionWaitsForChildCleanup(t *testing.T) {
 	t.Parallel()
 	o, _ := storageFixture(t)
 	child := storageRunning(t, o, "child")
@@ -214,7 +214,6 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 	}
 	expectSQLStatus(t, o.deleteProject(t.Context(), "p", cleanup), 503)
 	providerUnavailable = false
-	cost = 99 // A later provider value must not replace the saved usage.
 	if err := o.deleteProject(t.Context(), "p", cleanup); err != nil {
 		t.Fatal(err)
 	}
@@ -225,13 +224,6 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 		}
 		if len(jobs) != 0 {
 			t.Fatal(jobs)
-		}
-		usage, err := q.Usage("child")
-		if err != nil {
-			return err
-		}
-		if usage.Data.CostCents == nil || *usage.Data.CostCents != 40 {
-			t.Fatal(usage)
 		}
 		audit, err := q.ProjectAudit("p")
 		if len(audit) != 0 {

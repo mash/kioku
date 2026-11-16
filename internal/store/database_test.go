@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/mash/kioku/internal/model"
 )
 
 func newCatalog(t *testing.T) *Database {
@@ -36,7 +34,7 @@ func testJob(id, project, status string, created int64) JobRow {
 }
 func pointer[T any](v T) *T { return &v }
 
-func TestCatalogSchemaHasExactlyFifteenTablesAndSeventySevenColumns(t *testing.T) {
+func TestCatalogSchemaHasExactlyFourteenTablesAndSeventyThreeColumns(t *testing.T) {
 	d := newCatalog(t)
 	var tables, columns int
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables); err != nil {
@@ -45,7 +43,7 @@ func TestCatalogSchemaHasExactlyFifteenTablesAndSeventySevenColumns(t *testing.T
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'").Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
-	if tables != 15 || columns != 77 {
+	if tables != 14 || columns != 73 {
 		t.Fatalf("tables=%d columns=%d", tables, columns)
 	}
 	for _, tc := range []struct {
@@ -195,24 +193,6 @@ func TestDatabaseFailureDoesNotPoisonOtherOperations(t *testing.T) {
 	}
 	catalogWrite(t, d, func(q *Queries) error { return q.PutUser(UserRow{ID: "other", Email: "ok"}) })
 }
-func TestUsageInsertPreservesFirstNull(t *testing.T) {
-	d := newCatalog(t)
-	u := UsageRow{JobID: "j", ProjectID: "p", RecordedAt: 1, Data: model.UsageValues{OrgID: "o", UserID: "u"}}
-	catalogWrite(t, d, func(q *Queries) error { return q.RecordUsage(u) })
-	u.RecordedAt = 2
-	u.Data.CostCents = pointer(int64(40))
-	u.Data.UserID = "changed"
-	catalogWrite(t, d, func(q *Queries) error { return q.RecordUsage(u) })
-	if err := d.Read(t.Context(), func(q *Queries) error {
-		got, err := q.Usage("j")
-		if err == nil && (got.Data.CostCents != nil || got.RecordedAt != 1 || got.Data.UserID != "u") {
-			t.Fatal(got)
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
 func TestHistoryKeepsPendingCleanupAndUnconsumedChildren(t *testing.T) {
 	for _, count := range []int{255, 256, 257} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
@@ -224,9 +204,6 @@ func TestHistoryKeepsPendingCleanupAndUnconsumedChildren(t *testing.T) {
 						return err
 					}
 					if err := q.PutAudit(AuditRow{ID: id, ProjectID: "p", Created: int64(i)}); err != nil {
-						return err
-					}
-					if err := q.RecordUsage(UsageRow{JobID: id, ProjectID: "p", RecordedAt: 1}); err != nil {
 						return err
 					}
 				}
@@ -268,11 +245,6 @@ func TestHistoryKeepsPendingCleanupAndUnconsumedChildren(t *testing.T) {
 				}
 				if len(audit) != min(count, 256) {
 					t.Fatal(len(audit))
-				}
-				for i := 1; i <= count; i++ {
-					if _, err := q.Usage(fmt.Sprintf("j%03d", i)); err != nil {
-						return err
-					}
 				}
 				for _, id := range []string{"cleanup", "parent", "child", "other"} {
 					if _, err := q.Job(id); err != nil {

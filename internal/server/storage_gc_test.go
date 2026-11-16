@@ -114,7 +114,7 @@ func TestProjectLockProtectsInputSelectionAndRead(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
+func TestProjectDeletionRetainsSessions(t *testing.T) {
 	t.Parallel()
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
@@ -122,9 +122,6 @@ func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
 	j.CleanupComplete = true
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if e := q.PutJob(j); e != nil {
-			return e
-		}
-		if e := q.RecordUsage(store.UsageRow{JobID: "j", ProjectID: "p"}); e != nil {
 			return e
 		}
 		if e := q.InsertSession(store.SessionRow{ID: "agent", UserID: "u", Kind: "agent", Status: "active", ProjectID: store.NullableString("p"), Expires: 999999, Data: json.RawMessage(`{}`)}); e != nil {
@@ -164,9 +161,6 @@ func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
 		}
 		if _, e := q.Job("j"); !errors.Is(e, sql.ErrNoRows) {
 			t.Fatal(e)
-		}
-		if _, e := q.Usage("j"); e != nil {
-			return e
 		}
 		_, e := q.Session("agent")
 		return e

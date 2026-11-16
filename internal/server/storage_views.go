@@ -67,15 +67,6 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 		if child.Status != "queued" && child.Status != "running" {
 			return nil
 		}
-		project, err := q.Project(initial.ProjectID)
-		if err != nil {
-			return err
-		}
-		if !project.Deleting && initial.Data.Run != nil && initial.CleanupComplete {
-			if _, err = q.Usage(initial.ID); err != nil {
-				return err
-			}
-		}
 		waiting = true
 		return nil
 	}); err != nil {
@@ -113,9 +104,6 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 		if p.Data.Run != nil {
 			if !p.CleanupComplete {
 				return nil
-			}
-			if _, e = q.Usage(p.ID); e != nil {
-				return e
 			}
 		}
 		if g.Next < 0 || g.Next > len(p.Data.Views) {
@@ -156,11 +144,9 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 				if !child.CleanupComplete {
 					return nil
 				}
-				usage, e := q.Usage(child.ID)
-				if e != nil {
-					return e
+				if child.Data.Run.Usage != nil {
+					cost = child.Data.Run.Usage.CostCents
 				}
-				cost = usage.Data.CostCents
 			}
 			result := &p.Data.Views[g.Next]
 			result.Status = child.Status

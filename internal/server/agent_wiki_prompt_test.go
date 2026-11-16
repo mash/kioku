@@ -185,7 +185,7 @@ func TestMissingInboxBodyFailsBeforeStartingRun(t *testing.T) {
 		t.Fatal(item)
 	}
 	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
-		_, e := q.Usage(parent.ID)
+		_, e := jobUsage(q, parent.ID)
 		if !errors.Is(e, sql.ErrNoRows) {
 			t.Fatal("usage without Run", e)
 		}

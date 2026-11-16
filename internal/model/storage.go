@@ -31,13 +31,7 @@ func ViewContentKey(project, view string, hash ContentHash) blob.Key {
 	return blob.Key("projects/" + project + "/.kioku/views/" + view + "/bundle-" + string(hash) + ".zip")
 }
 
-// UsageValues preserves unknown measurements as null, including after cleanup.
-type UsageValues struct {
-	OrgID  string `json:"org_id"`
-	UserID string `json:"user_id"`
-	UsageMeasurements
-}
-
+// UsageMeasurements keeps unknown measurements as null, including after cleanup.
 type UsageMeasurements struct {
 	Model                    *string `json:"model"`
 	InputTokens              *int64  `json:"input_tokens"`

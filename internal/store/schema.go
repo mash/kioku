@@ -24,7 +24,6 @@ CREATE TABLE audit(id TEXT NOT NULL PRIMARY KEY,project_id TEXT NOT NULL,created
 CREATE TABLE views(project_id TEXT NOT NULL,id TEXT NOT NULL,slug TEXT NOT NULL,created_at INTEGER,bundle_hash TEXT CHECK(length(bundle_hash)=64 AND bundle_hash NOT GLOB '*[^0-9a-f]*'),data TEXT NOT NULL CHECK(json_valid(data) AND json_type(data)='object'),PRIMARY KEY(project_id,id),UNIQUE(project_id,slug),
 CHECK(slug<>'wiki' OR (created_at IS NULL AND bundle_hash IS NULL)),
 CHECK(COALESCE(CASE WHEN slug='wiki' THEN json_type(data,'$.title') IN ('null','text') AND json_type(data,'$.prompt') IN ('null','text') AND json_type(data,'$.status')='null' AND json_type(data,'$.error')='null' AND json_type(data,'$.job_id')='null' AND json_type(data,'$.wiki_snapshot_id')='null' AND json_type(data,'$.generated_at')='null' ELSE json_type(data,'$.title')='text' AND json_type(data,'$.prompt')='text' AND json_type(data,'$.status')='text' END,0))) STRICT;
-CREATE TABLE usage(project_id TEXT NOT NULL,job_id TEXT NOT NULL PRIMARY KEY,recorded_at INTEGER NOT NULL,data TEXT NOT NULL CHECK(json_valid(data) AND json_type(data)='object')) STRICT;
 CREATE INDEX sessions_user ON sessions(user_id,kind,expires,id);
 CREATE INDEX sessions_expires ON sessions(expires,id);
 CREATE INDEX sessions_kind ON sessions(kind,status,id);

@@ -234,8 +234,24 @@ func fixtureRow(j fixtureJob) store.JobRow {
 			n := r.OutputWaitSince.UnixMilli()
 			row.Data.Run.OutputWaitSince = &n
 		}
+		if r.CleanupComplete || r.CostCents != nil {
+			row.Data.Run.Usage = &model.UsageMeasurements{CostCents: r.CostCents}
+		}
 	}
 	return row
+}
+
+// jobUsage returns the usage that cleanup recorded in the job row, or
+// sql.ErrNoRows when it has not recorded any.
+func jobUsage(q *store.Queries, id string) (model.UsageMeasurements, error) {
+	j, err := q.Job(id)
+	if err != nil {
+		return model.UsageMeasurements{}, err
+	}
+	if j.Data.Run == nil || j.Data.Run.Usage == nil {
+		return model.UsageMeasurements{}, sql.ErrNoRows
+	}
+	return *j.Data.Run.Usage, nil
 }
 func fixtureJobsFind(t testing.TB, source any, id string) (fixtureJob, bool) {
 	if f, ok := source.(*fixture); ok {
@@ -264,8 +280,7 @@ func fixtureJobsGet(t testing.TB, source any, id string) fixtureJob {
 	return j
 }
 func fixtureJobProjection(t testing.TB, q *store.Queries, row store.JobRow) fixtureJob {
-	pub, err := jobProjection(q, row)
-	fixtureCheck(t, err)
+	pub := jobValue(row)
 	j := fixtureJob{ID: pub.ID, ProjectID: pub.ProjectID, Kind: pub.Kind, Status: pub.Status, Created: pub.Created, UserID: pub.UserID, AgentID: pub.AgentID, AgentBudgetCents: pub.AgentBudgetCents, Automatic: pub.Automatic, Error: pub.Error, Revision: pub.Revision, WikiStatus: pub.WikiStatus, Unchanged: pub.Unchanged, Views: pub.Views}
 	if g := row.Data.ViewGeneration; g != nil {
 		j.ViewGeneration = &fixtureViewGeneration{Snapshot: store.ValueString(row.GenerationSnapshot), Remaining: g.Remaining, Next: g.Next, ChildID: fixtureChildID(t, q, row.ID)}

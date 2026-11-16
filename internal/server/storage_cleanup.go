@@ -2,12 +2,10 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
 )
@@ -60,16 +58,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 	if !stopped && status.State == runner.StateNone {
 		// Usage is committed only after stopping the attempt. A previous cleanup
 		// may have deleted its last session before a later cleanup step failed.
-		if err := o.db.Read(ctx, func(q *store.Queries) error {
-			_, err := q.Usage(id)
-			stopped = err == nil
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			return err
-		}); err != nil {
-			return false, err
-		}
+		stopped = run.Usage != nil
 	}
 	if !stopped {
 		return false, nil
@@ -82,13 +71,12 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		if current.Data.Run == nil {
 			return errors.New("attempt disappeared")
 		}
-		data := model.UsageValues{UserID: j.Data.UserID, UsageMeasurements: status.Usage}
-		p, e := q.Project(j.ProjectID)
-		if e != nil {
-			return e
+		if current.Data.Run.Usage != nil {
+			return nil
 		}
-		data.OrgID = p.OrgID
-		return q.RecordUsage(store.UsageRow{ProjectID: j.ProjectID, JobID: id, RecordedAt: o.now().UnixMilli(), Data: data})
+		usage := status.Usage
+		current.Data.Run.Usage = &usage
+		return q.PutJob(current)
 	}); err != nil {
 		return false, err
 	}
@@ -124,12 +112,11 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		if current.CleanupComplete {
 			return nil
 		}
-		usage, e := q.Usage(id)
-		if e != nil {
-			return e
+		if current.Data.Run.Usage == nil {
+			return errors.New("cleanup lost the recorded usage")
 		}
 		if current.Data.ViewGeneration != nil {
-			current.Data.ViewGeneration.Remaining = remainingViewBudget(current.Data.ViewGeneration.Remaining, usage.Data.CostCents)
+			current.Data.ViewGeneration.Remaining = remainingViewBudget(current.Data.ViewGeneration.Remaining, current.Data.Run.Usage.CostCents)
 		}
 		current.CleanupComplete = true
 		return q.PutJob(current)

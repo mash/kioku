@@ -2,8 +2,6 @@ package store
 
 import (
 	"encoding/json"
-
-	"github.com/mash/kioku/internal/model"
 )
 
 // Row types separate indexed columns from non-searchable payloads.
@@ -219,24 +217,6 @@ func scanView(s rowScanner) (ViewRow, error) {
 	var v ViewRow
 	var raw string
 	err := s.Scan(&v.ProjectID, &v.ID, &v.Slug, &v.CreatedAt, &v.BundleHash, &raw)
-	if err != nil {
-		return v, err
-	}
-	err = unmarshalData(raw, &v.Data)
-	return v, err
-}
-
-type UsageRow struct {
-	ProjectID  string
-	JobID      string
-	RecordedAt int64
-	Data       model.UsageValues
-}
-
-func scanUsage(s rowScanner) (UsageRow, error) {
-	var v UsageRow
-	var raw string
-	err := s.Scan(&v.ProjectID, &v.JobID, &v.RecordedAt, &raw)
 	if err != nil {
 		return v, err
 	}

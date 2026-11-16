@@ -29,7 +29,7 @@ func (e *e2e) waitJob(token, namespace, id string, tick func()) model.Job {
 			tick()
 		}
 		e.expect(e.call("GET", "/api/projects/"+namespace+"/jobs/"+id, token, nil), 200, &job)
-		if job.Status == "completed" || job.Status == "failed" {
+		if (job.Status == "completed" || job.Status == "failed") && (job.Run == nil || job.Run.CleanupComplete) {
 			return job
 		}
 		time.Sleep(10 * time.Millisecond)

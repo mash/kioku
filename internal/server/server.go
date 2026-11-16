@@ -46,24 +46,22 @@ type Runners interface {
 func (s *Server) SetRunners(g Runners) { s.runners = g }
 
 type Server struct {
-	mcpTools    map[string]any
-	runners     Runners
-	Config      Config
-	Store       catalog
-	Blobs       blob.Store
-	Cipher      *auth.Cipher
-	wake        chan struct{}
-	mux         *http.ServeMux
-	storage     *storageOperations
-	fatal       chan struct{}
-	fatalOnce   sync.Once
-	fatalError  atomic.Pointer[store.FatalDatabaseError]
-	prepareOnce sync.Once
-	prepareErr  error
-	rateMu      sync.Mutex
-	rates       map[string]rateWindow
-	requests    atomic.Uint64
-	failures    atomic.Uint64
+	mcpTools   map[string]any
+	runners    Runners
+	Config     Config
+	Store      catalog
+	Blobs      blob.Store
+	Cipher     *auth.Cipher
+	wake       chan struct{}
+	mux        *http.ServeMux
+	storage    *storageOperations
+	fatal      chan struct{}
+	fatalOnce  sync.Once
+	fatalError atomic.Pointer[store.FatalDatabaseError]
+	rateMu     sync.Mutex
+	rates      map[string]rateWindow
+	requests   atomic.Uint64
+	failures   atomic.Uint64
 }
 type apiError struct {
 	status  int
@@ -111,10 +109,6 @@ func (s *Server) Handler() http.Handler {
 			} else {
 				writeError(w, fail(503, "storage recovery failed"))
 			}
-			return
-		}
-		if err := s.Prepare(); err != nil {
-			s.requestError(w, r, err)
 			return
 		}
 		start := time.Now()

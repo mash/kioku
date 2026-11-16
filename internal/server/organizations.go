@@ -201,18 +201,15 @@ func (s *Server) namespacePage(w http.ResponseWriter, r *http.Request, uid strin
 	}
 	return s.projectPage(w, r, uid)
 }
+
+// Prepare validates startup dependencies. Request transactions report their own
+// database errors; /healthz performs the explicit liveness query.
 func (s *Server) Prepare() error {
-	s.prepareOnce.Do(func() {
-		if s.Config.Prompts == nil {
-			s.prepareErr = errors.New("prompts are not configured")
-			return
-		}
-		if s.runners == nil {
-			s.prepareErr = errors.New("runners are not configured")
-		}
-	})
-	if s.prepareErr != nil {
-		return s.prepareErr
+	if s.Config.Prompts == nil {
+		return errors.New("prompts are not configured")
+	}
+	if s.runners == nil {
+		return errors.New("runners are not configured")
 	}
 	return s.Store.Read(context.Background(), func(q *store.Queries) error { return q.Healthy() })
 }

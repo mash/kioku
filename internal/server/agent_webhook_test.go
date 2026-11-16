@@ -147,15 +147,10 @@ func TestManagedWebhookDisabledAndTemporaryReconciliation(t *testing.T) {
 
 type webhookFailedCatalog struct {
 	catalog
-	err  error
-	skip int
+	err error
 }
 
 func (d *webhookFailedCatalog) Read(ctx context.Context, fn func(*store.Queries) error) error {
-	if d.skip > 0 {
-		d.skip--
-		return d.catalog.Read(ctx, fn)
-	}
 	return d.err
 }
 
@@ -170,8 +165,7 @@ func TestWebhookReportsFatalDatabaseFailure(t *testing.T) {
 			if fatal {
 				failure = &store.FatalDatabaseError{Cause: err}
 			}
-			// Let the request's initial health check succeed, then fail inside the webhook.
-			f.s.Store = &webhookFailedCatalog{catalog: f.stateStore, err: failure, skip: 1}
+			f.s.Store = &webhookFailedCatalog{catalog: f.stateStore, err: failure}
 			body := []byte(`{"data":{"type":"session.status_idled","id":"session"}}`)
 			if code := signedAgentWebhook(t, f, body, time.Now(), webhookTestSecret, nil); code != 204 {
 				t.Fatal(code)

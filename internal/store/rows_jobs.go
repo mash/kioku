@@ -5,10 +5,7 @@ const jobsColumns = "id,project_id,status,created,kind,session_id,input_ready,cl
 func (q *Queries) Job(id string) (JobRow, error) {
 	return scanJob(q.row("SELECT "+jobsColumns+" FROM jobs WHERE id=?", id))
 }
-func (q *Queries) DeleteJob(id string) error {
-	_, err := q.exec("DELETE FROM jobs WHERE id=?", id)
-	return err
-}
+
 func (q *Queries) PutJob(v JobRow) error {
 	if v.Data.Views == nil {
 		v.Data.Views = []ViewResultData{}

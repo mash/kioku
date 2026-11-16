@@ -54,7 +54,7 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	}
 	var revisions int
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		for _, r := range fixtureRevisionsList(t, st) {
+		for _, r := range fixtureRevisionsList(t, st, p.ID) {
 			if r.ProjectID == p.ID {
 				revisions++
 			}

@@ -212,11 +212,11 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 		if len(jobs) != 0 {
 			t.Fatal(jobs)
 		}
-		usage, err := q.ProjectUsage("p")
+		usage, err := q.Usage("child")
 		if err != nil {
 			return err
 		}
-		if len(usage) != 1 || usage[0].Data.CostCents == nil || *usage[0].Data.CostCents != 40 {
+		if usage.Data.CostCents == nil || *usage.Data.CostCents != 40 {
 			t.Fatal(usage)
 		}
 		audit, err := q.ProjectAudit("p")

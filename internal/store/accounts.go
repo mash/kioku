@@ -104,5 +104,3 @@ func (q *Queries) InsertOAuthClient(v OAuthClientRow) error {
 	}
 	return q.PutOAuthClient(v)
 }
-
-func (q *Queries) Users() ([]UserRow, error) { return q.listUser("ORDER BY id") }

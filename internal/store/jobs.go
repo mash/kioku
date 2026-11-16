@@ -81,6 +81,3 @@ func (q *Queries) CompactHistory(project string, now *int64) error {
 func (q *Queries) ProjectAudit(project string) ([]AuditRow, error) {
 	return q.listAudit("WHERE project_id=? ORDER BY created,id", project)
 }
-func (q *Queries) ProjectUsage(project string) ([]UsageRow, error) {
-	return q.listUsage("WHERE project_id=? ORDER BY recorded_at,attempt_id", project)
-}

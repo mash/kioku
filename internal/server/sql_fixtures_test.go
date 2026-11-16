@@ -303,16 +303,16 @@ func fixtureJobsPut(t testing.TB, q *store.Queries, id string, j fixtureJob) {
 	j.ID = id
 	fixtureCheck(t, q.PutJob(fixtureRow(j)))
 }
-func fixtureJobsDelete(t testing.TB, q *store.Queries, id string) { fixtureCheck(t, q.DeleteJob(id)) }
-func fixtureJobsList(t testing.TB, source any) map[string]fixtureJob {
+
+func fixtureJobsList(t testing.TB, source any, pids ...string) map[string]fixtureJob {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureJob
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureJobsList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureJobsList(t, tx, pids...); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
 	out := map[string]fixtureJob{}
-	for pid := range fixtureProjectsList(t, q) {
+	for _, pid := range pids {
 		rows, err := q.ProjectJobs(pid)
 		fixtureCheck(t, err)
 		for _, r := range rows {
@@ -348,21 +348,7 @@ func fixtureProjectsGet(t testing.TB, source any, id string) fixtureProject {
 	p, _ := fixtureProjectsFind(t, q, id)
 	return p
 }
-func fixtureProjectsList(t testing.TB, source any) map[string]fixtureProject {
-	if f, ok := source.(*fixture); ok {
-		var value map[string]fixtureProject
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureProjectsList(t, tx); return nil }))
-		return value
-	}
-	q := source.(*store.Queries)
-	ids, err := q.ProjectIDs()
-	fixtureCheck(t, err)
-	out := map[string]fixtureProject{}
-	for _, id := range ids {
-		out[id] = fixtureProjectsGet(t, q, id)
-	}
-	return out
-}
+
 func fixtureProjectsPut(t testing.TB, q *store.Queries, id string, p fixtureProject) {
 	row, err := q.Project(id)
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -440,21 +426,7 @@ func fixtureUsersPut(t testing.TB, q *store.Queries, id string, u model.User) {
 		fixtureCheck(t, q.PutIdentity(id, p, v))
 	}
 }
-func fixtureUsersList(t testing.TB, source any) map[string]model.User {
-	if f, ok := source.(*fixture); ok {
-		var value map[string]model.User
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureUsersList(t, tx); return nil }))
-		return value
-	}
-	q := source.(*store.Queries)
-	rows, err := q.Users()
-	fixtureCheck(t, err)
-	out := map[string]model.User{}
-	for _, row := range rows {
-		out[row.ID] = fixtureUsersGet(t, q, row.ID)
-	}
-	return out
-}
+
 func fixtureOrganizationsGet(t testing.TB, source any, id string) model.Organization {
 	if f, ok := source.(*fixture); ok {
 		var value model.Organization
@@ -493,15 +465,15 @@ func fixtureInboxFind(t testing.TB, source any, id string) (model.InboxItem, boo
 	fixtureCheck(t, err)
 	return inboxProjection(row), true
 }
-func fixtureInboxList(t testing.TB, source any) map[string]model.InboxItem {
+func fixtureInboxList(t testing.TB, source any, pids ...string) map[string]model.InboxItem {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]model.InboxItem
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureInboxList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureInboxList(t, tx, pids...); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
 	out := map[string]model.InboxItem{}
-	for id := range fixtureProjectsList(t, q) {
+	for _, id := range pids {
 		rows, err := q.ProjectInbox(id)
 		fixtureCheck(t, err)
 		for _, r := range rows {
@@ -517,29 +489,29 @@ func fixtureInboxPut(t testing.TB, q *store.Queries, id string, v model.InboxIte
 	}
 	fixtureCheck(t, q.PutInbox(store.InboxRow{ID: id, ProjectID: v.ProjectID, SourceURL: v.SourceURL, Remove: v.Remove, RunID: store.NullableString(v.RunID), Created: created, Data: store.InboxData{Submitter: v.Submitter}}))
 }
-func fixtureRevisionsGet(t testing.TB, source any, id string) fixtureRevision {
+func fixtureRevisionsGet(t testing.TB, source any, pid, id string) fixtureRevision {
 	if f, ok := source.(*fixture); ok {
 		var value fixtureRevision
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureRevisionsGet(t, tx, id); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureRevisionsGet(t, tx, pid, id); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
-	for _, r := range fixtureRevisionsList(t, q) {
+	for _, r := range fixtureRevisionsList(t, q, pid) {
 		if r.ID == id {
 			return r
 		}
 	}
 	return fixtureRevision{}
 }
-func fixtureRevisionsList(t testing.TB, source any) map[string]fixtureRevision {
+func fixtureRevisionsList(t testing.TB, source any, pids ...string) map[string]fixtureRevision {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureRevision
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureRevisionsList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureRevisionsList(t, tx, pids...); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
 	out := map[string]fixtureRevision{}
-	for pid := range fixtureProjectsList(t, q) {
+	for _, pid := range pids {
 		p, err := q.Project(pid)
 		fixtureCheck(t, err)
 		if p.WikiRevision == nil {
@@ -551,15 +523,15 @@ func fixtureRevisionsList(t testing.TB, source any) map[string]fixtureRevision {
 	}
 	return out
 }
-func fixtureAuditList(t testing.TB, source any) map[string]model.Audit {
+func fixtureAuditList(t testing.TB, source any, pids ...string) map[string]model.Audit {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]model.Audit
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureAuditList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureAuditList(t, tx, pids...); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
 	out := map[string]model.Audit{}
-	for pid := range fixtureProjectsList(t, q) {
+	for _, pid := range pids {
 		rows, err := q.ProjectAudit(pid)
 		fixtureCheck(t, err)
 		for _, r := range rows {
@@ -618,16 +590,16 @@ func fixtureSessionsPut(t testing.TB, q *store.Queries, id string, v fixtureSess
 	}
 	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: kind, Status: "active", UserID: v.UserID, Expires: v.Expires.UnixMilli(), Created: created, Data: fixtureJSON(t, data)}))
 }
-func fixtureSessionsList(t testing.TB, source any) map[string]fixtureSession {
+func fixtureSessionsList(t testing.TB, source any, uid string) map[string]fixtureSession {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureSession
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureSessionsList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureSessionsList(t, tx, uid); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
 	out := map[string]fixtureSession{}
 	for _, kind := range []string{"web", "cli"} {
-		rows, err := q.KindSessions(kind)
+		rows, err := q.UserSessions(uid, kind)
 		fixtureCheck(t, err)
 		for _, r := range rows {
 			out[r.ID] = fixtureSessionsGet(t, q, r.ID)
@@ -676,14 +648,14 @@ func fixtureDevicesPut(t testing.TB, q *store.Queries, id string, v fixtureDevic
 func fixtureDevicesDelete(t testing.TB, q *store.Queries, id string) {
 	fixtureCheck(t, q.DeleteSession(auth.Hash(id)))
 }
-func fixtureAgentTokensList(t testing.TB, source any) map[string]fixtureAgentToken {
+func fixtureAgentTokensList(t testing.TB, source any, pid string) map[string]fixtureAgentToken {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureAgentToken
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureAgentTokensList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureAgentTokensList(t, tx, pid); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
-	rows, err := q.KindSessions("agent")
+	rows, err := q.ProjectSessions(pid, "agent")
 	fixtureCheck(t, err)
 	out := map[string]fixtureAgentToken{}
 	for _, row := range rows {
@@ -694,14 +666,14 @@ func fixtureAgentTokensList(t testing.TB, source any) map[string]fixtureAgentTok
 	}
 	return out
 }
-func fixtureAgentTokensGet(t testing.TB, source any, id string) fixtureAgentToken {
+func fixtureAgentTokensGet(t testing.TB, source any, pid, id string) fixtureAgentToken {
 	if f, ok := source.(*fixture); ok {
 		var value fixtureAgentToken
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureAgentTokensGet(t, tx, id); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureAgentTokensGet(t, tx, pid, id); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
-	return fixtureAgentTokensList(t, q)[id]
+	return fixtureAgentTokensList(t, q, pid)[id]
 }
 func fixtureAgentTokensPut(t testing.TB, q *store.Queries, id string, v fixtureAgentToken) {
 	v.ID = id
@@ -732,14 +704,14 @@ func fixtureOAuthTokensGet(t testing.TB, source any, id string) fixtureOAuthGran
 func fixtureOAuthTokensPut(t testing.TB, q *store.Queries, id string, v fixtureOAuthGrant) {
 	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: "mcp", Status: "active", UserID: v.UserID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, store.MCPData{TokenKind: v.Kind, ClientID: v.ClientID, ProjectIDs: v.ProjectIDs, Active: v.Active, RequestID: v.RequestID, Request: v.Request})}))
 }
-func fixtureOAuthTokensList(t testing.TB, source any) map[string]fixtureOAuthGrant {
+func fixtureOAuthTokensList(t testing.TB, source any, uid string) map[string]fixtureOAuthGrant {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureOAuthGrant
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureOAuthTokensList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureOAuthTokensList(t, tx, uid); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
-	rows, err := q.KindSessions("mcp")
+	rows, err := q.UserSessions(uid, "mcp")
 	fixtureCheck(t, err)
 	out := map[string]fixtureOAuthGrant{}
 	for _, row := range rows {
@@ -770,14 +742,14 @@ func fixtureOAuthCodesPut(t testing.TB, q *store.Queries, id string, v fixtureOA
 	}
 	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: "oauth_code", Status: status, UserID: v.UserID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, store.OAuthCodeData{ProjectIDs: v.ProjectIDs, Request: v.Request, PKCE: v.PKCE})}))
 }
-func fixtureOAuthCodesList(t testing.TB, source any) map[string]fixtureOAuthCode {
+func fixtureOAuthCodesList(t testing.TB, source any, uid string) map[string]fixtureOAuthCode {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureOAuthCode
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureOAuthCodesList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureOAuthCodesList(t, tx, uid); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
-	rows, err := q.KindSessions("oauth_code")
+	rows, err := q.UserSessions(uid, "oauth_code")
 	fixtureCheck(t, err)
 	out := map[string]fixtureOAuthCode{}
 	for _, row := range rows {
@@ -801,14 +773,14 @@ func fixtureLoginCodesGet(t testing.TB, source any, id string) fixtureLoginCode 
 func fixtureLoginCodesPut(t testing.TB, q *store.Queries, id string, v fixtureLoginCode) {
 	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: "login_code", Status: "pending", UserID: v.UserID, ProjectID: &v.ProjectID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, store.LoginCodeData{GrantKey: v.GrantKey, Role: &v.Role})}))
 }
-func fixtureLoginCodesList(t testing.TB, source any) map[string]fixtureLoginCode {
+func fixtureLoginCodesList(t testing.TB, source any, uid string) map[string]fixtureLoginCode {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureLoginCode
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureLoginCodesList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureLoginCodesList(t, tx, uid); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
-	rows, err := q.KindSessions("login_code")
+	rows, err := q.UserSessions(uid, "login_code")
 	fixtureCheck(t, err)
 	out := map[string]fixtureLoginCode{}
 	for _, row := range rows {
@@ -816,15 +788,15 @@ func fixtureLoginCodesList(t testing.TB, source any) map[string]fixtureLoginCode
 	}
 	return out
 }
-func fixtureInvitesList(t testing.TB, source any) map[string]fixtureInvite {
+func fixtureInvitesList(t testing.TB, source any, pids ...string) map[string]fixtureInvite {
 	if f, ok := source.(*fixture); ok {
 		var value map[string]fixtureInvite
-		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureInvitesList(t, tx); return nil }))
+		fixtureCheck(t, f.stateStore.Read(context.Background(), func(tx *store.Queries) error { value = fixtureInvitesList(t, tx, pids...); return nil }))
 		return value
 	}
 	q := source.(*store.Queries)
 	out := map[string]fixtureInvite{}
-	for pid := range fixtureProjectsList(t, q) {
+	for _, pid := range pids {
 		rows, err := q.ProjectInvites(pid)
 		fixtureCheck(t, err)
 		for _, row := range rows {
@@ -878,10 +850,12 @@ func fixtureRevisionsPut(t testing.TB, q *store.Queries, id string, v fixtureRev
 }
 func sessionKindCount(t *testing.T, f *fixture, kind string) int {
 	t.Helper()
-	n := 0
-	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error { rows, err := q.KindSessions(kind); n = len(rows); return err }))
+	db := fixtureSQLDatabase(t, f)
+	var n int
+	fixtureCheck(t, db.QueryRow("SELECT count(*) FROM sessions WHERE kind=?", kind).Scan(&n))
 	return n
 }
+
 func fixtureViewRow(t testing.TB, f *fixture, pid, id string) store.ViewRow {
 	t.Helper()
 	var v store.ViewRow

@@ -38,7 +38,7 @@ func managedJob(t *testing.T, f *fixture, token, pid string, ensureItem bool) fi
 	if ensureItem {
 		waiting := false
 		f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-			for _, item := range fixtureInboxList(t, st) {
+			for _, item := range fixtureInboxList(t, st, pid) {
 				if item.ProjectID == pid && item.RunID == "" {
 					waiting = true
 				}

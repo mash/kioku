@@ -283,14 +283,14 @@ func TestMigrationUsageSurvivesHistoryCompaction(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		usage, e := q.ProjectUsage("p")
-		if e != nil {
-			return e
+		if len(jobs) != 256 {
+			t.Fatal(len(jobs))
 		}
-		if len(jobs) != 256 || len(usage) != 270 {
-			t.Fatal(len(jobs), len(usage))
-		}
-		for _, u := range usage {
+		for i := 0; i < 270; i++ {
+			u, err := q.Usage(fmt.Sprintf("j%03d", i))
+			if err != nil {
+				return err
+			}
 			if u.AttemptID != u.JobID || u.RecordedAt != 5000 || u.Data.UserID != "deleted-user" || u.Data.Model != nil || u.Data.CostCents == nil {
 				t.Fatal(u)
 			}

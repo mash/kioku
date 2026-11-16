@@ -262,7 +262,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			var jobsBefore int
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 				before = fixtureProjectsGet(t, st, project.ID)
-				jobsBefore = len(fixtureJobsList(t, st))
+				jobsBefore = len(fixtureJobsList(t, st, project.ID))
 				return nil
 			}); err != nil {
 				t.Fatal(err)
@@ -280,7 +280,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			var submitter string
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 				submitter = fixtureInboxGet(t, st, item.ID).Submitter
-				if fixtureProjectsGet(t, st, project.ID).Revision != before.Revision || len(fixtureJobsList(t, st)) != jobsBefore || submitter != fixtureSessionsGet(t, st, auth.Hash(caller)).UserID {
+				if fixtureProjectsGet(t, st, project.ID).Revision != before.Revision || len(fixtureJobsList(t, st, project.ID)) != jobsBefore || submitter != fixtureSessionsGet(t, st, auth.Hash(caller)).UserID {
 					t.Error("inbox acceptance changed generation or submitter")
 				}
 				return nil
@@ -328,7 +328,7 @@ func TestConnectorSourcePutValidation(t *testing.T) {
 		}
 	}
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureJobsList(t, st)) != 0 || len(fixtureInboxList(t, st)) != 0 || len(fixtureAuditList(t, st)) != 0 {
+		if len(fixtureJobsList(t, st, project.ID)) != 0 || len(fixtureInboxList(t, st, project.ID)) != 0 || len(fixtureAuditList(t, st, project.ID)) != 0 {
 			t.Error("rejected source changed state")
 		}
 		return nil
@@ -352,8 +352,8 @@ func TestSourcePutSetsDeadline(t *testing.T) {
 		}
 		st := f
 		deadline := fixtureProjectsGet(t, st, p.ID).NextGenerateAt
-		if deadline.Before(before.Add(10*time.Second)) || deadline.After(time.Now().UTC().Add(10*time.Second)) || len(fixtureJobsList(t, st)) != 0 {
-			t.Fatal(deadline, fixtureJobsList(t, st))
+		if deadline.Before(before.Add(10*time.Second)) || deadline.After(time.Now().UTC().Add(10*time.Second)) || len(fixtureJobsList(t, st, p.ID)) != 0 {
+			t.Fatal(deadline, fixtureJobsList(t, st, p.ID))
 		}
 	}
 }

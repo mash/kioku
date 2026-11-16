@@ -248,7 +248,10 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 		t.Fatal("projects_list showed an ungranted project", msg, projects)
 	}
 	var sourcesBefore int
-	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error { sourcesBefore = len(fixtureInboxList(t, st)); return nil }); err != nil {
+	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
+		sourcesBefore = len(fixtureInboxList(t, st, granted.ID, shared.ID, deleting.ID))
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	// The user is a member of both, so only the grant can deny them. A deleting
@@ -269,7 +272,7 @@ func TestConnectorToolsSeeOnlyGrantedProjects(t *testing.T) {
 		}
 	}
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureInboxList(t, st)) != sourcesBefore || len(fixtureLoginCodesList(t, st)) != 0 {
+		if len(fixtureInboxList(t, st, granted.ID, shared.ID, deleting.ID)) != sourcesBefore || len(fixtureLoginCodesList(t, st, fixtureSessionsGet(t, st, auth.Hash(human)).UserID)) != 0 {
 			t.Error("a rejected tool call changed state")
 		}
 		return nil

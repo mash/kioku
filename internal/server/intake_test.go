@@ -26,7 +26,7 @@ func waitingInboxItem(t *testing.T, f *fixture, pid, url string) model.InboxItem
 	t.Helper()
 	var result model.InboxItem
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		for _, item := range fixtureInboxList(t, st) {
+		for _, item := range fixtureInboxList(t, st, pid) {
 			if item.ProjectID == pid && item.SourceURL == url && item.RunID == "" {
 				if result.ID != "" {
 					t.Fatal("duplicate waiting inbox items", pid, url)

@@ -108,37 +108,32 @@ func finishLoopbackOAuth(t *testing.T, f *fixture, req *http.Request) *http.Resp
 
 func loopbackSnapshot(t *testing.T, f *fixture) string {
 	t.Helper()
-	var result string
-	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
-		users, err := q.Users()
-		if err != nil {
-			return err
-		}
-		parts := []string{string(fixtureJSON(t, users))}
-		for _, kind := range []string{"web", "cli", "cli_login"} {
-			rows, err := q.KindSessions(kind)
-			if err != nil {
-				return err
+	db := fixtureSQLDatabase(t, f)
+	tx, err := db.Begin()
+	fixtureCheck(t, err)
+	defer tx.Rollback()
+	var parts []string
+	for _, query := range []string{"SELECT id,email,data FROM users ORDER BY id", "SELECT id,kind,status,user_id,project_id,expires,created,data FROM sessions WHERE kind IN ('web','cli','cli_login') ORDER BY id"} {
+		rows, err := tx.Query(query)
+		fixtureCheck(t, err)
+		columns, err := rows.Columns()
+		fixtureCheck(t, err)
+		for rows.Next() {
+			values := make([]any, len(columns))
+			ptrs := make([]any, len(columns))
+			for i := range values {
+				ptrs[i] = &values[i]
 			}
-			for _, row := range rows {
-				parts = append(parts, string(fixtureJSON(t, struct {
-					ID, Kind, Status, User string
-					Expires, Created       int64
-					Data                   json.RawMessage
-				}{row.ID, row.Kind, row.Status, row.UserID, row.Expires, row.Created, row.Data})))
-			}
+			fixtureCheck(t, rows.Scan(ptrs...))
+			parts = append(parts, string(fixtureJSON(t, values)))
 		}
-		result = auth.Hash(strings.Join(parts, "\n"))
-		return nil
-	}))
-	return result
+		fixtureCheck(t, rows.Err())
+		rows.Close()
+	}
+	return auth.Hash(strings.Join(parts, "\n"))
 }
-func loopbackCount(t *testing.T, f *fixture) int {
-	t.Helper()
-	n := 0
-	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error { rows, err := q.KindSessions("cli_login"); n = len(rows); return err }))
-	return n
-}
+
+func loopbackCount(t *testing.T, f *fixture) int { return sessionKindCount(t, f, "cli_login") }
 
 func TestLoopbackStartValidation(t *testing.T) {
 	for _, tc := range []struct{ field, value string }{
@@ -226,11 +221,12 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			before := fixtureSessionsList(t, f)
+			uid := fixtureDevicesGet(t, f, a.device).UserID
+			before := fixtureSessionsList(t, f, uid)
 			if status := f.request("POST", "/api/auth/loopback/token", "", req, nil); status != 410 {
 				t.Fatal(status)
 			}
-			after := fixtureSessionsList(t, f)
+			after := fixtureSessionsList(t, f, uid)
 			// E14: expired rows may be pruned; an unexpired mismatch is active/consumed.
 			d := fixtureDevicesGet(t, f, a.device)
 			if (!d.Used && failure != "expired") || !reflect.DeepEqual(before, after) {

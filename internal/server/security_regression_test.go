@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/store"
 )
@@ -74,7 +75,7 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 			expected := 502
 			if mode == "legacy session" {
 				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-					for k, v := range fixtureSessionsList(t, st) {
+					for k, v := range fixtureSessionsList(t, st, fixtureSessionsGet(t, st, auth.Hash(token)).UserID) {
 						if fixtureUsersGet(t, st, v.UserID).Email == "member@example.com" {
 							v.IdentityAccessToken = ""
 							fixtureSessionsPut(t, st, k, v)
@@ -106,7 +107,7 @@ func TestEmailInviteRejectsMissingProofAndProviderFailure(t *testing.T) {
 				t.Fatal(mode, c)
 			}
 			_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-				for _, inv := range fixtureInvitesList(t, st) {
+				for _, inv := range fixtureInvitesList(t, st, p.ID) {
 					if inv.ProjectID == p.ID && inv.UsedBy != "" {
 						t.Error("failed verification consumed invite")
 					}
@@ -236,11 +237,10 @@ func TestSlowHTTPResponseDoesNotHoldDatabaseMutex(t *testing.T) {
 	database := make(chan error, 1)
 	go func() {
 		database <- f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-			u := fixtureUsersList(t, st)
-			for id, user := range u {
-				user.Name = "Updated while response is blocked"
-				fixtureUsersPut(t, st, id, user)
-			}
+			session := fixtureSessionsGet(t, st, auth.Hash(token))
+			user := fixtureUsersGet(t, st, session.UserID)
+			user.Name = "Updated while response is blocked"
+			fixtureUsersPut(t, st, user.ID, user)
 			return nil
 		})
 	}()

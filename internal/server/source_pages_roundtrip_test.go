@@ -57,7 +57,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	pages["wiki/log.md"] = "# Log\nUpdated one source"
 	publish(j)
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		r := fixtureRevisionsGet(t, st, fixtureProjectsGet(t, st, p.ID).Revision)
+		r := fixtureRevisionsGet(t, st, p.ID, fixtureProjectsGet(t, st, p.ID).Revision)
 		count := 0
 		for name, key := range r.Files {
 			if !strings.HasPrefix(name, "wiki/source-") {
@@ -69,8 +69,8 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 				t.Fatalf("published source %s: %q, %v", name, body, err)
 			}
 		}
-		if count != 2 || len(fixtureInboxList(t, st)) != 0 {
-			t.Fatal(count, fixtureInboxList(t, st))
+		if count != 2 || len(fixtureInboxList(t, st, p.ID)) != 0 {
+			t.Fatal(count, fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	}); err != nil {

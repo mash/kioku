@@ -272,7 +272,7 @@ func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
 		// are never read. Avoid serializing 10,000 copies of the real request on
 		// every database transaction, while keeping the real refresh grant intact.
 		grant.Request = nil
-		count, err := st.KindSessions("mcp")
+		count, err := st.UserSessions(grant.UserID, "mcp")
 		if err != nil {
 			return err
 		}

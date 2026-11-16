@@ -492,14 +492,12 @@ func TestViewGenerationStopsAfterFailure(t *testing.T) {
 				if e := st.RecordUsage(store.UsageRow{AttemptID: child.ID, JobID: child.ID, ProjectID: p.ID, Data: model.UsageValues{UserID: child.UserID}}); e != nil {
 					return e
 				}
-				if scenario == "missing" {
-					fixtureJobsDelete(t, st, child.ID)
-				}
 				return nil
 			}); err != nil {
 				t.Fatal(err)
 			}
 			if scenario == "missing" {
+				fixtureSQL(t, f, "DELETE FROM jobs WHERE id='"+child.ID+"'")
 				if err := f.s.storage.advanceViews(t.Context(), parent.ID); !errors.Is(err, sql.ErrNoRows) {
 					t.Fatal("missing child must be unavailable", err)
 				}

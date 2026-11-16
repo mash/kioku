@@ -44,9 +44,7 @@ CREATE INDEX jobs_child ON jobs(child_id,id);
 CREATE INDEX jobs_parent ON jobs(parent_id,status,id);
 CREATE INDEX jobs_generation ON jobs(status,generation_snapshot,id);
 CREATE INDEX views_order ON views(project_id,created_at,id);
-CREATE INDEX wiki_hash ON wiki_files(project_id,hash);
 CREATE INDEX audit_history ON audit(project_id,created DESC,id DESC);
 CREATE INDEX inbox_source ON inbox(project_id,source_url,run_id);
 CREATE INDEX inbox_run ON inbox(project_id,run_id,remove,created,id);
-CREATE INDEX usage_project ON usage(project_id,recorded_at,attempt_id);
 `

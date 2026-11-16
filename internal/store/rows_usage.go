@@ -13,6 +13,3 @@ func (q *Queries) RecordUsage(v UsageRow) error {
 	_, err = q.exec("INSERT INTO usage("+usageColumns+") VALUES(?,?,?,?,?) ON CONFLICT(attempt_id) DO NOTHING", v.AttemptID, v.ProjectID, v.JobID, v.RecordedAt, raw)
 	return err
 }
-func (q *Queries) listUsage(suffix string, args ...any) ([]UsageRow, error) {
-	return listRows(q, "SELECT "+usageColumns+" FROM usage "+suffix, scanUsage, args...)
-}

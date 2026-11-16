@@ -337,8 +337,8 @@ func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 					t.Fatal(got)
 				}
 				if err := db.Read(t.Context(), func(q *store.Queries) error {
-					rows, err := q.ProjectUsage("p")
-					if len(rows) != 1 || (rows[0].Data.CostCents == nil || *rows[0].Data.CostCents != 40) {
+					rows, err := q.Usage("j")
+					if rows.Data.CostCents == nil || *rows.Data.CostCents != 40 {
 						t.Fatal(rows)
 					}
 					return err

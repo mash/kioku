@@ -116,11 +116,13 @@ func (f *fixture) request(method, path, token string, in, out any) int {
 		_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 			switch v := out.(type) {
 			case *fixtureProject:
-				for _, p := range fixtureProjectsList(t, st) {
-					if p.Namespace == v.Namespace {
-						*v = p
-						break
-					}
+				parts := strings.Split(v.Namespace, "/")
+				if len(parts) == 2 {
+					org, err := st.OrganizationBySlug(parts[0])
+					fixtureCheck(t, err)
+					row, err := st.ProjectBySlug(org.ID, parts[1])
+					fixtureCheck(t, err)
+					*v = fixtureProjectsGet(t, st, row.ID)
 				}
 			case *fixtureJob:
 				if j, ok := fixtureJobsFind(t, st, v.ID); ok {
@@ -138,11 +140,12 @@ func (f *fixture) login(email string) string {
 	token := auth.Token()
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		uid := ""
-		for id, u := range fixtureUsersList(t, st) {
-			if u.Email == email {
-				uid = id
-				break
-			}
+		users, err := st.UsersByEmail(email)
+		if err != nil {
+			return err
+		}
+		if len(users) != 0 {
+			uid = users[0].ID
 		}
 		if uid == "" {
 			uid = auth.Token()[:20]
@@ -433,15 +436,20 @@ func sourcePage(id string) string {
 func (f *fixture) publicPath(path string) string {
 	t := f.t
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		for id, p := range fixtureProjectsList(t, st) {
-			path = strings.ReplaceAll(path, "/api/projects/"+id+"/", "/api/projects/"+p.Namespace+"/")
-			if path == "/api/projects/"+id {
-				path = "/api/projects/" + p.Namespace
-			}
-			if path == "/projects/"+id {
-				path = "/" + p.Namespace
-			}
+		parts := strings.Split(path, "/")
+		index := 2
+		if strings.HasPrefix(path, "/api/projects/") {
+			index = 3
 		}
+		if len(parts) <= index {
+			return nil
+		}
+		id := strings.SplitN(parts[index], "?", 2)[0]
+		p, ok := fixtureProjectsFind(t, st, id)
+		if ok {
+			path = strings.Replace(path, "/"+id, "/"+p.Namespace, 1)
+		}
+
 		return nil
 	})
 	return path

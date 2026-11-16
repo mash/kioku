@@ -37,8 +37,8 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 		t.Fatal(j)
 	}
 	f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureInboxList(t, st)) != 1 || fixtureInboxGet(t, st, second.ID).RunID != "" {
-			t.Fatal(fixtureInboxList(t, st))
+		if len(fixtureInboxList(t, st, p.ID)) != 1 || fixtureInboxGet(t, st, second.ID).RunID != "" {
+			t.Fatal(fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	})
@@ -72,7 +72,7 @@ func TestInboxFailureReleasesForNewGeneration(t *testing.T) {
 			t.Fatal("superseded item returned")
 		}
 		if fixtureInboxGet(t, st, replacement.ID).RunID != "" {
-			t.Fatal(fixtureInboxList(t, st))
+			t.Fatal(fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	})
@@ -151,7 +151,7 @@ func TestInterruptedPublicationKeepsInbox(t *testing.T) {
 	}
 	f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 		if !fixtureProjectsGet(t, st, p.ID).WikiIncomplete || fixtureInboxGet(t, st, item.ID).ID == "" || fixtureInboxGet(t, st, item.ID).RunID != j.ID {
-			t.Fatal(fixtureProjectsGet(t, st, p.ID), fixtureInboxList(t, st))
+			t.Fatal(fixtureProjectsGet(t, st, p.ID), fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	})
@@ -207,8 +207,8 @@ func TestInboxScheduleOnlyEligibleWaitingItems(t *testing.T) {
 			}
 			generationTick(t, f, now)
 			st := f
-			if len(fixtureJobsList(t, st)) != tc.jobs {
-				t.Fatal(fixtureJobsList(t, st))
+			if len(fixtureJobsList(t, st, p.ID)) != tc.jobs {
+				t.Fatal(fixtureJobsList(t, st, p.ID))
 			}
 			if got := len(f.s.wake); got != tc.jobs {
 				t.Fatalf("worker notifications = %d, queued jobs = %d", got, tc.jobs)
@@ -247,8 +247,8 @@ func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
 				t.Fatal(got)
 			}
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-				if len(fixtureInboxList(t, st)) != 1 || !fixtureInboxGet(t, st, replacement.ID).Remove {
-					t.Fatalf("failed item conflicts with accepted replacement: %+v", fixtureInboxList(t, st))
+				if len(fixtureInboxList(t, st, p.ID)) != 1 || !fixtureInboxGet(t, st, replacement.ID).Remove {
+					t.Fatalf("failed item conflicts with accepted replacement: %+v", fixtureInboxList(t, st, p.ID))
 				}
 				return nil
 			}); err != nil {
@@ -375,7 +375,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 			restartManagedFixture(t, f)
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 				p := fixtureProjectsGet(t, st, p.ID)
-				if !p.WikiIncomplete || fixtureRevisionsGet(t, st, p.Revision).StoredBytes <= f.s.Config.MaxWikiBytes {
+				if !p.WikiIncomplete || fixtureRevisionsGet(t, st, p.ID, p.Revision).StoredBytes <= f.s.Config.MaxWikiBytes {
 					t.Fatal("publication did not stop over quota", p)
 				}
 				return nil
@@ -510,7 +510,7 @@ func TestRejectedPutKeepsDeadline(t *testing.T) {
 			f, token, p, _ := managedFixture(t)
 			f.s.Config.GenerateDebounce = 10 * time.Second
 			putFile(t, f, token, p.ID, "a.md", "Body")
-			before := fixtureInboxList(t, f)
+			before := fixtureInboxList(t, f, p.ID)
 			deadline := fixtureProjectsGet(t, f, p.ID).NextGenerateAt
 			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 				p := fixtureProjectsGet(t, st, p.ID)
@@ -528,7 +528,7 @@ func TestRejectedPutKeepsDeadline(t *testing.T) {
 			if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{File: &model.FileInput{Name: "new.md", Content: testSourceContent("https://example.com/new", "New")}}, nil); c != want {
 				t.Fatal(c)
 			}
-			after := fixtureInboxList(t, f)
+			after := fixtureInboxList(t, f, p.ID)
 			if !fixtureProjectsGet(t, f, p.ID).NextGenerateAt.Equal(deadline) || len(after) != len(before) {
 				t.Fatal("rejected put changed deadline or inbox")
 			}
@@ -570,7 +570,7 @@ func TestDeadlineQueuesOnceAndClears(t *testing.T) {
 	putFile(t, f, token, p.ID, "a.md", "Body")
 	deadline := fixtureProjectsGet(t, f, p.ID).NextGenerateAt
 	generationTick(t, f, deadline.Add(-time.Millisecond))
-	if st := f; len(fixtureJobsList(t, st)) != 0 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) {
+	if st := f; len(fixtureJobsList(t, st, p.ID)) != 0 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) {
 		t.Fatal("early tick changed state")
 	}
 	generationTick(t, f, deadline)
@@ -578,10 +578,10 @@ func TestDeadlineQueuesOnceAndClears(t *testing.T) {
 		generationTick(t, f, at)
 	}
 	st := f
-	if !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() || len(fixtureJobsList(t, st)) != 1 {
-		t.Fatal(fixtureProjectsGet(t, st, p.ID), fixtureJobsList(t, st))
+	if !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() || len(fixtureJobsList(t, st, p.ID)) != 1 {
+		t.Fatal(fixtureProjectsGet(t, st, p.ID), fixtureJobsList(t, st, p.ID))
 	}
-	for _, j := range fixtureJobsList(t, st) {
+	for _, j := range fixtureJobsList(t, st, p.ID) {
 		if !j.Automatic || j.Status != "queued" || j.WikiStatus != "pending" || p.Members[j.UserID] != "owner" || !j.Created.Equal(deadline) {
 			t.Fatal(j)
 		}
@@ -624,7 +624,7 @@ func TestDeadlineWaitsForJob(t *testing.T) {
 				t.Fatal("manual generation did not notify worker")
 			}
 			generationTick(t, f, deadline)
-			if st := f; !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) || len(fixtureJobsList(t, st)) != 1 {
+			if st := f; !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) || len(fixtureJobsList(t, st, p.ID)) != 1 {
 				t.Fatal("job did not preserve deadline")
 			}
 			if len(f.s.wake) != 0 {
@@ -644,12 +644,12 @@ func TestDeadlineWaitsForJob(t *testing.T) {
 				t.Fatal(err)
 			}
 			generationTick(t, f, deadline)
-			if st := f; len(fixtureJobsList(t, st)) != 1 {
+			if st := f; len(fixtureJobsList(t, st, p.ID)) != 1 {
 				t.Fatal("queued before extended deadline")
 			}
 			generationTick(t, f, extended)
-			if st := f; !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() || len(fixtureJobsList(t, st)) != 2 {
-				t.Fatal(fixtureJobsList(t, st))
+			if st := f; !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() || len(fixtureJobsList(t, st, p.ID)) != 2 {
+				t.Fatal(fixtureJobsList(t, st, p.ID))
 			}
 		})
 	}
@@ -662,7 +662,7 @@ func TestFailedAutomaticJobIsNotRequeued(t *testing.T) {
 	generationTick(t, f, fixtureProjectsGet(t, f, p.ID).NextGenerateAt)
 	var job fixtureJob
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		for _, j := range fixtureJobsList(t, st) {
+		for _, j := range fixtureJobsList(t, st, p.ID) {
 			job = j
 			job.Status = "queued"
 			fixtureJobsPut(t, st, job.ID, job)
@@ -686,12 +686,12 @@ func TestFailedAutomaticJobIsNotRequeued(t *testing.T) {
 		generationTick(t, f, at)
 	}
 	st := f
-	if len(fixtureJobsList(t, st)) != 1 || fixtureInboxGet(t, st, first.ID).ID == "" || fixtureInboxGet(t, st, first.ID).RunID != "" || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
+	if len(fixtureJobsList(t, st, p.ID)) != 1 || fixtureInboxGet(t, st, first.ID).ID == "" || fixtureInboxGet(t, st, first.ID).RunID != "" || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
 		t.Fatal("failed job was retried or did not release inbox")
 	}
 	putFile(t, f, token, p.ID, "b.md", "Body")
 	generationTick(t, f, fixtureProjectsGet(t, f, p.ID).NextGenerateAt)
-	if st := f; len(fixtureJobsList(t, st)) != 2 {
+	if st := f; len(fixtureJobsList(t, st, p.ID)) != 2 {
 		t.Fatal("new put did not schedule generation")
 	}
 }
@@ -704,13 +704,13 @@ func TestZeroDebounceQueuesOnNextTick(t *testing.T) {
 			before := time.Now().UTC().Truncate(time.Millisecond)
 			putFile(t, f, token, p.ID, "a.md", "Body")
 			st := f
-			if len(fixtureJobsList(t, st)) != 0 || fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Before(before) {
+			if len(fixtureJobsList(t, st, p.ID)) != 0 || fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Before(before) {
 				t.Fatal("put must only set the deadline")
 			}
 			generationTick(t, f, time.Now().UTC().Truncate(time.Millisecond))
 			st = f
-			if len(fixtureJobsList(t, st)) != 1 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
-				t.Fatal(fixtureJobsList(t, st))
+			if len(fixtureJobsList(t, st, p.ID)) != 1 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
+				t.Fatal(fixtureJobsList(t, st, p.ID))
 			}
 		})
 	}
@@ -731,12 +731,12 @@ func TestStoredFixedDeadlineFiresOnce(t *testing.T) {
 	f.s.Config.GenerateDebounce = 10 * time.Second
 	restartManagedFixture(t, f)
 	generationTick(t, f, deadline.Add(-time.Millisecond))
-	if st := f; len(fixtureJobsList(t, st)) != 0 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) {
+	if st := f; len(fixtureJobsList(t, st, p.ID)) != 0 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) {
 		t.Fatal("stored deadline changed")
 	}
 	generationTick(t, f, deadline)
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		for id, j := range fixtureJobsList(t, st) {
+		for id, j := range fixtureJobsList(t, st, p.ID) {
 			j.Status = "completed"
 			fixtureJobsPut(t, st, id, j)
 		}
@@ -745,7 +745,7 @@ func TestStoredFixedDeadlineFiresOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	generationTick(t, f, deadline.Add(48*time.Hour))
-	if st := f; len(fixtureJobsList(t, st)) != 1 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
+	if st := f; len(fixtureJobsList(t, st, p.ID)) != 1 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
 		t.Fatal("fixed deadline repeated")
 	}
 }
@@ -767,12 +767,12 @@ func TestFullInboxLetsDeadlinePass(t *testing.T) {
 	if c := f.request("POST", "/api/projects/"+p.ID+"/put", token, model.PutRequest{Remove: true, SourceURL: "https://example.com/full"}, nil); c != 429 {
 		t.Fatal(c)
 	}
-	if st := f; !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) || len(fixtureInboxList(t, st)) != maxInboxItems {
+	if st := f; !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.Equal(deadline) || len(fixtureInboxList(t, st, p.ID)) != maxInboxItems {
 		t.Fatal("rejected put changed state")
 	}
 	generationTick(t, f, deadline)
-	if st := f; len(fixtureJobsList(t, st)) != 1 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
-		t.Fatal(fixtureJobsList(t, st))
+	if st := f; len(fixtureJobsList(t, st, p.ID)) != 1 || !fixtureProjectsGet(t, st, p.ID).NextGenerateAt.IsZero() {
+		t.Fatal(fixtureJobsList(t, st, p.ID))
 	}
 }
 

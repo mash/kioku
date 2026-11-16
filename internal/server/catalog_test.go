@@ -78,7 +78,7 @@ func TestInboxUnknownCommitResolvesWithoutRepeatingMutation(t *testing.T) {
 			if d.writes.Load() != 1 || d.reconnects.Load() != 1 {
 				t.Fatal("write/reconnect repeated", d.writes.Load(), d.reconnects.Load())
 			}
-			items := fixtureInboxList(t, f)
+			items := fixtureInboxList(t, f, p.ID)
 			if (len(items) == 1) != (which == "applied") {
 				t.Fatal(items)
 			}
@@ -91,7 +91,7 @@ func TestInboxUnknownCommitResolvesWithoutRepeatingMutation(t *testing.T) {
 				if code := f.request("POST", "/api/projects/"+p.Namespace+"/put", token, req, nil); code != 202 {
 					t.Fatal(code)
 				}
-				items = fixtureInboxList(t, f)
+				items = fixtureInboxList(t, f, p.ID)
 				if len(items) != 1 {
 					t.Fatal(items)
 				}

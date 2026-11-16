@@ -105,7 +105,7 @@ func TestGenerationBrowserWithoutPersonalConnection(t *testing.T) {
 	}
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 		found := false
-		for _, j := range fixtureJobsList(t, st) {
+		for _, j := range fixtureJobsList(t, st, p.ID) {
 			if j.ProjectID == p.ID && j.Kind == "generate" {
 				found = true
 				if j.AgentBudgetCents != 50 {

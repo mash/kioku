@@ -273,12 +273,10 @@ func TestHistoryKeepsPendingCleanupAndUnconsumedChildren(t *testing.T) {
 				if len(audit) != min(count, 256) {
 					t.Fatal(len(audit))
 				}
-				usage, err := q.ProjectUsage("p")
-				if err != nil {
-					return err
-				}
-				if len(usage) != count {
-					t.Fatal("usage pruned", len(usage))
+				for i := 1; i <= count; i++ {
+					if _, err := q.Usage(fmt.Sprintf("j%03d", i)); err != nil {
+						return err
+					}
 				}
 				for _, id := range []string{"cleanup", "parent", "child", "other"} {
 					if _, err := q.Job(id); err != nil {

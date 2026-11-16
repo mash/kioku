@@ -28,3 +28,15 @@ func fixtureSQLFault(t testing.TB, f *fixture, table, event, condition string) f
 	t.Cleanup(restore)
 	return restore
 }
+
+func fixtureSQLDatabase(t testing.TB, f *fixture) *sql.DB {
+	t.Helper()
+	path, ok := fixtureDatabasePaths.Load(f.stateStore)
+	if !ok {
+		t.Fatal("fixture database path missing")
+	}
+	db, err := sql.Open("sqlite", path.(string))
+	fixtureCheck(t, err)
+	t.Cleanup(func() { db.Close() })
+	return db
+}

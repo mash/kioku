@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -152,11 +153,11 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				usage, err := q.ProjectUsage("p")
-				if len(items) != 1 || len(usage) != 0 {
+				usage, err := q.Usage("j")
+				if len(items) != 1 || !errors.Is(err, sql.ErrNoRows) {
 					t.Fatalf("unstarted job assigned input or recorded usage: items=%v usage=%v", items, usage)
 				}
-				return err
+				return nil
 			}))
 		})
 	}

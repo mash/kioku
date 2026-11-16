@@ -81,8 +81,8 @@ func TestRestoringSQLiteSelectsBackupContentReferences(t *testing.T) {
 		t.Fatal("backup references were not restored")
 	}
 	_ = restored.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureRevisionsList(t, st)) != 1 || len(fixtureInboxList(t, st)) != 0 {
-			t.Error("project content lost during restore", fixtureInboxList(t, st))
+		if len(fixtureRevisionsList(t, st, p.ID)) != 1 || len(fixtureInboxList(t, st, p.ID)) != 0 {
+			t.Error("project content lost during restore", fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	})
@@ -132,7 +132,7 @@ func TestInterruptedImmutableWikiCanBeRetried(t *testing.T) {
 	if got := reconcileManaged(t, f, j); got.Status != "completed" {
 		t.Fatal(got)
 	}
-	if project := fixtureProjectsGet(t, f, p.ID); project.WikiIncomplete || len(fixtureInboxList(t, f)) != 0 {
+	if project := fixtureProjectsGet(t, f, p.ID); project.WikiIncomplete || len(fixtureInboxList(t, f, p.ID)) != 0 {
 		t.Fatal(project)
 	}
 	if _, err := objects.Get(t.Context(), blob.Key("projects/"+p.ID+"/.kioku/state.json")); !errors.Is(err, os.ErrNotExist) {

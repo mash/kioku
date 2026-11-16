@@ -165,7 +165,7 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 		data, err := json.Marshal(struct {
 			Codes  map[string]fixtureOAuthCode
 			Tokens map[string]fixtureOAuthGrant
-		}{fixtureOAuthCodesList(t, st), fixtureOAuthTokensList(t, st)})
+		}{fixtureOAuthCodesList(t, st, fixtureSessionsGet(t, st, auth.Hash(human)).UserID), fixtureOAuthTokensList(t, st, fixtureSessionsGet(t, st, auth.Hash(human)).UserID)})
 		if err != nil {
 			return err
 		}

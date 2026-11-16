@@ -207,7 +207,7 @@ func TestManagedWorkerSessionAndProjectLimits(t *testing.T) {
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
 		running := 0
 		seen := map[string]bool{}
-		for _, j := range fixtureJobsList(t, st) {
+		for _, j := range fixtureJobsList(t, st, projects[0].ID, projects[1].ID, projects[2].ID) {
 			if j.Status == "running" && j.Run != nil {
 				running++
 				if seen[j.ProjectID] {

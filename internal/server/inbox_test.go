@@ -35,14 +35,14 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 			t.Fatal("stored remove flag", item)
 		}
 		f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-			if len(fixtureInboxList(t, st)) != 1 || len(fixtureJobsList(t, st)) != 0 {
-				t.Fatal("not replaced", fixtureInboxList(t, st))
+			if len(fixtureInboxList(t, st, p.ID)) != 1 || len(fixtureJobsList(t, st, p.ID)) != 0 {
+				t.Fatal("not replaced", fixtureInboxList(t, st, p.ID))
 			}
 			return nil
 		})
 	}
 	f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		for id, v := range fixtureInboxList(t, st) {
+		for id, v := range fixtureInboxList(t, st, p.ID) {
 			v.RunID = "running"
 			fixtureInboxPut(t, st, id, v)
 		}
@@ -56,7 +56,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		t.Fatal(c, projects)
 	}
 	f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		for i := len(fixtureInboxList(t, st)); i < 200; i++ {
+		for i := len(fixtureInboxList(t, st, p.ID)); i < 200; i++ {
 			id := fmt.Sprint(i)
 			fixtureInboxPut(t, st, id, model.InboxItem{ID: id, ProjectID: p.ID, SourceURL: "https://example.com/" + id})
 		}
@@ -103,8 +103,8 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 		t.Fatal(c)
 	}
 	f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureInboxList(t, st)) != 0 {
-			t.Fatal(fixtureInboxList(t, st))
+		if len(fixtureInboxList(t, st, p.ID)) != 0 {
+			t.Fatal(fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	})

@@ -20,7 +20,7 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 	sendOutput(t, f, ma, j, "Summary")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		v := fixtureAgentTokensGet(t, st, id)
+		v := fixtureAgentTokensGet(t, st, p.ID, id)
 		v.RevokedAt = time.Now().UTC()
 		fixtureAgentTokensPut(t, st, id, v)
 		return nil
@@ -29,7 +29,7 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 		t.Fatal(got)
 	}
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if fixtureProjectsGet(t, st, p.ID).Revision != "" || len(fixtureRevisionsList(t, st)) != 0 {
+		if fixtureProjectsGet(t, st, p.ID).Revision != "" || len(fixtureRevisionsList(t, st, p.ID)) != 0 {
 			t.Error("revoked job published")
 		}
 		if costOf(fixtureJobsGet(t, st, j.ID).Run.CostCents) != 123 {

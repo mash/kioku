@@ -48,8 +48,8 @@ func TestInboxProvenanceValidationMatchesMCP(t *testing.T) {
 		})
 	}
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureInboxList(t, st)) != 0 || len(fixtureJobsList(t, st)) != 0 {
-			t.Fatal("invalid sources changed state", fixtureInboxList(t, st))
+		if len(fixtureInboxList(t, st, p.ID)) != 0 || len(fixtureJobsList(t, st, p.ID)) != 0 {
+			t.Fatal("invalid sources changed state", fixtureInboxList(t, st, p.ID))
 		}
 		return nil
 	}); err != nil {

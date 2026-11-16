@@ -83,7 +83,7 @@ func TestWikiPromptGeneration(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-				for _, item := range fixtureInboxList(t, st) {
+				for _, item := range fixtureInboxList(t, st, p.ID) {
 					if item.ProjectID == p.ID {
 						t.Error("published inbox was not consumed")
 					}

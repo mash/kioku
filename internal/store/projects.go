@@ -41,22 +41,6 @@ func (q *Queries) ReleaseInbox(project, run string) error {
 	return err
 }
 
-func (q *Queries) ProjectIDs() ([]string, error) {
-	rows, err := q.rows("SELECT id FROM projects ORDER BY id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
 func (q *Queries) ClearProjectContent(project string) error {
 	for _, table := range []string{"wiki_files", "views", "inbox"} {
 		if _, err := q.exec("DELETE FROM "+table+" WHERE project_id=?", project); err != nil {

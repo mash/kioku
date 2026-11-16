@@ -84,13 +84,10 @@ func TestBrowserLoginPrunesExpiredSessionsAtCapacity(t *testing.T) {
 	if resp := finishLoopbackOAuth(t, f, req); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expired sessions prevent browser login: %d", resp.StatusCode)
 	}
-	fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
-		rows, err := q.KindSessions("web")
-		if len(rows) != 1 {
-			t.Fatalf("expired web sessions remain: %d", len(rows))
-		}
-		return err
-	}))
+	if n := sessionKindCount(t, f, "web"); n != 1 {
+		t.Fatalf("expired web sessions remain: %d", n)
+	}
+
 }
 
 func TestConnectorProjectSQLFailureIsNotNotFound(t *testing.T) {

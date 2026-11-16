@@ -38,8 +38,8 @@ func TestCreateAgentRouteRemoved(t *testing.T) {
 		t.Fatal("create agent route still answers", c)
 	}
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if len(fixtureAgentTokensList(t, st)) != 0 {
-			t.Error("agent credential minted", len(fixtureAgentTokensList(t, st)))
+		if len(fixtureAgentTokensList(t, st, p.ID)) != 0 {
+			t.Error("agent credential minted", len(fixtureAgentTokensList(t, st, p.ID)))
 		}
 		return nil
 	})
@@ -88,7 +88,7 @@ func TestAgentCannotCrossProjectsOrAdministerAccount(t *testing.T) {
 		t.Fatal("agent list exposed credential")
 	}
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if fixtureAgentTokensGet(t, st, id).TokenHash == token || fixtureAgentTokensGet(t, st, id).TokenHash == "" {
+		if fixtureAgentTokensGet(t, st, a.ID, id).TokenHash == token || fixtureAgentTokensGet(t, st, a.ID, id).TokenHash == "" {
 			t.Error("plaintext token persistence")
 		}
 		return nil
@@ -168,7 +168,7 @@ func TestMembershipRemovalPermanentlyRevokesDelegatedTokens(t *testing.T) {
 		t.Fatal("rejoining resurrected delegated token", c)
 	}
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		v := fixtureAgentTokensGet(t, st, id)
+		v := fixtureAgentTokensGet(t, st, p.ID, id)
 		v.RevokedAt = time.Time{}
 		v.Expires = time.Now().Add(-time.Minute)
 		fixtureAgentTokensPut(t, st, id, v)
@@ -193,7 +193,7 @@ func TestRevokingAgentDuringRequestCannotBroadenItsIdentity(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	wrapped := f.s.wrap(func(w http.ResponseWriter, r *http.Request, uid string) error {
 		if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-			token := fixtureAgentTokensGet(t, st, id)
+			token := fixtureAgentTokensGet(t, st, p.ID, id)
 			token.RevokedAt = time.Now().UTC()
 			fixtureAgentTokensPut(t, st, id, token)
 			return nil

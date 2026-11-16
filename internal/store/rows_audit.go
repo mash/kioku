@@ -2,9 +2,6 @@ package store
 
 const auditColumns = "id,project_id,created,data"
 
-func (q *Queries) Audit(id string) (AuditRow, error) {
-	return scanAudit(q.row("SELECT "+auditColumns+" FROM audit WHERE id=?", id))
-}
 func (q *Queries) PutAudit(v AuditRow) error {
 	raw, err := marshalData(v.Data)
 	if err != nil {

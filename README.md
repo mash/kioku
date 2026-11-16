@@ -252,7 +252,6 @@ Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `sour
 KIOKU_DATA/
   catalog.sqlite       # アカウント・組織・権限・プロジェクト設定
   encryption.key       # 暗号鍵の環境変数が未設定なら初回生成、0600
-  admin.sock           # オペレーター専用、0600
   objects/projects/    # KIOKU_STORAGE=local の場合のみ
 ```
 
@@ -287,21 +286,13 @@ Wikiは一組だけを保持し、生成中に変更ファイルを順次上書�
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
-## 旧データ・オンラインバックアップ
+## 旧データ・バックアップ
 
 旧 content schema 1 を検出すると起動を拒否します。旧プロジェクト内容は、運用者がサーバーを停止して手作業で削除する必要があります。更新後は利用者へ put し直しを依頼してください。
 
-稼働中のサーバへオンラインバックアップを依頼できます。
+カタログ（`catalog.sqlite`）は Litestream などで継続的に複製します。手元で一回だけ写しを取るときは、稼働中でも `sqlite3 /var/lib/kioku/catalog.sqlite "VACUUM INTO '/var/backups/kioku/catalog.sqlite'"` を使えます。本文はS3に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとS3接続設定は別途復元してください。自動生成した `encryption.key` もSQLiteの写しには含まれないため、別途保管・復元が必要です。
 
-```bash
-kiokud --data /var/lib/kioku --online-backup /var/backups/kioku/config-2026-10-31
-# 停止時の設定バックアップも可能
-kiokud --data /var/lib/kioku --backup /var/backups/kioku/offline-2026-10-31
-```
-
-バックアップは設定・アカウントのSQLiteのみです。本文やジョブはS3に残り、過去のSQLiteを復元しても新しいプロジェクトデータを巻き戻しません。暗号化キーとS3接続設定は別途復元してください。自動生成した `encryption.key` もSQLiteバックアップには含まれないため、別途保管・復元が必要です。保存先はサービスアカウントが書き込める新規ディレクトリにします。バックアップの定期実行・暗号化・S3転送はまだ構成していません。
-
-詳しい保存境界、障害復旧、オンラインバックアップは [WORKERS.md](docs/WORKERS.md) を参照してください。
+詳しい保存境界と障害復旧は [WORKERS.md](docs/WORKERS.md) を参照してください。
 
 ## 運用・削除・接続確認
 

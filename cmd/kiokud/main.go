@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -37,9 +36,6 @@ func run() error {
 	addr := flag.String("addr", env("KIOKU_ADDR", "127.0.0.1:8080"), "listen address")
 	storage := flag.String("storage", env("KIOKU_STORAGE", string(blob.BackendLocal)), "object storage backend: local or s3")
 	dir := flag.String("data", env("KIOKU_DATA", "./data"), "persistent metadata directory")
-	onlineBackup := flag.String("online-backup", "", "request an online configuration backup from the running server")
-	adminSocket := flag.String("admin-socket", "", "operator Unix socket (default DATA/admin.sock)")
-	backup := flag.String("backup", "", "write a configuration-only SQLite backup, then exit (offline operator command)")
 	maxBytes := flag.Int64("max-wiki-bytes", 64<<20, "maximum published wiki bytes per project")
 	maxJobs := flag.Int("max-jobs", 20, "maximum queued/running generation jobs per project")
 	generateDebounce := flag.Duration("generate-debounce", 10*time.Second, "time from the last put to automatic generation")
@@ -64,20 +60,6 @@ func run() error {
 	agentVersion, err := strconv.ParseInt(env("KIOKU_MA_AGENT_VERSION", "0"), 10, 64)
 	if err != nil || agentVersion < 0 {
 		return errors.New("KIOKU_MA_AGENT_VERSION must be a nonnegative integer")
-	}
-	if *adminSocket == "" {
-		*adminSocket = filepath.Join(*dir, "admin.sock")
-	}
-	if *onlineBackup != "" {
-		return requestOnlineBackup(*adminSocket, *onlineBackup)
-	}
-	if *backup != "" {
-		stateStore, err := store.OpenBackupDatabase(*dir)
-		if err != nil {
-			return err
-		}
-		defer stateStore.Close()
-		return stateStore.Backup(*backup)
 	}
 	if *maxBytes < 1 || *maxJobs < 1 || *rate < 1 || *generateDebounce < 0 {
 		return errors.New("limits must be positive; generate-debounce must not be negative")
@@ -152,11 +134,6 @@ func run() error {
 	if err = app.Prepare(); err != nil {
 		return err
 	}
-	stopAdmin, err := serveAdmin(ctx, *adminSocket, stateStore)
-	if err != nil {
-		return err
-	}
-	defer stopAdmin()
 	workerDone := make(chan error, 1)
 	go func() {
 		err := app.RunWorker(ctx)

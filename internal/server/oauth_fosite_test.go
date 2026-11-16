@@ -42,9 +42,7 @@ func TestConnectorFositePersistenceAndNoBearerSecrets(t *testing.T) {
 	// a new server and cipher. Neither provider nor key derivation may rely on RAM.
 	// E1: copy a consistent SQL snapshot, then open it with a fresh server.
 	dir := filepath.Join(t.TempDir(), "backup")
-	if err := f.stateStore.Backup(dir); err != nil {
-		t.Fatal(err)
-	}
+	fixtureSnapshot(t, f, dir)
 	stateStore, err := openFixtureDatabase(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -200,19 +200,11 @@ Before dequeuing new jobs after restart, the worker runs reconciliation once. Th
 
 An exec run cannot be rediscovered after restart. Keep the same runner configuration to reconcile it and remove its leftover working directory under the same data directory.
 
-## Configuration-only online backup
+## Catalog backup
 
-Run an operator backup while the service remains available:
+kiokud has no backup command. Continuous replication of `catalog.sqlite`, such as Litestream to a separate bucket, is operator work outside this repository. For a one-off copy while the service runs, use `sqlite3 DATA/catalog.sqlite "VACUUM INTO '/new/path/catalog.sqlite'"`.
 
-```bash
-kiokud --data /var/lib/kioku --online-backup /var/backups/kioku/config-2026-10-31
-```
-
-The running process exposes only `DATA/admin.sock` (0600), configurable with `--admin-socket`. No public API can download a deployment backup. The destination must be a new absolute directory writable by the service account. Only one backup runs at a time. A consistent account/config snapshot is captured under the store lock; the standalone SQLite file is built afterwards without holding that lock across backup I/O. Backup files are private (0600). `backup.json` is written last with the capture timestamp, schema version and SHA-256 of the standalone SQLite file; an incomplete directory without it is not a completed backup.
-
-The older `--backup DIR` operator command works with a stopped server and opens configuration only; it does not require S3 availability. It refuses unfinished transactions until the configured server completes recovery.
-
-These commands create local, unencrypted configuration backups. Continuous replication of the catalog, such as Litestream to a separate bucket, credential provisioning and restore drills are operator work outside this repository. Keep the application encryption key and backup recovery credentials separately. If `KIOKU_ENCRYPTION_KEY` is unset, the server creates `DATA/encryption.key` (0600) once and reuses it; this file is not included in SQLite backups and must be backed up and restored separately. An explicit environment key takes precedence and is not copied to disk. Restore SQLite with the same S3 endpoint/access and stored project bucket mapping; the newest project content/checkpoints load from S3, not the older backup. Old working cache files can be discarded. In local-development mode without S3, `DATA/objects/` is the durable content store and must be preserved separately. Account recovery still has the configuration backup's recovery point.
+Credential provisioning and restore drills are operator work outside this repository. Keep the application encryption key and backup recovery credentials separately. If `KIOKU_ENCRYPTION_KEY` is unset, the server creates `DATA/encryption.key` (0600) once and reuses it; this file is not included in SQLite backups and must be backed up and restored separately. An explicit environment key takes precedence and is not copied to disk. Restore SQLite with the same S3 endpoint/access and stored project bucket mapping; the newest project content/checkpoints load from S3, not the older backup. Old working cache files can be discarded. In local-development mode without S3, `DATA/objects/` is the durable content store and must be preserved separately. Account recovery still has the configuration backup's recovery point.
 
 SQLite backups do not restore old wiki page contents. Published source pages and any independent object-store backup policy are separate. There is no cross-project content snapshot or page-history restore promise.
 

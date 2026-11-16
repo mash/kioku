@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -65,31 +64,7 @@ func TestRuntimeDoesNotReadLegacyProjectContent(t *testing.T) {
 		t.Fatal("normal open touched objects")
 	}
 }
-func TestBackupDoesNotNeedContentStorage(t *testing.T) {
-	d := newCatalog(t)
-	catalogWrite(t, d, func(q *Queries) error {
-		if e := q.PutProject(ProjectRow{ID: "p", Slug: "p"}); e != nil {
-			return e
-		}
-		return q.PutInbox(InboxRow{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a"})
-	})
-	dest := filepath.Join(t.TempDir(), "backup")
-	if e := d.Backup(dest); e != nil {
-		t.Fatal(e)
-	}
-	restored, e := OpenBackupDatabase(dest)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer restored.Close()
-	if e = restored.Read(t.Context(), func(q *Queries) error { _, e := q.Inbox("i"); return e }); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = os.Stat(filepath.Join(dest, "objects")); !os.IsNotExist(e) {
-		t.Fatal("backup included objects", e)
-	}
-}
-func TestAgentCredentialMetadataSurvivesRestartAndBackup(t *testing.T) {
+func TestAgentCredentialMetadataSurvivesRestart(t *testing.T) {
 	d := newCatalog(t)
 	now := time.Now().UnixMilli()
 	raw, e := json.Marshal(AgentSessionData{SessionRoleData: SessionRoleData{AgentID: pointer("delegation"), Role: pointer("read")}, Name: "Cloud"})
@@ -98,27 +73,21 @@ func TestAgentCredentialMetadataSurvivesRestartAndBackup(t *testing.T) {
 	}
 	record := SessionRow{ID: auth.Hash("synthetic-token"), Kind: "agent", Status: "active", ProjectID: pointer("project"), UserID: "user", Created: now, Expires: now + 3600000, Data: raw}
 	catalogWrite(t, d, func(q *Queries) error { return q.PutSession(record) })
-	backup := filepath.Join(t.TempDir(), "backup")
-	if e = d.Backup(backup); e != nil {
-		t.Fatal(e)
-	}
 	path := d.path
 	d.Close()
-	for _, file := range []string{path, filepath.Join(backup, "catalog.sqlite")} {
-		restored, e := OpenDatabase(file, false)
-		if e != nil {
-			t.Fatal(e)
+	restored, e := OpenDatabase(path, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer restored.Close()
+	if e = restored.Read(t.Context(), func(q *Queries) error {
+		row, e := q.Session(record.ID)
+		if !reflect.DeepEqual(record, row) {
+			t.Fatal(row, record)
 		}
-		if e = restored.Read(t.Context(), func(q *Queries) error {
-			row, e := q.Session(record.ID)
-			if !reflect.DeepEqual(record, row) {
-				t.Fatal(row, record)
-			}
-			return e
-		}); e != nil {
-			t.Fatal(e)
-		}
-		restored.Close()
+		return e
+	}); e != nil {
+		t.Fatal(e)
 	}
 }
 func TestBusyProjectHistoryHasNoArchiveReader(t *testing.T) {

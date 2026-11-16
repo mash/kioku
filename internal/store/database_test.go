@@ -450,7 +450,7 @@ func TestCleanupDefaultAndUnconsumedChildConstraints(t *testing.T) {
 	})
 }
 
-func TestReadinessUsesVersionForStartupHealthAndBackup(t *testing.T) {
+func TestReadinessUsesVersionForStartupAndHealth(t *testing.T) {
 	for _, version := range []int{0, 2, 3, 4} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			d := newCatalog(t)
@@ -463,9 +463,6 @@ func TestReadinessUsesVersionForStartupHealthAndBackup(t *testing.T) {
 			}
 			if err := d.Read(t.Context(), func(q *Queries) error { return q.Healthy() }); (err == nil) != want {
 				t.Fatal("health", err)
-			}
-			if err := d.Backup(filepath.Join(t.TempDir(), "backup")); (err == nil) != want {
-				t.Fatal("backup", err)
 			}
 		})
 	}

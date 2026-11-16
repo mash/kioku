@@ -89,24 +89,6 @@ func OpenStorage(ctx context.Context, dir string, objects blob.Store, loadKey fu
 	owned = true
 	return db, cipher, nil
 }
-func OpenBackupDatabase(dir string) (*Database, error) {
-	lock, err := acquireCatalogLock(dir)
-	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, "catalog.sqlite")
-	if err = validateCatalogHeader(path); err != nil {
-		lock.Close()
-		return nil, err
-	}
-	db, err := OpenDatabase(path, false)
-	if err != nil {
-		lock.Close()
-		return nil, err
-	}
-	db.lock = lock
-	return db, nil
-}
 func acquireCatalogLock(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err

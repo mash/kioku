@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -347,24 +346,6 @@ func TestEveryBlobCommitBoundarySurvivesRestart(t *testing.T) {
 					t.Fatal("project deletion removed session", err)
 				}
 			}
-			// The same catalog references remain valid when restored against its
-			// matching immutable objects. Backup does not supply those objects.
-			dest := filepath.Join(root, "backup")
-			if err := db.Backup(dest); err != nil {
-				t.Fatal(err)
-			}
-			restored, _, err := store.OpenStorage(t.Context(), dest, o.objects, func(bool) (*auth.Cipher, error) {
-				return auth.NewCipher(base64.StdEncoding.EncodeToString(make([]byte, 32)))
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			expectedRefs := assertStoredReferences(t, o)
-			restoredOps := newStorageOperations(restored, o.objects, o.config)
-			if got := assertStoredReferences(t, restoredOps); !reflect.DeepEqual(got, expectedRefs) {
-				t.Fatal("backup lost content references", got, expectedRefs)
-			}
-			restored.Close()
 		})
 	}
 }

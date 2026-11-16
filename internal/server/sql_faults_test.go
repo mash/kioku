@@ -2,6 +2,8 @@ package server
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -39,4 +41,11 @@ func fixtureSQLDatabase(t testing.TB, f *fixture) *sql.DB {
 	fixtureCheck(t, err)
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+// fixtureSnapshot copies the fixture catalog to dir/catalog.sqlite with VACUUM INTO.
+func fixtureSnapshot(t testing.TB, f *fixture, dir string) {
+	t.Helper()
+	fixtureCheck(t, os.MkdirAll(dir, 0700))
+	fixtureSQL(t, f, "VACUUM INTO '"+filepath.Join(dir, "catalog.sqlite")+"'")
 }

@@ -937,3 +937,7 @@ func fixtureOversizedWiki(t testing.TB, f *fixture, q *store.Queries, pid, revis
 	fixtureCheck(t, f.s.Blobs.Put(context.Background(), key, body))
 	fixtureRevisionsPut(t, q, revision, fixtureRevision{ID: revision, ProjectID: pid, Files: map[string]blob.Key{"wiki/index.md": key}, FileHashes: map[string]string{"wiki/index.md": string(hash)}, FileBytes: map[string]int64{"wiki/index.md": int64(len(body))}})
 }
+
+func fixtureInboxKey(i model.InboxItem) blob.Key {
+	return sqlInboxKey(store.InboxRow{ID: i.ID, ProjectID: i.ProjectID})
+}

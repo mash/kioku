@@ -118,7 +118,7 @@ func TestInboxOrphanGC(t *testing.T) {
 	token := f.login("owner@example.com")
 	p := securityProject(t, f, token)
 	item := model.InboxItem{ID: "orphan", ProjectID: p.ID}
-	if err := f.s.Blobs.Put(t.Context(), item.BodyKey(), []byte("body")); err != nil {
+	if err := f.s.Blobs.Put(t.Context(), fixtureInboxKey(item), []byte("body")); err != nil {
 		t.Fatal(err)
 	}
 	n, err := f.s.storage.collectGarbage(t.Context(), p.ID)

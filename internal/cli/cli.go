@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mash/kioku/internal/buildinfo"
-	"github.com/mash/kioku/internal/config"
 )
 
 type App struct {
@@ -59,7 +58,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	global.SetOutput(errOut)
 	dir := global.String("C", ".", "working directory (before command)")
 	project := global.String("n", "", "project namespace ORG/PROJECT (before command)")
-	server := global.String("server", config.Env("KIOKU_SERVER", ""), "server origin (before command)")
+	server := global.String("server", os.Getenv("KIOKU_SERVER"), "server origin (before command)")
 	if err = global.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			_, err = fmt.Fprint(out, help)

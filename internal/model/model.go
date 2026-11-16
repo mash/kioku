@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
-
-	"github.com/mash/kioku/internal/blob"
 )
 
 type Organization struct {
@@ -99,10 +97,6 @@ type InboxItem struct {
 	Submitter string    `json:"submitter"`
 	Created   time.Time `json:"created"`
 	RunID     string    `json:"run_id,omitempty"`
-}
-
-func (i InboxItem) BodyKey() blob.Key {
-	return blob.Key("projects/" + i.ProjectID + "/.kioku/inbox/" + i.ID + ".md")
 }
 
 // SyncManifest describes the current published tree, including partial publication.

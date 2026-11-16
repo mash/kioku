@@ -109,7 +109,7 @@ func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 		if item.SourceURL != "https://example.com/a" || item.Remove || item.Submitter == "forged" {
 			t.Fatalf("stored item: %+v", item)
 		}
-		body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
+		body, err := f.s.Blobs.Get(t.Context(), fixtureInboxKey(item))
 		if err != nil || string(body) != content {
 			t.Fatalf("body: %q, %v", body, err)
 		}

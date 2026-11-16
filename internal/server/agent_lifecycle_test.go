@@ -133,7 +133,7 @@ func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob, title s
 			continue
 		}
 		if !item.Remove {
-			body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
+			body, err := f.s.Blobs.Get(t.Context(), fixtureInboxKey(item))
 			if err != nil {
 				t.Fatal(err)
 			}

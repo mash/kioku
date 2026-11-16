@@ -17,7 +17,6 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/config"
 	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
@@ -100,7 +99,7 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), GenerateDebounce: 10 * time.Second, BaseURL: base, Providers: providers, MetricsToken: config.Env("KIOKU_METRICS_TOKEN", "")}, stateStore, objects, cipher)
+	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), GenerateDebounce: 10 * time.Second, BaseURL: base, Providers: providers, MetricsToken: os.Getenv("KIOKU_METRICS_TOKEN")}, stateStore, objects, cipher)
 	set, err := runners.Load(runners.Config{Prompts: rendered, Type: selection, Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base}, func(jobID string) { app.ReconcileJob(ctx, jobID) })
 	if err != nil {
 		return err
@@ -150,6 +149,11 @@ func run() error {
 	}
 	return workerErr
 }
+
+// env returns a nonempty environment setting or the fallback.
 func env(key, fallback string) string {
-	return config.Env(key, fallback)
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

@@ -173,9 +173,9 @@ func TestMissingInboxBodyFailsBeforeStartingRun(t *testing.T) {
 	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	item := putFile(t, f, token, p.ID, "source.md", "Evidence")
-	body, err := f.s.Blobs.Get(t.Context(), item.BodyKey())
+	body, err := f.s.Blobs.Get(t.Context(), fixtureInboxKey(item))
 	fixtureCheck(t, err)
-	fixtureCheck(t, f.s.Blobs.Delete(t.Context(), item.BodyKey()))
+	fixtureCheck(t, f.s.Blobs.Delete(t.Context(), fixtureInboxKey(item)))
 	parent := managedJob(t, f, token, p.ID, false)
 	fixtureCheck(t, f.s.startAgentJob(t.Context(), fixtureRow(parent)))
 	parent = storedJob(t, f, parent.ID)
@@ -197,7 +197,7 @@ func TestMissingInboxBodyFailsBeforeStartingRun(t *testing.T) {
 			t.Fatal("provider started before input ready")
 		}
 	}
-	fixtureCheck(t, f.s.Blobs.Put(t.Context(), item.BodyKey(), body))
+	fixtureCheck(t, f.s.Blobs.Put(t.Context(), fixtureInboxKey(item), body))
 	retry := startManaged(t, f, token, p.ID, false)
 	if retry.Run == nil || len(retry.Run.InboxIDs) != 1 || retry.Run.InboxIDs[0] != item.ID {
 		t.Fatal(retry)

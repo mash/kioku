@@ -24,7 +24,7 @@ func TestOpenAISelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := r.(*openairunner.FileRunner); !ok {
+	if _, ok := r.(*openairunner.Runner); !ok {
 		t.Fatalf("%T", r)
 	}
 	for _, change := range []func(*Config){func(c *Config) { c.OpenAIAPIKey = "" }, func(c *Config) { c.OpenAIModel = "" }} {

@@ -80,7 +80,7 @@ func (s *Set) prepareRunner(onExit func(string, string)) error {
 		if strings.TrimSpace(s.config.OpenAIAPIKey) == "" || strings.TrimSpace(s.config.OpenAIModel) == "" {
 			return errors.New("KIOKU_RUNNER=openai requires OPENAI_API_KEY and KIOKU_OPENAI_MODEL")
 		}
-		s.openaiRunner = openairunner.NewFiles(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: s.config.Prompts.FileSystem()})
+		s.openaiRunner = openairunner.New(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: s.config.Prompts.FileSystem()})
 	case "exec":
 		model := s.config.Prompts.Model()
 		if model.ID == "" {

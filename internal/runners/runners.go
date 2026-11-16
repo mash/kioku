@@ -39,7 +39,7 @@ type Config struct {
 type Set struct {
 	config       Config
 	execRunner   *execrunner.Runner
-	openaiRunner *openairunner.FileRunner
+	openaiRunner *openairunner.Runner
 }
 
 func Load(c Config, onExit func(string, string)) (*Set, error) {

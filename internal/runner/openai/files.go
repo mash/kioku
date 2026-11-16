@@ -14,21 +14,17 @@ import (
 	"github.com/mash/kioku/internal/runner"
 )
 
-type FileRunner struct{ *Runner }
-
-func NewFiles(c Config) *FileRunner { return &FileRunner{Runner: New(c)} }
-
-func (*FileRunner) Provider() string { return "openai" }
+func (*Runner) Provider() string { return "openai" }
 
 const openAIOutputPath = "/workspace/outputs/" + runner.OutputArchiveName
 
-func (*FileRunner) FilePaths() (string, string) { return "/workspace/input.tar.gz", openAIOutputPath }
+func (*Runner) FilePaths() (string, string) { return "/workspace/input.tar.gz", openAIOutputPath }
 
 func (s resource) offline() bool {
 	return s.Environment.Type == "openai_hosted" && s.Environment.Network.Access == "disabled" && len(s.VaultIDs) == 0
 }
 
-func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
+func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 	system := spec.System
 	if system == "" {
 		system = r.config.Prompt
@@ -81,7 +77,7 @@ func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.Run
 		})
 }
 
-func (r *FileRunner) uploadInput(ctx context.Context, name string, data []byte) (string, error) {
+func (r *Runner) uploadInput(ctx context.Context, name string, data []byte) (string, error) {
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	for name, value := range map[string]string{
@@ -121,7 +117,7 @@ type fileResource struct {
 	Bytes    int64  `json:"size_bytes"`
 }
 
-func (r *FileRunner) listFiles(ctx context.Context, path string, visit func(fileResource) error) error {
+func (r *Runner) listFiles(ctx context.Context, path string, visit func(fileResource) error) error {
 	cursor := ""
 	seen := map[string]bool{}
 	for {
@@ -153,7 +149,7 @@ func (r *FileRunner) listFiles(ctx context.Context, path string, visit func(file
 	}
 }
 
-func (r *FileRunner) CollectOutput(ctx context.Context, a runner.Attempt, status runner.Status, limit int64) ([]byte, error) {
+func (r *Runner) CollectOutput(ctx context.Context, a runner.Attempt, status runner.Status, limit int64) ([]byte, error) {
 	if a.Run.ID == "" || status.Run.ID != a.Run.ID || status.TurnID == "" || status.State != runner.StateStopped || status.Reason != "" {
 		return nil, errors.New("OpenAI output requires a matching completed turn")
 	}
@@ -186,10 +182,7 @@ func (r *FileRunner) CollectOutput(ctx context.Context, a runner.Attempt, status
 	return runner.ReadOutputArchive(res.Body, limit)
 }
 
-func (r *FileRunner) Cleanup(ctx context.Context, a runner.Attempt) error {
-	if !a.Run.UsesProviderFiles {
-		return r.Runner.Cleanup(ctx, a)
-	}
+func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	if a.Run.Resources["upload_started"] != "true" && a.Run.ID == "" {
 		return nil
 	}
@@ -242,7 +235,7 @@ func (r *FileRunner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	return nil
 }
 
-func (r *FileRunner) delete(ctx context.Context, path string) error {
+func (r *Runner) delete(ctx context.Context, path string) error {
 	err := r.request(ctx, "DELETE", path, nil, nil)
 	if errors.Is(err, apiError(404)) {
 		return nil

@@ -75,7 +75,7 @@ func TestFileSessionUsesOnlyCompletedTurnArtifacts(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	r := NewFiles(Config{BaseURL: server.URL, HTTPClient: server.Client(), APIKey: "fake", Model: "test", Prompt: "test"})
+	r := New(Config{BaseURL: server.URL, HTTPClient: server.Client(), APIKey: "fake", Model: "test", Prompt: "test"})
 	var saved []runner.RunRef
 	ref, err := r.Start(t.Context(), runner.RunSpec{Key: key, BudgetCents: 50, FirstMessage: "test",
 		InputArchive: []byte("input"), SaveRef: func(ref runner.RunRef) error { saved = append(saved, ref); return nil }})
@@ -119,7 +119,7 @@ func TestFileSessionDoesNotStartWithoutNetworkConfirmation(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	r := NewFiles(Config{BaseURL: server.URL, HTTPClient: server.Client(), APIKey: "fake", Model: "test", Prompt: "test"})
+	r := New(Config{BaseURL: server.URL, HTTPClient: server.Client(), APIKey: "fake", Model: "test", Prompt: "test"})
 	ref, err := r.Start(t.Context(), runner.RunSpec{Key: key, BudgetCents: 50, FirstMessage: "test",
 		InputArchive: []byte("input"), SaveRef: func(runner.RunRef) error { return nil }})
 	if err == nil || errors.Is(err, runner.ErrTemporary) || ref.ID != "session" {

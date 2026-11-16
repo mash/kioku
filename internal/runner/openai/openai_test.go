@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,7 +13,7 @@ import (
 )
 
 func spec() runner.RunSpec {
-	return runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, InputURL: "https://kioku.test/input", OutputURL: "https://kioku.test/output", Token: "job-secret", FirstMessage: "generate wiki", BudgetCents: 50, Deadline: time.Now().Add(time.Hour)}
+	return runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, InputArchive: []byte("input"), SaveRef: func(runner.RunRef) error { return nil }, FirstMessage: "generate wiki", BudgetCents: 50, Deadline: time.Now().Add(time.Hour)}
 }
 func setup(t *testing.T, h http.HandlerFunc) *Runner {
 	t.Helper()
@@ -22,80 +21,8 @@ func setup(t *testing.T, h http.HandlerFunc) *Runner {
 	t.Cleanup(s.Close)
 	return New(Config{APIKey: "api-secret", Model: "test-model", Prompt: "wiki instructions", BaseURL: s.URL})
 }
-func TestLifecycle(t *testing.T) {
-	var calls []string
-	r := setup(t, func(w http.ResponseWriter, q *http.Request) {
-		calls = append(calls, q.Method+" "+q.URL.Path)
-		if q.Header.Get("Authorization") != "Bearer api-secret" || q.Header.Get("OpenAI-Beta") != "agents=v1" {
-			t.Error("missing authentication")
-		}
-		switch q.Method + " " + q.URL.Path {
-		case "POST /vaults":
-			fmt.Fprint(w, `{"id":"vault"}`)
-		case "POST /vaults/vault/credentials":
-			// Inspect wire names, not Go field inference.
-			var raw map[string]any
-			json.NewDecoder(q.Body).Decode(&raw)
-			auth := raw["auth"].(map[string]any)
-			if auth["secret_name"] != "KIOKU_JOB_TOKEN" || auth["secret_value"] != "job-secret" || auth["type"] != "environment_variable" {
-				t.Error(raw)
-			}
-			fmt.Fprint(w, `{"id":"credential"}`)
-		case "POST /agents/sessions":
-			var b map[string]any
-			json.NewDecoder(q.Body).Decode(&b)
-			if b["spend_control"].(map[string]any)["limit"] != float64(50) {
-				t.Error(b)
-			}
-			env := b["environment"].(map[string]any)
-			if _, overridesOperator := env["network"]; overridesOperator {
-				t.Error(b)
-			}
-			encoded, _ := json.Marshal(b)
-			if strings.Contains(string(encoded), "job-secret") || strings.Contains(string(encoded), "api-secret") {
-				t.Error("secret in session")
-			}
-			fmt.Fprint(w, `{"id":"session"}`)
-		case "GET /agents/sessions/session":
-			fmt.Fprint(w, `{"id":"session","status":"idle","vault_ids":["vault"],"spend_control":{"consumed":42,"limit":50}}`)
-		case "GET /agents/sessions/session/turns":
-			fmt.Fprint(w, `{"data":[{"status":"completed"}]}`)
-		case "POST /agents/sessions/session/events":
-			var b map[string]any
-			json.NewDecoder(q.Body).Decode(&b)
-			if b["events"].([]any)[0].(map[string]any)["type"] != "agent.session.input.cancel" {
-				t.Error(b)
-			}
-			w.WriteHeader(204)
-		case "GET /agents/sessions", "GET /vaults":
-			fmt.Fprint(w, `{"data":[],"has_more":false}`)
-		case "DELETE /agents/sessions/session", "DELETE /vaults/vault":
-			w.WriteHeader(204)
-		default:
-			t.Errorf("unexpected %s %s", q.Method, q.URL)
-			w.WriteHeader(500)
-		}
-	})
-	ref, err := r.Start(t.Context(), spec())
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := runner.Attempt{Key: spec().Key, Run: ref}
-	status, err := r.Inspect(t.Context(), a)
-	if err != nil || status.State != runner.StateStopped || status.Usage.CostCents != nil {
-		t.Fatal(status, err)
-	}
-	if err = r.Stop(t.Context(), a); err != nil {
-		t.Fatal(err)
-	}
-	if err = r.Cleanup(t.Context(), a); err != nil {
-		t.Fatal(err)
-	}
-	if calls[len(calls)-1] != "DELETE /vaults/vault" {
-		t.Fatal(calls)
-	}
-}
 func TestInspectDoesNotTreatIdleAsSuccess(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"", "completed", "failed", "cancelled", "in_progress"} {
 		t.Run(state, func(t *testing.T) {
 			r := setup(t, func(w http.ResponseWriter, q *http.Request) {
@@ -103,13 +30,13 @@ func TestInspectDoesNotTreatIdleAsSuccess(t *testing.T) {
 					if state == "" {
 						fmt.Fprint(w, `{"data":[]}`)
 					} else {
-						fmt.Fprintf(w, `{"data":[{"status":%q}]}`, state)
+						fmt.Fprintf(w, `{"data":[{"id":"turn","status":%q}]}`, state)
 					}
 				} else {
-					fmt.Fprint(w, `{"id":"session","status":"idle"}`)
+					fmt.Fprint(w, `{"id":"session","status":"idle","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"},"environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`)
 				}
 			})
-			got, err := r.Inspect(t.Context(), runner.Attempt{Run: runner.RunRef{ID: "session"}})
+			got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,32 +50,8 @@ func TestInspectDoesNotTreatIdleAsSuccess(t *testing.T) {
 		})
 	}
 }
-func TestDiscoveryAndCleanupPartialStarts(t *testing.T) {
-	var deleted []string
-	r := setup(t, func(w http.ResponseWriter, q *http.Request) {
-		if q.Method == "DELETE" {
-			deleted = append(deleted, q.URL.Path)
-			w.WriteHeader(404)
-			return
-		}
-		if q.URL.Path == "/agents/sessions" {
-			fmt.Fprint(w, `{"data":[]}`)
-			return
-		}
-		if q.URL.Query().Get("after") == "" {
-			fmt.Fprint(w, `{"data":[{"id":"foreign","metadata":{"kioku_job_id":"job","kioku_attempt_id":"other"}}],"has_more":true,"last_id":"foreign"}`)
-			return
-		}
-		fmt.Fprint(w, `{"data":[{"id":"orphan","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"}}]}`)
-	})
-	if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec().Key}); err != nil {
-		t.Fatal(err)
-	}
-	if len(deleted) != 1 || deleted[0] != "/vaults/orphan" {
-		t.Fatal(deleted)
-	}
-}
 func TestErrorsAreRedactedAndNotRetried(t *testing.T) {
+	t.Parallel()
 	for _, code := range []int{400, 401, 409, 429, 503} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			calls := 0
@@ -168,6 +71,7 @@ func TestErrorsAreRedactedAndNotRetried(t *testing.T) {
 	}
 }
 func TestRedirectDoesNotForwardCredentials(t *testing.T) {
+	t.Parallel()
 	hit := false
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) { hit = true }))
 	defer target.Close()
@@ -176,19 +80,10 @@ func TestRedirectDoesNotForwardCredentials(t *testing.T) {
 		t.Fatal(err, hit)
 	}
 }
-func TestInvalidJobDoesNotCallProvider(t *testing.T) {
-	r := setup(t, func(w http.ResponseWriter, q *http.Request) { t.Error("unexpected provider call") })
-	for _, u := range []string{"http://kioku.test/input", "https://user:pass@kioku.test/input", "https://kioku.test:8080/input", "https://other.test/input"} {
-		s := spec()
-		s.InputURL = u
-		if _, err := r.Start(t.Context(), s); err == nil {
-			t.Fatal(u)
-		}
-	}
-}
 func TestCleanupWaitsForSessionDeletion(t *testing.T) {
+	t.Parallel()
 	r := setup(t, func(w http.ResponseWriter, q *http.Request) {
-		if q.URL.Path == "/agents/sessions" {
+		if q.URL.Path == "/agents/sessions/session/artifacts" {
 			fmt.Fprint(w, `{"data":[]}`)
 			return
 		}
@@ -196,33 +91,33 @@ func TestCleanupWaitsForSessionDeletion(t *testing.T) {
 			w.WriteHeader(409)
 			return
 		}
-		t.Error("must not delete vault while session deletion is pending")
+		t.Error("must not delete input while session deletion is pending")
 		w.WriteHeader(500)
 	})
-	err := r.Cleanup(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session", Resources: map[string]string{"vault_id": "vault"}}})
+	err := r.Cleanup(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session", Resources: map[string]string{"input_file_id": "input"}}})
 	if !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
 }
 
-// Cleanup may delete the session successfully before vault deletion fails.
-// A later inspection must permit reconciliation to retry vault cleanup.
+// Cleanup may delete the session successfully before input deletion fails.
+// A later inspection must permit reconciliation to retry input cleanup.
 func TestDeletedSessionAllowsCleanupRetry(t *testing.T) {
+	t.Parallel()
 	r := setup(t, func(w http.ResponseWriter, q *http.Request) { w.WriteHeader(404) })
-	got, err := r.Inspect(t.Context(), runner.Attempt{Run: runner.RunRef{ID: "session"}})
+	got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session"}})
 	if err != nil || got.State != runner.StateNone {
 		t.Fatal(got, err)
 	}
 }
 
 func TestLostCreateResponseIsRecoveredByAttempt(t *testing.T) {
+	t.Parallel()
 	created := false
 	r := setup(t, func(w http.ResponseWriter, q *http.Request) {
 		switch q.Method + " " + q.URL.Path {
-		case "POST /vaults":
-			fmt.Fprint(w, `{"id":"vault"}`)
-		case "POST /vaults/vault/credentials":
-			w.WriteHeader(204)
+		case "POST /files":
+			fmt.Fprint(w, `{"id":"input"}`)
 		case "POST /agents/sessions":
 			created = true
 			fmt.Fprint(w, `{"id":`)
@@ -232,7 +127,7 @@ func TestLostCreateResponseIsRecoveredByAttempt(t *testing.T) {
 			}
 			fmt.Fprint(w, `{"data":[{"id":"session","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"}}]}`)
 		case "GET /agents/sessions/session":
-			fmt.Fprint(w, `{"id":"session","status":"in_progress","vault_ids":["vault"]}`)
+			fmt.Fprint(w, `{"id":"session","status":"in_progress","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"},"environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`)
 		default:
 			t.Errorf("unexpected request: %s", q.URL)
 			w.WriteHeader(500)
@@ -243,43 +138,7 @@ func TestLostCreateResponseIsRecoveredByAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec().Key})
-	if err != nil || got.State != runner.StateRunning || got.Run.ID != "session" || got.Run.Resources["vault_id"] != "vault" {
+	if err != nil || got.State != runner.StateRunning || got.Run.ID != "session" {
 		t.Fatal(got, err)
-	}
-}
-
-func TestVaultContainsOnlyJobTokenWithHeaderDestination(t *testing.T) {
-	count := 0
-	r := setup(t, func(w http.ResponseWriter, q *http.Request) {
-		var b map[string]any
-		json.NewDecoder(q.Body).Decode(&b)
-		switch q.URL.Path {
-		case "/vaults":
-			fmt.Fprint(w, `{"id":"vault"}`)
-		case "/vaults/vault/credentials":
-			a := b["auth"].(map[string]any)
-			name := a["secret_name"].(string)
-			want := "kioku.test"
-			hosts := a["networking"].(map[string]any)["allowed_hosts"].([]any)
-			if name != "KIOKU_JOB_TOKEN" || a["type"] != "environment_variable" || len(hosts) != 1 || hosts[0] != want || a["injection_location"].(map[string]any)["header"] != true {
-				t.Fatal(a)
-			}
-			count++
-			fmt.Fprint(w, `{"id":"credential"}`)
-		case "/agents/sessions":
-			if strings.Contains(fmt.Sprint(b), string(spec().Token)) {
-				t.Fatal("secret in session")
-			}
-			fmt.Fprint(w, `{"id":"session"}`)
-		default:
-			t.Fatal(q.URL.Path)
-		}
-	})
-	s := spec()
-	if _, err := r.Start(t.Context(), s); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatal(count)
 	}
 }

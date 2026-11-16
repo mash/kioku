@@ -148,7 +148,7 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	fixtureViewBundle(t, f, p.ID, v.ID, "old-job", "wiki-1", []byte("published"))
 	child := fixtureViewJob(t, f, p.ID, v.ID, "late-job", "wiki-1")
 	prompt := "New prompt"
-	updated, err := f.s.updateViewLocked(ctx, p.ID, v.Slug, nil, &prompt)
+	updated, err := f.s.updateViewLocked(ctx, p.ID, v.Slug, requestBody{raw: []byte(`{"prompt":"New prompt"}`)})
 	fixtureCheck(t, err)
 	if updated.Prompt != prompt || updated.JobID != "old-job" {
 		t.Fatal(updated)
@@ -174,7 +174,7 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	if _, err := f.s.viewBySlugLocked(ctx, p.ID, v.Slug); err == nil {
 		t.Fatal("deleted default view returned")
 	}
-	replacement, err := f.s.createViewLocked(ctx, p.ID, v.Slug, "Replacement", prompt)
+	replacement, err := f.s.createViewLocked(ctx, p.ID, requestBody{raw: []byte(`{"slug":"` + v.Slug + `","title":"Replacement","prompt":"New prompt"}`)})
 	fixtureCheck(t, err)
 	if replacement.ID == v.ID {
 		t.Fatal("reused ID")

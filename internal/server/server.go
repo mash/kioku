@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -298,8 +299,26 @@ func jsonOut(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
-	d := json.NewDecoder(r.Body)
+	return readBody(w, r).decode(v)
+}
+
+// requestBody holds a JSON request body that a handler reads before its
+// authorization check and decodes after it, so that an unauthorized request
+// never learns which input is valid.
+type requestBody struct {
+	raw []byte
+	err error
+}
+
+func readBody(w http.ResponseWriter, r *http.Request) requestBody {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	return requestBody{raw, err}
+}
+func (b requestBody) decode(v any) error {
+	if b.err != nil {
+		return fail(400, "invalid JSON or request exceeds 16 MiB")
+	}
+	d := json.NewDecoder(bytes.NewReader(b.raw))
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
 		return fail(400, "invalid JSON or request exceeds 16 MiB")

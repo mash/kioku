@@ -36,17 +36,7 @@ func (s *Server) createView(w http.ResponseWriter, r *http.Request, uid string) 
 		return err
 	}
 	defer unlock()
-	var req viewCreateRequest
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	var slug string
-	if req.Slug != nil {
-		if err := json.Unmarshal(req.Slug, &slug); err != nil || !validSlug(slug) {
-			return fail(400, "invalid view slug")
-		}
-	}
-	view, err := s.createViewLocked(r.Context(), pid, slug, req.Title, req.Prompt)
+	view, err := s.createViewLocked(r.Context(), pid, readBody(w, r))
 	if err != nil {
 		return err
 	}
@@ -85,32 +75,13 @@ func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) 
 		return err
 	}
 	defer unlock()
-	var req struct {
-		Title  json.RawMessage `json:"title"`
-		Prompt json.RawMessage `json:"prompt"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	title, err := viewSettingText(req.Title)
+	view, err := s.updateViewLocked(r.Context(), pid, r.PathValue("view"), readBody(w, r))
 	if err != nil {
 		return err
 	}
-	prompt, err := viewSettingText(req.Prompt)
-	if err != nil {
-		return err
-	}
-	if r.PathValue("view") == wikiViewSlug {
-		view, err := s.updateViewLocked(r.Context(), pid, wikiViewSlug, title, prompt)
-		if err != nil {
-			return err
-		}
+	if view.Slug == wikiViewSlug {
 		jsonOut(w, 200, viewDetail{viewDefinition: view})
 		return nil
-	}
-	view, err := s.updateViewLocked(r.Context(), pid, r.PathValue("view"), title, prompt)
-	if err != nil {
-		return err
 	}
 	jsonOut(w, 200, view)
 	return nil

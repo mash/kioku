@@ -162,19 +162,20 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 	return nil
 }
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid string) error {
-	var req struct {
-		Confirm string `json:"confirm"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	if req.Confirm != "delete-account" {
-		return fail(400, "explicit delete-account confirmation required")
-	}
+	body := readBody(w, r)
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
 	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
+		var req struct {
+			Confirm string `json:"confirm"`
+		}
+		if err := body.decode(&req); err != nil {
+			return err
+		}
+		if req.Confirm != "delete-account" {
+			return fail(400, "explicit delete-account confirmation required")
+		}
 		projects, err := q.ProjectsForUser(uid)
 		if err != nil {
 			return err
@@ -218,7 +219,14 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 	jsonOut(w, 200, map[string]bool{"deleted": true})
 	return nil
 }
-func transferTarget(q *store.Queries, target string) (string, error) {
+func decodeTransferTarget(q *store.Queries, body requestBody) (string, error) {
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := body.decode(&req); err != nil {
+		return "", err
+	}
+	target := req.Target
 	if u, err := q.User(target); err == nil {
 		return u.ID, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -237,12 +245,7 @@ func transferTarget(q *store.Queries, target string) (string, error) {
 	return users[0].ID, nil
 }
 func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid string) error {
-	var req struct {
-		Target string `json:"target"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
+	body := readBody(w, r)
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
@@ -251,7 +254,7 @@ func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid str
 		if err != nil {
 			return err
 		}
-		target, err := transferTarget(q, req.Target)
+		target, err := decodeTransferTarget(q, body)
 		if err != nil {
 			return err
 		}
@@ -273,12 +276,7 @@ func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid str
 	return nil
 }
 func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, uid string) error {
-	var req struct {
-		Target string `json:"target"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
+	body := readBody(w, r)
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
@@ -287,7 +285,7 @@ func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, ui
 		if err != nil {
 			return err
 		}
-		target, err := transferTarget(q, req.Target)
+		target, err := decodeTransferTarget(q, body)
 		if err != nil {
 			return err
 		}

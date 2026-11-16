@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -157,12 +158,23 @@ func (s *Server) viewBySlugLocked(ctx context.Context, pid, slug string) (viewDe
 	})
 	return v, err
 }
-func (s *Server) createViewLocked(ctx context.Context, pid, slug, title, prompt string) (viewDefinition, error) {
-	if strings.TrimSpace(title) == "" || strings.TrimSpace(prompt) == "" {
-		return viewDefinition{}, fail(400, "title and prompt must contain text")
-	}
+func (s *Server) createViewLocked(ctx context.Context, pid string, body requestBody) (viewDefinition, error) {
 	var result viewDefinition
 	err := s.write(ctx, func(q *store.Queries) error {
+		var req viewCreateRequest
+		if err := body.decode(&req); err != nil {
+			return err
+		}
+		var slug string
+		if req.Slug != nil {
+			if err := json.Unmarshal(req.Slug, &slug); err != nil || !validSlug(slug) {
+				return fail(400, "invalid view slug")
+			}
+		}
+		title, prompt := req.Title, req.Prompt
+		if strings.TrimSpace(title) == "" || strings.TrimSpace(prompt) == "" {
+			return fail(400, "title and prompt must contain text")
+		}
 		p, err := q.Project(pid)
 		if err != nil {
 			return err
@@ -201,12 +213,27 @@ func (s *Server) createViewLocked(ctx context.Context, pid, slug, title, prompt 
 	})
 	return result, err
 }
-func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, title, prompt *string) (viewDefinition, error) {
-	if title == nil && prompt == nil || title != nil && strings.TrimSpace(*title) == "" || prompt != nil && strings.TrimSpace(*prompt) == "" {
-		return viewDefinition{}, fail(400, "provide title or prompt with text")
-	}
+func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body requestBody) (viewDefinition, error) {
 	var result viewDefinition
 	err := s.write(ctx, func(q *store.Queries) error {
+		var req struct {
+			Title  json.RawMessage `json:"title"`
+			Prompt json.RawMessage `json:"prompt"`
+		}
+		if err := body.decode(&req); err != nil {
+			return err
+		}
+		title, err := viewSettingText(req.Title)
+		if err != nil {
+			return err
+		}
+		prompt, err := viewSettingText(req.Prompt)
+		if err != nil {
+			return err
+		}
+		if title == nil && prompt == nil {
+			return fail(400, "provide title or prompt with text")
+		}
 		row, err := q.ViewBySlug(pid, slug)
 		if errors.Is(err, sql.ErrNoRows) && slug == wikiViewSlug {
 			row = newWikiViewRow(pid)

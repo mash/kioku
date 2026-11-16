@@ -115,6 +115,76 @@ func TestInboxPutCommitsOnlyAfterObjectSuccess(t *testing.T) {
 	}
 }
 
+func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
+	for _, stage := range []string{"build", "put"} {
+		t.Run(stage, func(t *testing.T) {
+			o, objects := storageFixture(t)
+			sqlWrite(t, o.db, func(q *store.Queries) error {
+				if err := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u", WikiStatus: nullableString("pending")}}); err != nil {
+					return err
+				}
+				return q.PutInbox(store.InboxRow{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", Data: store.InboxData{Submitter: "u"}})
+			})
+			if stage == "put" {
+				objects.put = func(ctx context.Context, _ blob.Key, _ []byte) error {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_, err := o.prepareInput(ctx, "j", false, "", func(ctx context.Context, _ storageInput) ([]byte, error) {
+				if stage == "build" {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				return []byte("archive"), nil
+			})
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("preparation error = %v", err)
+			}
+			j := readSQLJob(t, o, "j")
+			if j.Status != "failed" || valueString(j.Data.WikiStatus) != "failed" || valueString(j.Data.Error) != context.DeadlineExceeded.Error() || j.Data.Run != nil || j.InputReady {
+				t.Fatalf("timed-out preparation was left retryable: %+v", j)
+			}
+			fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error {
+				items, err := q.AvailableInbox("p", false)
+				if err != nil {
+					return err
+				}
+				usage, err := q.ProjectUsage("p")
+				if len(items) != 1 || len(usage) != 0 {
+					t.Fatalf("unstarted job assigned input or recorded usage: items=%v usage=%v", items, usage)
+				}
+				return err
+			}))
+		})
+	}
+}
+
+func TestInputPreparationCancellationKeepsJobQueued(t *testing.T) {
+	o, _ := storageFixture(t)
+	sqlWrite(t, o.db, func(q *store.Queries) error {
+		if err := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u"}}); err != nil {
+			return err
+		}
+		return q.PutInbox(store.InboxRow{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", Data: store.InboxData{Submitter: "u"}})
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err := o.prepareInput(ctx, "j", false, "", func(context.Context, storageInput) ([]byte, error) {
+		cancel()
+		return nil, ctx.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("preparation error = %v", err)
+	}
+	j := readSQLJob(t, o, "j")
+	if j.Status != "queued" || j.Data.Run != nil || j.InputReady {
+		t.Fatalf("shutdown cancellation changed unstarted job: %+v", j)
+	}
+}
+
 func readFixtureWikiFile(ctx context.Context, o *storageOperations, path string) (string, error) {
 	s := &Server{Store: o.db, Blobs: o.objects, storage: o}
 	rev, unlock, err := s.wikiFiles(ctx, "u", "p")

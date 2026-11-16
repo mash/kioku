@@ -75,3 +75,43 @@ func TestPublicProjectAPIRejectsIDSelectors(t *testing.T) {
 		t.Fatal(out.Code, out.Body.String())
 	}
 }
+
+func TestProjectPageShowsFiveRecentGenerations(t *testing.T) {
+	f, token, p := orgProject(t)
+	fixtureCheck(t, f.stateStore.Write(t.Context(), func(q *store.Queries) error {
+		for i, id := range []string{"oldest", "older", "third", "fourth", "fifth", "latest-a", "latest-b"} {
+			created := min(i, 5)
+			if err := q.PutJob(store.JobRow{ID: id, ProjectID: p.ID, Status: "completed", Kind: "generate", Created: int64(created)}); err != nil {
+				return err
+			}
+		}
+		if err := q.PutJob(store.JobRow{ID: "view-child", ProjectID: p.ID, Status: "completed", Kind: "view", Created: 10, ParentID: nullableString("latest-b"), Data: store.JobData{ViewTask: &store.ViewTaskData{}}}); err != nil {
+			return err
+		}
+		return q.PutJob(store.JobRow{ID: "unrelated", ProjectID: "other", Status: "completed", Kind: "generate", Created: 10})
+	}))
+	req := httptest.NewRequest("GET", "/"+p.Namespace, nil)
+	req.AddCookie(&http.Cookie{Name: "kioku_session", Value: token})
+	out := httptest.NewRecorder()
+	f.s.Handler().ServeHTTP(out, req)
+	if out.Code != 200 {
+		t.Fatal(out.Code, out.Body.String())
+	}
+	body := out.Body.String()
+	if got := strings.Count(body, ">生成ジョブ</a>"); got != 5 {
+		t.Fatalf("recent job count = %d", got)
+	}
+	previous := -1
+	for _, id := range []string{"latest-b", "latest-a", "fifth", "fourth", "third"} {
+		index := strings.Index(body, "/jobs/"+id+`"`)
+		if index <= previous {
+			t.Fatalf("missing or misordered recent job %q: %s", id, body)
+		}
+		previous = index
+	}
+	for _, id := range []string{"oldest", "older", "view-child", "unrelated"} {
+		if strings.Contains(body, "/jobs/"+id+`"`) {
+			t.Fatalf("unexpected recent job %q", id)
+		}
+	}
+}

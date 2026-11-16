@@ -9,6 +9,9 @@ import (
 func (q *Queries) ProjectJobs(project string) ([]JobRow, error) {
 	return q.listJob("WHERE project_id=? ORDER BY created DESC,id DESC", project)
 }
+func (q *Queries) RecentGenerationJobs(project string, limit int) ([]JobRow, error) {
+	return q.listJob("WHERE project_id=? AND kind='generate' ORDER BY created DESC,id DESC LIMIT ?", project, limit)
+}
 func (q *Queries) ReconcileJobs() ([]JobRow, error) {
 	return q.listJob("WHERE phase IS NOT NULL AND (cleanup_complete=0 OR status='running') ORDER BY id")
 }

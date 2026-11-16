@@ -198,23 +198,17 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		data.CanEdit = p.Members[uid] == "owner"
 		data.Presets = projectViewPresets
 		data.MaxBudget = fmt.Sprintf("%.2f", float64(s.Config.AgentMaxSessionCents)/100)
-		jobs, err := q.ProjectJobs(p.ID)
+		jobs, err := q.RecentGenerationJobs(p.ID, 5)
 		if err != nil {
 			return err
 		}
 		for _, row := range jobs {
-			if row.Kind != "generate" {
-				continue
-			}
 			j, err := jobProjection(q, row)
 			if err != nil {
 				return err
 			}
 			j.Error = strings.ReplaceAll(j.Error, p.ID, "[project]")
 			data.RecentJobs = append(data.RecentJobs, j)
-			if len(data.RecentJobs) == 5 {
-				break
-			}
 		}
 		project, err := q.Project(p.ID)
 		if err != nil {

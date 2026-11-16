@@ -1,7 +1,5 @@
 package store
 
-import "errors"
-
 func (q *Queries) UserSessions(user, kind string) ([]SessionRow, error) {
 	if kind == "" {
 		return q.listSession("WHERE user_id=? ORDER BY id", user)
@@ -16,11 +14,11 @@ func (q *Queries) RevokeUserSessions(user string) error {
 	_, err := q.exec("DELETE FROM sessions WHERE user_id=?", user)
 	return err
 }
-func (q *Queries) ConsumeSession(id, kind string, now int64) (bool, error) {
-	if kind != "cli_login" && kind != "oauth_code" && kind != "login_code" {
-		return false, errors.New("session kind is not exchangeable")
-	}
-	res, err := q.exec("UPDATE sessions SET status='active' WHERE id=? AND kind=? AND status='pending' AND expires>?", id, kind, now)
+
+// ConsumeOAuthCode marks an authorization code used. The row stays so that a
+// replayed code can revoke its token family.
+func (q *Queries) ConsumeOAuthCode(id string, now int64) (bool, error) {
+	res, err := q.exec("UPDATE sessions SET status='active' WHERE id=? AND kind='oauth_code' AND status='pending' AND expires>?", id, now)
 	if err != nil {
 		return false, err
 	}

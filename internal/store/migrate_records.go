@@ -114,11 +114,11 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if v.ID != r.id {
 				return errors.New("agent identity mismatch")
 			}
-			if v.JobID != "" || v.Role == "job" {
+			if v.JobID != "" || v.Role == "job" || !v.RevokedAt.IsZero() {
 				p.discardedRecords++
 				continue
 			}
-			if e := p.addSession(SessionRow{ID: v.TokenHash, Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, AgentSessionData{SessionRoleData: SessionRoleData{AgentID: NullableString(v.ID), Role: NullableString(v.Role)}, Name: v.Name, RevokedAt: migrationTime(v.RevokedAt)}); e != nil {
+			if e := p.addSession(SessionRow{ID: v.TokenHash, Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, AgentSessionData{SessionRoleData: SessionRoleData{AgentID: NullableString(v.ID), Role: NullableString(v.Role)}, Name: v.Name}); e != nil {
 				return e
 			}
 		case "devices":
@@ -126,15 +126,15 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if e := decodeLegacyJSON(r.body, &v); e != nil {
 				return e
 			}
+			if v.Used {
+				p.discardedRecords++
+				continue
+			}
 			identity, e := migrateIdentity(cipher, v.UserID, v.IdentityProvider, v.IdentityID, v.IdentityCredential)
 			if e != nil {
 				return e
 			}
-			status := "pending"
-			if v.Used {
-				status = "active"
-			}
-			if e = p.addSession(SessionRow{ID: auth.Hash(r.id), Kind: "cli_login", Status: status, UserID: v.UserID, Expires: migrationCreated(v.Expires)}, CLILoginData{IdentitySessionData: identity, LoopbackChallenge: NullableString(v.LoopbackChallenge), LoopbackRedirectURI: NullableString(v.LoopbackRedirectURI), LoopbackState: NullableString(v.LoopbackState), LoopbackCodeHash: NullableString(v.LoopbackCodeHash)}); e != nil {
+			if e = p.addSession(SessionRow{ID: auth.Hash(r.id), Kind: "cli_login", Status: "pending", UserID: v.UserID, Expires: migrationCreated(v.Expires)}, CLILoginData{IdentitySessionData: identity, LoopbackChallenge: NullableString(v.LoopbackChallenge), LoopbackRedirectURI: NullableString(v.LoopbackRedirectURI), LoopbackState: NullableString(v.LoopbackState), LoopbackCodeHash: NullableString(v.LoopbackCodeHash)}); e != nil {
 				return e
 			}
 		case "oauth_codes":

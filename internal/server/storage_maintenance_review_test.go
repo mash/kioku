@@ -8,13 +8,12 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-func TestMaintenancePrunesExpiredAndConsumedSessions(t *testing.T) {
+func TestMaintenancePrunesExpiredSessions(t *testing.T) {
 	t.Parallel()
 	o, _ := storageFixture(t)
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		for _, row := range []store.SessionRow{
 			{ID: "expired", Kind: "user", Status: "active", UserID: "u", Expires: 1000, Data: []byte(`{}`)},
-			{ID: "consumed", Kind: "cli_login", Status: "active", UserID: "u", Expires: 2000, Data: []byte(`{}`)},
 			{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 1000, Data: fixtureJSON(t, store.MCPData{TokenKind: "access"})},
 			{ID: "pending", Kind: "login_code", Status: "pending", UserID: "u", Expires: 2000, Data: fixtureJSON(t, store.LoginCodeData{GrantKey: "access"})},
 		} {
@@ -28,7 +27,7 @@ func TestMaintenancePrunesExpiredAndConsumedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error {
-		for _, id := range []string{"expired", "consumed", "access"} {
+		for _, id := range []string{"expired", "access"} {
 			if _, err := q.Session(id); !errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("session %s was not pruned: %v", id, err)
 			}

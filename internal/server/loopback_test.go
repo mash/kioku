@@ -202,9 +202,9 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 				t.Fatal(status)
 			}
 			after := fixtureSessionsList(t, f, uid)
-			// E14: expired rows may be pruned; an unexpired mismatch is active/consumed.
-			d := fixtureDevicesGet(t, f, a.device)
-			if (!d.Used && failure != "expired") || !reflect.DeepEqual(before, after) {
+			// E14: an unexpired mismatch consumes the row; an expired row waits for pruning.
+			exists := fixtureDevicesGet(t, f, a.device).SecretHash != ""
+			if (exists && failure != "expired") || !reflect.DeepEqual(before, after) {
 				t.Fatal("failed exchange was not consumed or issued a session")
 			}
 			req["code"], req["code_verifier"] = code, a.verifier
@@ -218,7 +218,7 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 func TestLoopbackCallbackFailure(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []string{"denied", "exchange-error", "identity-error"} {
-		for _, unusable := range []string{"", "expired", "used", "bound", "missing"} {
+		for _, unusable := range []string{"", "expired", "bound", "missing"} {
 			t.Run(reason+"/"+unusable, func(t *testing.T) {
 				f := setupLoopback(t)
 				a := newLoopbackAttempt(t, f)
@@ -239,8 +239,6 @@ func TestLoopbackCallbackFailure(t *testing.T) {
 					switch unusable {
 					case "expired":
 						d.Expires = time.Now().Add(-time.Second)
-					case "used":
-						d.Used = true
 					case "bound":
 						d.UserID = "other"
 					case "missing":
@@ -367,9 +365,7 @@ func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
 		t.Fatal(status)
 	}
 	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		d := fixtureDevicesGet(t, st, "0")
-		d.Used = true
-		fixtureDevicesPut(t, st, "0", d)
+		fixtureDevicesDelete(t, st, "0")
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -377,17 +373,8 @@ func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 201 {
 		t.Fatal(status)
 	}
-	if loopbackCount(t, f) != 10001 {
-		t.Fatal("login pruned consumed rows outside the hourly pruning")
-	}
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
 		t.Fatal("active capacity not enforced", status)
-	}
-	if err := f.stateStore.Write(t.Context(), func(q *store.Queries) error { return q.PruneSessions(time.Now().UnixMilli()) }); err != nil {
-		t.Fatal(err)
-	}
-	if loopbackCount(t, f) != 10000 {
-		t.Fatal("maintenance did not prune consumed row")
 	}
 	s := &Server{Config: Config{RatePerMinute: 100}}
 	for i := range 21 {

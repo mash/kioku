@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -28,8 +27,7 @@ type CLILoginData struct {
 }
 type AgentSessionData struct {
 	SessionRoleData
-	Name      string `json:"name"`
-	RevokedAt *int64 `json:"revoked_at"`
+	Name string `json:"name"`
 }
 type MCPData struct {
 	TokenKind  string          `json:"token_kind"`
@@ -57,7 +55,7 @@ func (SessionRow) MarshalJSON() ([]byte, error) { return []byte(`"[redacted sess
 
 func (q *Queries) InsertSession(v SessionRow, now int64) error {
 	var count int
-	if err := q.row("SELECT count(*) FROM sessions WHERE kind=? AND expires>? AND NOT (kind='cli_login' AND status='active')", v.Kind, now).Scan(&count); err != nil {
+	if err := q.row("SELECT count(*) FROM sessions WHERE kind=? AND expires>?", v.Kind, now).Scan(&count); err != nil {
 		return err
 	}
 	if count >= 10000 {
@@ -69,23 +67,12 @@ func (q *Queries) InsertSession(v SessionRow, now int64) error {
 
 var ErrSessionCapacity = errors.New("session storage capacity exceeded")
 
-func (q *Queries) TakeLoginCode(id string, now int64) (SessionRow, error) {
-	v, err := q.Session(id)
-	if err != nil {
-		return v, err
+// TakeSession consumes a single-use cli_login or login_code row by deleting it.
+func (q *Queries) TakeSession(id, kind string, now int64) (SessionRow, error) {
+	if kind != "cli_login" && kind != "login_code" {
+		return SessionRow{}, errors.New("session kind is not single-use")
 	}
-	res, err := q.exec("DELETE FROM sessions WHERE id=? AND kind='login_code' AND status='pending' AND expires>?", id, now)
-	if err != nil {
-		return SessionRow{}, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return SessionRow{}, err
-	}
-	if n != 1 {
-		return SessionRow{}, sql.ErrNoRows
-	}
-	return v, nil
+	return scanSession(q.row("DELETE FROM sessions WHERE id=? AND kind=? AND expires>? RETURNING "+sessionsColumns, id, kind, now))
 }
 func (q *Queries) RevokeOAuthFamily(user, id string) error {
 	rows, err := q.UserSessions(user, "mcp")
@@ -114,10 +101,7 @@ func (q *Queries) RevokeOAuthFamily(user, id string) error {
 	return nil
 }
 func (q *Queries) PruneSessions(now int64) error {
-	if _, err := q.exec("DELETE FROM sessions WHERE expires<=?", now); err != nil {
-		return err
-	}
-	_, err := q.exec("DELETE FROM sessions WHERE kind='cli_login' AND status='active'")
+	_, err := q.exec("DELETE FROM sessions WHERE expires<=?", now)
 	return err
 }
 

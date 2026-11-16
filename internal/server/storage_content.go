@@ -152,7 +152,7 @@ func sqlJobAuthorization(q *store.Queries, j store.JobRow, now int64) error {
 		if err != nil {
 			return err
 		}
-		if a.AgentID != nil && *a.AgentID == *j.Data.AgentID && v.UserID == j.Data.UserID && v.Active(now) && a.RevokedAt == nil && store.ValueString(a.Role) == "write" {
+		if a.AgentID != nil && *a.AgentID == *j.Data.AgentID && v.UserID == j.Data.UserID && v.Active(now) && store.ValueString(a.Role) == "write" {
 			return nil
 		}
 	}

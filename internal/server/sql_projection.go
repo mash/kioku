@@ -254,7 +254,7 @@ func (s *Server) checkMutation(q *store.Queries, r *http.Request, uid, pid strin
 			return err
 		}
 		logout := r.Pattern == "POST /api/logout"
-		if row.Kind != "agent" || data.RevokedAt != nil || !logout && (store.ValueString(data.Role) != "write" || store.ValueString(row.ProjectID) != pid) {
+		if row.Kind != "agent" || !logout && (store.ValueString(data.Role) != "write" || store.ValueString(row.ProjectID) != pid) {
 			return fail(403, "agent permission denied")
 		}
 	}

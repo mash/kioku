@@ -21,10 +21,7 @@ func TestRevokedAgentCannotPublishAnAlreadyRunningGeneration(t *testing.T) {
 	sendOutput(t, f, ma, j, "Summary")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		v := fixtureAgentTokensGet(t, st, p.ID, id)
-		v.RevokedAt = time.Now().UTC()
-		fixtureAgentTokensPut(t, st, id, v)
-		return nil
+		return st.DeleteSession(fixtureAgentTokensGet(t, st, p.ID, id).TokenHash)
 	})
 	if got := reconcileManaged(t, f, j); got.Status != "failed" {
 		t.Fatal(got)

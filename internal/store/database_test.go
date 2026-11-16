@@ -158,7 +158,7 @@ func TestExchangeChangesOneRow(t *testing.T) {
 	for range 16 {
 		wg.Go(func() {
 			if err := d.Write(t.Context(), func(q *Queries) error {
-				ok, err := q.ConsumeSession("s", "oauth_code", 99)
+				ok, err := q.ConsumeOAuthCode("s", 99)
 				if ok {
 					winners <- struct{}{}
 				}

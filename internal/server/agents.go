@@ -3,7 +3,6 @@ package server
 import (
 	"net/http"
 	"sort"
-	"time"
 
 	"github.com/mash/kioku/internal/store"
 )
@@ -40,7 +39,7 @@ func (s *Server) authorizeAgent(r *http.Request, principal authenticatedSession)
 	return fail(403, "agent credential does not permit this operation")
 }
 func publicAgent(row store.SessionRow, data store.AgentSessionData) map[string]any {
-	return map[string]any{"id": store.ValueString(data.AgentID), "issuer_id": row.UserID, "name": data.Name, "role": store.ValueString(data.Role), "created": creationDate(row.Created), "expires": storageDate(row.Expires), "revoked_at": optionalDate(data.RevokedAt)}
+	return map[string]any{"id": store.ValueString(data.AgentID), "issuer_id": row.UserID, "name": data.Name, "role": store.ValueString(data.Role), "created": creationDate(row.Created), "expires": storageDate(row.Expires)}
 }
 func (s *Server) agents(w http.ResponseWriter, r *http.Request, uid string) error {
 	out := []map[string]any{}
@@ -71,28 +70,6 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request, uid string) erro
 	jsonOut(w, 200, out)
 	return nil
 }
-func revokeAgentSession(q *store.Queries, key string, now int64) error {
-	row, err := q.Session(key)
-	if err != nil {
-		return err
-	}
-	if row.Kind != "agent" {
-		return fail(404, "agent credential not found")
-	}
-	data, err := store.SessionData[store.AgentSessionData](row)
-	if err != nil {
-		return err
-	}
-	if data.RevokedAt != nil {
-		return nil
-	}
-	data.RevokedAt = &now
-	row.Data, err = store.EncodeSessionData(data)
-	if err != nil {
-		return err
-	}
-	return q.PutSession(row)
-}
 func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request, uid string) error {
 	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
 		p, e := member(q, r.PathValue("project"), uid)
@@ -109,7 +86,7 @@ func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request, uid string)
 				return e
 			}
 			if store.ValueString(data.AgentID) == r.PathValue("agent") && (row.UserID == uid || p.Members[uid] == "owner") {
-				return revokeAgentSession(q, row.ID, time.Now().UnixMilli())
+				return q.DeleteSession(row.ID)
 			}
 		}
 		return fail(404, "agent credential not found")
@@ -128,7 +105,7 @@ func revokeAgents(q *store.Queries, uid, pid string) error {
 		if pid != "" && store.ValueString(row.ProjectID) != pid {
 			continue
 		}
-		if err = revokeAgentSession(q, row.ID, time.Now().UnixMilli()); err != nil {
+		if err = q.DeleteSession(row.ID); err != nil {
 			return err
 		}
 	}

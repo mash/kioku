@@ -102,7 +102,7 @@ func (s *oauthSQL) GetAuthorizeCodeSession(_ context.Context, key string, _ fosi
 	return r, nil
 }
 func (s *oauthSQL) InvalidateAuthorizeCodeSession(_ context.Context, key string) error {
-	ok, err := s.q.ConsumeSession(key, "oauth_code", s.now.UnixMilli())
+	ok, err := s.q.ConsumeOAuthCode(key, s.now.UnixMilli())
 	if err != nil {
 		return s.storageError(err)
 	}

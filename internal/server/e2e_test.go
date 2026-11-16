@@ -371,6 +371,21 @@ func TestE2EAgentScopeSingleUseAndRevocation(t *testing.T) {
 	e.tool(access, "cli_login_code", map[string]string{"project": project, "role": "write"}, false, &grant)
 	e.expect(e.call("POST", "/api/agent/login", "", map[string]string{"code": grant.Code, "name": "writer"}), 200, &issued)
 	e.expect(e.call("GET", "/api/projects/"+project+"/jobs/unknown/agent/input", issued.Token, nil), 403, nil)
+	var agents []map[string]any
+	e.expect(e.call("GET", "/api/projects/"+project+"/agents", human, nil), 200, &agents)
+	if len(agents) != 1 || agents[0]["name"] != "connector:writer" {
+		t.Fatal("agent list kept ended credentials", agents)
+	}
+	revoke := "/api/projects/" + project + "/agents/" + agents[0]["id"].(string)
+	e.expect(e.call("DELETE", revoke, human, nil), 200, nil)
+	e.expect(e.call("GET", "/api/me", issued.Token, nil), 401, nil)
+	e.expect(e.call("DELETE", revoke, human, nil), 404, nil)
+	e.expect(e.call("GET", "/api/projects/"+project+"/agents", human, nil), 200, &agents)
+	if len(agents) != 0 {
+		t.Fatal("revoked agent still listed", agents)
+	}
+	e.tool(access, "cli_login_code", map[string]string{"project": project, "role": "write"}, false, &grant)
+	e.expect(e.call("POST", "/api/agent/login", "", map[string]string{"code": grant.Code, "name": "writer"}), 200, &issued)
 	e.expect(e.call("POST", "/api/account/revoke-all", human, nil), 200, nil)
 	e.expect(e.call("GET", "/api/me", issued.Token, nil), 401, nil)
 	e.expect(e.call("GET", "/api/me", human, nil), 401, nil)

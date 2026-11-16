@@ -348,9 +348,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, uid string) erro
 		return err
 	}
 	if err = s.Store.Write(r.Context(), func(q *store.Queries) error {
-		if principal.AgentID != "" {
-			return revokeAgentSession(q, key, time.Now().UnixMilli())
-		}
 		return q.DeleteSession(key)
 	}); err != nil {
 		return err

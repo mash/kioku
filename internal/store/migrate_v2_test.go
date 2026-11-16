@@ -188,13 +188,14 @@ func TestMigrationRejectsPendingAndDeletingProjects(t *testing.T) {
 		})
 	}
 }
-func TestMigrationKeepsUsedAuthenticationAndDropsJobRows(t *testing.T) {
+func TestMigrationKeepsUsedOAuthAndDropsConsumedAndJobRows(t *testing.T) {
 	path, b, c, _ := migrationFixture(t)
 	expires := time.Unix(100000, 0)
 	migrationRecord(t, path, "sessions", "human", legacyV2Session{UserID: "u", Expires: expires})
 	migrationRecord(t, path, "sessions", "job", legacyV2Session{UserID: "u", Expires: expires, Role: "job"})
 	migrationRecord(t, path, "agent_tokens", "a", legacyV2AgentToken{ID: "a", UserID: "u", ProjectID: "p", Name: "agent", Role: "write", TokenHash: "agenthash", Expires: expires})
 	migrationRecord(t, path, "agent_tokens", "j", legacyV2AgentToken{ID: "j", UserID: "u", ProjectID: "p", JobID: "job", TokenHash: "jobhash", Expires: expires})
+	migrationRecord(t, path, "agent_tokens", "r", legacyV2AgentToken{ID: "r", UserID: "u", ProjectID: "p", Name: "revoked", Role: "write", TokenHash: "revokedhash", Expires: expires, RevokedAt: expires})
 	migrationRecord(t, path, "devices", "device", legacyV2Device{Used: true, UserID: "u", Expires: expires, SecretHash: "discard"})
 	migrationRecord(t, path, "oauth", "old-state", legacyV2OAuthState{Provider: "github", Expires: expires, Verifier: "discard"})
 	request := json.RawMessage(`{"id":"r","requestedAt":"2026-01-01T00:00:00Z","client":{"id":"c","redirect_uris":[],"grant_types":[],"response_types":[],"scopes":[],"audience":[]},"scopes":[],"grantedScopes":[],"requestedAudience":[],"grantedAudience":[],"form":{},"session":{"expires_at":{},"username":"","subject":"u","project_ids":["p"]}}`)
@@ -209,7 +210,7 @@ func TestMigrationKeepsUsedAuthenticationAndDropsJobRows(t *testing.T) {
 	}
 	defer d.Close()
 	if e = d.Read(t.Context(), func(q *Queries) error {
-		for id, kind := range map[string]string{"human": "user", "agenthash": "agent", auth.Hash("device"): "cli_login", "code": "oauth_code", "refresh": "mcp"} {
+		for id, kind := range map[string]string{"human": "user", "agenthash": "agent", "code": "oauth_code", "refresh": "mcp"} {
 			s, e := q.Session(id)
 			if e != nil {
 				return e
@@ -222,7 +223,7 @@ func TestMigrationKeepsUsedAuthenticationAndDropsJobRows(t *testing.T) {
 				t.Fatal(id, s)
 			}
 		}
-		for _, id := range []string{"job", "jobhash", "old-state"} {
+		for _, id := range []string{"job", "jobhash", "revokedhash", auth.Hash("device"), "old-state"} {
 			if _, e := q.Session(id); !errors.Is(e, sql.ErrNoRows) {
 				t.Fatal(id, e)
 			}

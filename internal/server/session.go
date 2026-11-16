@@ -60,9 +60,6 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 				if e != nil {
 					return e
 				}
-				if agent.RevokedAt != nil {
-					return nil
-				}
 				if _, e = sqlMember(q, store.ValueString(row.ProjectID), row.UserID); e != nil {
 					var api apiError
 					if errors.As(e, &api) {

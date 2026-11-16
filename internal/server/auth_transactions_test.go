@@ -126,16 +126,8 @@ func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
 		if _, err := q.Session(code.ID); !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("rejected login did not consume its code: %v", err)
 		}
-		row, err := q.Session(old.ID)
-		if err != nil {
-			return err
-		}
-		var data store.AgentSessionData
-		if err := json.Unmarshal(row.Data, &data); err != nil {
-			return err
-		}
-		if data.RevokedAt != nil {
-			t.Fatal("capacity rejection revoked the credential it failed to replace")
+		if _, err := q.Session(old.ID); err != nil {
+			t.Fatal("capacity rejection revoked the credential it failed to replace", err)
 		}
 		return nil
 	}))
@@ -152,18 +144,10 @@ func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
 		return err
 	})
 	fixtureCheck(t, d.Read(t.Context(), func(q *store.Queries) error {
-		row, err := q.Session(old.ID)
-		if err != nil {
-			return err
+		if _, err := q.Session(old.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal("successful replacement did not revoke the old credential", err)
 		}
-		var data store.AgentSessionData
-		if err := json.Unmarshal(row.Data, &data); err != nil {
-			return err
-		}
-		if data.RevokedAt == nil || *data.RevokedAt != now.UnixMilli() {
-			t.Fatal("successful replacement did not revoke the old credential")
-		}
-		_, err = q.Session(auth.Hash("kioku_agent.new.secret"))
+		_, err := q.Session(auth.Hash("kioku_agent.new.secret"))
 		return err
 	}))
 }

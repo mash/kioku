@@ -16,23 +16,10 @@ import (
 func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, now time.Time) (store.SessionRow, error) {
 	id := auth.Hash(device)
 	bad := fail(410, "login code expired or already used")
-	ok, err := q.ConsumeSession(id, "cli_login", now.UnixMilli())
-	if err != nil {
-		return store.SessionRow{}, err
-	}
-	if !ok {
-		v, err := q.Session(id)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return store.SessionRow{}, err
-		}
-		if err == nil && v.Kind == "cli_login" && v.Expires <= now.UnixMilli() {
-			if err := q.DeleteSession(id); err != nil {
-				return store.SessionRow{}, err
-			}
-		}
+	v, err := q.TakeSession(id, "cli_login", now.UnixMilli())
+	if errors.Is(err, sql.ErrNoRows) {
 		return store.SessionRow{}, bad
 	}
-	v, err := q.Session(id)
 	if err != nil {
 		return store.SessionRow{}, err
 	}
@@ -61,7 +48,7 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 }
 
 func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret string, now time.Time) (store.SessionRow, string, error) {
-	v, err := q.TakeLoginCode(auth.Hash(code), now.UnixMilli())
+	v, err := q.TakeSession(auth.Hash(code), "login_code", now.UnixMilli())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return store.SessionRow{}, "", fail(401, "login code expired or already used")
@@ -124,9 +111,6 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		if err != nil {
 			return store.SessionRow{}, "", err
 		}
-		if a.RevokedAt != nil {
-			continue
-		}
 		if old.UserID == v.UserID && a.Name == name {
 			replaced = append(replaced, old.ID)
 		} else {
@@ -149,7 +133,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		return store.SessionRow{}, "", err
 	}
 	for _, key := range replaced {
-		if err = revokeAgentSession(q, key, now.UnixMilli()); err != nil {
+		if err = q.DeleteSession(key); err != nil {
 			return store.SessionRow{}, "", err
 		}
 	}

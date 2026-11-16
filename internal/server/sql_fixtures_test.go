@@ -127,7 +127,6 @@ type fixtureDevice struct {
 	UserID               string    `json:"user_id,omitempty"`
 	SecretHash           string    `json:"secret_hash"`
 	Expires              time.Time `json:"expires"`
-	Used                 bool      `json:"used"`
 }
 
 type fixtureAgentToken struct {
@@ -140,7 +139,6 @@ type fixtureAgentToken struct {
 	TokenHash string    `json:"token_hash"`
 	Created   time.Time `json:"created"`
 	Expires   time.Time `json:"expires"`
-	RevokedAt time.Time `json:"revoked_at,omitempty"`
 }
 
 type fixtureOAuthGrant struct {
@@ -617,7 +615,7 @@ func fixtureDevicesGet(t testing.TB, source any, id string) fixtureDevice {
 	fixtureCheck(t, err)
 	var d store.CLILoginData
 	fixtureCheck(t, json.Unmarshal(row.Data, &d))
-	return fixtureDevice{UserID: row.UserID, SecretHash: row.ID, Expires: storageDate(row.Expires), Used: row.Status == "active", IdentityProvider: store.ValueString(d.IdentityProvider), IdentityID: store.ValueString(d.IdentityID), IdentityAccessToken: store.ValueString(d.IdentityAccessToken), LoopbackChallenge: store.ValueString(d.LoopbackChallenge), LoopbackRedirectURI: store.ValueString(d.LoopbackRedirectURI), LoopbackState: store.ValueString(d.LoopbackState), LoopbackCodeHash: store.ValueString(d.LoopbackCodeHash)}
+	return fixtureDevice{UserID: row.UserID, SecretHash: row.ID, Expires: storageDate(row.Expires), IdentityProvider: store.ValueString(d.IdentityProvider), IdentityID: store.ValueString(d.IdentityID), IdentityAccessToken: store.ValueString(d.IdentityAccessToken), LoopbackChallenge: store.ValueString(d.LoopbackChallenge), LoopbackRedirectURI: store.ValueString(d.LoopbackRedirectURI), LoopbackState: store.ValueString(d.LoopbackState), LoopbackCodeHash: store.ValueString(d.LoopbackCodeHash)}
 }
 func fixtureDevicesPut(t testing.TB, q *store.Queries, id string, v fixtureDevice) {
 	key := auth.Hash(id)
@@ -635,11 +633,7 @@ func fixtureDevicesPut(t testing.TB, q *store.Queries, id string, v fixtureDevic
 	d.LoopbackRedirectURI = store.NullableString(v.LoopbackRedirectURI)
 	d.LoopbackState = store.NullableString(v.LoopbackState)
 	d.LoopbackCodeHash = store.NullableString(v.LoopbackCodeHash)
-	status := "pending"
-	if v.Used {
-		status = "active"
-	}
-	fixtureCheck(t, q.PutSession(store.SessionRow{ID: key, Kind: "cli_login", Status: status, UserID: v.UserID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, d)}))
+	fixtureCheck(t, q.PutSession(store.SessionRow{ID: key, Kind: "cli_login", Status: "pending", UserID: v.UserID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, d)}))
 }
 func fixtureDevicesDelete(t testing.TB, q *store.Queries, id string) {
 	fixtureCheck(t, q.DeleteSession(auth.Hash(id)))
@@ -658,7 +652,7 @@ func fixtureAgentTokensList(t testing.TB, source any, pid string) map[string]fix
 		var d store.AgentSessionData
 		fixtureCheck(t, json.Unmarshal(row.Data, &d))
 		id := store.ValueString(d.AgentID)
-		out[id] = fixtureAgentToken{ID: id, ProjectID: store.ValueString(row.ProjectID), UserID: row.UserID, Name: d.Name, Role: store.ValueString(d.Role), TokenHash: row.ID, Created: creationDate(row.Created), Expires: storageDate(row.Expires), RevokedAt: optionalDate(d.RevokedAt)}
+		out[id] = fixtureAgentToken{ID: id, ProjectID: store.ValueString(row.ProjectID), UserID: row.UserID, Name: d.Name, Role: store.ValueString(d.Role), TokenHash: row.ID, Created: creationDate(row.Created), Expires: storageDate(row.Expires)}
 	}
 	return out
 }
@@ -674,10 +668,6 @@ func fixtureAgentTokensGet(t testing.TB, source any, pid, id string) fixtureAgen
 func fixtureAgentTokensPut(t testing.TB, q *store.Queries, id string, v fixtureAgentToken) {
 	v.ID = id
 	d := store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: &id, Role: store.NullableString(v.Role)}, Name: v.Name}
-	if !v.RevokedAt.IsZero() {
-		n := v.RevokedAt.UnixMilli()
-		d.RevokedAt = &n
-	}
 	created := int64(0)
 	if !v.Created.IsZero() {
 		created = v.Created.UnixMilli()

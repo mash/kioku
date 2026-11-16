@@ -8,9 +8,6 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-func (s *Server) checkOwner(pid, uid string) error {
-	return s.Store.Read(context.Background(), func(q *store.Queries) error { _, err := owner(q, pid, uid); return err })
-}
 func (s *Server) checkDeleteOwner(pid, uid string) error {
 	return s.Store.Read(context.Background(), func(q *store.Queries) error { return deleteOwner(q, pid, uid) })
 }

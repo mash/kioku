@@ -36,9 +36,6 @@ func (s *Server) createView(w http.ResponseWriter, r *http.Request, uid string) 
 		return err
 	}
 	defer unlock()
-	if err := s.checkOwner(pid, uid); err != nil {
-		return err
-	}
 	var req viewCreateRequest
 	if err := decode(w, r, &req); err != nil {
 		return err
@@ -88,9 +85,6 @@ func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) 
 		return err
 	}
 	defer unlock()
-	if err := s.checkOwner(pid, uid); err != nil {
-		return err
-	}
 	var req struct {
 		Title  json.RawMessage `json:"title"`
 		Prompt json.RawMessage `json:"prompt"`
@@ -140,12 +134,6 @@ func (s *Server) deleteView(w http.ResponseWriter, r *http.Request, uid string) 
 		return err
 	}
 	defer unlock()
-	if err := s.checkOwner(pid, uid); err != nil {
-		return err
-	}
-	if r.PathValue("view") == wikiViewSlug {
-		return fail(409, "the wiki view cannot be deleted")
-	}
 	if err := s.deleteViewLocked(r.Context(), pid, r.PathValue("view")); err != nil {
 		return err
 	}

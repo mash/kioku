@@ -19,9 +19,6 @@ const maxInboxItems = 200
 
 func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
-	if err := s.check(pid, uid); err != nil {
-		return err
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxPutBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

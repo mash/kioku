@@ -135,9 +135,6 @@ func owner(q *store.Queries, pid, uid string) (model.Project, error) {
 	}
 	return p, err
 }
-func (s *Server) check(pid, uid string) error {
-	return s.Store.Read(context.Background(), func(q *store.Queries) error { _, err := sqlMember(q, pid, uid); return err })
-}
 func (s *Server) mutation(r *http.Request, uid string, fn func(*store.Queries) error) error {
 	return s.httpMutation(r, uid, r.PathValue("project")).write(r.Context(), s.Store, fn)
 }

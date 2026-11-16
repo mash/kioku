@@ -19,7 +19,7 @@ func viewHasNewWiki(view viewDefinition, project model.Project) *bool {
 	if view.GeneratedAt == nil || view.Slug == wikiViewSlug {
 		return nil
 	}
-	updated := view.WikiSnapshotID != project.WikiCompleteRevision
+	updated := view.WikiSnapshotID != project.Revision
 	return &updated
 }
 

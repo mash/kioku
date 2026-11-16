@@ -33,7 +33,7 @@ func projectProjection(q *store.Queries, row store.ProjectRow) (model.Project, e
 	return projectValue(row, org.Slug, members), nil
 }
 func projectValue(row store.ProjectRow, orgSlug string, members map[string]string) model.Project {
-	return model.Project{ID: row.ID, OrgID: row.OrgID, Slug: row.Slug, Namespace: orgSlug + "/" + row.Slug, Name: row.Data.Name, Members: members, Created: storageDate(row.Created), Deleting: row.Deleting, Revision: store.ValueString(row.WikiRevision), WikiCompleteRevision: store.ValueString(row.WikiRevision), WikiUpdatedAt: optionalDate(row.Data.WikiUpdatedAt)}
+	return model.Project{ID: row.ID, OrgID: row.OrgID, Slug: row.Slug, Namespace: orgSlug + "/" + row.Slug, Name: row.Data.Name, Members: members, Created: storageDate(row.Created), Deleting: row.Deleting, Revision: store.ValueString(row.WikiRevision), WikiUpdatedAt: optionalDate(row.Data.WikiUpdatedAt)}
 }
 func projectProjections(q *store.Queries, rows []store.ProjectRow) ([]model.Project, error) {
 	out := make([]model.Project, 0, len(rows))

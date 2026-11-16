@@ -40,7 +40,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 	if content.Incomplete {
 		return errors.New("complete Wiki publication before migration")
 	}
-	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), NextGenerateAt: migrationTime(content.NextGenerateAt), Data: ProjectData{Name: old.Name, WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
+	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), NextGenerateAt: migrationTime(content.NextGenerateAt), Data: ProjectData{Name: old.Name, WikiUpdatedAt: migrationTime(content.WikiUpdatedAt)}}
 	if content.NextGenerateAt.After(time.Time{}) && !content.NextGenerateAt.IsZero() {
 		return errors.New("complete scheduled generation before migration")
 	}
@@ -70,7 +70,6 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			return errors.New("legacy Wiki identity mismatch")
 		}
 		project.WikiRevision = &w.ID
-		project.Data.WikiCreated = migrationTime(w.Created)
 		var total int64
 		for name, key := range w.Files {
 			if !wiki.ValidFile(name) || !blob.ValidKey(key) || !strings.HasPrefix(string(key), prefix) {

@@ -127,7 +127,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 	if !validSlug(req.Slug) {
 		return fail(400, "invalid project slug")
 	}
-	row := store.ProjectRow{ID: auth.Token()[:20], Slug: req.Slug, Created: time.Now().UnixMilli(), Data: store.ProjectData{Name: req.Name, ViewsInitialized: true}}
+	row := store.ProjectRow{ID: auth.Token()[:20], Slug: req.Slug, Created: time.Now().UnixMilli(), Data: store.ProjectData{Name: req.Name}}
 	// Check access before committing the organization, project and default Views.
 	if _, err := s.Blobs.List(r.Context(), "projects/"+row.ID+"/"); err != nil {
 		return err

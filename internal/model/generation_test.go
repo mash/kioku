@@ -15,7 +15,7 @@ func TestJobRunJSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(b), `"run":`) || strings.Contains(string(b), `"managed":`) || strings.Contains(string(b), `"cost_cents":`) != (cost != nil) {
+		if !strings.Contains(string(b), `"run":`) || strings.Contains(string(b), `"managed":`) || !strings.Contains(string(b), `"cost_cents":`) || strings.Contains(string(b), `"cost_cents":null`) != (cost == nil) {
 			t.Fatal(string(b))
 		}
 		var got Job

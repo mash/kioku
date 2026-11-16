@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/publicapi"
 )
 
 func TestStorageContractExamplesAreComplete(t *testing.T) {
@@ -35,7 +34,7 @@ func TestStorageContractExamplesAreComplete(t *testing.T) {
 func TestJobResponseDoesNotExposeStorageFields(t *testing.T) {
 	t.Parallel()
 	job := model.Job{ID: "j1", ProjectID: "private-project", Run: &model.AgentRun{}}
-	b, err := json.Marshal(publicapi.Value(job))
+	b, err := json.Marshal(job)
 	if err != nil {
 		t.Fatal(err)
 	}

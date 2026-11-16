@@ -1,6 +1,8 @@
 package model
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/blob"
@@ -21,19 +23,17 @@ type User struct {
 	Identities map[string]string `json:"identities,omitempty"`
 }
 type Project struct {
-	WikiIncomplete       bool              `json:"wiki_incomplete,omitempty"`
-	WikiCompleteRevision string            `json:"wiki_complete_revision,omitempty"`
-	ViewEpoch            string            `json:"view_epoch,omitempty"`
-	WikiUpdatedAt        time.Time         `json:"wiki_updated_at,omitempty"`
-	OrgID                string            `json:"org_id"`
-	Slug                 string            `json:"slug"`
-	Namespace            string            `json:"namespace"`
-	ID                   string            `json:"id"`
-	Name                 string            `json:"name"`
-	Members              map[string]string `json:"members"`
-	Revision             string            `json:"revision"`
-	Created              time.Time         `json:"created"`
-	Deleting             bool              `json:"deleting,omitempty"`
+	WikiIncomplete bool              `json:"wiki_incomplete"`
+	WikiUpdatedAt  time.Time         `json:"wiki_updated_at"`
+	OrgID          string            `json:"-"`
+	Slug           string            `json:"slug"`
+	Namespace      string            `json:"namespace"`
+	ID             string            `json:"-"`
+	Name           string            `json:"name"`
+	Members        map[string]string `json:"members"`
+	Revision       string            `json:"revision"`
+	Created        time.Time         `json:"created"`
+	Deleting       bool              `json:"-"`
 }
 
 // ProjectEntry adds current inbox state to a project listing without persisting it.
@@ -58,18 +58,18 @@ type Revision struct {
 	Files       map[string]blob.Key `json:"files"` // relative filename -> current object key
 }
 type Job struct {
-	AgentBudgetCents int64           `json:"agent_budget_cents,omitempty"`
+	AgentBudgetCents int64           `json:"agent_budget_cents"`
 	Run              *AgentRun       `json:"run,omitempty"`
-	Unchanged        bool            `json:"unchanged,omitempty"`
-	Kind             string          `json:"kind,omitempty"`
-	Automatic        bool            `json:"automatic,omitempty"`
-	AgentID          string          `json:"agent_id,omitempty"`
+	Unchanged        bool            `json:"unchanged"`
+	Kind             string          `json:"kind"`
+	Automatic        bool            `json:"automatic"`
+	AgentID          string          `json:"agent_id"`
 	ID               string          `json:"id"`
-	ProjectID        string          `json:"project_id"`
+	ProjectID        string          `json:"-"`
 	UserID           string          `json:"user_id"`
 	Status           string          `json:"status"`
-	Error            string          `json:"error,omitempty"`
-	Revision         string          `json:"revision,omitempty"`
+	Error            string          `json:"error"`
+	Revision         string          `json:"revision"`
 	Created          time.Time       `json:"created"`
 	WikiStatus       string          `json:"wiki_status,omitempty"`
 	Views            []ViewJobResult `json:"views,omitempty"`
@@ -84,7 +84,7 @@ type ViewJobResult struct {
 
 type Audit struct {
 	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
+	ProjectID string    `json:"-"`
 	UserID    string    `json:"user_id"`
 	Action    string    `json:"action"`
 	Detail    string    `json:"detail"`
@@ -127,4 +127,26 @@ type SyncFile struct {
 type SnapshotFile struct {
 	Body string `json:"body"`
 	Hash string `json:"hash"`
+}
+
+// MarshalJSON keeps internal project IDs out of errors and preserves the public
+// distinction between a job without View generation and one with an empty list.
+func (j Job) MarshalJSON() ([]byte, error) {
+	type public Job
+	message := j.Error
+	if j.ProjectID != "" {
+		message = strings.ReplaceAll(message, j.ProjectID, "[project]")
+	}
+	var views *[]ViewJobResult
+	if j.WikiStatus != "" {
+		if j.Views == nil {
+			j.Views = []ViewJobResult{}
+		}
+		views = &j.Views
+	}
+	return json.Marshal(struct {
+		public
+		Error string           `json:"error"`
+		Views *[]ViewJobResult `json:"views,omitempty"`
+	}{public(j), message, views})
 }

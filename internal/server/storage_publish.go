@@ -39,7 +39,7 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	rev, started := o.id(), o.now().UnixMilli()
+	rev := o.id()
 	check := func(q *store.Queries) error {
 		j, err := o.runningJob(q, id)
 		if err != nil {
@@ -120,7 +120,6 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 		}
 		now := o.now().UnixMilli()
 		p.WikiRevision = &rev
-		p.Data.WikiCreated = &started
 		p.Data.WikiUpdatedAt = &now
 		if e = q.PutProject(p); e != nil {
 			return e

@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-
-	"github.com/mash/kioku/internal/publicapi"
 )
 
 func (a *App) print(v any) error {
-	b, err := json.Marshal(publicapi.Value(v))
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}

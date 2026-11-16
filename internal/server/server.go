@@ -16,7 +16,6 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/publicapi"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
@@ -314,7 +313,7 @@ func writeError(w http.ResponseWriter, err error) {
 func jsonOut(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(publicapi.Value(v))
+	_ = json.NewEncoder(w).Encode(v)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)

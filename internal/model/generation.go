@@ -16,8 +16,8 @@ const (
 // AgentRun is the public run projection. Provider resources and private
 // checkpoints live only in the typed SQL job row.
 type AgentRun struct {
-	CostCents       *int64       `json:"cost_cents,omitempty"`
-	CleanupComplete bool         `json:"cleanup_complete,omitempty"`
+	CostCents       *int64       `json:"cost_cents"`
+	CleanupComplete bool         `json:"cleanup_complete"`
 	Phase           ManagedPhase `json:"phase"`
 	PreparedAt      time.Time    `json:"prepared_at"`
 	Deadline        time.Time    `json:"deadline"`

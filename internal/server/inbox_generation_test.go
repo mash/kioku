@@ -320,7 +320,7 @@ func (b unavailableWikiRead) Get(context.Context, blob.Key) ([]byte, error) {
 func TestGenerationWikiRejectsMissingImmutableFiles(t *testing.T) {
 	t.Parallel()
 	f, _, p, _ := managedFixture(t)
-	rev := model.Revision{Files: map[string]blob.Key{"wiki/source-missing.md": model.WikiContentKey(p.ID, model.ContentHash(strings.Repeat("a", 64)))}}
+	rev := wikiTree{Files: map[string]store.WikiFileRow{"wiki/source-missing.md": {ProjectID: p.ID, Path: "wiki/source-missing.md", Hash: strings.Repeat("a", 64)}}}
 	if _, err := f.s.generationWiki(t.Context(), rev); err == nil {
 		t.Fatal("missing body ignored")
 	}

@@ -185,12 +185,12 @@ func (s *Server) mcpProjects(key string) (any, error) {
 	return map[string]any{"projects": projects}, err
 }
 
-func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string, names ...string) (model.Revision, func(), error) {
+func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string, names ...string) (wikiTree, func(), error) {
 	project, unlock, err := s.lockConnectorProject(ctx, key, namespace)
 	if err != nil {
-		return model.Revision{}, nil, err
+		return wikiTree{}, nil, err
 	}
-	var rev model.Revision
+	var rev wikiTree
 	err = s.Store.Read(ctx, func(q *store.Queries) error {
 		row, err := q.Project(project.ID)
 		if err != nil {
@@ -201,7 +201,7 @@ func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string, 
 	})
 	if err != nil {
 		unlock()
-		return model.Revision{}, nil, err
+		return wikiTree{}, nil, err
 	}
 	return rev, unlock, nil
 }
@@ -218,7 +218,7 @@ func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, o
 	_, fileExists := rev.Files[name]
 	if !fileExists {
 		switch {
-		case rev.ID == "":
+		case rev.Revision == "":
 			return nil, fail(404, "project has no wiki yet")
 		default:
 			return nil, fail(404, "wiki file not found; start at wiki/index.md")

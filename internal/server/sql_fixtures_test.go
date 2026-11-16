@@ -512,7 +512,12 @@ func fixtureRevisionsList(t testing.TB, source any, pids ...string) map[string]f
 		}
 		r, err := wikiProjection(q, p)
 		fixtureCheck(t, err)
-		out[r.ID] = fixtureRevision{ID: r.ID, ProjectID: r.ProjectID, Files: r.Files, FileHashes: r.FileHashes, FileBytes: r.FileBytes, StoredBytes: r.StoredBytes}
+		v := fixtureRevision{ID: r.Revision, ProjectID: pid, Files: map[string]blob.Key{}, FileHashes: map[string]string{}, FileBytes: map[string]int64{}}
+		for name, row := range r.Files {
+			v.Files[name], v.FileHashes[name], v.FileBytes[name] = wikiKey(row), row.Hash, row.Data.Bytes
+			v.StoredBytes += row.Data.Bytes
+		}
+		out[r.Revision] = v
 	}
 	return out
 }

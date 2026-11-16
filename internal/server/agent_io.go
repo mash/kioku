@@ -42,7 +42,7 @@ func (s *Server) outputContext(ctx context.Context, job store.JobRow) (map[strin
 		return nil, nil, err
 	}
 	defer unlock()
-	var rev model.Revision
+	var rev wikiTree
 	items := []model.InboxItem{}
 	err = s.Store.Read(ctx, func(q *store.Queries) error {
 		_, err := s.storage.runningJob(q, job.ID)
@@ -72,7 +72,7 @@ func (s *Server) outputContext(ctx context.Context, job store.JobRow) (map[strin
 	previous, err := s.generationWiki(ctx, rev)
 	return previous, items, err
 }
-func (s *Server) generationWiki(ctx context.Context, rev model.Revision) (map[string]string, error) {
+func (s *Server) generationWiki(ctx context.Context, rev wikiTree) (map[string]string, error) {
 	previous := map[string]string{}
 	for name := range rev.Files {
 		if !agentgen.AgentPage(name) {

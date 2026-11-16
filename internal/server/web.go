@@ -182,7 +182,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 	}
 	defer unlock()
 	var key blob.Key
-	var rev model.Revision
+	var rev wikiTree
 	err = s.Store.Read(r.Context(), func(q *store.Queries) error {
 		p, err := member(q, r.PathValue("project"), uid)
 		if err != nil {
@@ -224,9 +224,12 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		if !wiki.ValidFile(data.File) {
 			return fail(404, "file not found")
 		}
-		key = rev.Files[data.File]
-		if key == "" && r.URL.Query().Get("file") != "" {
+		row, exists := rev.Files[data.File]
+		if !exists && r.URL.Query().Get("file") != "" {
 			return fail(404, "file not found")
+		}
+		if exists {
+			key = wikiKey(row)
 		}
 		return nil
 	})

@@ -47,15 +47,6 @@ type InboxEntry struct {
 	Remove    bool   `json:"remove,omitempty"`
 }
 
-type Revision struct {
-	FileBytes   map[string]int64    `json:"file_bytes,omitempty"`
-	FileHashes  map[string]string   `json:"file_hashes,omitempty"`
-	StoredBytes int64               `json:"stored_bytes"`
-	ID          string              `json:"id"`
-	ProjectID   string              `json:"project_id"`
-	Created     time.Time           `json:"created"`
-	Files       map[string]blob.Key `json:"files"` // relative filename -> current object key
-}
 type Job struct {
 	AgentBudgetCents int64           `json:"agent_budget_cents"`
 	Run              *AgentRun       `json:"run,omitempty"`

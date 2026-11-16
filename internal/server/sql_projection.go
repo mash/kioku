@@ -177,8 +177,18 @@ func creationDate(v int64) time.Time {
 	return storageDate(v)
 }
 
-func wikiProjection(q *store.Queries, p store.ProjectRow, names ...string) (model.Revision, error) {
-	rev := model.Revision{ID: store.ValueString(p.WikiRevision), ProjectID: p.ID, Files: map[string]blob.Key{}, FileHashes: map[string]string{}, FileBytes: map[string]int64{}}
+// wikiTree is the published Wiki: its revision and the catalog row of each path.
+type wikiTree struct {
+	Revision string
+	Files    map[string]store.WikiFileRow
+}
+
+func wikiKey(row store.WikiFileRow) blob.Key {
+	return model.WikiContentKey(row.ProjectID, model.ContentHash(row.Hash))
+}
+
+func wikiProjection(q *store.Queries, p store.ProjectRow, names ...string) (wikiTree, error) {
+	rev := wikiTree{Revision: store.ValueString(p.WikiRevision), Files: map[string]store.WikiFileRow{}}
 	var rows []store.WikiFileRow
 	var err error
 	if len(names) > 0 && names[0] != "" {
@@ -195,10 +205,7 @@ func wikiProjection(q *store.Queries, p store.ProjectRow, names ...string) (mode
 		return rev, err
 	}
 	for _, row := range rows {
-		rev.Files[row.Path] = model.WikiContentKey(p.ID, model.ContentHash(row.Hash))
-		rev.FileHashes[row.Path] = row.Hash
-		rev.FileBytes[row.Path] = row.Data.Bytes
-		rev.StoredBytes += row.Data.Bytes
+		rev.Files[row.Path] = row
 	}
 	return rev, nil
 }

@@ -133,7 +133,7 @@ iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8
 
 func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) error {
 	ctx := r.Context()
-	resolve := func() (p model.Project, rev model.Revision, err error) {
+	resolve := func() (p model.Project, rev wikiTree, err error) {
 		err = s.Store.Read(ctx, func(q *store.Queries) error {
 			var err error
 			p, err = namespaceProject(q, r.PathValue("org"), r.PathValue("slug"), uid)

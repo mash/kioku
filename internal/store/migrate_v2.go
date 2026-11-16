@@ -18,24 +18,24 @@ import (
 // migrationPlan is a transient, validated set of v3 rows, not a runtime State.
 // No provider is consulted and no object is mutated until every input passes.
 type migrationPlan struct {
-	organizations       []OrganizationRow
-	organizationMembers [][3]string
-	users               []UserRow
-	identities          [][3]string
-	projects            []ProjectRow
-	projectMembers      [][3]string
-	sessions            []SessionRow
-	invites             []InviteRow
-	clients             []OAuthClientRow
-	inbox               []InboxRow
-	wiki                []WikiFileRow
-	jobs                []JobRow
-	audit               []AuditRow
-	views               []ViewRow
-	copies              map[blob.Key][]byte
-	obsolete            []blob.Key
-	migratedRecords     int
-	discardedRecords    int
+	organizations      []OrganizationRow
+	organizationOwners [][2]string
+	users              []UserRow
+	identities         [][3]string
+	projects           []ProjectRow
+	projectMembers     [][3]string
+	sessions           []SessionRow
+	invites            []InviteRow
+	clients            []OAuthClientRow
+	inbox              []InboxRow
+	wiki               []WikiFileRow
+	jobs               []JobRow
+	audit              []AuditRow
+	views              []ViewRow
+	copies             map[blob.Key][]byte
+	obsolete           []blob.Key
+	migratedRecords    int
+	discardedRecords   int
 }
 type legacyV2Record struct {
 	kind, id string
@@ -177,8 +177,8 @@ func (p *migrationPlan) apply(q *Queries) error {
 			return e
 		}
 	}
-	for _, v := range p.organizationMembers {
-		if e := q.PutOrganizationMember(v[0], v[1], v[2]); e != nil {
+	for _, v := range p.organizationOwners {
+		if e := q.PutOrganizationOwner(v[0], v[1]); e != nil {
 			return e
 		}
 	}
@@ -247,14 +247,14 @@ func (p *migrationPlan) apply(q *Queries) error {
 	var missingPrincipal bool
 	if err := q.row(`SELECT
 		EXISTS(SELECT 1 FROM projects p WHERE NOT EXISTS(SELECT 1 FROM organizations o WHERE o.id=p.org_id)) OR
-		EXISTS(SELECT 1 FROM organization_members m WHERE NOT EXISTS(SELECT 1 FROM users u WHERE u.id=m.user_id)) OR
+		EXISTS(SELECT 1 FROM organization_owners m WHERE NOT EXISTS(SELECT 1 FROM users u WHERE u.id=m.user_id)) OR
 		EXISTS(SELECT 1 FROM project_members m WHERE NOT EXISTS(SELECT 1 FROM users u WHERE u.id=m.user_id))`).Scan(&missingPrincipal); err != nil {
 		return err
 	}
 	if missingPrincipal {
 		return errors.New("missing legacy organization or member")
 	}
-	counts := map[string]int{"organizations": len(p.organizations), "organization_members": len(p.organizationMembers), "users": len(p.users), "user_identities": len(p.identities), "projects": len(p.projects), "project_members": len(p.projectMembers), "sessions": len(p.sessions), "invites": len(p.invites), "oauth_clients": len(p.clients), "inbox": len(p.inbox), "wiki_files": len(p.wiki), "jobs": len(p.jobs), "audit": len(p.audit), "views": len(p.views)}
+	counts := map[string]int{"organizations": len(p.organizations), "organization_owners": len(p.organizationOwners), "users": len(p.users), "user_identities": len(p.identities), "projects": len(p.projects), "project_members": len(p.projectMembers), "sessions": len(p.sessions), "invites": len(p.invites), "oauth_clients": len(p.clients), "inbox": len(p.inbox), "wiki_files": len(p.wiki), "jobs": len(p.jobs), "audit": len(p.audit), "views": len(p.views)}
 	for table, want := range counts {
 		var n int
 		if e := q.row("SELECT count(*) FROM " + table).Scan(&n); e != nil {

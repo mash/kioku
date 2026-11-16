@@ -31,7 +31,14 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			}
 			p.organizations = append(p.organizations, OrganizationRow{ID: v.ID, Slug: v.Slug, Data: OrganizationData{Name: v.Name, Created: migrationCreated(v.Created)}})
 			for user, role := range v.Members {
-				p.organizationMembers = append(p.organizationMembers, [3]string{v.ID, user, role})
+				switch role {
+				case "owner":
+					p.organizationOwners = append(p.organizationOwners, [2]string{v.ID, user})
+				case "member":
+					// Organization members have no rights; project membership grants access.
+				default:
+					return errors.New("invalid legacy organization role")
+				}
 			}
 		case "users":
 			var v legacyV2User

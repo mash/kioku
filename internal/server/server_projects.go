@@ -138,7 +138,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 		var e error
 		if req.Organization == "" {
 			org, e = personalOrg(q, uid)
-			if e == nil && org.Members[uid] != "owner" {
+			if e == nil && !org.Owners[uid] {
 				return fail(409, "personal namespace ownership changed; select a named organization")
 			}
 		} else {

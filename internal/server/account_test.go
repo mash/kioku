@@ -105,7 +105,7 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 		if _, ok := fixtureUsersFind(t, st, uid); ok {
 			t.Error("profile retained")
 		}
-		if fixtureProjectsGet(t, st, p.ID).Members[target] != "owner" || fixtureProjectsGet(t, st, p.ID).Members[uid] != "" || fixtureOrganizationsGet(t, st, p.OrgID).Members[target] != "owner" {
+		if fixtureProjectsGet(t, st, p.ID).Members[target] != "owner" || fixtureProjectsGet(t, st, p.ID).Members[uid] != "" || !fixtureOrganizationsGet(t, st, p.OrgID).Owners[target] {
 			t.Error("ownership or membership incorrect")
 		}
 		return nil

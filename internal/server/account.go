@@ -189,26 +189,19 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 				return fail(409, "transfer or delete owned projects before deleting your account")
 			}
 		}
-		orgs, err := q.OrganizationsForUser(uid)
+		owned, err := q.OwnedOrganizations(uid)
 		if err != nil {
 			return err
 		}
-		roles, err := q.OrganizationRoles(uid)
-		if err != nil {
-			return err
-		}
-		for _, org := range orgs {
-			if roles[org.ID] != "owner" {
-				continue
-			}
-			projects, err := q.OrganizationProjects(org.ID)
+		for org := range owned {
+			projects, err := q.OrganizationProjects(org)
 			if err != nil {
 				return err
 			}
 			if len(projects) > 0 {
 				return fail(409, "transfer organization ownership before deleting your account")
 			}
-			if err := q.DeleteOrganizationRows(org.ID); err != nil {
+			if err := q.DeleteOrganizationRows(org); err != nil {
 				return err
 			}
 		}
@@ -289,7 +282,7 @@ func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, ui
 		if err != nil {
 			return err
 		}
-		eligible := org.Members[target] != ""
+		eligible := org.Owners[target]
 		projects, err := q.OrganizationProjects(org.ID)
 		if err != nil {
 			return err
@@ -306,14 +299,7 @@ func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, ui
 		if target == uid || !eligible {
 			return fail(409, "new owner must already belong to an organization project")
 		}
-		for user, role := range org.Members {
-			if role == "owner" {
-				if err := q.PutOrganizationMember(org.ID, user, "member"); err != nil {
-					return err
-				}
-			}
-		}
-		return q.PutOrganizationMember(org.ID, target, "owner")
+		return q.ReplaceOrganizationOwners(org.ID, target)
 	}); err != nil {
 		return err
 	}

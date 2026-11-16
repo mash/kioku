@@ -4,7 +4,7 @@ package store
 // keys: actor and object IDs in history survive deletion of their principals.
 const catalogSchema = `
 CREATE TABLE organizations(id TEXT NOT NULL PRIMARY KEY,slug TEXT NOT NULL UNIQUE,data TEXT NOT NULL CHECK(json_valid(data) AND json_type(data)='object')) STRICT;
-CREATE TABLE organization_members(org_id TEXT NOT NULL,user_id TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('owner','member')),PRIMARY KEY(org_id,user_id)) STRICT;
+CREATE TABLE organization_owners(org_id TEXT NOT NULL,user_id TEXT NOT NULL,PRIMARY KEY(org_id,user_id)) STRICT;
 CREATE TABLE users(id TEXT NOT NULL PRIMARY KEY,email TEXT NOT NULL,data TEXT NOT NULL CHECK(json_valid(data) AND json_type(data)='object')) STRICT;
 CREATE TABLE user_identities(user_id TEXT NOT NULL,provider TEXT NOT NULL,identity_id TEXT NOT NULL,PRIMARY KEY(user_id,provider),UNIQUE(provider,identity_id)) STRICT;
 CREATE TABLE projects(id TEXT NOT NULL PRIMARY KEY,org_id TEXT NOT NULL,slug TEXT NOT NULL,created INTEGER NOT NULL,deleting INTEGER NOT NULL CHECK(deleting IN (0,1)),wiki_revision TEXT,next_generate_at INTEGER,data TEXT NOT NULL CHECK(json_valid(data) AND json_type(data)='object'),UNIQUE(org_id,slug)) STRICT;
@@ -29,7 +29,7 @@ CREATE INDEX sessions_expires ON sessions(expires,id);
 CREATE INDEX sessions_kind ON sessions(kind,status,id);
 CREATE INDEX sessions_project ON sessions(project_id,kind,user_id,id);
 CREATE INDEX projects_due ON projects(next_generate_at,id) WHERE next_generate_at IS NOT NULL AND deleting=0;
-CREATE INDEX organization_members_user ON organization_members(user_id,role,org_id);
+CREATE INDEX organization_owners_user ON organization_owners(user_id,org_id);
 CREATE INDEX project_members_user ON project_members(user_id,role,project_id);
 CREATE INDEX invites_token ON invites(token_hash);
 CREATE INDEX invites_project ON invites(project_id,used_by,expires,id);

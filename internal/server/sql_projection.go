@@ -68,8 +68,8 @@ func projectProjections(q *store.Queries, rows []store.ProjectRow) ([]model.Proj
 }
 
 func organizationProjection(q *store.Queries, row store.OrganizationRow) (model.Organization, error) {
-	members, err := q.OrganizationMembers(row.ID)
-	return model.Organization{ID: row.ID, Slug: row.Slug, Name: row.Data.Name, Created: storageDate(row.Data.Created), Members: members}, err
+	owners, err := q.OrganizationOwners(row.ID)
+	return model.Organization{ID: row.ID, Slug: row.Slug, Name: row.Data.Name, Created: storageDate(row.Data.Created), Owners: owners}, err
 }
 func userProjection(q *store.Queries, row store.UserRow) (model.User, error) {
 	ids, err := q.Identities(row.ID)

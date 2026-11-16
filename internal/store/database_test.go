@@ -34,7 +34,7 @@ func testJob(id, project, status string, created int64) JobRow {
 }
 func pointer[T any](v T) *T { return &v }
 
-func TestCatalogSchemaHasExactlyFourteenTablesAndSeventyThreeColumns(t *testing.T) {
+func TestCatalogSchemaHasExactlyFourteenTablesAndSeventyTwoColumns(t *testing.T) {
 	d := newCatalog(t)
 	var tables, columns int
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&tables); err != nil {
@@ -43,7 +43,7 @@ func TestCatalogSchemaHasExactlyFourteenTablesAndSeventyThreeColumns(t *testing.
 	if err := d.reader.QueryRow("SELECT count(*) FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%'").Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
-	if tables != 14 || columns != 73 {
+	if tables != 14 || columns != 72 {
 		t.Fatalf("tables=%d columns=%d", tables, columns)
 	}
 	for _, tc := range []struct {
@@ -65,7 +65,6 @@ func TestSchemaRejectsInvalidRows(t *testing.T) {
 	d := newCatalog(t)
 	for _, query := range []string{
 		`INSERT INTO users VALUES('u','a','[]')`,
-		`INSERT INTO organization_members VALUES('o','u','admin')`,
 		`INSERT INTO projects VALUES('p','o','p',0,2,NULL,NULL,'{}')`,
 		`INSERT INTO sessions VALUES('s','user','pending','u',NULL,10,0,'{}')`,
 		`INSERT INTO sessions VALUES('s','agent','active','',NULL,10,0,'{}')`,

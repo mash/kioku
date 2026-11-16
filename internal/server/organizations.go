@@ -55,14 +55,11 @@ func orgOwner(q *store.Queries, slug, uid string) (model.Organization, error) {
 	if err != nil {
 		return model.Organization{}, err
 	}
-	role, err := q.OrganizationRole(row.ID, uid)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" {
+	org, err := organizationProjection(q, row)
+	if err == nil && !org.Owners[uid] {
 		return model.Organization{}, fail(404, "organization not found or owner permission required")
 	}
-	if err != nil {
-		return model.Organization{}, err
-	}
-	return organizationProjection(q, row)
+	return org, err
 }
 func personalOrg(q *store.Queries, uid string) (model.Organization, error) {
 	id := "personal-" + uid
@@ -77,7 +74,7 @@ func personalOrg(q *store.Queries, uid string) (model.Organization, error) {
 	if err = q.PutOrganization(row); err != nil {
 		return model.Organization{}, err
 	}
-	if err = q.PutOrganizationMember(id, uid, "owner"); err != nil {
+	if err = q.PutOrganizationOwner(id, uid); err != nil {
 		return model.Organization{}, err
 	}
 	return organizationProjection(q, row)
@@ -101,21 +98,11 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 	}
 	org := store.OrganizationRow{ID: auth.Token()[:20], Slug: req.Slug, Data: store.OrganizationData{Name: req.Name, Created: time.Now().UnixMilli()}}
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
-		orgs, e := q.OrganizationsForUser(uid)
+		owned, e := q.OwnedOrganizations(uid)
 		if e != nil {
 			return e
 		}
-		roles, e := q.OrganizationRoles(uid)
-		if e != nil {
-			return e
-		}
-		owned := 0
-		for _, o := range orgs {
-			if roles[o.ID] == "owner" {
-				owned++
-			}
-		}
-		if owned >= 20 {
+		if len(owned) >= 20 {
 			return fail(429, "organization ownership limit reached")
 		}
 		if _, e = q.OrganizationBySlug(req.Slug); e == nil {
@@ -126,7 +113,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 		if e = q.PutOrganization(org); e != nil {
 			return e
 		}
-		return q.PutOrganizationMember(org.ID, uid, "owner")
+		return q.PutOrganizationOwner(org.ID, uid)
 	}); err != nil {
 		return err
 	}
@@ -140,14 +127,14 @@ func (s *Server) organizations(w http.ResponseWriter, r *http.Request, uid strin
 		if e != nil {
 			return e
 		}
-		roles, e := q.OrganizationRoles(uid)
+		owned, e := q.OwnedOrganizations(uid)
 		if e != nil {
 			return e
 		}
 		for _, org := range orgs {
-			role := roles[org.ID]
-			if role == "" {
-				role = "member"
+			role := "member"
+			if owned[org.ID] {
+				role = "owner"
 			}
 			out = append(out, map[string]string{"id": org.ID, "slug": org.Slug, "name": org.Data.Name, "role": role})
 		}

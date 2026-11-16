@@ -25,24 +25,46 @@ func (q *Queries) ProjectRole(project, user string) (string, error) {
 	err := q.row("SELECT role FROM project_members WHERE project_id=? AND user_id=?", project, user).Scan(&role)
 	return role, err
 }
-func (q *Queries) OrganizationRole(org, user string) (string, error) {
-	var role string
-	err := q.row("SELECT role FROM organization_members WHERE org_id=? AND user_id=?", org, user).Scan(&role)
-	return role, err
-}
 func (q *Queries) PutProjectMember(project, user, role string) error {
 	_, err := q.exec("INSERT INTO project_members VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role", project, user, role)
 	return err
 }
-func (q *Queries) PutOrganizationMember(org, user, role string) error {
-	_, err := q.exec("INSERT INTO organization_members VALUES(?,?,?) ON CONFLICT(org_id,user_id) DO UPDATE SET role=excluded.role", org, user, role)
+func (q *Queries) PutOrganizationOwner(org, user string) error {
+	_, err := q.exec("INSERT INTO organization_owners VALUES(?,?) ON CONFLICT DO NOTHING", org, user)
 	return err
+}
+
+// ReplaceOrganizationOwners makes user the only owner of org.
+func (q *Queries) ReplaceOrganizationOwners(org, user string) error {
+	if _, err := q.exec("DELETE FROM organization_owners WHERE org_id=?", org); err != nil {
+		return err
+	}
+	return q.PutOrganizationOwner(org, user)
 }
 func (q *Queries) ProjectMembers(project string) (map[string]string, error) {
 	return q.members("SELECT user_id,role FROM project_members WHERE project_id=?", project)
 }
-func (q *Queries) OrganizationMembers(org string) (map[string]string, error) {
-	return q.members("SELECT user_id,role FROM organization_members WHERE org_id=?", org)
+func (q *Queries) OrganizationOwners(org string) (map[string]bool, error) {
+	return q.idSet("SELECT user_id FROM organization_owners WHERE org_id=?", org)
+}
+func (q *Queries) OwnedOrganizations(user string) (map[string]bool, error) {
+	return q.idSet("SELECT org_id FROM organization_owners WHERE user_id=?", user)
+}
+func (q *Queries) idSet(query, id string) (map[string]bool, error) {
+	rows, err := q.rows(query, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
 }
 func (q *Queries) members(query, id string) (map[string]string, error) {
 	rows, err := q.rows(query, id)
@@ -62,7 +84,7 @@ func (q *Queries) members(query, id string) (map[string]string, error) {
 }
 
 func (q *Queries) OrganizationsForUser(user string) ([]OrganizationRow, error) {
-	return q.listOrganization("WHERE id IN (SELECT org_id FROM organization_members WHERE user_id=? UNION SELECT p.org_id FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=?) ORDER BY slug", user, user)
+	return q.listOrganization("WHERE id IN (SELECT org_id FROM organization_owners WHERE user_id=? UNION SELECT p.org_id FROM projects p JOIN project_members m ON m.project_id=p.id WHERE m.user_id=?) ORDER BY slug", user, user)
 }
 func (q *Queries) DeleteProjectMember(project, user string) error {
 	_, err := q.exec("DELETE FROM project_members WHERE project_id=? AND user_id=?", project, user)
@@ -73,7 +95,7 @@ func (q *Queries) DeleteIdentity(user, provider string) error {
 	return err
 }
 func (q *Queries) DeleteAccountRows(user string) error {
-	for _, table := range []string{"user_identities", "organization_members", "project_members", "sessions"} {
+	for _, table := range []string{"user_identities", "organization_owners", "project_members", "sessions"} {
 		if _, err := q.exec("DELETE FROM "+table+" WHERE user_id=?", user); err != nil {
 			return err
 		}
@@ -88,15 +110,12 @@ func (q *Queries) OrganizationProjects(org string) ([]ProjectRow, error) {
 	return q.listProject("WHERE org_id=? ORDER BY id", org)
 }
 func (q *Queries) DeleteOrganizationRows(org string) error {
-	if _, err := q.exec("DELETE FROM organization_members WHERE org_id=?", org); err != nil {
+	if _, err := q.exec("DELETE FROM organization_owners WHERE org_id=?", org); err != nil {
 		return err
 	}
 	return q.DeleteOrganization(org)
 }
 
-func (q *Queries) OrganizationRoles(user string) (map[string]string, error) {
-	return q.members("SELECT org_id,role FROM organization_members WHERE user_id=?", user)
-}
 func (q *Queries) OrganizationsByIDs(ids []string) ([]OrganizationRow, error) {
 	raw, err := marshalData(ids)
 	if err != nil {

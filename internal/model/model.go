@@ -9,11 +9,11 @@ import (
 )
 
 type Organization struct {
-	ID      string            `json:"id"`
-	Slug    string            `json:"slug"`
-	Name    string            `json:"name"`
-	Members map[string]string `json:"members"`
-	Created time.Time         `json:"created"`
+	ID      string          `json:"id"`
+	Slug    string          `json:"slug"`
+	Name    string          `json:"name"`
+	Owners  map[string]bool `json:"owners"`
+	Created time.Time       `json:"created"`
 }
 
 type User struct {

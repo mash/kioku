@@ -55,7 +55,7 @@ func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
 		setup(s, &config)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	rs, err := runners.Load(config, func(job, attempt string) { s.ReconcileJob(ctx, job, attempt) })
+	rs, err := runners.Load(config, func(job string) { s.ReconcileJob(ctx, job) })
 	if err != nil {
 		cancel()
 		t.Fatal(err)

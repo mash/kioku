@@ -127,7 +127,7 @@ func waitExecJob(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 	return j
 }
 
-func TestExecTimeoutAndStaleExit(t *testing.T) {
+func TestExecTimeout(t *testing.T) {
 	t.Parallel()
 	f, token, p := execFixture(t, "wait")
 	j := startManaged(t, f, token, p.ID, true)
@@ -138,10 +138,6 @@ func TestExecTimeoutAndStaleExit(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
-	}
-	f.s.ReconcileJob(t.Context(), j.ID, "older-attempt")
-	if got := storedJob(t, f, j.ID); got.Status != "running" || got.Run.AbortReason != "" {
-		t.Fatal("stale callback reconciled job", got)
 	}
 	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(j)); err != nil && !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
@@ -166,7 +162,7 @@ func TestReconcileJobStopsWithShutdownContext(t *testing.T) {
 	}})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	f.s.ReconcileJob(ctx, j.ID, j.Run.Attempt.ID)
+	f.s.ReconcileJob(ctx, j.ID)
 	select {
 	case <-entered:
 		t.Fatal("shutdown started a new inspection")
@@ -175,7 +171,7 @@ func TestReconcileJobStopsWithShutdownContext(t *testing.T) {
 	ctx, cancel = context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); f.s.ReconcileJob(ctx, j.ID, j.Run.Attempt.ID) }()
+	go func() { defer close(done); f.s.ReconcileJob(ctx, j.ID) }()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):

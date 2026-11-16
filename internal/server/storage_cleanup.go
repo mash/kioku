@@ -24,7 +24,7 @@ func sqlAttempt(j store.JobRow) runner.Attempt {
 			ref.Resources["input_file_id"] = *run.InputFileID
 		}
 	}
-	return runner.Attempt{Key: runner.AttemptKey{JobID: j.ID, AttemptID: j.ID, ProjectID: j.ProjectID}, Run: ref}
+	return runner.Attempt{Key: runner.AttemptKey{JobID: j.ID, ProjectID: j.ProjectID}, Run: ref}
 }
 func runRefChanged(j store.JobRow, ref runner.RunRef) bool {
 	run := j.Data.Run

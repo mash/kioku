@@ -14,7 +14,7 @@ import (
 )
 
 func TestFileSessionUsesOnlyCompletedTurnArtifacts(t *testing.T) {
-	key := runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}
+	key := runner.AttemptKey{JobID: "job", ProjectID: "project"}
 	var downloads, deletes atomic.Int32
 	var duplicate atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -106,7 +106,7 @@ func TestFileSessionUsesOnlyCompletedTurnArtifacts(t *testing.T) {
 }
 
 func TestFileSessionDoesNotStartWithoutNetworkConfirmation(t *testing.T) {
-	key := runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}
+	key := runner.AttemptKey{JobID: "job", ProjectID: "project"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.Method + " " + req.URL.Path {
 		case "POST /files":

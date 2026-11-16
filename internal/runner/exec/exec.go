@@ -30,7 +30,7 @@ type Config struct {
 
 type Runner struct {
 	config    Config
-	onExit    func(string, string)
+	onExit    func(string)
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.Mutex
@@ -53,7 +53,7 @@ type child struct {
 	stderr    byteCounter
 }
 
-func New(config Config, onExit func(jobID, attemptID string)) *Runner {
+func New(config Config, onExit func(jobID string)) *Runner {
 	config.Command = slices.Clone(config.Command)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Runner{config: config, onExit: onExit, ctx: ctx, cancel: cancel, children: map[string]*child{}, signal: signalGroup}
@@ -63,14 +63,14 @@ func (r *Runner) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, e
 	if r.config.Root == "" || len(r.config.Command) == 0 {
 		return runner.RunRef{}, errors.New("exec runner is not configured")
 	}
-	name := spec.Key.JobID + "-" + spec.Key.AttemptID
-	if !validName(name) || spec.Key.JobID == "" || spec.Key.AttemptID == "" {
+	name := spec.Key.JobID + "-" + spec.Key.JobID
+	if !validName(name) || spec.Key.JobID == "" {
 		return runner.RunRef{}, errors.New("invalid exec attempt")
 	}
-	ref := runner.RunRef{ID: spec.Key.AttemptID}
+	ref := runner.RunRef{ID: spec.Key.JobID}
 	dir := filepath.Join(r.config.Root, name)
 	if err := os.MkdirAll(filepath.Join(dir, "tmp"), 0700); err != nil {
-		slog.Warn("exec runner workdir unavailable", "job", spec.Key.JobID, "attempt", spec.Key.AttemptID, "error", err)
+		slog.Warn("exec runner workdir unavailable", "job", spec.Key.JobID, "attempt", spec.Key.JobID, "error", err)
 		return runner.RunRef{}, errors.New("exec runner workdir unavailable")
 	}
 	r.mu.Lock()
@@ -90,12 +90,12 @@ func (r *Runner) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, e
 	cmd.Stdout, cmd.Stderr = &c.stdout, &c.stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		slog.Warn("exec runner input unavailable", "job", spec.Key.JobID, "attempt", spec.Key.AttemptID, "error", err)
+		slog.Warn("exec runner input unavailable", "job", spec.Key.JobID, "attempt", spec.Key.JobID, "error", err)
 		return runner.RunRef{}, errors.New("exec runner input unavailable")
 	}
 	if err = cmd.Start(); err != nil {
 		stdin.Close()
-		slog.Warn("exec runner could not start", "job", spec.Key.JobID, "attempt", spec.Key.AttemptID, "error", err)
+		slog.Warn("exec runner could not start", "job", spec.Key.JobID, "attempt", spec.Key.JobID, "error", err)
 		return runner.RunRef{}, errors.New("exec runner could not start")
 	}
 	c.pgid = cmd.Process.Pid
@@ -105,7 +105,7 @@ func (r *Runner) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, e
 	if system == "" {
 		system = r.config.Prompt
 	}
-	wire := input{Version: 1, JobID: spec.Key.JobID, AttemptID: spec.Key.AttemptID, InputURL: spec.InputURL, OutputURL: spec.OutputURL, JobToken: string(spec.Token), Model: r.config.Model.ID, FirstMessage: spec.FirstMessage, Prompt: system, BudgetCents: spec.BudgetCents, Deadline: spec.Deadline}
+	wire := input{Version: 1, JobID: spec.Key.JobID, AttemptID: spec.Key.JobID, InputURL: spec.InputURL, OutputURL: spec.OutputURL, JobToken: string(spec.Token), Model: r.config.Model.ID, FirstMessage: spec.FirstMessage, Prompt: system, BudgetCents: spec.BudgetCents, Deadline: spec.Deadline}
 	go func() {
 		defer close(c.stdinDone)
 		defer stdin.Close()
@@ -121,7 +121,7 @@ func (r *Runner) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, e
 func (r *Runner) wait(c *child) {
 	_ = c.cmd.Wait()
 	<-c.stdinDone
-	status := runner.Status{Run: runner.RunRef{ID: c.key.AttemptID}, State: runner.StateStopped}
+	status := runner.Status{Run: runner.RunRef{ID: c.key.JobID}, State: runner.StateStopped}
 	result, valid := parseResult(c.stdout.line())
 	successful, signaled := false, false
 	if c.cmd.ProcessState != nil {
@@ -160,24 +160,24 @@ func (r *Runner) wait(c *child) {
 	r.mu.Unlock()
 	if notify {
 		defer r.callbacks.Done()
-		r.onExit(c.key.JobID, c.key.AttemptID)
+		r.onExit(c.key.JobID)
 	}
 }
 func (r *Runner) Inspect(_ context.Context, a runner.Attempt) (runner.Status, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if c := r.children[a.Key.AttemptID]; c != nil {
+	if c := r.children[a.Key.JobID]; c != nil {
 		if c.key != a.Key {
 			return runner.Status{}, errors.New("exec inspection attempt changed")
 		}
 		return c.status, nil
 	}
-	return runner.Status{Run: runner.RunRef{ID: a.Key.AttemptID}, State: runner.StateStopped, Reason: "exec run lost on restart"}, nil
+	return runner.Status{Run: runner.RunRef{ID: a.Key.JobID}, State: runner.StateStopped, Reason: "exec run lost on restart"}, nil
 }
 func (r *Runner) Stop(_ context.Context, a runner.Attempt) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	c := r.children[a.Key.AttemptID]
+	c := r.children[a.Key.JobID]
 	if c != nil && c.key != a.Key {
 		return errors.New("exec stop attempt changed")
 	}
@@ -203,7 +203,7 @@ func (r *Runner) Stop(_ context.Context, a runner.Attempt) error {
 			}
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			if r.children[a.Key.AttemptID] == c && !c.exited {
+			if r.children[a.Key.JobID] == c && !c.exited {
 				_ = r.signal(c.pgid, syscall.SIGKILL)
 			}
 		}()
@@ -212,14 +212,14 @@ func (r *Runner) Stop(_ context.Context, a runner.Attempt) error {
 }
 func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) (cleanupErr error) {
 	key := a.Key
-	path := filepath.Join(r.config.Root, key.JobID+"-"+key.AttemptID)
+	path := filepath.Join(r.config.Root, key.JobID+"-"+key.JobID)
 	defer func() {
 		if cleanupErr != nil {
-			slog.Warn("exec cleanup failed", "job", key.JobID, "attempt", key.AttemptID, "error", cleanupErr)
+			slog.Warn("exec cleanup failed", "job", key.JobID, "attempt", key.JobID, "error", cleanupErr)
 		}
 	}()
 	r.mu.Lock()
-	c := r.children[key.AttemptID]
+	c := r.children[key.JobID]
 	if c != nil && c.key != key {
 		r.mu.Unlock()
 		return errors.New("exec cleanup attempt changed")
@@ -241,22 +241,22 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) (cleanupErr erro
 		}
 		r.mu.Lock()
 	}
-	if c != nil && r.children[key.AttemptID] == c {
+	if c != nil && r.children[key.JobID] == c {
 		if err := r.signal(c.pgid, syscall.SIGKILL); err != nil {
 			r.mu.Unlock()
 			return fmt.Errorf("%w: exec group cleanup failed", runner.ErrTemporary)
 		}
-		delete(r.children, key.AttemptID)
+		delete(r.children, key.JobID)
 	}
 	r.mu.Unlock()
 	if r.config.Root == "" {
 		return nil
 	}
 	name := filepath.Base(path)
-	expected := key.JobID + "-" + key.AttemptID
+	expected := key.JobID + "-" + key.JobID
 	path = filepath.Clean(path)
 	rel, err := filepath.Rel(r.config.Root, path)
-	if key.JobID == "" || key.AttemptID == "" || !validName(expected) || !validName(name) || name != expected || err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+	if key.JobID == "" || !validName(expected) || !validName(name) || name != expected || err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		slog.Warn("invalid exec workdir", "job", key.JobID)
 		return nil
 	}
@@ -310,7 +310,7 @@ func (r *Runner) Close(ctx context.Context) error {
 	cancel()
 	r.mu.Lock()
 	for _, c := range children {
-		if r.children[c.key.AttemptID] == c && !c.exited {
+		if r.children[c.key.JobID] == c && !c.exited {
 			_ = r.signal(c.pgid, syscall.SIGKILL)
 		}
 	}
@@ -325,9 +325,9 @@ func (r *Runner) Close(ctx context.Context) error {
 	}
 	r.mu.Lock()
 	for _, c := range children {
-		if r.children[c.key.AttemptID] == c {
+		if r.children[c.key.JobID] == c {
 			cleanupErr = errors.Join(cleanupErr, r.signal(c.pgid, syscall.SIGKILL))
-			delete(r.children, c.key.AttemptID)
+			delete(r.children, c.key.JobID)
 		}
 	}
 	r.mu.Unlock()

@@ -91,7 +91,7 @@ func (r *Runner) send(ctx context.Context, method, path string, input io.Reader,
 	return res, nil
 }
 func metadata(k runner.AttemptKey) map[string]string {
-	return map[string]string{"kioku_job_id": k.JobID, "kioku_attempt_id": k.AttemptID}
+	return map[string]string{"kioku_job_id": k.JobID, "kioku_attempt_id": k.JobID}
 }
 
 type resource struct {
@@ -110,7 +110,7 @@ type resource struct {
 // Scan unfiltered pages and match all identity fields locally: metadata indexes
 // are eventually consistent. Never replay a session creation after an ambiguous response.
 func (r *Runner) find(ctx context.Context, path string, k runner.AttemptKey) ([]resource, error) {
-	if k.JobID == "" || k.AttemptID == "" || k.ProjectID == "" {
+	if k.JobID == "" || k.ProjectID == "" {
 		return nil, errors.New("missing OpenAI attempt identity")
 	}
 	var found []resource

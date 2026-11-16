@@ -120,7 +120,7 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 	}
 	raw := ""
 	if !offline {
-		raw, err = s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Attempt: job.ID, Expires: job.Data.Run.Deadline + 600000})
+		raw, err = s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Expires: job.Data.Run.Deadline + 600000})
 		if err != nil {
 			return s.failAgentJobLocked(ctx, job, err.Error(), nil)
 		}

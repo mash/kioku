@@ -42,7 +42,7 @@ type Set struct {
 	openaiRunner *openairunner.Runner
 }
 
-func Load(c Config, onExit func(string, string)) (*Set, error) {
+func Load(c Config, onExit func(string)) (*Set, error) {
 	if c.AgentMaxSessions == 0 {
 		c.AgentMaxSessions = 4
 	}

@@ -100,9 +100,9 @@ func TestManagedConfigurationCleansExecWorkdir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := runner.AttemptKey{JobID: "job", AttemptID: "attempt"}
+	key := runner.AttemptKey{JobID: "job"}
 	a := runner.Attempt{Key: key}
-	workdir := filepath.Join(c.DataDir, "exec-runs", key.JobID+"-"+key.AttemptID)
+	workdir := filepath.Join(c.DataDir, "exec-runs", key.JobID+"-"+key.JobID)
 	if err := os.MkdirAll(workdir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRunnerOwnsCommandAndClose(t *testing.T) {
 	if err := g.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "closed"}}); err == nil {
+	if _, err := r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: "job"}}); err == nil {
 		t.Fatal("closed runner accepted a new run")
 	}
 }

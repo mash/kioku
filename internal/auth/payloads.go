@@ -13,7 +13,6 @@ type OAuthCookie struct {
 }
 type JobCredential struct {
 	JobID   string `json:"job_id"`
-	Attempt string `json:"attempt"`
 	Expires int64  `json:"expires"`
 }
 

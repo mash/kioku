@@ -46,10 +46,10 @@ func TestClientPaginatesAndUsesEventTimestamps(t *testing.T) {
 		{"id": "e2", "type": "session.status_idle", "processed_at": "2026-11-01T02:00:00Z", "stop_reason": map[string]string{"type": "requires_action"}},
 	}
 	f.SetSession(s)
-	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "target", AttemptID: "target", ProjectID: "project"}); err != nil || len(ids) != 2 || !slices.Contains(ids, old) || !slices.Contains(ids, latest) {
+	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "target", ProjectID: "project"}); err != nil || len(ids) != 2 || !slices.Contains(ids, old) || !slices.Contains(ids, latest) {
 		t.Fatal(ids, err)
 	}
-	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "absent", AttemptID: "absent", ProjectID: "project"}); err != nil || len(ids) != 0 {
+	if ids, err := a.FindAttemptSessions(t.Context(), runner.AttemptKey{JobID: "absent", ProjectID: "project"}); err != nil || len(ids) != 0 {
 		t.Fatal(ids, err)
 	}
 	got, err := a.GetSession(context.Background(), latest)

@@ -43,7 +43,7 @@ func (s *Set) prepareManaged() error {
 	return nil
 }
 
-func (s *Set) prepareRunner(onExit func(string, string)) error {
+func (s *Set) prepareRunner(onExit func(string)) error {
 	if err := s.prepareManaged(); err != nil {
 		return err
 	}

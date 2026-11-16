@@ -13,7 +13,7 @@ import (
 )
 
 func spec() runner.RunSpec {
-	return runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, InputArchive: []byte("input"), SaveRef: func(runner.RunRef) error { return nil }, FirstMessage: "generate wiki", BudgetCents: 50, Deadline: time.Now().Add(time.Hour)}
+	return runner.RunSpec{Key: runner.AttemptKey{JobID: "job", ProjectID: "project"}, InputArchive: []byte("input"), SaveRef: func(runner.RunRef) error { return nil }, FirstMessage: "generate wiki", BudgetCents: 50, Deadline: time.Now().Add(time.Hour)}
 }
 func setup(t *testing.T, h http.HandlerFunc) *Runner {
 	t.Helper()
@@ -33,7 +33,7 @@ func TestInspectDoesNotTreatIdleAsSuccess(t *testing.T) {
 						fmt.Fprintf(w, `{"data":[{"id":"turn","status":%q}]}`, state)
 					}
 				} else {
-					fmt.Fprint(w, `{"id":"session","status":"idle","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"},"environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`)
+					fmt.Fprint(w, `{"id":"session","status":"idle","metadata":{"kioku_job_id":"job","kioku_attempt_id":"job"},"environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`)
 				}
 			})
 			got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec().Key, Run: runner.RunRef{ID: "session"}})
@@ -125,9 +125,9 @@ func TestLostCreateResponseIsRecoveredByAttempt(t *testing.T) {
 			if !created {
 				t.Error("session not created")
 			}
-			fmt.Fprint(w, `{"data":[{"id":"session","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"}}]}`)
+			fmt.Fprint(w, `{"data":[{"id":"session","metadata":{"kioku_job_id":"job","kioku_attempt_id":"job"}}]}`)
 		case "GET /agents/sessions/session":
-			fmt.Fprint(w, `{"id":"session","status":"in_progress","metadata":{"kioku_job_id":"job","kioku_attempt_id":"attempt"},"environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`)
+			fmt.Fprint(w, `{"id":"session","status":"in_progress","metadata":{"kioku_job_id":"job","kioku_attempt_id":"job"},"environment":{"type":"openai_hosted","network":{"access":"disabled"}}}`)
 		default:
 			t.Errorf("unexpected request: %s", q.URL)
 			w.WriteHeader(500)

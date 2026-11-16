@@ -107,7 +107,7 @@ func (a *API) FindInputs(ctx context.Context, name string) ([]string, error) {
 }
 
 func (a *API) FindAttemptSessions(ctx context.Context, key runner.AttemptKey) ([]string, error) {
-	if key.JobID == "" || key.AttemptID == "" || key.ProjectID == "" {
+	if key.JobID == "" || key.ProjectID == "" {
 		return nil, errors.New("missing Claude attempt identity")
 	}
 	var ids []string
@@ -123,7 +123,7 @@ func (a *API) FindAttemptSessions(ctx context.Context, key runner.AttemptKey) ([
 				return nil, errors.New("Claude session list contains an empty ID")
 			}
 			meta := session.Metadata
-			if meta["kioku_job_id"] == key.JobID && meta["kioku_attempt_id"] == key.AttemptID {
+			if meta["kioku_job_id"] == key.JobID && meta["kioku_attempt_id"] == key.JobID {
 				ids = append(ids, session.ID)
 			}
 		}

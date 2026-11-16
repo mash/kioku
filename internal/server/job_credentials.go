@@ -22,7 +22,7 @@ func checkSQLJobCredential(q *store.Queries, cipher *auth.Cipher, token, pid, id
 	if err != nil {
 		return job, err
 	}
-	if job.ProjectID != pid || !job.Running() || payload.Attempt != job.ID || job.Data.Run.AbortReason != nil {
+	if job.ProjectID != pid || !job.Running() || job.Data.Run.AbortReason != nil {
 		return store.JobRow{}, denied
 	}
 	if err = sqlJobAuthorization(q, job, now.UnixMilli()); err != nil {

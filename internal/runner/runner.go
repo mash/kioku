@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-type AttemptKey struct{ JobID, AttemptID, ProjectID string }
+type AttemptKey struct{ JobID, ProjectID string }
 
 // RunRef points at a run and the resources needed for cleanup.
 type RunRef struct {

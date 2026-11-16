@@ -81,7 +81,7 @@ func TestOpenAIPromptOverridesOnWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := prompts.JobVariables{JobID: "job", Namespace: "acme/project", InputURL: "/workspace/input.tar.gz", OutputURL: "/workspace/outputs/output.tar.gz"}
-	_, err = r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: job.JobID, ProjectID: "internal-project", AttemptID: "attempt"},
+	_, err = r.Start(t.Context(), runner.RunSpec{Key: runner.AttemptKey{JobID: job.JobID, ProjectID: "internal-project"},
 		InputArchive: []byte("fixture"), SaveRef: func(runner.RunRef) error { return nil },
 		FirstMessage: rendered.FileUser(job), BudgetCents: 50})
 	if err != nil || !found {

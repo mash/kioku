@@ -6,7 +6,7 @@ import (
 )
 
 // ReconcileJob handles a runner exit notification using the caller's lifetime context.
-func (s *Server) ReconcileJob(ctx context.Context, jobID, attemptID string) {
+func (s *Server) ReconcileJob(ctx context.Context, jobID string) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -15,7 +15,7 @@ func (s *Server) ReconcileJob(ctx context.Context, jobID, attemptID string) {
 		s.databaseError(ctx, err)
 		return
 	}
-	if !job.Running() || job.ID != attemptID {
+	if !job.Running() {
 		return
 	}
 	if err := s.reconcileAgentJob(ctx, job); err != nil && ctx.Err() == nil {

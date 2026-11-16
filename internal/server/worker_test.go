@@ -58,7 +58,7 @@ func TestRunWorkerContinuesAfterPermanentStartFailure(t *testing.T) {
 					if spec.Key.ProjectID == p.ID {
 						return runner.RunRef{}, errors.New("permanent start failure")
 					}
-					return runner.RunRef{ID: spec.Key.AttemptID}, nil
+					return runner.RunRef{ID: spec.Key.JobID}, nil
 				},
 				inspect: func(_ context.Context, a runner.Attempt) (runner.Status, error) {
 					if a.Key.ProjectID == p.ID && confirmed.Load() {

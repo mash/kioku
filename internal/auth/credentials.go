@@ -36,7 +36,7 @@ func (c *Cipher) OpenOAuthCookie(cookie, state, provider string, now int64) (OAu
 	return v, nil
 }
 func (c *Cipher) SealJobCredential(v JobCredential) (string, error) {
-	if v.JobID == "" || strings.ContainsAny(v.JobID, "./\\\x00") || v.Attempt != v.JobID || v.Expires <= 0 {
+	if v.JobID == "" || strings.ContainsAny(v.JobID, "./\\\x00") || v.Expires <= 0 {
 		return "", ErrInvalidCredential
 	}
 	type wire JobCredential
@@ -56,7 +56,7 @@ func (c *Cipher) OpenJobCredential(token string, now int64) (JobCredential, erro
 	if err != nil {
 		return v, ErrInvalidCredential
 	}
-	if err = json.Unmarshal([]byte(plain), &v); err != nil || v.JobID != parts[1] || v.Attempt != v.JobID || now >= v.Expires {
+	if err = json.Unmarshal([]byte(plain), &v); err != nil || v.JobID != parts[1] || now >= v.Expires {
 		return JobCredential{}, ErrInvalidCredential
 	}
 	return v, nil

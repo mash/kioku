@@ -39,7 +39,7 @@ func TestSealedJobCredentialIsBoundToItsJobAndDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := c.SealJobCredential(JobCredential{JobID: "j1", Attempt: "j1", Expires: 100})
+	raw, err := c.SealJobCredential(JobCredential{JobID: "j1", Expires: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

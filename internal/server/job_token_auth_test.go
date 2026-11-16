@@ -29,7 +29,7 @@ func jobTokenFixture(t *testing.T) (*fixture, string, fixtureJob, fixtureAgentTo
 	}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Attempt: job.ID, Expires: now.Add(time.Hour + 10*time.Minute).UnixMilli()})
+	raw, err := f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Expires: now.Add(time.Hour + 10*time.Minute).UnixMilli()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 		denied := raw
 		if expired {
 			var err error
-			denied, err = f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Attempt: job.ID, Expires: time.Now().Add(-time.Second).UnixMilli()})
+			denied, err = f.s.Cipher.SealJobCredential(auth.JobCredential{JobID: job.ID, Expires: time.Now().Add(-time.Second).UnixMilli()})
 			if err != nil {
 				t.Fatal(err)
 			}

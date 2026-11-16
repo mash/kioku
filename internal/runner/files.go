@@ -10,7 +10,7 @@ import (
 
 const OutputArchiveName = "output.tar.gz"
 
-func InputArchiveName(key AttemptKey) string { return "kioku-input-" + key.AttemptID + ".tar.gz" }
+func InputArchiveName(key AttemptKey) string { return "kioku-input-" + key.JobID + ".tar.gz" }
 
 // StartFileSession journals the upload and session creation separately. A
 // lost response is reconciled by name/metadata; a create is never replayed.
@@ -19,8 +19,8 @@ func StartFileSession(ctx context.Context, spec RunSpec, provider string,
 	start func(context.Context, string, func(string) error) (string, error),
 ) (RunRef, error) {
 	ref := RunRef{UsesProviderFiles: true, Resources: map[string]string{"provider": provider}}
-	if spec.SaveRef == nil || len(spec.InputArchive) == 0 || spec.Key.AttemptID == "" ||
-		spec.Key.JobID == "" || spec.Key.ProjectID == "" || spec.Token != "" ||
+	if spec.SaveRef == nil || len(spec.InputArchive) == 0 || spec.Key.JobID == "" ||
+		spec.Key.ProjectID == "" || spec.Token != "" ||
 		spec.InputURL != "" || spec.OutputURL != "" {
 		return ref, errors.New("invalid file runner input")
 	}

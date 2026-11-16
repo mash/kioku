@@ -14,7 +14,7 @@ func fixture(t *testing.T) (*Runner, *fake.Server, runner.RunSpec) {
 	t.Cleanup(f.Close)
 	rendered := defaultPrompts(t)
 	r := New(NewAPI(f.URL(), "key", nil), "agent", 3, "environment", rendered.System(), rendered.Model())
-	return r, f, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, InputArchive: []byte("input"), SaveRef: func(runner.RunRef) error { return nil }, BudgetCents: 50, FirstMessage: "message"}
+	return r, f, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", ProjectID: "project"}, InputArchive: []byte("input"), SaveRef: func(runner.RunRef) error { return nil }, BudgetCents: 50, FirstMessage: "message"}
 }
 func start(t *testing.T, r *Runner, spec runner.RunSpec) runner.RunRef {
 	t.Helper()

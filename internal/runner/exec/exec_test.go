@@ -119,7 +119,7 @@ func TestExecHelper(t *testing.T) {
 	}
 	os.Exit(0)
 }
-func newRunner(t *testing.T, role string, onExit func(string, string)) (*Runner, runner.RunSpec) {
+func newRunner(t *testing.T, role string, onExit func(string)) (*Runner, runner.RunSpec) {
 	t.Helper()
 	root := t.TempDir()
 	r := New(Config{Root: root, Command: []string{os.Args[0], "-test.run=^TestExecHelper$", "--", role}, Model: prompts.Model{ID: "model"}, Prompt: "system"}, onExit)
@@ -130,7 +130,7 @@ func newRunner(t *testing.T, role string, onExit func(string, string)) (*Runner,
 			t.Error(err)
 		}
 	})
-	return r, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Token: runner.Secret("private-token"), FirstMessage: "first", BudgetCents: 1000, Deadline: time.Now().Add(time.Hour).UTC()}
+	return r, runner.RunSpec{Key: runner.AttemptKey{JobID: "job", ProjectID: "project"}, Token: runner.Secret("private-token"), FirstMessage: "first", BudgetCents: 1000, Deadline: time.Now().Add(time.Hour).UTC()}
 }
 func startExec(t *testing.T, r *Runner, spec runner.RunSpec) runner.RunRef {
 	t.Helper()
@@ -186,8 +186,8 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 		uploaded <- b
 	}))
 	defer host.Close()
-	exited := make(chan runner.AttemptKey, 1)
-	r, spec := newRunner(t, "environment", func(job, attempt string) { exited <- runner.AttemptKey{JobID: job, AttemptID: attempt} })
+	exited := make(chan string, 1)
+	r, spec := newRunner(t, "environment", func(job string) { exited <- job })
 	spec.InputURL, spec.OutputURL = host.URL+"/input", host.URL+"/output"
 	ref := startExec(t, r, spec)
 	status := awaitExit(t, r, ref)
@@ -196,7 +196,7 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 	}
 	select {
 	case key := <-exited:
-		if key.JobID != "job" || key.AttemptID != "attempt" {
+		if key != "job" {
 			t.Fatal(key)
 		}
 	case <-time.After(time.Second):
@@ -210,7 +210,7 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 	if err := json.Unmarshal(wire, &report); err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Env) != 3 || report.Input.JobToken != string(spec.Token) || report.Input.Version != 1 || report.Input.Model != "model" || report.Input.Prompt != "system" || report.Input.BudgetCents != 1000 || !report.Input.Deadline.Equal(spec.Deadline) {
+	if len(report.Env) != 3 || report.Input.JobToken != string(spec.Token) || report.Input.Version != 1 || report.Input.JobID != "job" || report.Input.AttemptID != report.Input.JobID || report.Input.Model != "model" || report.Input.Prompt != "system" || report.Input.BudgetCents != 1000 || !report.Input.Deadline.Equal(spec.Deadline) {
 		t.Fatal("wire contract mismatch")
 	}
 	for _, value := range append(report.Env, report.Argv...) {
@@ -218,7 +218,7 @@ func TestExecSuccessAndPrivateInput(t *testing.T) {
 			t.Fatal("secret in process arguments or environment")
 		}
 	}
-	dir := filepath.Join(r.config.Root, spec.Key.JobID+"-"+spec.Key.AttemptID)
+	dir := filepath.Join(r.config.Root, spec.Key.JobID+"-"+spec.Key.JobID)
 	for _, path := range []string{dir, filepath.Join(dir, "tmp")} {
 		info, err := os.Stat(path)
 		if err != nil || info.Mode().Perm() != 0700 {
@@ -283,7 +283,7 @@ func TestExecStartDoesNotWaitForStdinOrUseCallerContext(t *testing.T) {
 	if err != nil || time.Since(before) > time.Second {
 		t.Fatal(err, "Start blocked")
 	}
-	awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+	awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 	status, _ := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
 	if status.State != runner.StateRunning || status.Usage.CostCents != nil {
 		t.Fatal(status)
@@ -299,10 +299,10 @@ func TestExecStartDoesNotWaitForStdinOrUseCallerContext(t *testing.T) {
 func TestExecStopEscalatesOnce(t *testing.T) {
 	r, spec := newRunner(t, "ignore-term", nil)
 	ref := startExec(t, r, spec)
-	awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+	awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 	kills := make(chan time.Time, 4)
 	r.mu.Lock()
-	c := r.children[spec.Key.AttemptID]
+	c := r.children[spec.Key.JobID]
 	r.signal = func(pgid int, sig syscall.Signal) error {
 		if pgid != c.pgid {
 			t.Errorf("signal group %d, want %d", pgid, c.pgid)
@@ -364,7 +364,7 @@ func TestExecCleanupKillsGrandchildren(t *testing.T) {
 	if status.State != runner.StateStopped {
 		t.Fatal(status)
 	}
-	raw, err := os.ReadFile(filepath.Join(r.config.Root, "job-attempt", "grandchild"))
+	raw, err := os.ReadFile(filepath.Join(r.config.Root, "job-job", "grandchild"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,10 +390,10 @@ func TestExecCleanupKillsGrandchildren(t *testing.T) {
 func TestExecCleanupBoundaries(t *testing.T) {
 	r, spec := newRunner(t, "no-stdin", nil)
 	// An arbitrary ID must not become a process handle.
-	if err := r.Stop(t.Context(), runner.Attempt{Key: runner.AttemptKey{AttemptID: strconv.Itoa(os.Getpid())}}); err != nil {
+	if err := r.Stop(t.Context(), runner.Attempt{Key: runner.AttemptKey{JobID: strconv.Itoa(os.Getpid())}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []runner.AttemptKey{{JobID: "../outside", AttemptID: "attempt"}, {JobID: "job", AttemptID: "../outside"}, {JobID: "", AttemptID: "attempt"}} {
+	for _, key := range []runner.AttemptKey{{JobID: "../outside"}, {JobID: ""}} {
 		if _, err := r.Start(t.Context(), runner.RunSpec{Key: key}); err == nil {
 			t.Fatal("invalid key accepted", key)
 		}
@@ -401,13 +401,13 @@ func TestExecCleanupBoundaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, path := range []string{filepath.Join(r.config.Root, "wrong-name"), filepath.Join(t.TempDir(), "job-attempt")} {
+	for _, path := range []string{filepath.Join(r.config.Root, "wrong-name"), filepath.Join(t.TempDir(), "job-job")} {
 		if err := os.Mkdir(path, 0700); err != nil {
 			t.Fatal(err)
 		}
 		c := &child{key: spec.Key, cmd: &exec.Cmd{Dir: path}, pgid: 1 << 30, exited: true, done: make(chan struct{})}
 		close(c.done)
-		r.children[spec.Key.AttemptID] = c
+		r.children[spec.Key.JobID] = c
 		if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec.Key}); err != nil {
 			t.Fatal(err)
 		}
@@ -416,7 +416,7 @@ func TestExecCleanupBoundaries(t *testing.T) {
 		}
 	}
 	ref := startExec(t, r, spec)
-	awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+	awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 	wrong := spec.Key
 	wrong.ProjectID = "other"
 	if err := r.Cleanup(t.Context(), runner.Attempt{Key: wrong}); err == nil {
@@ -436,8 +436,8 @@ func TestExecReconcileOnlyAndCleanupTimeout(t *testing.T) {
 	if _, err := r.Start(t.Context(), runner.RunSpec{}); err == nil {
 		t.Fatal("reconcile-only start accepted")
 	}
-	key := runner.AttemptKey{JobID: "job", AttemptID: "attempt"}
-	ref := runner.RunRef{ID: "attempt"}
+	key := runner.AttemptKey{JobID: "job"}
+	ref := runner.RunRef{ID: "job"}
 	status, _ := r.Inspect(t.Context(), runner.Attempt{Key: key, Run: ref})
 	if status.Run.ID != ref.ID || status.State != runner.StateStopped || status.Usage.CostCents != nil {
 		t.Fatal(status)
@@ -446,13 +446,13 @@ func TestExecReconcileOnlyAndCleanupTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &child{key: key, pgid: 1 << 30, done: make(chan struct{})}
-	r.children[key.AttemptID] = c
+	r.children[key.JobID] = c
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if err := r.Cleanup(ctx, runner.Attempt{Key: key, Run: ref}); !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
-	if r.children[key.AttemptID] != c {
+	if r.children[key.JobID] != c {
 		t.Fatal("timed out cleanup forgot child")
 	}
 	c.exited = true
@@ -464,7 +464,7 @@ func TestExecReconcileOnlyAndCleanupTimeout(t *testing.T) {
 func TestExecCloseWaitsForCallbacksAndRejectsStart(t *testing.T) {
 	entered, returned := make(chan struct{}), make(chan struct{})
 	var r *Runner
-	r, spec := newRunner(t, "invalid", func(string, string) { close(entered); <-r.Context().Done(); close(returned) })
+	r, spec := newRunner(t, "invalid", func(string) { close(entered); <-r.Context().Done(); close(returned) })
 	_ = startExec(t, r, spec)
 	select {
 	case <-entered:
@@ -479,7 +479,7 @@ func TestExecCloseWaitsForCallbacksAndRejectsStart(t *testing.T) {
 	default:
 		t.Fatal("Close left callback running")
 	}
-	spec.Key.AttemptID = "after-close"
+	spec.Key.JobID = "after-close"
 	if _, err := r.Start(t.Context(), spec); err == nil {
 		t.Fatal("Start after Close")
 	}
@@ -492,10 +492,10 @@ func TestExecCloseAndCleanupRace(t *testing.T) {
 			if role == "invalid" {
 				awaitExit(t, r, ref)
 			} else {
-				awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+				awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 			}
 			r.mu.Lock()
-			c := r.children[spec.Key.AttemptID]
+			c := r.children[spec.Key.JobID]
 			finalKills := 0
 			r.signal = func(pgid int, sig syscall.Signal) error {
 				if pgid != c.pgid {
@@ -531,7 +531,7 @@ func TestExecCloseReclaimsExitedChildGroup(t *testing.T) {
 	r, spec := newRunner(t, "grandchild", nil)
 	ref := startExec(t, r, spec)
 	_ = awaitExit(t, r, ref)
-	raw, err := os.ReadFile(filepath.Join(r.config.Root, "job-attempt", "grandchild"))
+	raw, err := os.ReadFile(filepath.Join(r.config.Root, "job-job", "grandchild"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestExecFailedStartCleansByKey(t *testing.T) {
 
 func TestExecCleanupReadOnlyDirectories(t *testing.T) {
 	r, spec := newRunner(t, "invalid", nil)
-	workdir := filepath.Join(r.config.Root, "job-attempt")
+	workdir := filepath.Join(r.config.Root, "job-job")
 	cache := filepath.Join(workdir, "cache", "module")
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		t.Fatal(err)
@@ -629,12 +629,12 @@ func TestExecCleanupLogsFailure(t *testing.T) {
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	defer slog.SetDefault(old)
-	key := runner.AttemptKey{JobID: "job", AttemptID: "attempt"}
+	key := runner.AttemptKey{JobID: "job"}
 	if err := r.Cleanup(t.Context(), runner.Attempt{Key: key}); !errors.Is(err, runner.ErrTemporary) {
 		t.Fatal(err)
 	}
 	got := logs.String()
-	for _, want := range []string{"level=WARN", "exec cleanup failed", "job=job", "attempt=attempt"} {
+	for _, want := range []string{"level=WARN", "exec cleanup failed", "job=job", "attempt=job"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %s", want, got)
 		}
@@ -647,7 +647,7 @@ func TestExecCleanupLogsFailure(t *testing.T) {
 func TestExecCloseWithinDeadline(t *testing.T) {
 	r, spec := newRunner(t, "ignore-term", nil)
 	startExec(t, r, spec)
-	awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+	awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	if err := r.Close(ctx); err != nil {
@@ -676,7 +676,7 @@ func TestExecStopAllowsExternalCleanup(t *testing.T) {
 	}
 	r.config.Command = append(r.config.Command, external)
 	ref := startExec(t, r, spec)
-	awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+	awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 	if err := r.Stop(t.Context(), runner.Attempt{Key: spec.Key, Run: ref}); err != nil {
 		t.Fatal(err)
 	}
@@ -707,7 +707,7 @@ func TestExecInvalidResultLogLevels(t *testing.T) {
 			r, spec := newRunner(t, role, nil)
 			ref := startExec(t, r, spec)
 			if role == "no-stdin" {
-				awaitFile(t, filepath.Join(r.config.Root, "job-attempt", "ready"))
+				awaitFile(t, filepath.Join(r.config.Root, "job-job", "ready"))
 				if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec.Key, Run: ref}); err != nil {
 					t.Fatal(err)
 				}
@@ -748,7 +748,7 @@ func TestExecStartLogsUnderlyingErrors(t *testing.T) {
 			if err == nil || err.Error() != want {
 				t.Fatal(err)
 			}
-			for _, text := range []string{"level=WARN", "job=job", "attempt=attempt", "error=", causePath} {
+			for _, text := range []string{"level=WARN", "job=job", "attempt=job", "error=", causePath} {
 				if !strings.Contains(logs.String(), text) {
 					t.Fatalf("missing %q in %s", text, logs.String())
 				}

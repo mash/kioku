@@ -177,7 +177,7 @@ func (f *fixture) wait(pid, token, id string) fixtureJob {
 					sendOutput(f.t, f, f.auto, current, "Generated")
 				}
 				f.auto.SetStatus(current.Run.Ref.ID, "idle", "end_turn", 1)
-				f.s.ReconcileJob(context.Background(), current.ID, current.Run.Attempt.ID)
+				f.s.ReconcileJob(context.Background(), current.ID)
 			}
 		}
 		if j.Status == "failed" {
@@ -408,7 +408,7 @@ func (f *fixture) setRunners() {
 	f.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	f.runnerConfig.Prompts = f.s.Config.Prompts
-	g, err := runners.Load(f.runnerConfig, func(jobID, attemptID string) { f.s.ReconcileJob(ctx, jobID, attemptID) })
+	g, err := runners.Load(f.runnerConfig, func(jobID string) { f.s.ReconcileJob(ctx, jobID) })
 	if err != nil {
 		f.t.Fatal(err)
 	}

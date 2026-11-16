@@ -10,7 +10,7 @@ import (
 )
 
 func TestAgentConfigLimitsCapabilitiesAndMatchesOutputRules(t *testing.T) {
-	rendered, err := prompts.Load("", prompts.Variables{ClientVersion: "test-version", MaxOutputBytes: 128 << 20}, nil)
+	rendered, err := prompts.Load(prompts.Variables{ClientVersion: "test-version", MaxOutputBytes: 128 << 20}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

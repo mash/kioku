@@ -5,25 +5,16 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 )
 
 var testVars = Variables{BaseURL: "https://kioku.test", ClientVersion: "9.8.7", MaxOutputBytes: 2468}
 
-func writePrompt(t *testing.T, dir, file, body string) {
+func loadTest(t *testing.T, files map[string]string) *Rendered {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-func loadTest(t *testing.T, dir string) *Rendered {
-	t.Helper()
-	r, err := Load(dir, testVars, nil)
+	r, err := LoadWith(files, testVars, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,35 +22,25 @@ func loadTest(t *testing.T, dir string) *Rendered {
 }
 func defaultPrompts(t *testing.T) *Rendered {
 	t.Helper()
-	return loadTest(t, "")
+	return loadTest(t, nil)
 }
 func loadFiles(t *testing.T, files map[string]string) (*Rendered, error) {
 	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		writePrompt(t, dir, name, body)
-	}
-	return Load(dir, testVars, nil)
+	return LoadWith(files, testVars, nil)
 }
 func TestDefaultsAndCopiedFiles(t *testing.T) {
 	want := defaultPrompts(t)
-	dir := t.TempDir()
-	if got := loadTest(t, dir); !reflect.DeepEqual(got.Sources(), want.Sources()) {
-		t.Fatal("missing files changed defaults")
-	}
+	files := map[string]string{}
 	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
 		b, err := defaults.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		writePrompt(t, dir, name, string(b))
+		files[name] = string(b)
 	}
-	writePrompt(t, dir, ".ignored", "private")
-	got := loadTest(t, dir)
-	for i, source := range got.Sources() {
-		if source.Source != "override" || source.SHA256 != want.Sources()[i].SHA256 {
-			t.Fatal(source)
-		}
+	got := loadTest(t, files)
+	if !reflect.DeepEqual(got.Sources(), want.Sources()) {
+		t.Fatal("copied defaults changed hashes")
 	}
 	if !strings.Contains(got.System(), "Kioku-Client-Version: 9.8.7") || !strings.Contains(got.System(), "2468 bytes") {
 		t.Fatal("default variables missing")
@@ -196,22 +177,16 @@ func TestLoadStripsLeadingBOM(t *testing.T) {
 		{"mcp", MCPFile, "instructions: 'Hello {{.BaseURL}}'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			writePrompt(t, dir, tc.file, tc.body)
-			want := loadTest(t, dir)
-			writePrompt(t, dir, tc.file, "\ufeff"+tc.body)
-			got := loadTest(t, dir)
+			want := loadTest(t, map[string]string{tc.file: tc.body})
+			got := loadTest(t, map[string]string{tc.file: "\ufeff" + tc.body})
 			if !reflect.DeepEqual(got.Sources(), want.Sources()) {
 				t.Fatal("leading BOM changed hashes")
 			}
 
 		})
 	}
-	dir := t.TempDir()
-	writePrompt(t, dir, SystemFile, "\ufeff\ufeffbody\ufeff")
-	got := loadTest(t, dir)
-	writePrompt(t, dir, SystemFile, "\ufeffbody\ufeff")
-	if reflect.DeepEqual(got.Sources(), loadTest(t, dir).Sources()) {
+	got := loadTest(t, map[string]string{SystemFile: "\ufeff\ufeffbody\ufeff"})
+	if reflect.DeepEqual(got.Sources(), loadTest(t, map[string]string{SystemFile: "\ufeffbody\ufeff"}).Sources()) {
 		t.Fatal("should strip only one leading BOM")
 	}
 }
@@ -234,9 +209,7 @@ func TestLoadRejectsEmptyRenderedBodies(t *testing.T) {
 		{"whitespace user expansion", UserFile, "{{.ClientVersion}}\n", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			writePrompt(t, dir, tc.file, tc.body)
-			_, err := Load(dir, Variables{ClientVersion: " \t"}, nil)
+			_, err := LoadWith(map[string]string{tc.file: tc.body}, Variables{ClientVersion: " \t"}, nil)
 			want := invalid(tc.file, "empty body", tc.line).Error()
 			if err == nil || err.Error() != want {
 				t.Fatalf("want %q, got %v", want, err)
@@ -245,9 +218,7 @@ func TestLoadRejectsEmptyRenderedBodies(t *testing.T) {
 	}
 
 	// Job variables are supplied later; a URL-only template is still non-empty.
-	dir := t.TempDir()
-	writePrompt(t, dir, UserFile, "{{.InputURL}}\n{{.OutputURL}}")
-	r, err := Load(dir, Variables{}, nil)
+	r, err := LoadWith(map[string]string{UserFile: "{{.InputURL}}\n{{.OutputURL}}"}, Variables{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,52 +312,12 @@ func TestTemplateActionsRequireExactSpelling(t *testing.T) {
 		})
 	}
 }
-func TestDirectoryValidation(t *testing.T) {
-	dir := t.TempDir()
-	writePrompt(t, dir, "file", "private-secret")
-	for _, path := range []string{filepath.Join(dir, "missing"), filepath.Join(dir, "file")} {
-		if _, err := Load(path, testVars, nil); err == nil || !strings.Contains(err.Error(), "directory") {
-			t.Fatal(err)
-		}
-	}
-	for _, symlink := range []bool{false, true} {
-		t.Run(strconv.FormatBool(symlink), func(t *testing.T) {
-			d := t.TempDir()
-			if symlink {
-				if err := os.Symlink(filepath.Join(dir, "file"), filepath.Join(d, "private-secret")); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				writePrompt(t, d, "private-secret", "hidden")
-			}
-			if _, err := Load(d, testVars, nil); err == nil || !strings.Contains(err.Error(), "unknown file") || strings.Contains(err.Error(), "private-secret") {
-				t.Fatal(err)
-			}
-		})
-	}
-	for _, kind := range []string{"directory", "dangling"} {
-		d := t.TempDir()
-		path := filepath.Join(d, SystemFile)
-		if kind == "directory" {
-			if err := os.Mkdir(path, 0700); err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			if err := os.Symlink(filepath.Join(d, "absent"), path); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := Load(d, testVars, nil); err == nil {
-			t.Fatal("unreadable prompt accepted")
-		}
-	}
-}
 func TestTemplatesMCPMergeAndSnapshot(t *testing.T) {
-	dir := t.TempDir()
-	writePrompt(t, dir, SystemFile, "---\nmodel: {id: custom, effort: high, speed: fast, inference_geo: us}\n---\n{{.BaseURL}} {{.ClientVersion}} {{.MaxOutputBytes}} {{\"{{\"}} $KIOKU_JOB_TOKEN")
-	writePrompt(t, dir, UserFile, "custom {{.JobID}} {{.Namespace}} {{.InputURL}} {{.OutputURL}} {{.BaseURL}}")
-	writePrompt(t, dir, MCPFile, "instructions: 'Welcome {{.BaseURL}}'\ntools:\n  wiki_read:\n    description: '{{.BaseURL}} wiki'\n    properties:\n      project:\n        description: |\n          Select {{.BaseURL}}\n")
-	r := loadTest(t, dir)
+	r := loadTest(t, map[string]string{
+		SystemFile: "---\nmodel: {id: custom, effort: high, speed: fast, inference_geo: us}\n---\n{{.BaseURL}} {{.ClientVersion}} {{.MaxOutputBytes}} {{\"{{\"}} $KIOKU_JOB_TOKEN",
+		UserFile:   "custom {{.JobID}} {{.Namespace}} {{.InputURL}} {{.OutputURL}} {{.BaseURL}}",
+		MCPFile:    "instructions: 'Welcome {{.BaseURL}}'\ntools:\n  wiki_read:\n    description: '{{.BaseURL}} wiki'\n    properties:\n      project:\n        description: |\n          Select {{.BaseURL}}\n",
+	})
 	if r.System() != "https://kioku.test 9.8.7 2468 {{ $KIOKU_JOB_TOKEN\n\n"+WikiInstructionsParagraph {
 		t.Fatal(r.System())
 	}
@@ -412,10 +343,6 @@ func TestTemplatesMCPMergeAndSnapshot(t *testing.T) {
 	if hash(got) != hash(base) {
 		t.Fatal("other descriptions changed")
 	}
-	writePrompt(t, dir, SystemFile, "changed")
-	if r.System() == "changed\n\n"+WikiInstructionsParagraph {
-		t.Fatal("snapshot changed")
-	}
 	if r.MCP().Tools["wiki_read"].Description != "https://kioku.test wiki" {
 		t.Fatal("caller changed snapshot")
 	}
@@ -425,33 +352,28 @@ func TestLog(t *testing.T) {
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
 	defer slog.SetDefault(old)
-	dir := t.TempDir()
-	writePrompt(t, dir, SystemFile, "---\nmodel: {id: private-secret, effort: high, speed: fast}\n---\nprivate-secret")
-	r := loadTest(t, dir)
+	r := loadTest(t, map[string]string{SystemFile: "---\nmodel: {id: private-secret, effort: high, speed: fast}\n---\nprivate-secret"})
 	r.Log()
-	if strings.Count(log.String(), "sha256=") != 4 || strings.Count(log.String(), "source=override") != 1 || strings.Count(log.String(), "source=default") != 3 || strings.Contains(log.String(), "private-secret") {
+	if strings.Count(log.String(), "sha256=") != 4 || strings.Contains(log.String(), "private-secret") {
 		t.Fatal(log.String())
 	}
 	if r.Model().ID == "" {
 		t.Fatal("model lost")
 	}
-	writePrompt(t, dir, SystemFile, "no frontmatter")
-	if r := loadTest(t, dir); r.Model() != (Model{}) {
+	if r := loadTest(t, map[string]string{SystemFile: "no frontmatter"}); r.Model() != (Model{}) {
 		t.Fatal("omitted model should not inherit default")
 	}
 }
 func TestHashTracksEffectiveChanges(t *testing.T) {
 	original := defaultPrompts(t)
 	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
-		dir := t.TempDir()
 		body, _ := defaults.ReadFile(name)
 		if name == MCPFile {
 			body = []byte("instructions: extra")
 		} else {
 			body = append(body, []byte("\nextra")...)
 		}
-		writePrompt(t, dir, name, string(body))
-		r := loadTest(t, dir)
+		r := loadTest(t, map[string]string{name: string(body)})
 		for i, s := range r.Sources() {
 			if (s.SHA256 == original.Sources()[i].SHA256) == (s.File == name) {
 				t.Fatal("hash mismatch", s)
@@ -461,11 +383,8 @@ func TestHashTracksEffectiveChanges(t *testing.T) {
 }
 
 func TestUserHashDistinguishesFieldsFromLiteralBraces(t *testing.T) {
-	dir := t.TempDir()
-	writePrompt(t, dir, UserFile, `{{.JobID}} {{.InputURL}} {{.OutputURL}}`)
-	field := loadTest(t, dir)
-	writePrompt(t, dir, UserFile, `{{"{{"}}.JobID}} {{.InputURL}} {{.OutputURL}}`)
-	literal := loadTest(t, dir)
+	field := loadTest(t, map[string]string{UserFile: `{{.JobID}} {{.InputURL}} {{.OutputURL}}`})
+	literal := loadTest(t, map[string]string{UserFile: `{{"{{"}}.JobID}} {{.InputURL}} {{.OutputURL}}`})
 	if field.Sources()[1].SHA256 == literal.Sources()[1].SHA256 {
 		t.Fatal("different template behavior has the same hash")
 	}
@@ -496,23 +415,23 @@ func TestModelValuesArePlainStrings(t *testing.T) {
 
 func TestWikiDefaultPrompt(t *testing.T) {
 	const embedded = "原資料ごとに、関係する concept、entity、analysis、overview のページを書き直す。wiki/index.md は、ページを種類ごとに分けた目次にする。\n"
-	for _, tc := range []struct{ name, input, want, origin string }{
-		{"default", "", embedded, "default"},
-		{"override", " 決定と論点を分けて書く。\n", " 決定と論点を分けて書く。\n", "override"},
-		{"BOM", "\ufeff本文\n", "本文\n", "override"},
-		{"literal templates", "{{.BaseURL}} {{.Unknown}} {{if .BaseURL}} {{", "{{.BaseURL}} {{.Unknown}} {{if .BaseURL}} {{", "override"},
-		{"later delimiter", "本文\n---\n", "本文\n---\n", "override"},
+	for _, tc := range []struct{ name, input, want string }{
+		{"default", "", embedded},
+		{"replaced", " 決定と論点を分けて書く。\n", " 決定と論点を分けて書く。\n"},
+		{"BOM", "\ufeff本文\n", "本文\n"},
+		{"literal templates", "{{.BaseURL}} {{.Unknown}} {{if .BaseURL}} {{", "{{.BaseURL}} {{.Unknown}} {{if .BaseURL}} {{"},
+		{"later delimiter", "本文\n---\n", "本文\n---\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if tc.origin == "override" {
-				writePrompt(t, dir, DefaultPromptFile, tc.input)
+			var files map[string]string
+			if tc.input != "" {
+				files = map[string]string{DefaultPromptFile: tc.input}
 			}
-			r := loadTest(t, dir)
+			r := loadTest(t, files)
 			if got := r.WikiDefaultPrompt(); got != tc.want {
 				t.Fatalf("body = %q, want %q", got, tc.want)
 			}
-			want := Source{DefaultPromptFile, tc.origin, fmt.Sprintf("%x", sha256.Sum256([]byte(tc.want)))}
+			want := Source{DefaultPromptFile, fmt.Sprintf("%x", sha256.Sum256([]byte(tc.want)))}
 			found := false
 			for _, source := range r.Sources() {
 				if source.File == DefaultPromptFile {
@@ -530,12 +449,8 @@ func TestWikiDefaultPrompt(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
 			defer slog.SetDefault(old)
 			r.Log()
-			if !strings.Contains(log.String(), "file="+DefaultPromptFile+" source="+tc.origin+" sha256="+want.SHA256) || strings.Contains(log.String(), strings.TrimSpace(tc.want)) {
+			if !strings.Contains(log.String(), "file="+DefaultPromptFile+" sha256="+want.SHA256) || strings.Contains(log.String(), strings.TrimSpace(tc.want)) {
 				t.Fatal(log.String())
-			}
-			writePrompt(t, dir, DefaultPromptFile, "changed")
-			if r.WikiDefaultPrompt() != tc.want {
-				t.Fatal("snapshot changed")
 			}
 		})
 	}
@@ -559,11 +474,11 @@ func TestWikiDefaultPromptInvalid(t *testing.T) {
 
 func TestWikiInstructionsParagraph(t *testing.T) {
 	for _, override := range []bool{false, true} {
-		dir := t.TempDir()
+		var files map[string]string
 		if override {
-			writePrompt(t, dir, SystemFile, "Custom {{.ClientVersion}}")
+			files = map[string]string{SystemFile: "Custom {{.ClientVersion}}"}
 		}
-		r := loadTest(t, dir)
+		r := loadTest(t, files)
 		for _, system := range []string{r.System(), r.FileSystem()} {
 			if strings.Count(system, WikiInstructionsParagraph) != 1 {
 				t.Fatal("missing or repeated paragraph")

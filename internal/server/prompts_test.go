@@ -2,8 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,7 +12,7 @@ import (
 
 func defaultPrompts(t *testing.T) *prompts.Rendered {
 	t.Helper()
-	r, err := prompts.Load("", prompts.Variables{ClientVersion: MinimumClientVersion, MaxOutputBytes: 128 << 20}, MCPToolNames())
+	r, err := prompts.Load(prompts.Variables{ClientVersion: MinimumClientVersion, MaxOutputBytes: 128 << 20}, MCPToolNames())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,13 +20,7 @@ func defaultPrompts(t *testing.T) *prompts.Rendered {
 }
 func loadPrompts(t *testing.T, vars prompts.Variables, files map[string]string) (*prompts.Rendered, error) {
 	t.Helper()
-	dir := t.TempDir()
-	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return prompts.Load(dir, vars, MCPToolNames())
+	return prompts.LoadWith(files, vars, MCPToolNames())
 }
 func overridePrompts(t *testing.T, f *fixture, system, user, mcp string) {
 	t.Helper()

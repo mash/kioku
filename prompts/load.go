@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"maps"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -33,7 +31,7 @@ type Variables struct {
 }
 type JobVariables struct{ JobID, Namespace, InputURL, OutputURL string }
 type Model struct{ ID, Effort, Speed, InferenceGeo string }
-type Source struct{ File, Source, SHA256 string }
+type Source struct{ File, SHA256 string }
 
 // Rendered owns a startup snapshot. No job or caller can mutate its templates.
 type Rendered struct {
@@ -54,7 +52,7 @@ func (r *Rendered) Model() Model              { return r.model }
 func (r *Rendered) Sources() []Source         { return slices.Clone(r.sources) }
 func (r *Rendered) Log() {
 	for _, s := range r.sources {
-		slog.Info("prompt loaded", "file", s.File, "source", s.Source, "sha256", s.SHA256)
+		slog.Info("prompt loaded", "file", s.File, "sha256", s.SHA256)
 	}
 }
 
@@ -76,61 +74,33 @@ func invalid(file, kind string, line int) error {
 	return fmt.Errorf("prompts: %s: %s (line %d)", file, kind, max(1, line))
 }
 
-type file struct{ body, origin string }
+// Load renders the embedded prompt files. Servers pass their tool/property
+// names; callers without an MCP server may pass nil.
+func Load(vars Variables, knownTools map[string][]string) (*Rendered, error) {
+	return LoadWith(nil, vars, knownTools)
+}
 
-func readFile(dir, name string) (file, error) {
-	var b []byte
-	var err error
-	origin := "default"
-	if dir == "" {
-		b, err = defaults.ReadFile(name)
+// LoadWith renders the embedded prompt files with some of them replaced by
+// files, keyed by file name. Tests use it to vary the prompts. The text in
+// files[MCPFile] replaces only the descriptions that it names.
+func LoadWith(replaced map[string]string, vars Variables, knownTools map[string][]string) (*Rendered, error) {
+	files := map[string]string{}
+	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
+		b, err := defaults.ReadFile(name)
 		if err != nil {
 			panic(err)
 		}
-	} else {
-		origin = "override"
-		path := filepath.Join(dir, name)
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			return file{}, invalid(name, "read", 1)
-		}
-		b, err = os.ReadFile(path)
-		if err != nil {
-			return file{}, invalid(name, "read", 1)
-		}
+		files[name] = strings.TrimPrefix(string(b), "\ufeff")
 	}
-	return file{strings.TrimPrefix(string(b), "\ufeff"), origin}, nil
-}
-
-// Load reads only the four documented files. Missing files use embedded defaults.
-// Servers pass their tool/property names; callers without an MCP server may pass nil.
-func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered, error) {
-	files := map[string]file{}
-	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {
-		files[name], _ = readFile("", name)
-	}
-	defaultMCP := files[MCPFile].body
-	if dir != "" {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return nil, invalid("KIOKU_PROMPTS_DIR", "directory", 1)
+	defaultMCP := files[MCPFile]
+	for name, body := range replaced {
+		if _, ok := files[name]; !ok {
+			return nil, invalid(name, "unknown file", 1)
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if strings.HasPrefix(name, ".") {
-				continue
-			}
-			if _, ok := files[name]; !ok {
-				return nil, invalid("KIOKU_PROMPTS_DIR", "unknown file", 1)
-			}
-			files[name], err = readFile(dir, name)
-			if err != nil {
-				return nil, err
-			}
-		}
+		files[name] = strings.TrimPrefix(body, "\ufeff")
 	}
 	r := &Rendered{vars: map[string]string{"BaseURL": vars.BaseURL, "ClientVersion": vars.ClientVersion, "MaxOutputBytes": strconv.FormatInt(vars.MaxOutputBytes, 10)}}
-	body, line, err := r.loadSystem(files[SystemFile].body)
+	body, line, err := r.loadSystem(files[SystemFile])
 	if err != nil {
 		return nil, err
 	}
@@ -150,14 +120,14 @@ func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered
 	systemVars["ReadJobInput"] = "Extract the mounted input archive from the local input path."
 	systemVars["SubmitJobOutput"] = "Tar and gzip wiki/ only and atomically rename the completed archive to the local output path."
 	r.fileSystem = system.render(systemVars) + "\n\n" + WikiInstructionsParagraph + "\n\nThis session uses local files only. The input and output in the user message are local paths. Read the mounted archive and write the completed archive at the output path, creating its parent directory as needed. These instructions supersede any download or upload steps. Do not use the network or credentials. Finish only after writing the archive."
-	r.defaultPrompt = files[DefaultPromptFile].body
+	r.defaultPrompt = files[DefaultPromptFile]
 	if isFrontmatterDelimiter(r.defaultPrompt) {
 		return nil, invalid(DefaultPromptFile, "syntax", 1)
 	}
 	if strings.TrimSpace(r.defaultPrompt) == "" {
 		return nil, invalid(DefaultPromptFile, "empty body", 1)
 	}
-	user := files[UserFile].body
+	user := files[UserFile]
 	if isFrontmatterDelimiter(user) {
 		return nil, invalid(UserFile, "syntax", 1)
 	}
@@ -177,23 +147,23 @@ func Load(dir string, vars Variables, knownTools map[string][]string) (*Rendered
 	if err := r.loadMCP(defaultMCP, knownTools); err != nil {
 		return nil, err
 	}
-	if files[MCPFile].origin == "override" {
-		if err := r.loadMCP(files[MCPFile].body, knownTools); err != nil {
+	if _, ok := replaced[MCPFile]; ok {
+		if err := r.loadMCP(files[MCPFile], knownTools); err != nil {
 			return nil, err
 		}
 	}
 	// Hash effective text/configuration, independent of YAML formatting and source.
 	r.sources = []Source{
-		{SystemFile, files[SystemFile].origin, hash(struct {
+		{SystemFile, hash(struct {
 			System string
 			Model  Model
 		}{r.system, r.model})},
-		{UserFile, files[UserFile].origin, hash(struct {
+		{UserFile, hash(struct {
 			Template  string
 			Variables map[string]string
 		}{user, r.vars})},
-		{MCPFile, files[MCPFile].origin, hash(r.mcp)},
-		{DefaultPromptFile, files[DefaultPromptFile].origin, fmt.Sprintf("%x", sha256.Sum256([]byte(r.defaultPrompt)))},
+		{MCPFile, hash(r.mcp)},
+		{DefaultPromptFile, fmt.Sprintf("%x", sha256.Sum256([]byte(r.defaultPrompt)))},
 	}
 	return r, nil
 }

@@ -43,7 +43,7 @@ func TestExecRunnerHelper(t *testing.T) {
 			os.Exit(97)
 		}
 	default:
-		rendered, err := prompts.Load("", prompts.Variables{ClientVersion: MinimumClientVersion, MaxOutputBytes: 128 << 20}, MCPToolNames())
+		rendered, err := prompts.Load(prompts.Variables{ClientVersion: MinimumClientVersion, MaxOutputBytes: 128 << 20}, MCPToolNames())
 		if err != nil || in.Prompt != rendered.System() {
 			os.Exit(96)
 		}

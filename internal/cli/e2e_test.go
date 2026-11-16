@@ -30,7 +30,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rendered, err := prompts.Load("", prompts.Variables{ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 128 << 20}, server.MCPToolNames())
+	rendered, err := prompts.Load(prompts.Variables{ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 128 << 20}, server.MCPToolNames())
 	if err != nil {
 		t.Fatal(err)
 	}

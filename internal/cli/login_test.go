@@ -379,7 +379,7 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 		body, _ := json.Marshal(payload)
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}}
-	rendered, err := prompts.Load("", prompts.Variables{ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 128 << 20}, server.MCPToolNames())
+	rendered, err := prompts.Load(prompts.Variables{ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 128 << 20}, server.MCPToolNames())
 	if err != nil {
 		t.Fatal(err)
 	}

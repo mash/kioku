@@ -430,10 +430,8 @@ kiokud sends this agent's system prompt with every session. A session without th
 | --- | --- |
 | S1 | console または `ant` で Agent を作成する（`POST /v1/agents`）。model は任意、system は上記の文、tools は不要。 |
 | S2 | Environment を作成する（`POST /v1/environments`）。cloud 環境で [`limited` で許可ホストを空にする](docs/WORKERS.md#job-credential-and-network-policy)。 |
-| S3 | 差し替える場合だけ、動かす kiokud と同じ版の repo の `prompts/` から、下記4ファイルのうち必要なものを専用の DIR にコピーする。 |
-| S4 | DIR 内のファイルを編集する。既定値を使う場合は S3・S4 は不要。 |
-| S5 | `KIOKU_MA_AGENT_ID` と `KIOKU_MA_ENVIRONMENT_ID` に作成した ID を設定する。差し替える場合は `KIOKU_PROMPTS_DIR=DIR` も設定する。 |
-| S6 | kiokud を再起動する。検証に失敗すると起動しない。起動ログの `source` と `sha256` を確認する。 |
+| S3 | `KIOKU_MA_AGENT_ID` と `KIOKU_MA_ENVIRONMENT_ID` に作成した ID を設定する。 |
+| S4 | kiokud を再起動する。起動ログの `sha256` で使っている文を確認する。 |
 
 Environment の package managers と MCP servers は無効にし、デプロイごとに別の Environment を作成します。kiokud は各実行前に設定をAPIから読み戻し、外向き通信を許可する環境では生成を開始しません。旧版から切り替える前に稼働中のジョブと後片付けを完了させ、新しい環境のIDを設定してください。
 
@@ -445,29 +443,16 @@ CLI は `kioku --server https://kioku.example.com login` で接続し、
 `kioku -n "$NAMESPACE" --server https://kioku.example.com pull` で作業先を設定します。
 生成予算はサーバーのセッション上限以内で指定できます。指定しない場合はサーバー上限を使います。
 
-### 生成プロンプトと MCP の説明の差し替え
+### 生成プロンプトと MCP の説明
 
-`KIOKU_PROMPTS_DIR` が未設定なら、バイナリに埋め込んだ既定値を使います。設定した場合も、置かなかったファイルは既定値のままです。ファイルは起動時だけ読みます。
+生成プロンプトと MCP の説明は [prompts/](prompts/) のファイルをバイナリに埋め込んだものです。変えるときはファイルを編集してビルドし直します。
 
-| ファイル | 差し替える内容 |
+| ファイル | 内容 |
 | --- | --- |
-| [wiki-agent.system.md](prompts/wiki-agent.system.md) | system 本文全体と、任意の YAML frontmatter の `model`。他の frontmatter キーは不可。 |
-| [wiki-agent.user.md](prompts/wiki-agent.user.md) | 最初の user message 全体。frontmatter は不可。`{{.InputURL}}` と `{{.OutputURL}}` の参照が必須。 |
-| [wiki-agent.default-prompt.md](prompts/wiki-agent.default-prompt.md) | 既定の Wiki の prompt。Wiki の prompt を保存していないプロジェクトで、Wiki の View の prompt と WIKI.md に使う。frontmatter は不可。テンプレートは展開しない |
-| [mcp-server.yaml](prompts/mcp-server.yaml) | `instructions`、`tools.<名前>.description`、`tools.<名前>.properties.<プロパティ>.description`。書いたキーだけを上書きする。既存 schema 内で説明のないプロパティにも追加できる。 |
-
-`prompts/` 全体はコピーしないでください。DIR 直下の未知の名前（symlink を含む）は起動エラーです。`.` で始まる名前だけを無視します。MCP のツール名・順序・schema と wiki agent の tools は Go に固定されています。`output-rules.txt` と hook の文は差し替え対象ではありません。
-
-`wiki-agent.default-prompt.md` 以外の 3 ファイルで `{{.BaseURL}}`、`{{.ClientVersion}}`、`{{.MaxOutputBytes}}` を使えます。値は順に `KIOKU_BASE_URL`、サーバーの `MinimumClientVersion`、128 MiB（Wiki の上限64 MiBの2倍）です。`{{.JobID}}`、`{{.Namespace}}`、`{{.InputURL}}`、`{{.OutputURL}}` は user ファイルだけで使えます。system は全ジョブで同じ文になります。`JOB.md` の項目は固定です。managed runner では `BaseURL` は空になり、`InputURL` と `OutputURL` はローカルパスになります。system ファイルには `{{.ReadJobInput}}` と `{{.SubmitJobOutput}}` でrunnerに合った入出力手順を差し込めます。
-
-テンプレートを展開する 3 ファイルでは、Go の `text/template` はフィールド参照のみを許可します。`if`、`range`、`with`、パイプ、関数、`define`、`template`、未定義変数は起動エラーです。文字列 `{{` 自体は `{{"{{"}}` と書きます。`$KIOKU_JOB_TOKEN` はそのまま残ります。YAML の説明は先に YAML として解析するので、`{{` で始まる文は引用符または block scalar で書きます。
-
-```yaml
-instructions: 社内の記述規則に従ってください。
-tools:
-  wiki_search:
-    description: "{{.BaseURL}} の社内 wiki を検索する"
-```
+| [wiki-agent.system.md](prompts/wiki-agent.system.md) | system 本文全体と、任意の YAML frontmatter の `model`。 |
+| [wiki-agent.user.md](prompts/wiki-agent.user.md) | 最初の user message 全体。 |
+| [wiki-agent.default-prompt.md](prompts/wiki-agent.default-prompt.md) | 既定の Wiki の prompt。Wiki の prompt を保存していないプロジェクトで、Wiki の View の prompt と WIKI.md に使う。 |
+| [mcp-server.yaml](prompts/mcp-server.yaml) | `instructions`、ツールとプロパティの説明。 |
 
 model は文字列、または必須の `id` と任意の `effort`、`speed`、`inference_geo` を持つ map です。各値は文字列で、テンプレート展開はしません。
 
@@ -483,11 +468,7 @@ model:
 
 MA は指定された model を送信し、省略時は Agent 側の model を使います。model の文字列指定や effort を省いた map は、MA 側の effort をモデル既定に戻し、省略した inference_geo を消します。維持したい値は map に明示してください。exec は model の id だけを使い、他のフィールドがあれば起動時に警告を1件出します。exec で model を省略すると起動しません。
 
-`wiki-agent.default-prompt.md` は UTF-8 のテキストで、先頭の BOM を除きます。空白以外の文字がない本文は `prompts: wiki-agent.default-prompt.md: empty body (line 1)`、先頭が `---` の本文は `prompts: wiki-agent.default-prompt.md: syntax (line 1)` で起動エラーになります。保存済みの Wiki の prompt は既定値より優先します。
-
-ディレクトリ不備、未知のキー、解析できない YAML/frontmatter/template、空の description も起動エラーです。MA の system は展開後に WIKI.md を読む固定の段落を足してから `utf8.RuneCountInString` で100,000文字以内であることを検査します。他の文や runner に独自の長さ制限は設けません。エラーは種類と行番号だけを示し、ファイル本文を出しません。
-
-起動ログは4ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。`wiki-agent.default-prompt.md` だけは BOM を除いた本文のバイト列から計算します。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
+起動ログは4ファイルそれぞれに `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は解析後）。`wiki-agent.default-prompt.md` だけは BOM を除いた本文のバイト列から計算します。本文自体はログに出しません。
 
 起動済みの MA セッションは作成時の文を使い続け、新しい生成ジョブは新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
 

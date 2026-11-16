@@ -59,7 +59,7 @@ func run() error {
 	if u.Scheme != "https" && !(u.Scheme == "http" && local) {
 		return errors.New("HTTPS is required outside localhost")
 	}
-	rendered, err := prompts.Load(os.Getenv("KIOKU_PROMPTS_DIR"), prompts.Variables{BaseURL: base, ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 2 * server.MaxWikiBytes}, server.MCPToolNames())
+	rendered, err := prompts.Load(prompts.Variables{BaseURL: base, ClientVersion: server.MinimumClientVersion, MaxOutputBytes: 2 * server.MaxWikiBytes}, server.MCPToolNames())
 	if err != nil {
 		return err
 	}

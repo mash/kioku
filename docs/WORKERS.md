@@ -81,13 +81,13 @@ Editing any View's title or prompt during generation does not change its generat
 
 ## Prompt configuration
 
-`KIOKU_PROMPTS_DIR` optionally replaces `wiki-agent.system.md`, `wiki-agent.user.md`, `wiki-agent.default-prompt.md`, and the description fields in `mcp-server.yaml`. The server reads and validates these once before constructing runners or accepting HTTP requests. Missing files use embedded defaults; unknown visible filenames, invalid templates/YAML, and unknown keys stop startup. See [the configuration reference](../README.md#生成プロンプトと-mcp-の説明の差し替え) for variables, model handling, and examples.
+The prompts and MCP descriptions are the files in `prompts/`, embedded in the binary. The server renders them once before constructing runners or accepting HTTP requests. See [the configuration reference](../README.md#生成プロンプトと-mcp-の説明) for variables and model handling.
 
 The default Wiki prompt is UTF-8 text with a leading BOM removed, no frontmatter and no template expansion; strings such as `{{.BaseURL}}` remain literal. It must contain non-whitespace text. An empty body stops startup with `prompts: wiki-agent.default-prompt.md: empty body (line 1)`; a leading `---` stops startup with `prompts: wiki-agent.default-prompt.md: syntax (line 1)`. An owner-saved Wiki prompt always takes precedence over the default.
 
-Startup logs record `file`, `source=default|override` and `sha256` for all four files, including `wiki-agent.default-prompt.md`, without exposing content. The system prompt uses deployment variables only; per-job variables are confined to the user template. `JOB.md` is not customizable. MCP descriptions and optional `instructions` are served to clients, not to the generation agent; no `listChanged` notification is sent.
+Startup logs record `file` and `sha256` for all four files, including `wiki-agent.default-prompt.md`, without exposing content. The system prompt uses deployment variables only; per-job variables are confined to the user template. `JOB.md` is not customizable. MCP descriptions and optional `instructions` are served to clients, not to the generation agent; no `listChanged` notification is sent.
 
-All Wiki runners receive this fixed paragraph immediately after the rendered system, including an overridden system:
+All Wiki runners receive this fixed paragraph immediately after the rendered system:
 
 > WIKI.md in the input holds the project owner's instructions for organizing this wiki. Follow them when you choose, split and structure pages and wiki/index.md. When they conflict with the rules above, follow the rules above.
 
@@ -169,7 +169,7 @@ The command receives one JSON object on stdin, followed by EOF:
 }
 ```
 
-For Wiki generation, `prompt` and `first_message` are rendered from `prompts/wiki-agent.system.md` and `prompts/wiki-agent.user.md` or their `KIOKU_PROMPTS_DIR` overrides, with the fixed WIKI.md paragraph appended to `prompt`. For non-Wiki View generation those fields describe the View archive contract and point to the saved prompt in `VIEW.md`. The configured Wiki model ID is passed as a hint in `model`. A model map uses only `id`, with a startup warning when other keys are set. The input archive's `JOB.md` contains the job metadata. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. Kioku validates the archive before publication.
+For Wiki generation, `prompt` and `first_message` are rendered from `prompts/wiki-agent.system.md` and `prompts/wiki-agent.user.md`, with the fixed WIKI.md paragraph appended to `prompt`. For non-Wiki View generation those fields describe the View archive contract and point to the saved prompt in `VIEW.md`. The configured Wiki model ID is passed as a hint in `model`. A model map uses only `id`, with a startup warning when other keys are set. The input archive's `JOB.md` contains the job metadata. Fetch the gzip tar input with GET `input_url` and upload the complete gzip tar output with PUT `output_url`, using `Authorization: Bearer <job_token>` and `Kioku-Client-Version: 0.1.0` for both. Kioku validates the archive before publication.
 
 The prompt refers to `$KIOKU_JOB_TOKEN`. The command must make that name usable within its sandbox. Outside development, inject the real value into kiokud-bound headers through a proxy so the model and tool output never see it. Use a separate sandbox for every run, allow outbound access only to kiokud and the required LLM API, and disable package-manager networking, MCP, web fetch and web search. Keep provider keys, object-store credentials and other projects' tokens outside the sandbox. Remove the sandbox and its secrets afterwards.
 

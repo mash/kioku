@@ -141,32 +141,6 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request, uid string) error
 	jsonOut(w, 200, out)
 	return nil
 }
-func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, uid string) error {
-	pid := r.PathValue("project")
-	if err := s.checkOwner(pid, uid); err != nil {
-		return err
-	}
-	var req struct {
-		Keep int `json:"keep"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		return err
-	}
-	if req.Keep < 0 || req.Keep > 1000 {
-		return fail(400, "legacy keep value must be between 0 and 1000")
-	}
-	removed, err := s.storage.maintenance(r.Context(), pid, func(q *store.Queries) error {
-		if _, err := owner(q, pid, uid); err != nil {
-			return err
-		}
-		return s.requestMutation(r.Context(), q, pid)
-	})
-	if err != nil {
-		return err
-	}
-	jsonOut(w, 200, map[string]any{"objects_removed": removed, "history_retained": false})
-	return nil
-}
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
 	if err := s.checkDeleteOwner(pid, uid); err != nil {

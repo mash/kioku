@@ -47,8 +47,8 @@ func TestQuotaRetentionDeletionAuditAndMetrics(t *testing.T) {
 	if err := f.s.Blobs.Put(context.Background(), blob.Key("projects/"+p.ID+"/orphan"), []byte("orphan")); err != nil {
 		t.Fatal(err)
 	}
-	if c := f.request("POST", base+"/maintenance", token, map[string]int{"keep": 1}, nil); c != 200 {
-		t.Fatal(c)
+	if _, err := f.s.storage.collectAllGarbage(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := f.s.Blobs.Get(context.Background(), blob.Key("projects/"+p.ID+"/orphan")); err == nil {
 		t.Fatal("orphan retained")

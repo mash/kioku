@@ -49,8 +49,9 @@ func (q *Queries) NextQueued(maxSessions int, deferred ...string) (JobRow, error
 	return rows[0], nil
 }
 
-// CompactHistory is part of the state-changing transaction. Cleanup and
-// unconsumed child results are protected independently from public history.
+// CompactHistory keeps the newest 256 finished jobs and audit rows of a project.
+// With now, it also removes jobs older than 30 days and audit older than 90 days.
+// Cleanup and unconsumed child results are protected independently from public history.
 func (q *Queries) CompactHistory(project string, now *int64) error {
 	eligible := `project_id=? AND status IN ('completed','failed','skipped') AND (phase IS NULL OR cleanup_complete=1) AND parent_id IS NULL`
 
@@ -87,7 +88,8 @@ func (q *Queries) CompactHistory(project string, now *int64) error {
 	return nil
 }
 func (q *Queries) ProjectAudit(project string) ([]AuditRow, error) {
-	return q.listAudit("WHERE project_id=? ORDER BY created,id", project)
+	// Pruning runs hourly, so return only the newest 256 rows that it keeps.
+	return q.listAudit("WHERE id IN (SELECT id FROM audit WHERE project_id=? ORDER BY created DESC,id DESC LIMIT 256) ORDER BY created,id", project)
 }
 
 func (q *Queries) UsageForJobs(ids []string) ([]UsageRow, error) {

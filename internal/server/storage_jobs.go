@@ -117,10 +117,7 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 				return err
 			}
 			input.Job = j
-			if err := q.PutJob(j); err != nil {
-				return err
-			}
-			return q.CompactHistory(j.ProjectID, nil)
+			return q.PutJob(j)
 		})
 		return input.Job, err
 	}
@@ -195,10 +192,7 @@ func (o *storageOperations) failPreparation(ctx context.Context, id string, caus
 		if j.Data.WikiStatus != nil {
 			j.Data.WikiStatus = store.NullableString("failed")
 		}
-		if err = q.PutJob(j); err != nil {
-			return err
-		}
-		return q.CompactHistory(j.ProjectID, nil)
+		return q.PutJob(j)
 	}); err != nil {
 		return err
 	}
@@ -347,10 +341,7 @@ func (o *storageOperations) failJob(ctx context.Context, id, reason string, stat
 		if err = q.ReleaseInbox(j.ProjectID, j.ID); err != nil {
 			return err
 		}
-		if err = q.PutJob(j); err != nil {
-			return err
-		}
-		return q.CompactHistory(j.ProjectID, nil)
+		return q.PutJob(j)
 	})
 	return outputWins, err
 }

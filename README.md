@@ -299,14 +299,13 @@ S3使用時は本文のローカルキャッシュを作成しません。SQLite
 ```bash
 kioku -n "$NAMESPACE" project usage
 kioku -n "$NAMESPACE" project audit                  # owner のみ
-kioku -n "$NAMESPACE" project maintenance            # owner: 未参照オブジェクトを回収
 kioku -n "$NAMESPACE" delete https://example.com/doc  # 資料の削除を inbox に投入
 kioku -n "$NAMESPACE" project delete --yes           # owner: プロジェクトを削除
 ```
 
 資料の削除は次の生成で反映します。プロジェクト削除は実行・資格情報の片付けを待ち、途中失敗時にも同じコマンドで再実行できます。取得済みのローカルコピーや外部バックアップは遠隔消去できません。
 
-`project maintenance` は未参照の本文を含むオブジェクトを回収し、完了／失敗ジョブを30日、監査履歴を90日で整理します。必要な頻度で実行・スケジュールしてください。オブジェクトストアの旧バージョンは、プロバイダー側でも保持・削除を設定します。
+kiokud は1時間ごとに未参照の本文を含むオブジェクトを回収し、期限切れのセッションと招待を消し、完了／失敗ジョブを30日、監査履歴を90日で整理します。オブジェクトストアの旧バージョンは、プロバイダー側でも保持・削除を設定します。
 
 ```bash
 kiokud --max-wiki-bytes 67108864 --max-jobs 20 --rate-per-minute 600

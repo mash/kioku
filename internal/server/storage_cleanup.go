@@ -150,10 +150,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 			current.Data.ViewGeneration.Remaining = remainingViewBudget(current.Data.ViewGeneration.Remaining, usage.Data.CostCents)
 		}
 		current.CleanupComplete = true
-		if e = q.PutJob(current); e != nil {
-			return e
-		}
-		return q.CompactHistory(j.ProjectID, nil)
+		return q.PutJob(current)
 	})
 	return err == nil, err
 }

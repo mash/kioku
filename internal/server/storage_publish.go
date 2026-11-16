@@ -130,10 +130,7 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 		if e = beginSQLViews(q, &j, p, j.Data.Run.BudgetCents); e != nil {
 			return e
 		}
-		if e = q.PutJob(j); e != nil {
-			return e
-		}
-		return q.CompactHistory(p.ID, nil)
+		return q.PutJob(j)
 	})
 	return rev, err
 }
@@ -198,9 +195,6 @@ func (o *storageOperations) publishView(ctx context.Context, id string, bundle *
 		}
 		j.Status = "completed"
 		j.Data.Error = nil
-		if e = q.PutJob(j); e != nil {
-			return e
-		}
-		return q.CompactHistory(j.ProjectID, nil)
+		return q.PutJob(j)
 	})
 }

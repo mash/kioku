@@ -107,6 +107,9 @@ func (s *Server) runMaintenance(ctx context.Context) {
 			slog.Error("generation scheduling deferred", "error", err)
 		}
 		if now.Sub(lastGC) >= time.Hour {
+			if err := s.storage.pruneExpired(ctx); err != nil {
+				slog.Error("expired row pruning deferred", "error", err)
+			}
 			if _, err := s.storage.collectAllGarbage(ctx); err != nil {
 				slog.Warn("garbage collection deferred", "error", err)
 			}

@@ -174,7 +174,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /metrics", s.metrics)
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/usage", s.wrap(s.usage, true))
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/audit", s.wrap(s.audit, true))
-	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/maintenance", s.wrap(s.cleanup, true))
 	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}", s.wrap(s.deleteProject, true))
 
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

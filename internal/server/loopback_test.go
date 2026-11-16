@@ -378,7 +378,7 @@ func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
 		t.Fatal(status)
 	}
 	if loopbackCount(t, f) != 10001 {
-		t.Fatal("login pruned consumed rows outside maintenance")
+		t.Fatal("login pruned consumed rows outside the hourly pruning")
 	}
 	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
 		t.Fatal("active capacity not enforced", status)

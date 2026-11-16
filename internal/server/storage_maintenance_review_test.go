@@ -24,7 +24,7 @@ func TestMaintenancePrunesSessionsAndPreservesPendingLogin(t *testing.T) {
 		}
 		return nil
 	})
-	if _, err := o.maintenance(t.Context(), "p"); err != nil {
+	if err := o.pruneExpired(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error {

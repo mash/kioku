@@ -4,7 +4,7 @@ import "fmt"
 
 func (a *App) project(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: kioku project create|join|list|delete|share|usage|audit|maintenance")
+		return fmt.Errorf("usage: kioku project create|join|list|delete|share|usage|audit")
 	}
 	switch args[0] {
 	case "create":
@@ -21,8 +21,6 @@ func (a *App) project(args []string) error {
 		return a.usage()
 	case "audit":
 		return a.audit()
-	case "maintenance":
-		return a.maintenance(args[1:])
 	default:
 		return fmt.Errorf("unknown project command %q", args[0])
 	}

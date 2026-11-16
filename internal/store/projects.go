@@ -57,9 +57,26 @@ func (q *Queries) DeleteProjectRows(project string) error {
 	}
 	return q.DeleteProject(project)
 }
-func (q *Queries) PruneInvites(project string, now int64) error {
-	_, err := q.exec("DELETE FROM invites WHERE project_id=? AND expires<=?", project, now)
-	return err
+
+// PruneExpired removes expired sessions and invites, and compacts the job and
+// audit history of every project. The hourly maintenance pass runs it.
+func (q *Queries) PruneExpired(now int64) error {
+	if err := q.PruneSessions(now); err != nil {
+		return err
+	}
+	if _, err := q.exec("DELETE FROM invites WHERE expires<=?", now); err != nil {
+		return err
+	}
+	ids, err := listRows(q, "SELECT id FROM projects", func(r rowScanner) (string, error) { var id string; err := r.Scan(&id); return id, err })
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := q.CompactHistory(id, &now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (q *Queries) InboxCountExceptReplacement(project, source string) (int, error) {

@@ -1,6 +1,6 @@
 # Project storage, inbox and generation
 
-`kiokud` is one Go process: HTTP API, one generation worker, reconciliation/maintenance and an operator-only Unix socket. Only one server may write a deployment. Its SQLite process lock is local to the host; fence the old server before starting a replacement against the same object storage.
+`kiokud` is one Go process: HTTP API, one generation worker, and reconciliation/maintenance. Only one server may write a deployment. Its SQLite process lock is local to the host; fence the old server before starting a replacement against the same object storage.
 
 ## SQLite and project storage
 
@@ -135,7 +135,7 @@ Completed/failed jobs retain a cleanup marker and remain in the hot index until 
 
 Project deletion interrupts active sessions, records known usage, revokes credentials and removes temporary archives before deleting job records. If reconciliation has not confirmed stop/cleanup, deletion returns 503 and preserves the data needed to retry. URL removal instead queues an item with remove true and does not cancel a running generation. New puts remain independent of a running agent. `--max-jobs 20` bounds queued jobs per project; the separate inbox limit is 200.
 
-Finishing a generation and recording its provider cost use the control/content redo protocol; page writes may already be visible before completion. Maintenance removes unreferenced inbox bodies. The server validates returned archives and never executes their contents.
+Finishing a generation and recording its provider cost use the control/content redo protocol; page writes may already be visible before completion. Hourly maintenance prunes expired sessions, invites and old history, and removes unreferenced inbox bodies. The server validates returned archives and never executes their contents.
 
 ## External runner (self-host and development)
 

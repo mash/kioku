@@ -132,7 +132,7 @@ func (r *pausedReader) Read([]byte) (int, error) {
 	return 0, io.EOF
 }
 func (*pausedReader) Close() error { return nil }
-func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
+func TestUnauthorizedPutDoesNotReadBodyOrAcquireGate(t *testing.T) {
 	t.Parallel()
 	f := setup(t)
 	owner := f.login("owner@example.com")
@@ -145,7 +145,7 @@ func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
 	defer unlock()
 	body := &pausedReader{make(chan struct{}), make(chan struct{})}
 	defer close(body.release)
-	req := httptest.NewRequest("POST", "/api/projects/"+p.Namespace+"/maintenance", body)
+	req := httptest.NewRequest("POST", "/api/projects/"+p.Namespace+"/put", body)
 	req.Header.Set("Authorization", "Bearer "+attacker)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	rec := httptest.NewRecorder()
@@ -162,7 +162,7 @@ func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
 		t.Fatal("unauthorized request waited for the project gate")
 	}
 }
-func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
+func TestSlowPutBodyDoesNotHoldProjectGate(t *testing.T) {
 	t.Parallel()
 	f := setup(t)
 	token := f.login("owner@example.com")
@@ -171,7 +171,7 @@ func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
 	var once sync.Once
 	release := func() { once.Do(func() { close(body.release) }) }
 	defer release()
-	req := httptest.NewRequest("POST", "/api/projects/"+p.Namespace+"/maintenance", body)
+	req := httptest.NewRequest("POST", "/api/projects/"+p.Namespace+"/put", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Kioku-Client-Version", "dev")
 	done := make(chan struct{})

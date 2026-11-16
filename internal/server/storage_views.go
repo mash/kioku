@@ -215,10 +215,7 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			p.Data.Error = store.NullableString(authErr.Error())
 			p.GenerationSnapshot = nil
 			p.Data.ViewGeneration = nil
-			if e = q.PutJob(p); e != nil {
-				return e
-			}
-			return q.CompactHistory(p.ProjectID, nil)
+			return q.PutJob(p)
 		}
 		for g.Next < len(p.Data.Views) {
 			result := &p.Data.Views[g.Next]
@@ -257,10 +254,7 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			p.GenerationSnapshot = nil
 			p.Data.ViewGeneration = nil
 		}
-		if e = q.PutJob(p); e != nil {
-			return e
-		}
-		return q.CompactHistory(p.ProjectID, nil)
+		return q.PutJob(p)
 	})
 }
 
@@ -278,9 +272,6 @@ func (o *storageOperations) finishView(ctx context.Context, id, status, reason s
 		}
 		j.Status = status
 		j.Data.Error = store.NullableString(reason)
-		if e = q.PutJob(j); e != nil {
-			return e
-		}
-		return q.CompactHistory(j.ProjectID, nil)
+		return q.PutJob(j)
 	})
 }

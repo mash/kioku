@@ -34,8 +34,9 @@ func TestUnknownCostFailureStillStopsSessionAfterRecovery(t *testing.T) {
 	if j.Status != "failed" {
 		t.Fatal("unknown usage did not fail at deadline", j.Status)
 	}
-	if code := f.request("POST", "/api/projects/"+p.ID+"/maintenance", token, map[string]int{"keep": 0}, nil); code != 200 {
-		t.Fatal(code)
+	fixtureCheck(t, f.s.storage.pruneExpired(t.Context()))
+	if _, err := f.s.storage.collectAllGarbage(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	restartManagedFixture(t, f)
 	ma.SetError("POST", path+"/events", 0)

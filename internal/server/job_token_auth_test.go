@@ -63,7 +63,6 @@ func jobRestrictedRoutes() []string {
 		"GET /{org}/{slug}/views/{view}",
 		"GET /api/projects/{org}/{slug}/usage",
 		"GET /api/projects/{org}/{slug}/audit",
-		"POST /api/projects/{org}/{slug}/maintenance",
 		"DELETE /api/projects/{org}/{slug}",
 		"POST /api/auth/loopback",
 		"POST /api/auth/loopback/token",

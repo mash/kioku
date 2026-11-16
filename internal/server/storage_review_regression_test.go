@@ -87,7 +87,7 @@ func TestBrowserLoginIgnoresExpiredSessionsAtCapacity(t *testing.T) {
 		t.Fatalf("expired sessions prevent browser login: %d", resp.StatusCode)
 	}
 	if n := sessionKindCount(t, f, "web"); n != 10001 {
-		t.Fatalf("browser login pruned sessions outside maintenance: %d", n)
+		t.Fatalf("browser login pruned sessions outside the hourly pruning: %d", n)
 	}
 
 }

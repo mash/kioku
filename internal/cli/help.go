@@ -31,7 +31,6 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   pull [--description TEXT]           Bind on first pull; fetch one project
   status | open
   project usage | project audit
-  project maintenance                          Collect unreferenced project objects
   project delete --yes                         Delete project and cloud objects
   job status|wait JOB_ID
 

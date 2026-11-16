@@ -167,10 +167,7 @@ func (s *Server) auditMutation(q *store.Queries, r *http.Request, uid, pid strin
 }
 
 func recordAudit(q *store.Queries, uid, pid, action, detail string) error {
-	if err := q.PutAudit(store.AuditRow{ID: auth.Token()[:20], ProjectID: pid, Created: time.Now().UnixMilli(), Data: store.AuditData{UserID: uid, Action: action, Detail: detail}}); err != nil {
-		return err
-	}
-	return q.CompactHistory(pid, nil)
+	return q.PutAudit(store.AuditRow{ID: auth.Token()[:20], ProjectID: pid, Created: time.Now().UnixMilli(), Data: store.AuditData{UserID: uid, Action: action, Detail: detail}})
 }
 
 func creationDate(v int64) time.Time {

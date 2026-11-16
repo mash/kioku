@@ -7,10 +7,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/store"
@@ -242,53 +240,5 @@ func TestConnectorRegistrationIgnoresAdditionalMetadata(t *testing.T) {
 	id, ok := client["client_id"].(string)
 	if !ok || id == "" || client["client_name"] != metadata["client_name"] || client["token_endpoint_auth_method"] != "none" || client["example_extension"] != nil {
 		t.Fatal("unexpected client registration", client)
-	}
-}
-
-func TestConnectorRefreshRetriesAfterCapacityFailure(t *testing.T) {
-	t.Parallel()
-	f := setupWithWorker(t, false)
-	client := connectorClient(t, f)
-	human := f.login("owner@example.com")
-	_, form := connectorAuthCode(t, f, client, human, securityProject(t, f, human).ID)
-	response := connectorForm(f, "POST", "/oauth/token", "", form)
-	var tokens struct {
-		Refresh string `json:"refresh_token"`
-	}
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &tokens) != nil || tokens.Refresh == "" {
-		t.Fatal("initial exchange failed")
-	}
-	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		grant := fixtureOAuthTokensGet(t, st, auth.Hash(tokens.Refresh))
-		grant.Kind, grant.Expires = "access", time.Now().Add(time.Hour)
-		// These unrelated grants only occupy capacity; their Fosite request bodies
-		// are never read. Avoid serializing 10,000 copies of the real request on
-		// every database transaction, while keeping the real refresh grant intact.
-		grant.Request = nil
-		count, err := st.UserSessions(grant.UserID, "mcp")
-		if err != nil {
-			return err
-		}
-		for i := 0; i < 10000-len(count); i++ {
-			grant.RequestID = "capacity-test-" + strconv.Itoa(i)
-			fixtureOAuthTokensPut(t, st, auth.Hash("capacity-test-"+strconv.Itoa(i)), grant)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	form = url.Values{"grant_type": {"refresh_token"}, "client_id": {client}, "refresh_token": {tokens.Refresh}}
-	response = connectorForm(f, "POST", "/oauth/token", "", form)
-	if response.Code != 503 || !strings.Contains(response.Body.String(), "temporarily_unavailable") {
-		t.Fatal("expected capacity failure", response.Code)
-	}
-	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		fixtureOAuthTokensDelete(t, st, auth.Hash("capacity-test-0"))
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if response = connectorForm(f, "POST", "/oauth/token", "", form); response.Code != 200 {
-		t.Fatal("retry lost refresh credential", response.Code)
 	}
 }

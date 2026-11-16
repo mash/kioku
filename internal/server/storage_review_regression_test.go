@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
@@ -74,22 +73,6 @@ func TestJoinRechecksCallerAtCommit(t *testing.T) {
 			}))
 		})
 	}
-}
-
-func TestBrowserLoginIgnoresExpiredSessionsAtCapacity(t *testing.T) {
-	t.Parallel()
-	f := setupLoopback(t)
-	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
-		INSERT INTO sessions(id,kind,status,user_id,project_id,created,expires,data)
-		SELECT 'expired-'||x,'user','active','old',NULL,0,0,'{}' FROM n`)
-	req := startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + "/auth/google/start"})
-	if resp := finishLoopbackOAuth(t, f, req); resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("expired sessions prevent browser login: %d", resp.StatusCode)
-	}
-	if n := sessionKindCount(t, f, "user"); n != 10001 {
-		t.Fatalf("browser login pruned sessions outside the hourly pruning: %d", n)
-	}
-
 }
 
 func TestConnectorProjectSQLFailureIsNotNotFound(t *testing.T) {
@@ -234,18 +217,4 @@ func TestScheduledProjectFailureDoesNotBlockOtherProjects(t *testing.T) {
 		}
 		return nil
 	}))
-}
-
-func TestOAuthRegistrationCapacityKeepsTooManyRequestsResponse(t *testing.T) {
-	t.Parallel()
-	f, _, _ := orgProject(t)
-	fixtureSQL(t, f, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
-		INSERT INTO oauth_clients(client_id,data) SELECT 'client-'||x,'{}' FROM n`)
-	req := httptest.NewRequest("POST", "/oauth/register", strings.NewReader(`{"redirect_uris":["https://client.example/callback"]}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	f.s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "too many OAuth clients") {
-		t.Fatalf("registration capacity response: %d %s", w.Code, w.Body.String())
-	}
 }

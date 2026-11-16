@@ -163,11 +163,7 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 		if err != nil {
 			return err
 		}
-		err = q.InsertSession(store.SessionRow{ID: auth.Hash(raw), Kind: "login_code", Status: "pending", UserID: uid, ProjectID: &project.ID, Expires: expires.UnixMilli(), Created: time.Now().UnixMilli(), Data: data}, time.Now().UnixMilli())
-		if errors.Is(err, store.ErrSessionCapacity) {
-			return fail(429, "too many login codes")
-		}
-		return err
+		return q.InsertSession(store.SessionRow{ID: auth.Hash(raw), Kind: "login_code", Status: "pending", UserID: uid, ProjectID: &project.ID, Expires: expires.UnixMilli(), Created: time.Now().UnixMilli(), Data: data})
 	})
 	return raw, expires, err
 }

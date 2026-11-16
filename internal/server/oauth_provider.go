@@ -108,11 +108,8 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request, _ string)
 	}
 	client := store.OAuthClientRow{ClientID: auth.Token(), Data: store.OAuthClientData{ClientName: req.Name, RedirectURIs: req.RedirectURIs, Created: time.Now().UnixMilli()}}
 	if err := s.Store.Write(r.Context(), func(q *store.Queries) error {
-		return q.InsertOAuthClient(client)
+		return q.PutOAuthClient(client)
 	}); err != nil {
-		if errors.Is(err, store.ErrSessionCapacity) {
-			return fail(http.StatusTooManyRequests, "too many OAuth clients")
-		}
 		return err
 	}
 	jsonOut(w, 201, map[string]any{"client_id": client.ClientID, "client_name": client.Data.ClientName, "redirect_uris": client.Data.RedirectURIs, "token_endpoint_auth_method": "none", "grant_types": []string{"authorization_code", "refresh_token"}, "response_types": []string{"code"}, "scope": connectorScope})
@@ -360,9 +357,6 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request, _ string) er
 	})
 	if err != nil && (problem == nil || !errors.Is(err, problem)) {
 		return err
-	}
-	if errors.Is(problem, store.ErrSessionCapacity) {
-		problem = fosite.ErrTemporarilyUnavailable
 	}
 	if problem != nil {
 		provider.WriteAccessError(r.Context(), w, request, problem)

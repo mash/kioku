@@ -1,12 +1,10 @@
 package server
 
 import (
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -69,10 +67,10 @@ func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
 	now := time.UnixMilli(1000)
 	data := store.CLILoginData{LoopbackCodeHash: sqlTestPtr(auth.Hash("code")), LoopbackChallenge: sqlTestPtr(auth.Challenge("verifier"))}
 	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}, 0); err != nil {
+		if err := q.InsertSession(store.SessionRow{ID: auth.Hash("device"), Kind: "cli_login", Status: "pending", UserID: "u", Expires: 2000, Data: sqlJSON(t, data)}); err != nil {
 			return err
 		}
-		return q.InsertSession(store.SessionRow{ID: auth.Hash("collision"), Kind: "user", Status: "active", UserID: "u", Expires: 2000, Data: json.RawMessage(`{}`)}, 0)
+		return q.InsertSession(store.SessionRow{ID: auth.Hash("collision"), Kind: "user", Status: "active", UserID: "u", Expires: 2000, Data: json.RawMessage(`{}`)})
 	})
 	err := d.Write(t.Context(), func(q *store.Queries) error {
 		_, err := exchangeCLILogin(q, "device", "code", "verifier", "collision", now)
@@ -92,62 +90,4 @@ func TestLoopbackIssuanceFailureRollsBackConsumption(t *testing.T) {
 		_, err = exchangeCLILogin(q, "device", "code", "verifier", "unique", now)
 		return err
 	})
-}
-func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
-	t.Parallel()
-	d, _ := sqlAuthFixture(t)
-	now := time.UnixMilli(1000)
-	old := store.SessionRow{ID: auth.Hash("old-agent"), Kind: "agent", Status: "active", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: sqlTestPtr("existing"), Role: sqlTestPtr("read")}, Name: "connector:host"})}
-	code := store.SessionRow{ID: auth.Hash("code"), Kind: "login_code", Status: "pending", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "grant", Role: sqlTestPtr("read")})}
-	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.PutSession(old); err != nil {
-			return err
-		}
-		if err := q.PutSession(store.SessionRow{ID: "grant", Kind: "mcp", Status: "active", UserID: "u", Expires: 2000, Data: sqlJSON(t, store.MCPData{TokenKind: "access", ProjectIDs: []string{"p"}})}); err != nil {
-			return err
-		}
-		// Fill the kind-wide limit without hitting this project's active limit.
-		for i := range 9999 {
-			row := old
-			row.ID = "capacity-" + strconv.Itoa(i)
-			row.ProjectID = sqlTestPtr("other-project")
-			if err := q.PutSession(row); err != nil {
-				return err
-			}
-		}
-		return q.PutSession(code)
-	})
-	err := writeConsuming(t.Context(), d, func(q *store.Queries) error {
-		_, _, err := exchangeAgentLogin(q, "code", "host", "", "new", "secret", now)
-		return err
-	})
-	expectSQLStatus(t, err, 429)
-	fixtureCheck(t, d.Read(t.Context(), func(q *store.Queries) error {
-		if _, err := q.Session(code.ID); !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("rejected login did not consume its code: %v", err)
-		}
-		if _, err := q.Session(old.ID); err != nil {
-			t.Fatal("capacity rejection revoked the credential it failed to replace", err)
-		}
-		return nil
-	}))
-	// Once capacity is available, a fresh code issues the replacement and
-	// revokes the old credential together.
-	sqlWrite(t, d, func(q *store.Queries) error {
-		if err := q.DeleteSession("capacity-0"); err != nil {
-			return err
-		}
-		return q.PutSession(code)
-	})
-	sqlWrite(t, d, func(q *store.Queries) error {
-		_, _, err := exchangeAgentLogin(q, "code", "host", "", "new", "secret", now)
-		return err
-	})
-	fixtureCheck(t, d.Read(t.Context(), func(q *store.Queries) error {
-		if _, err := q.Session(old.ID); !errors.Is(err, sql.ErrNoRows) {
-			t.Fatal("successful replacement did not revoke the old credential", err)
-		}
-		_, err := q.Session(auth.Hash("kioku_agent.new.secret"))
-		return err
-	}))
 }

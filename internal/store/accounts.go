@@ -94,17 +94,6 @@ func (q *Queries) DeleteOrganizationRows(org string) error {
 	return q.DeleteOrganization(org)
 }
 
-func (q *Queries) InsertOAuthClient(v OAuthClientRow) error {
-	var n int
-	if err := q.row("SELECT count(*) FROM oauth_clients").Scan(&n); err != nil {
-		return err
-	}
-	if n >= 10000 {
-		return ErrSessionCapacity
-	}
-	return q.PutOAuthClient(v)
-}
-
 func (q *Queries) OrganizationRoles(user string) (map[string]string, error) {
 	return q.members("SELECT org_id,role FROM organization_members WHERE user_id=?", user)
 }

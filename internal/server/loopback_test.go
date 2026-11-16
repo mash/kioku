@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -346,36 +345,8 @@ func TestLoopbackExpiredRequest(t *testing.T) {
 	}
 }
 
-func TestLoopbackLimitsWithDeferredPruning(t *testing.T) {
+func TestAuthRateLimit(t *testing.T) {
 	t.Parallel()
-	f := setupLoopback(t)
-	a := newLoopbackAttempt(t, f)
-	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		d := fixtureDevicesGet(t, st, a.device)
-		for i := range 10000 {
-			fixtureDevicesPut(t, st, strconv.Itoa(i), d)
-		}
-		fixtureDevicesDelete(t, st, a.device)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	req := map[string]string{"provider": "google", "code_challenge": auth.Challenge(a.verifier), "code_challenge_method": "S256", "redirect_uri": a.redirect, "state": a.state}
-	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
-		t.Fatal(status)
-	}
-	if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-		fixtureDevicesDelete(t, st, "0")
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 201 {
-		t.Fatal(status)
-	}
-	if status := f.request("POST", "/api/auth/loopback", "", req, nil); status != 429 {
-		t.Fatal("active capacity not enforced", status)
-	}
 	s := &Server{Config: Config{RatePerMinute: 100}}
 	for i := range 21 {
 		paths := []string{"/auth/google/start", "/api/auth/loopback", "/api/auth/loopback/token"}

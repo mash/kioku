@@ -139,7 +139,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return err
 	}
 	validation.SetMaxOpenConns(1)
-	err = transact(ctx, validation, func(q *Queries) error { return plan.apply(q, now.UnixMilli()) })
+	err = transact(ctx, validation, func(q *Queries) error { return plan.apply(q) })
 	closeErr := validation.Close()
 	if err = errors.Join(err, closeErr); err != nil {
 		return fmt.Errorf("migration validation failed: %w", err)
@@ -155,7 +155,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return err
 	}
 	return transact(ctx, db, func(q *Queries) error {
-		if err := plan.apply(q, now.UnixMilli()); err != nil {
+		if err := plan.apply(q); err != nil {
 			return err
 		}
 		// This is the stopped, one-time migration: no live writer or GC runs.
@@ -169,7 +169,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return err
 	})
 }
-func (p *migrationPlan) apply(q *Queries, now int64) error {
+func (p *migrationPlan) apply(q *Queries) error {
 	if _, err := q.exec(catalogSchema); err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (p *migrationPlan) apply(q *Queries, now int64) error {
 		}
 	}
 	for _, v := range p.sessions {
-		if e := q.InsertSession(v, now); e != nil {
+		if e := q.PutSession(v); e != nil {
 			return e
 		}
 	}

@@ -53,19 +53,22 @@ func (SessionRow) GoString() string             { return "[redacted session]" }
 func (SessionRow) LogValue() slog.Value         { return slog.StringValue("[redacted session]") }
 func (SessionRow) MarshalJSON() ([]byte, error) { return []byte(`"[redacted session]"`), nil }
 
-func (q *Queries) InsertSession(v SessionRow, now int64) error {
-	var count int
-	if err := q.row("SELECT count(*) FROM sessions WHERE kind=? AND expires>?", v.Kind, now).Scan(&count); err != nil {
+// sessionLimits bounds the rows that one user can hold per session kind.
+// InsertSession deletes the oldest rows beyond the limit, so that one user
+// can never fill the table for everyone. Revoked refresh tokens go first.
+var sessionLimits = map[string]int{"user": 50, "mcp": 1000, "oauth_code": 20, "login_code": 20}
+
+func (q *Queries) InsertSession(v SessionRow) error {
+	if _, err := q.exec("INSERT INTO sessions("+sessionsColumns+") VALUES(?,?,?,?,?,?,?,?)", v.ID, v.Kind, v.Status, v.UserID, v.ProjectID, v.Expires, v.Created, string(v.Data)); err != nil {
 		return err
 	}
-	if count >= 10000 {
-		return ErrSessionCapacity
+	limit, ok := sessionLimits[v.Kind]
+	if !ok {
+		return nil
 	}
-	_, err := q.exec("INSERT INTO sessions("+sessionsColumns+") VALUES(?,?,?,?,?,?,?,?)", v.ID, v.Kind, v.Status, v.UserID, v.ProjectID, v.Expires, v.Created, string(v.Data))
+	_, err := q.exec("DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE user_id=? AND kind=? ORDER BY status='revoked', created DESC, id DESC LIMIT -1 OFFSET ?)", v.UserID, v.Kind, limit)
 	return err
 }
-
-var ErrSessionCapacity = errors.New("session storage capacity exceeded")
 
 // TakeSession consumes a single-use cli_login or login_code row by deleting it.
 func (q *Queries) TakeSession(id, kind string, now int64) (SessionRow, error) {
@@ -100,8 +103,20 @@ func (q *Queries) RevokeOAuthFamily(user, id string) error {
 	}
 	return nil
 }
+
+// revokedRetention keeps a revoked refresh token long enough to detect its
+// replay and revoke the family; PruneSessions deletes it afterwards.
+const revokedRetention = 7 * 24 * 60 * 60 * 1000
+
+// clientRetention is how long a registered OAuth client may stay unused
+// before PruneSessions deletes it.
+const clientRetention = 24 * 60 * 60 * 1000
+
 func (q *Queries) PruneSessions(now int64) error {
-	_, err := q.exec("DELETE FROM sessions WHERE expires<=?", now)
+	if _, err := q.exec("DELETE FROM sessions WHERE expires<=? OR (kind='mcp' AND status='revoked' AND created<=?)", now, now-revokedRetention); err != nil {
+		return err
+	}
+	_, err := q.exec("DELETE FROM oauth_clients WHERE json_extract(data,'$.created')<=? AND client_id NOT IN (SELECT json_extract(data,'$.client_id') FROM sessions WHERE kind='mcp' AND json_extract(data,'$.client_id') IS NOT NULL)", now-clientRetention)
 	return err
 }
 

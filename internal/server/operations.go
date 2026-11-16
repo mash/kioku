@@ -48,6 +48,11 @@ func (s *Server) allow(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/auth/") || strings.HasPrefix(r.URL.Path, "/api/auth/") {
 		host += "/auth"
 		limit = 20
+	} else if r.URL.Path == "/oauth/register" {
+		// Registration is anonymous and stores a row; PruneSessions deletes
+		// unused clients after a day, so this bounds the rows per address.
+		host += "/register"
+		limit = 10
 	}
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()

@@ -17,7 +17,7 @@ func TestMaintenancePrunesExpiredSessions(t *testing.T) {
 			{ID: "access", Kind: "mcp", Status: "active", UserID: "u", Expires: 1000, Data: fixtureJSON(t, store.MCPData{TokenKind: "access"})},
 			{ID: "pending", Kind: "login_code", Status: "pending", UserID: "u", Expires: 2000, Data: fixtureJSON(t, store.LoginCodeData{GrantKey: "access"})},
 		} {
-			if err := q.InsertSession(row, 0); err != nil {
+			if err := q.InsertSession(row); err != nil {
 				return err
 			}
 		}

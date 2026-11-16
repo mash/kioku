@@ -77,7 +77,7 @@ func (s *oauthSQL) CreateAuthorizeCodeSession(_ context.Context, key string, r f
 	if err != nil {
 		return s.storageError(err)
 	}
-	return s.storageError(s.q.InsertSession(store.SessionRow{ID: key, Kind: "oauth_code", Status: "pending", UserID: session.Subject, Expires: session.GetExpiresAt(fosite.AuthorizeCode).UnixMilli(), Created: r.GetRequestedAt().UnixMilli(), Data: data}, time.Now().UnixMilli()))
+	return s.storageError(s.q.InsertSession(store.SessionRow{ID: key, Kind: "oauth_code", Status: "pending", UserID: session.Subject, Expires: session.GetExpiresAt(fosite.AuthorizeCode).UnixMilli(), Created: r.GetRequestedAt().UnixMilli(), Data: data}))
 }
 func (s *oauthSQL) GetAuthorizeCodeSession(_ context.Context, key string, _ fosite.Session) (fosite.Requester, error) {
 	v, err := s.read(key, "oauth_code")
@@ -171,7 +171,7 @@ func (s *oauthSQL) createToken(key, kind string, r fosite.Requester) error {
 	if err != nil {
 		return s.storageError(err)
 	}
-	return s.storageError(s.q.InsertSession(store.SessionRow{ID: key, Kind: "mcp", Status: "active", UserID: session.Subject, Expires: session.GetExpiresAt(tokenType).UnixMilli(), Created: r.GetRequestedAt().UnixMilli(), Data: data}, time.Now().UnixMilli()))
+	return s.storageError(s.q.InsertSession(store.SessionRow{ID: key, Kind: "mcp", Status: "active", UserID: session.Subject, Expires: session.GetExpiresAt(tokenType).UnixMilli(), Created: r.GetRequestedAt().UnixMilli(), Data: data}))
 }
 func (s *oauthSQL) getToken(key, kind string) (fosite.Requester, error) {
 	v, err := s.read(key, "mcp")
@@ -251,7 +251,7 @@ func (s *oauthSQL) RotateRefreshToken(_ context.Context, id, key string) error {
 
 func (s *oauthSQL) storageError(err error) error {
 	var protocol *fosite.RFC6749Error
-	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSessionCapacity) && !errors.As(err, &protocol) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.As(err, &protocol) {
 		s.failure = err
 	}
 	return err

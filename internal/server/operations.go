@@ -172,7 +172,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 	if err := s.checkDeleteOwner(pid, uid); err != nil {
 		return err
 	}
-	unlock, err := s.lockProject(r.Context(), "generate:"+pid)
+	unlock, err := s.storage.lock(r.Context(), "generate:"+pid)
 	if err != nil {
 		return err
 	}

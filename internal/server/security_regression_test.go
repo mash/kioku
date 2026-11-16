@@ -134,7 +134,7 @@ func TestUnauthorizedMaintenanceDoesNotReadBodyOrAcquireGate(t *testing.T) {
 	owner := f.login("owner@example.com")
 	attacker := f.login("attacker@example.com")
 	p := securityProject(t, f, owner)
-	unlock, err := f.s.lockProject(context.Background(), p.ID)
+	unlock, err := f.s.storage.lock(context.Background(), p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
 	<-body.started
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	unlock, err := f.s.lockProject(ctx, p.ID)
+	unlock, err := f.s.storage.lock(ctx, p.ID)
 	if err != nil {
 		t.Fatal("slow body held gate", err)
 	}
@@ -184,21 +184,21 @@ func TestSlowMaintenanceBodyDoesNotHoldProjectGate(t *testing.T) {
 }
 func TestProjectGatesAreIndependentAndCancelable(t *testing.T) {
 	f := setup(t)
-	unlock, err := f.s.lockProject(context.Background(), "one")
+	unlock, err := f.s.storage.lock(context.Background(), "one")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	other, err := f.s.lockProject(ctx, "two")
+	other, err := f.s.storage.lock(ctx, "two")
 	if err != nil {
 		t.Fatal("other project blocked", err)
 	}
 	other()
 	canceled, stop := context.WithCancel(context.Background())
 	stop()
-	if _, err = f.s.lockProject(canceled, "one"); !errors.Is(err, context.Canceled) {
+	if _, err = f.s.storage.lock(canceled, "one"); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancellation ignored", err)
 	}
 }

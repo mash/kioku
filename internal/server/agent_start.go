@@ -22,7 +22,7 @@ func (s *Server) loadJob(ctx context.Context, id string) (store.JobRow, error) {
 	return j, err
 }
 func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred ...string) error {
-	unlock, err := s.lockProject(ctx, "generate:"+job.ProjectID)
+	unlock, err := s.storage.lock(ctx, "generate:"+job.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -50,14 +50,14 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 			}
 			spec.Namespace = org.Slug + "/" + in.Project.Slug
 			if in.View != nil {
-				prompt := valueString(in.View.Data.Prompt)
+				prompt := store.ValueString(in.View.Data.Prompt)
 				spec.ViewPrompt = &prompt
 			} else {
 				v, err := q.ViewBySlug(in.Project.ID, wikiViewSlug)
 				if err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
-				prompt := valueString(v.Data.Prompt)
+				prompt := store.ValueString(v.Data.Prompt)
 				if prompt == "" {
 					prompt = s.defaultWikiPrompt()
 				}
@@ -169,7 +169,7 @@ func (s *Server) startAgentJob(ctx context.Context, job store.JobRow, deferred .
 	return s.storage.saveRunRef(ctx, job.ID, ref)
 }
 func inboxProjection(row store.InboxRow) model.InboxItem {
-	return model.InboxItem{ID: row.ID, ProjectID: row.ProjectID, SourceURL: row.SourceURL, Remove: row.Remove, Submitter: row.Data.Submitter, Created: storageDate(row.Created), RunID: valueString(row.RunID)}
+	return model.InboxItem{ID: row.ID, ProjectID: row.ProjectID, SourceURL: row.SourceURL, Remove: row.Remove, Submitter: row.Data.Submitter, Created: storageDate(row.Created), RunID: store.ValueString(row.RunID)}
 }
 
 func (s *Server) failUnstartedJob(ctx context.Context, id string, cause error) error {

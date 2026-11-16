@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -39,7 +38,7 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 			return e
 		}
 		now := time.Now()
-		if e == nil && row.Status == "active" && row.Expires > now.UnixMilli() {
+		if e == nil && row.Active(now.UnixMilli()) {
 			if _, e = q.User(row.UserID); errors.Is(e, sql.ErrNoRows) {
 				return nil
 			} else if e != nil {
@@ -47,32 +46,32 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 			}
 			switch row.Kind {
 			case "web", "cli":
-				var identity store.IdentitySessionData
-				if e = json.Unmarshal(row.Data, &identity); e != nil {
+				identity, e := store.SessionData[store.IdentitySessionData](row)
+				if e != nil {
 					return e
 				}
-				principal = authenticatedSession{UserID: row.UserID, ProjectID: valueString(row.ProjectID), AgentID: valueString(identity.AgentID), Role: valueString(identity.Role), Expires: storageDate(row.Expires), Identity: identity}
+				principal = authenticatedSession{UserID: row.UserID, ProjectID: store.ValueString(row.ProjectID), AgentID: store.ValueString(identity.AgentID), Role: store.ValueString(identity.Role), Expires: storageDate(row.Expires), Identity: identity}
 				return nil
 			case "agent":
 				if r.Header.Get("Authorization") == "" {
 					return nil
 				}
-				var agent store.AgentSessionData
-				if e = json.Unmarshal(row.Data, &agent); e != nil {
+				agent, e := store.SessionData[store.AgentSessionData](row)
+				if e != nil {
 					return e
 				}
 				parts := strings.Split(token, ".")
-				if len(parts) != 3 || parts[0] != "kioku_agent" || parts[1] != valueString(agent.AgentID) || agent.RevokedAt != nil {
+				if len(parts) != 3 || parts[0] != "kioku_agent" || parts[1] != store.ValueString(agent.AgentID) || agent.RevokedAt != nil {
 					return nil
 				}
-				if _, e = sqlMember(q, valueString(row.ProjectID), row.UserID); e != nil {
+				if _, e = sqlMember(q, store.ValueString(row.ProjectID), row.UserID); e != nil {
 					var api apiError
 					if errors.As(e, &api) {
 						return nil
 					}
 					return e
 				}
-				principal = authenticatedSession{UserID: row.UserID, ProjectID: valueString(row.ProjectID), AgentID: valueString(agent.AgentID), Role: valueString(agent.Role), Expires: storageDate(row.Expires)}
+				principal = authenticatedSession{UserID: row.UserID, ProjectID: store.ValueString(row.ProjectID), AgentID: store.ValueString(agent.AgentID), Role: store.ValueString(agent.Role), Expires: storageDate(row.Expires)}
 				return nil
 			}
 		}
@@ -88,7 +87,7 @@ func (s *Server) session(r *http.Request) (string, authenticatedSession, error) 
 			if e != nil {
 				return e
 			}
-			if j.Status != "running" || j.Data.Run == nil || j.Data.Run.AbortReason != nil {
+			if !j.Running() || j.Data.Run.AbortReason != nil {
 				return fail(403, "invalid job credential")
 			}
 			principal = authenticatedSession{UserID: j.Data.UserID, ProjectID: j.ProjectID, AgentID: payload.JobID, JobID: payload.JobID, Role: "job", Expires: storageDate(payload.Expires)}

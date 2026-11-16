@@ -1,7 +1,9 @@
 package store
 
+const usersColumns = "id,email,data"
+
 func (q *Queries) User(id string) (UserRow, error) {
-	return scanUser(q.row("SELECT id,email,data FROM users WHERE id=?", id))
+	return scanUser(q.row("SELECT "+usersColumns+" FROM users WHERE id=?", id))
 }
 func (q *Queries) DeleteUser(id string) error {
 	_, err := q.exec("DELETE FROM users WHERE id=?", id)
@@ -12,22 +14,9 @@ func (q *Queries) PutUser(v UserRow) error {
 	if err != nil {
 		return err
 	}
-	_, err = q.exec("INSERT INTO users(id,email,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,data=excluded.data", v.ID, v.Email, raw)
+	_, err = q.exec("INSERT INTO users("+usersColumns+") VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,data=excluded.data", v.ID, v.Email, raw)
 	return err
 }
 func (q *Queries) listUser(suffix string, args ...any) ([]UserRow, error) {
-	rows, err := q.rows("SELECT id,email,data FROM users "+suffix, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []UserRow{}
-	for rows.Next() {
-		v, err := scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return listRows(q, "SELECT "+usersColumns+" FROM users "+suffix, scanUser, args...)
 }

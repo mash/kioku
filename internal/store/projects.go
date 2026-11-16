@@ -1,7 +1,7 @@
 package store
 
 func (q *Queries) ProjectBySlug(org, slug string) (ProjectRow, error) {
-	return scanProject(q.row("SELECT id,org_id,slug,created,deleting,wiki_revision,wiki_incomplete,next_generate_at,view_epoch,data FROM projects WHERE org_id=? AND slug=?", org, slug))
+	return scanProject(q.row("SELECT "+projectsColumns+" FROM projects WHERE org_id=? AND slug=?", org, slug))
 }
 func (q *Queries) ProjectsForUser(user string) ([]ProjectRow, error) {
 	return q.listProject("WHERE id IN (SELECT project_id FROM project_members WHERE user_id=?) ORDER BY created,id", user)
@@ -25,7 +25,7 @@ func (q *Queries) ProjectViews(project string) ([]ViewRow, error) {
 	return q.listView("WHERE project_id=? ORDER BY created_at IS NULL,created_at,CASE WHEN created_at IS NULL THEN slug ELSE id END", project)
 }
 func (q *Queries) ViewBySlug(project, slug string) (ViewRow, error) {
-	return scanView(q.row("SELECT project_id,id,slug,created_at,bundle_hash,view_epoch,data FROM views WHERE project_id=? AND slug=?", project, slug))
+	return scanView(q.row("SELECT "+viewsColumns+" FROM views WHERE project_id=? AND slug=?", project, slug))
 }
 func (q *Queries) ReplaceInbox(v InboxRow) error {
 	if _, err := q.exec("DELETE FROM inbox WHERE project_id=? AND source_url=? AND run_id IS NULL", v.ProjectID, v.SourceURL); err != nil {

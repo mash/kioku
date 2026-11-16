@@ -101,3 +101,10 @@ type FatalDatabaseError struct{ Cause error }
 
 func (e *FatalDatabaseError) Error() string { return "SQLite connection recovery failed" }
 func (e *FatalDatabaseError) Unwrap() error { return e.Cause }
+
+// IsAbort identifies failures that must stop the current work pass.
+func IsAbort(err error) bool {
+	var fatal *FatalDatabaseError
+	var unknown *UnknownCommit
+	return errors.As(err, &fatal) || errors.As(err, &unknown)
+}

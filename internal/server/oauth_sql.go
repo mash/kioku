@@ -180,7 +180,7 @@ func (s *oauthSQL) CreateAuthorizeCodeSession(_ context.Context, key string, r f
 		return s.storageError(err)
 	}
 	session := r.GetSession().(*connectorSession)
-	data, err := json.Marshal(store.OAuthCodeData{ProjectIDs: session.ProjectIDs, Request: request})
+	data, err := store.EncodeSessionData(store.OAuthCodeData{ProjectIDs: session.ProjectIDs, Request: request})
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -191,8 +191,8 @@ func (s *oauthSQL) GetAuthorizeCodeSession(_ context.Context, key string, _ fosi
 	if err != nil {
 		return nil, s.storageError(err)
 	}
-	var data store.OAuthCodeData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.OAuthCodeData](v)
+	if err != nil {
 		return nil, s.storageError(err)
 	}
 	r, err := decodeSQLRequest(data.Request, v.UserID, data.ProjectIDs)
@@ -223,15 +223,15 @@ func (s *oauthSQL) CreatePKCERequestSession(_ context.Context, key string, r fos
 	if err != nil {
 		return s.storageError(err)
 	}
-	var data store.OAuthCodeData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.OAuthCodeData](v)
+	if err != nil {
 		return s.storageError(err)
 	}
 	data.PKCE, err = encodeSQLRequest(r)
 	if err != nil {
 		return s.storageError(err)
 	}
-	v.Data, err = json.Marshal(data)
+	v.Data, err = store.EncodeSessionData(data)
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -242,8 +242,8 @@ func (s *oauthSQL) GetPKCERequestSession(_ context.Context, key string, _ fosite
 	if err != nil {
 		return nil, s.storageError(err)
 	}
-	var data store.OAuthCodeData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.OAuthCodeData](v)
+	if err != nil {
 		return nil, s.storageError(err)
 	}
 	return decodeSQLRequest(data.PKCE, v.UserID, data.ProjectIDs)
@@ -253,12 +253,12 @@ func (s *oauthSQL) DeletePKCERequestSession(_ context.Context, key string) error
 	if err != nil {
 		return s.storageError(err)
 	}
-	var data store.OAuthCodeData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.OAuthCodeData](v)
+	if err != nil {
 		return s.storageError(err)
 	}
 	data.PKCE = nil
-	v.Data, err = json.Marshal(data)
+	v.Data, err = store.EncodeSessionData(data)
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -274,7 +274,7 @@ func (s *oauthSQL) createToken(key, kind string, r fosite.Requester) error {
 	if kind == "refresh" {
 		tokenType = fosite.RefreshToken
 	}
-	data, err := json.Marshal(store.MCPData{TokenKind: kind, Active: true, ClientID: r.GetClient().GetID(), RequestID: r.GetID(), ProjectIDs: session.ProjectIDs, Request: request})
+	data, err := store.EncodeSessionData(store.MCPData{TokenKind: kind, Active: true, ClientID: r.GetClient().GetID(), RequestID: r.GetID(), ProjectIDs: session.ProjectIDs, Request: request})
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -285,8 +285,8 @@ func (s *oauthSQL) getToken(key, kind string) (fosite.Requester, error) {
 	if err != nil {
 		return nil, s.storageError(err)
 	}
-	var data store.MCPData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.MCPData](v)
+	if err != nil {
 		return nil, s.storageError(err)
 	}
 	if data.TokenKind != kind {
@@ -332,12 +332,12 @@ func (s *oauthSQL) DeleteRefreshTokenSession(_ context.Context, key string) erro
 	if err != nil {
 		return s.storageError(err)
 	}
-	var data store.MCPData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.MCPData](v)
+	if err != nil {
 		return s.storageError(err)
 	}
 	data.Active = false
-	v.Data, err = json.Marshal(data)
+	v.Data, err = store.EncodeSessionData(data)
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -354,8 +354,8 @@ func (s *oauthSQL) RotateRefreshToken(_ context.Context, id, key string) error {
 	if err != nil {
 		return s.storageError(err)
 	}
-	var data store.MCPData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.MCPData](v)
+	if err != nil {
 		return s.storageError(err)
 	}
 	if data.TokenKind != "refresh" || !data.Active || data.RequestID != id {

@@ -94,7 +94,7 @@ func TestJobTokenOnlyPermitsJobRoutes(t *testing.T) {
 				if e != nil {
 					return e
 				}
-				j.Data.Run.AbortReason = nullableString("revoked")
+				j.Data.Run.AbortReason = store.NullableString("revoked")
 				return q.PutJob(j)
 			}))
 		}

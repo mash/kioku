@@ -149,7 +149,7 @@ func (f *fixture) login(email string) string {
 			fixtureUsersPut(t, st, uid, model.User{ID: uid, Name: strings.Split(email, "@")[0], Email: email, Identities: map[string]string{"google": uid}})
 		}
 		access := f.s.Cipher.SealIdentityTokens(auth.Credential{AccessToken: uid}, uid, "google", uid)
-		fixtureSessionsPut(t, st, auth.Hash(token), fixtureSession{UserID: uid, Expires: time.Now().Add(time.Hour), IdentityProvider: "google", IdentityID: uid, IdentityAccessToken: valueString(access.AccessToken)})
+		fixtureSessionsPut(t, st, auth.Hash(token), fixtureSession{UserID: uid, Expires: time.Now().Add(time.Hour), IdentityProvider: "google", IdentityID: uid, IdentityAccessToken: store.ValueString(access.AccessToken)})
 		return nil
 	}); err != nil {
 		f.t.Fatal(err)

@@ -127,7 +127,7 @@ func TestAgentIOPhasesAndResend(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		j.Data.Run.AbortReason = nullableString("revoked")
+		j.Data.Run.AbortReason = store.NullableString("revoked")
 		return st.PutJob(j)
 	}); err != nil {
 		t.Fatal(err)

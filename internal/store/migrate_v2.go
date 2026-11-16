@@ -43,12 +43,6 @@ type legacyV2Record struct {
 	body     []byte
 }
 
-func migrationString(v string) *string {
-	if v == "" {
-		return nil
-	}
-	return &v
-}
 func migrationTime(v time.Time) *int64 {
 	if v.IsZero() {
 		return nil

@@ -87,7 +87,7 @@ func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
 				t.Fatal("publication was not interrupted")
 			}
 			got := fixtureViewRow(t, f, p.ID, v.ID)
-			if valueString(got.Data.JobID) != "old-job" || storedJob(t, f, child).Status != "running" {
+			if store.ValueString(got.Data.JobID) != "old-job" || storedJob(t, f, child).Status != "running" {
 				t.Fatal("uncommitted publication visible", got)
 			}
 			body, err := readFixtureViewBundle(ctx, f.s, p.ID, v.Slug)
@@ -100,7 +100,7 @@ func TestViewOverwriteRecoversFromInterruptedPublication(t *testing.T) {
 			f.s.storage.objects = objects
 			fixtureCheck(t, f.s.storage.publishView(ctx, child, bundle))
 			got = fixtureViewRow(t, f, p.ID, v.ID)
-			if valueString(got.Data.JobID) != "new-job" || storedJob(t, f, child).Status != "completed" {
+			if store.ValueString(got.Data.JobID) != "new-job" || storedJob(t, f, child).Status != "completed" {
 				t.Fatal("publication not atomic", got)
 			}
 		})
@@ -215,7 +215,7 @@ func TestWikiViewPatchUsesSQLWithoutObjectReads(t *testing.T) {
 }
 
 func readFixtureViewBundle(ctx context.Context, s *Server, pid, slug string) ([]byte, error) {
-	unlock, err := s.lockProject(ctx, pid)
+	unlock, err := s.storage.lock(ctx, pid)
 	if err != nil {
 		return nil, err
 	}

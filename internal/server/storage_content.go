@@ -3,14 +3,13 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -42,18 +41,7 @@ func (o *storageOperations) lock(ctx context.Context, project string) (func(), e
 		return func() { <-ch }, nil
 	}
 }
-func nullableString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-func valueString(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
+
 func valueBool(b *bool) bool { return b != nil && *b }
 func equalOptional(a, b *string) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
@@ -67,10 +55,11 @@ func sqlInboxKey(i store.InboxRow) blob.Key {
 func wikiBytes(files []store.WikiFileRow) (int64, error) {
 	var total int64
 	for _, f := range files {
-		if f.Data.Bytes < 0 || total > math.MaxInt64-f.Data.Bytes {
+		sum := model.SumMeasurements(&total, &f.Data.Bytes)
+		if sum == nil {
 			return 0, errors.New("invalid wiki capacity")
 		}
-		total += f.Data.Bytes
+		total = *sum
 	}
 	return total, nil
 }
@@ -199,11 +188,11 @@ func sqlJobAuthorization(q *store.Queries, j store.JobRow, now int64) error {
 		return err
 	}
 	for _, v := range agents {
-		var a store.AgentSessionData
-		if err = json.Unmarshal(v.Data, &a); err != nil {
+		a, err := store.SessionData[store.AgentSessionData](v)
+		if err != nil {
 			return err
 		}
-		if a.AgentID != nil && *a.AgentID == *j.Data.AgentID && v.UserID == j.Data.UserID && v.Status == "active" && v.Expires > now && a.RevokedAt == nil && valueString(a.Role) == "write" {
+		if a.AgentID != nil && *a.AgentID == *j.Data.AgentID && v.UserID == j.Data.UserID && v.Active(now) && a.RevokedAt == nil && store.ValueString(a.Role) == "write" {
 			return nil
 		}
 	}
@@ -214,7 +203,7 @@ func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRo
 	if err != nil {
 		return j, err
 	}
-	if j.Status != "running" || j.Data.Run == nil {
+	if !j.Running() {
 		return j, fail(409, "generation job was canceled")
 	}
 	if j.Data.Run.AbortReason != nil {
@@ -232,7 +221,7 @@ func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRo
 		if err != nil {
 			return j, err
 		}
-		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != id || p.WikiIncomplete || valueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
+		if j.Data.ViewTask == nil || parent.Status != "running" || parent.ChildID == nil || *parent.ChildID != id || p.WikiIncomplete || store.ValueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
 			return j, fail(409, "Wiki または生成ジョブが変更されました")
 		}
 	}
@@ -240,3 +229,21 @@ func (o *storageOperations) runningJob(q *store.Queries, id string) (store.JobRo
 }
 
 type mutationHook struct{ check, audit func(*store.Queries) error }
+
+func (h mutationHook) apply(q *store.Queries, fn func(*store.Queries) error) error {
+	if h.check != nil {
+		if err := h.check(q); err != nil {
+			return err
+		}
+	}
+	if err := fn(q); err != nil {
+		return err
+	}
+	if h.audit != nil {
+		return h.audit(q)
+	}
+	return nil
+}
+func (h mutationHook) write(ctx context.Context, db catalog, fn func(*store.Queries) error) error {
+	return db.Write(ctx, func(q *store.Queries) error { return h.apply(q, fn) })
+}

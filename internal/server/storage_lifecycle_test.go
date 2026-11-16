@@ -16,7 +16,7 @@ import (
 
 func storageRunning(t *testing.T, o *storageOperations, id string) store.JobRow {
 	t.Helper()
-	j := store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, CleanupComplete: boolPointer(false), Phase: nullableString("output_received"), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 1000}}}
+	j := store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, CleanupComplete: boolPointer(false), Phase: store.NullableString("output_received"), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 1000}}}
 	sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
 	return j
 }
@@ -41,7 +41,7 @@ func TestPartialWikiKeepsCompletedCapacity(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		p.WikiRevision = nullableString("old")
+		p.WikiRevision = store.NullableString("old")
 		if e = q.PutProject(p); e != nil {
 			return e
 		}
@@ -61,7 +61,7 @@ func TestPartialWikiKeepsCompletedCapacity(t *testing.T) {
 	}
 	if err = o.db.Read(t.Context(), func(q *store.Queries) error {
 		p, e := q.Project("p")
-		if !p.WikiIncomplete || p.Data.WikiCompleteBytes == nil || *p.Data.WikiCompleteBytes != int64(len(old)) || valueString(p.Data.WikiCompleteRevision) != "old" {
+		if !p.WikiIncomplete || p.Data.WikiCompleteBytes == nil || *p.Data.WikiCompleteBytes != int64(len(old)) || store.ValueString(p.Data.WikiCompleteRevision) != "old" {
 			t.Fatal(p)
 		}
 		return e
@@ -83,7 +83,7 @@ func TestPartialWikiKeepsCompletedCapacity(t *testing.T) {
 			return e
 		}
 		files, e := q.ProjectWiki("p")
-		if p.WikiIncomplete || p.Data.WikiCompleteBytes != nil || valueString(p.Data.WikiCompleteRevision) != rev || len(files) != 1 {
+		if p.WikiIncomplete || p.Data.WikiCompleteBytes != nil || store.ValueString(p.Data.WikiCompleteRevision) != rev || len(files) != 1 {
 			t.Fatal(p, files)
 		}
 		return e
@@ -99,18 +99,18 @@ func TestViewAndChildCompletionCommitTogether(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		p.WikiRevision = nullableString("wiki1")
+		p.WikiRevision = store.NullableString("wiki1")
 		if e = q.PutProject(p); e != nil {
 			return e
 		}
 		if e = q.PutView(store.ViewRow{ID: "v", ProjectID: "p", Slug: "map", Data: sqlTestViewData()}); e != nil {
 			return e
 		}
-		if e = q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: nullableString("child"), GenerationSnapshot: nullableString("wiki1"), Data: store.JobData{UserID: "u", ViewGeneration: &store.GenerationData{}, Views: []store.ViewResultData{{ViewID: "v"}}}}); e != nil {
+		if e = q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: store.NullableString("child"), GenerationSnapshot: store.NullableString("wiki1"), Data: store.JobData{UserID: "u", ViewGeneration: &store.GenerationData{}, Views: []store.ViewResultData{{ViewID: "v"}}}}); e != nil {
 			return e
 		}
 		child.Kind = "view"
-		child.ParentID = nullableString("parent")
+		child.ParentID = store.NullableString("parent")
 		child.Data.ViewTask = &store.ViewTaskData{ViewID: "v", Snapshot: "wiki1"}
 		return q.PutJob(child)
 	})
@@ -137,7 +137,7 @@ func TestViewAndChildCompletionCommitTogether(t *testing.T) {
 			return e
 		}
 		j, e := q.Job("child")
-		if v.BundleHash == nil || valueString(v.Data.JobID) != "parent" || j.Status != "completed" {
+		if v.BundleHash == nil || store.ValueString(v.Data.JobID) != "parent" || j.Status != "completed" {
 			t.Fatal(v, j)
 		}
 		return e
@@ -196,14 +196,14 @@ func TestParentConsumesChildCostOnce(t *testing.T) {
 		child.Status = "completed"
 		child.InputReady = false
 		child.CleanupComplete = boolPointer(true)
-		child.ParentID = nullableString("parent")
+		child.ParentID = store.NullableString("parent")
 		child.Data.ViewTask = &store.ViewTaskData{ViewID: "v1", Snapshot: "w"}
 		sqlWrite(t, o.db, func(q *store.Queries) error {
 			p, e := q.Project("p")
 			if e != nil {
 				return e
 			}
-			p.WikiRevision = nullableString("w")
+			p.WikiRevision = store.NullableString("w")
 			if e = q.PutProject(p); e != nil {
 				return e
 			}
@@ -215,10 +215,10 @@ func TestParentConsumesChildCostOnce(t *testing.T) {
 			if e = q.PutJob(child); e != nil {
 				return e
 			}
-			if e = q.RecordUsage(store.UsageRow{AttemptID: "child", JobID: "child", ProjectID: "p", Data: model.UsageValues{CostCents: cost}}); e != nil {
+			if e = q.RecordUsage(store.UsageRow{AttemptID: "child", JobID: "child", ProjectID: "p", Data: model.UsageValues{UsageMeasurements: model.UsageMeasurements{CostCents: cost}}}); e != nil {
 				return e
 			}
-			return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: nullableString("child"), GenerationSnapshot: nullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}, {ViewID: "v2"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
+			return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: store.NullableString("child"), GenerationSnapshot: store.NullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}, {ViewID: "v2"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
 		})
 		if err := o.advanceViews(t.Context(), "parent"); err != nil {
 			t.Fatal(err)
@@ -243,7 +243,7 @@ func TestFileOutputWaitSurvivesRestart(t *testing.T) {
 	o, _ := storageFixture(t)
 	j := storageRunning(t, o, "j")
 	j.Data.Run.UsesProviderFiles = true
-	j.Phase = nullableString("agent_running")
+	j.Phase = store.NullableString("agent_running")
 	sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
 	if _, expired, e := o.beginFileWait(t.Context(), "j"); e != nil || expired {
 		t.Fatal(expired, e)
@@ -265,13 +265,13 @@ func TestHTTPOutputWinsBeforeNoOutputFailure(t *testing.T) {
 }
 
 func sqlTestViewData() store.ViewData {
-	return store.ViewData{Title: nullableString("Map"), Prompt: nullableString("Test"), Status: nullableString("pending")}
+	return store.ViewData{Title: store.NullableString("Map"), Prompt: store.NullableString("Test"), Status: store.NullableString("pending")}
 }
 
 func TestCleanupRestartNeverChargesTwice(t *testing.T) {
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
-	j.GenerationSnapshot = nullableString("w")
+	j.GenerationSnapshot = store.NullableString("w")
 	j.Data.ViewGeneration = &store.GenerationData{Remaining: 100}
 	sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
 	if e := b.Put(t.Context(), sqlJobKey(j, "input.tar.gz"), []byte("in")); e != nil {
@@ -317,7 +317,7 @@ func TestCleanupResumesAfterLastProviderSessionWasDeleted(t *testing.T) {
 		o, b := storageFixture(t)
 		j := storageRunning(t, o, "j")
 		j.Status = "completed"
-		j.SessionID = nullableString("deleted-session")
+		j.SessionID = store.NullableString("deleted-session")
 		j.Data.Run.UsesProviderFiles = true
 		j.Data.Run.UploadStarted = true
 		sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
@@ -388,7 +388,7 @@ func TestCleanupLockStateDoesNotGrowWithJobHistory(t *testing.T) {
 func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
-	j.Phase = nullableString("agent_running")
+	j.Phase = store.NullableString("agent_running")
 	sqlWrite(t, o.db, func(q *store.Queries) error { return q.PutJob(j) })
 	first, e := o.saveOutput(t.Context(), "j", []byte("one"), nil)
 	if e != nil {
@@ -397,7 +397,7 @@ func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
 	b.put = func(ctx context.Context, k blob.Key, v []byte) error {
 		return o.db.Write(ctx, func(q *store.Queries) error {
 			j, e := q.Job("j")
-			if valueString(j.OutputHash) != first {
+			if store.ValueString(j.OutputHash) != first {
 				t.Fatal("early reference", j)
 			}
 			return e
@@ -431,7 +431,7 @@ func TestOutputPutBeforeReferenceCommitAndBoundedReplacement(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if got := readSQLJob(t, o, "j"); valueString(got.OutputHash) != third {
+	if got := readSQLJob(t, o, "j"); store.ValueString(got.OutputHash) != third {
 		t.Fatal(got)
 	}
 }
@@ -471,14 +471,14 @@ func TestAbortDeadlineWaitsStrictlyPastTenMinutes(t *testing.T) {
 	if _, e := o.failJob(t.Context(), "j", "deadline", nil, false); e != nil {
 		t.Fatal(e)
 	}
-	if got := readSQLJob(t, o, "j"); got.Status != "running" || valueString(got.Data.Run.AbortReason) != "deadline" {
+	if got := readSQLJob(t, o, "j"); got.Status != "running" || store.ValueString(got.Data.Run.AbortReason) != "deadline" {
 		t.Fatal(got)
 	}
 	o.now = func() time.Time { return time.UnixMilli(j.Data.Run.Deadline + 600001) }
 	if _, e := o.failJob(t.Context(), "j", "later", nil, false); e != nil {
 		t.Fatal(e)
 	}
-	if got := readSQLJob(t, o, "j"); got.Status != "failed" || valueString(got.Data.Error) != "deadline" {
+	if got := readSQLJob(t, o, "j"); got.Status != "failed" || store.ValueString(got.Data.Error) != "deadline" {
 		t.Fatal(got)
 	}
 	if done, e := o.cleanup(t.Context(), "j", runner.Status{State: runner.StateRunning}, nil); e != nil || done {

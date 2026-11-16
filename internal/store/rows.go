@@ -249,3 +249,23 @@ func scanUsage(s rowScanner) (UsageRow, error) {
 	err = unmarshalData(raw, &v.Data)
 	return v, err
 }
+
+func listRows[T any](q *Queries, query string, scan func(rowScanner) (T, error), args ...any) ([]T, error) {
+	rows, err := q.rows(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []T{}
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (v SessionRow) Active(now int64) bool { return v.Status == "active" && v.Expires > now }
+func (v JobRow) Running() bool             { return v.Status == "running" && v.Data.Run != nil }

@@ -44,9 +44,7 @@ func (s *Server) advanceViewGenerations(ctx context.Context, deferred map[string
 		if err := s.storage.advanceViews(ctx, j.ID); err != nil {
 			errs = append(errs, err)
 			deferred[j.ID] = true
-			var fatal *store.FatalDatabaseError
-			var unknown *store.UnknownCommit
-			if errors.As(err, &fatal) || errors.As(err, &unknown) || ctx.Err() != nil {
+			if store.IsAbort(err) || ctx.Err() != nil {
 				break
 			}
 		}

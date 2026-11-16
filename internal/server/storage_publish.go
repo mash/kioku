@@ -68,7 +68,7 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 			p.Data.WikiCompleteRevision = p.WikiRevision
 		}
 		p.WikiIncomplete = true
-		j.Phase = nullableString("finalizing")
+		j.Phase = store.NullableString("finalizing")
 		if e = q.PutProject(p); e != nil {
 			return e
 		}
@@ -149,7 +149,7 @@ func (o *storageOperations) publishWikiLocked(ctx context.Context, initial store
 		}
 		removed := false
 		for _, item := range items {
-			if valueString(item.RunID) == id {
+			if store.ValueString(item.RunID) == id {
 				removed = removed || item.Remove
 				if e = q.DeleteInbox(item.ID); e != nil {
 					return e
@@ -244,7 +244,7 @@ func (o *storageOperations) publishView(ctx context.Context, id string, bundle *
 		now := o.now().UnixMilli()
 		v.BundleHash = &hash
 		v.ViewEpoch = p.ViewEpoch
-		v.Data.Status = nullableString("completed")
+		v.Data.Status = store.NullableString("completed")
 		v.Data.Error = nil
 		v.Data.JobID = j.ParentID
 		v.Data.WikiSnapshotID = &j.Data.ViewTask.Snapshot

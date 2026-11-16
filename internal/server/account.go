@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -29,13 +28,7 @@ func (s *Server) updateAccount(r *http.Request, uid string, fn func(*store.Queri
 		if err != nil {
 			return err
 		}
-		if _, err = q.User(uid); errors.Is(err, sql.ErrNoRows) {
-			return fail(401, "session changed; sign in again")
-		}
-		if err != nil {
-			return err
-		}
-		if session.UserID != uid || session.Status != "active" || (session.Kind != "web" && session.Kind != "cli") || session.Expires <= time.Now().UnixMilli() || principal.AgentID != "" {
+		if (session.Kind != "web" && session.Kind != "cli") || principal.AgentID != "" {
 			return fail(401, "session changed; sign in again")
 		}
 		return fn(q)
@@ -67,14 +60,14 @@ func (s *Server) account(w http.ResponseWriter, r *http.Request, uid string) err
 			return err
 		}
 		for _, row := range rows {
-			if (row.Kind != "web" && row.Kind != "cli") || row.Status != "active" || row.Expires <= time.Now().UnixMilli() {
+			if (row.Kind != "web" && row.Kind != "cli") || !row.Active(time.Now().UnixMilli()) {
 				continue
 			}
-			var data store.IdentitySessionData
-			if err := json.Unmarshal(row.Data, &data); err != nil {
+			data, err := store.SessionData[store.IdentitySessionData](row)
+			if err != nil {
 				return err
 			}
-			sessions = append(sessions, map[string]any{"id": row.ID, "current": row.ID == current, "created": creationDate(row.Created), "expires": storageDate(row.Expires), "provider": valueString(data.IdentityProvider)})
+			sessions = append(sessions, map[string]any{"id": row.ID, "current": row.ID == current, "created": creationDate(row.Created), "expires": storageDate(row.Expires), "provider": store.ValueString(data.IdentityProvider)})
 		}
 		result = map[string]any{"id": u.ID, "name": u.Data.Name, "email": u.Email, "identities": identities, "sessions": sessions}
 		return nil
@@ -137,7 +130,7 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 		if len(ids) < 2 {
 			return fail(409, "cannot unlink the last login identity")
 		}
-		if valueString(principal.Identity.IdentityProvider) == provider {
+		if store.ValueString(principal.Identity.IdentityProvider) == provider {
 			return fail(409, "sign in with another linked provider before unlinking this identity")
 		}
 		if err := q.DeleteIdentity(uid, provider); err != nil {
@@ -151,11 +144,11 @@ func (s *Server) unlinkIdentity(w http.ResponseWriter, r *http.Request, uid stri
 			if row.Kind != "web" && row.Kind != "cli" && row.Kind != "cli_login" {
 				continue
 			}
-			var data store.IdentitySessionData
-			if err := json.Unmarshal(row.Data, &data); err != nil {
+			data, err := store.SessionData[store.IdentitySessionData](row)
+			if err != nil {
 				return err
 			}
-			if valueString(data.IdentityProvider) == provider {
+			if store.ValueString(data.IdentityProvider) == provider {
 				if err := q.DeleteSession(row.ID); err != nil {
 					return err
 				}

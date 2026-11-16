@@ -120,7 +120,7 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			o, objects := storageFixture(t)
 			sqlWrite(t, o.db, func(q *store.Queries) error {
-				if err := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u", WikiStatus: nullableString("pending")}}); err != nil {
+				if err := q.PutJob(store.JobRow{ID: "j", ProjectID: "p", Status: "queued", Kind: "generate", Data: store.JobData{UserID: "u", WikiStatus: store.NullableString("pending")}}); err != nil {
 					return err
 				}
 				return q.PutInbox(store.InboxRow{ID: "i", ProjectID: "p", SourceURL: "https://example.com/a", Data: store.InboxData{Submitter: "u"}})
@@ -144,7 +144,7 @@ func TestInputPreparationTimeoutBecomesTerminal(t *testing.T) {
 				t.Fatalf("preparation error = %v", err)
 			}
 			j := readSQLJob(t, o, "j")
-			if j.Status != "failed" || valueString(j.Data.WikiStatus) != "failed" || valueString(j.Data.Error) != context.DeadlineExceeded.Error() || j.Data.Run != nil || j.InputReady {
+			if j.Status != "failed" || store.ValueString(j.Data.WikiStatus) != "failed" || store.ValueString(j.Data.Error) != context.DeadlineExceeded.Error() || j.Data.Run != nil || j.InputReady {
 				t.Fatalf("timed-out preparation was left retryable: %+v", j)
 			}
 			fixtureCheck(t, o.db.Read(t.Context(), func(q *store.Queries) error {

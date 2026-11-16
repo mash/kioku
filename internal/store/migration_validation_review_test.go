@@ -194,7 +194,7 @@ func TestMigrationPreservesCompletedWikiRevision(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if got := valueMigrationString(p.Data.WikiCompleteRevision); got != tc.want {
+				if got := ValueString(p.Data.WikiCompleteRevision); got != tc.want {
 					t.Fatalf("completed Wiki revision = %q, want %q", got, tc.want)
 				}
 				return nil

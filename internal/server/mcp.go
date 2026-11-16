@@ -30,11 +30,11 @@ func connectorGrant(q *store.Queries, key string) (connectorAccess, bool, error)
 	if err != nil {
 		return connectorAccess{}, false, err
 	}
-	if row.Kind != "mcp" || row.Status != "active" || row.Expires <= time.Now().UnixMilli() {
+	if row.Kind != "mcp" || !row.Active(time.Now().UnixMilli()) {
 		return connectorAccess{}, false, nil
 	}
-	var data store.MCPData
-	if err := json.Unmarshal(row.Data, &data); err != nil {
+	data, err := store.SessionData[store.MCPData](row)
+	if err != nil {
 		return connectorAccess{}, false, err
 	}
 	if _, err := q.User(row.UserID); errors.Is(err, sql.ErrNoRows) {
@@ -162,7 +162,7 @@ func (s *Server) cliLoginCode(grantKey, namespace, role string) (string, time.Ti
 		if err != nil {
 			return err
 		}
-		data, err := json.Marshal(store.LoginCodeData{GrantKey: grantKey, Role: &role})
+		data, err := store.EncodeSessionData(store.LoginCodeData{GrantKey: grantKey, Role: &role})
 		if err != nil {
 			return err
 		}
@@ -198,11 +198,11 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	}); err != nil {
 		return s.resolveExchange(r.Context(), err, 401)
 	}
-	var data store.AgentSessionData
-	if err := json.Unmarshal(row.Data, &data); err != nil {
+	data, err := store.SessionData[store.AgentSessionData](row)
+	if err != nil {
 		return err
 	}
-	jsonOut(w, 200, map[string]any{"id": id, "token": raw, "role": valueString(data.Role), "expires": storageDate(row.Expires), "namespace": namespace})
+	jsonOut(w, 200, map[string]any{"id": id, "token": raw, "role": store.ValueString(data.Role), "expires": storageDate(row.Expires), "namespace": namespace})
 	return nil
 }
 

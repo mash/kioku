@@ -91,7 +91,7 @@ func TestViewDetailComparesWithFullyPublishedWiki(t *testing.T) {
 	f, owner, p := orgProject(t)
 	ctx := t.Context()
 	setCompleteViewWiki(t, f, p.ID, "wiki-1", "epoch-1")
-	unlock, err := f.s.lockProject(ctx, p.ID)
+	unlock, err := f.s.storage.lock(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

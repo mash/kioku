@@ -141,7 +141,7 @@ func TestAgentLoginRejectionConsumesCode(t *testing.T) {
 func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
 	d, _ := sqlAuthFixture(t)
 	now := time.UnixMilli(1000)
-	old := store.SessionRow{ID: auth.Hash("old-agent"), Kind: "agent", Status: "active", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.AgentSessionData{AgentID: sqlTestPtr("existing"), Role: sqlTestPtr("read"), Name: "connector:host"})}
+	old := store.SessionRow{ID: auth.Hash("old-agent"), Kind: "agent", Status: "active", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: sqlTestPtr("existing"), Role: sqlTestPtr("read")}, Name: "connector:host"})}
 	code := store.SessionRow{ID: auth.Hash("code"), Kind: "login_code", Status: "pending", UserID: "u", ProjectID: sqlTestPtr("p"), Expires: 2000, Data: sqlJSON(t, store.LoginCodeData{GrantKey: "grant", Role: sqlTestPtr("read")})}
 	sqlWrite(t, d, func(q *store.Queries) error {
 		if err := q.PutSession(old); err != nil {

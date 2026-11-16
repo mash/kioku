@@ -7,14 +7,18 @@ import (
 	"log/slog"
 )
 
+type SessionRoleData struct {
+	AgentID *string `json:"agent_id"`
+	Role    *string `json:"role"`
+}
+
 type IdentitySessionData struct {
+	SessionRoleData
 	IdentityProvider     *string `json:"identity_provider"`
 	IdentityID           *string `json:"identity_id"`
 	IdentityAccessToken  *string `json:"identity_access_token"`
 	IdentityRefreshToken *string `json:"identity_refresh_token"`
 	IdentityExpiresAt    *int64  `json:"identity_expires_at"`
-	AgentID              *string `json:"agent_id"`
-	Role                 *string `json:"role"`
 }
 type CLILoginData struct {
 	IdentitySessionData
@@ -24,10 +28,9 @@ type CLILoginData struct {
 	LoopbackCodeHash    *string `json:"loopback_code_hash"`
 }
 type AgentSessionData struct {
-	AgentID   *string `json:"agent_id"`
-	Role      *string `json:"role"`
-	Name      string  `json:"name"`
-	RevokedAt *int64  `json:"revoked_at"`
+	SessionRoleData
+	Name      string `json:"name"`
+	RevokedAt *int64 `json:"revoked_at"`
 }
 type MCPData struct {
 	TokenKind  string          `json:"token_kind"`
@@ -62,7 +65,7 @@ func (q *Queries) InsertSession(v SessionRow) error {
 	if count >= 10000 {
 		return ErrSessionCapacity
 	}
-	_, err := q.exec("INSERT INTO sessions(id,kind,status,user_id,project_id,expires,created,data) VALUES(?,?,?,?,?,?,?,?)", v.ID, v.Kind, v.Status, v.UserID, v.ProjectID, v.Expires, v.Created, string(v.Data))
+	_, err := q.exec("INSERT INTO sessions("+sessionsColumns+") VALUES(?,?,?,?,?,?,?,?)", v.ID, v.Kind, v.Status, v.UserID, v.ProjectID, v.Expires, v.Created, string(v.Data))
 	return err
 }
 
@@ -162,4 +165,14 @@ func (d CLILoginData) MarshalJSON() ([]byte, error) {
 		LoopbackState        *string `json:"loopback_state"`
 		LoopbackCodeHash     *string `json:"loopback_code_hash"`
 	}{d.IdentityProvider, d.IdentityID, d.IdentityAccessToken, d.IdentityRefreshToken, d.IdentityExpiresAt, d.LoopbackChallenge, d.LoopbackRedirectURI, d.LoopbackState, d.LoopbackCodeHash})
+}
+
+func SessionData[T any](row SessionRow) (T, error) {
+	var data T
+	err := unmarshalData(string(row.Data), &data)
+	return data, err
+}
+func EncodeSessionData[T any](data T) (json.RawMessage, error) {
+	raw, err := marshalData(data)
+	return json.RawMessage(raw), err
 }

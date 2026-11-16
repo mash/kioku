@@ -131,7 +131,7 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 			func() error { return q.PutUser(store.UserRow{ID: "u", Email: "u@example.com"}) },
 			func() error { return q.PutOrganization(store.OrganizationRow{ID: "o", Slug: "org"}) },
 			func() error {
-				return q.PutProject(store.ProjectRow{ID: "p", OrgID: "o", Slug: "project", WikiRevision: nullableString("old")})
+				return q.PutProject(store.ProjectRow{ID: "p", OrgID: "o", Slug: "project", WikiRevision: store.NullableString("old")})
 			},
 			func() error { return q.PutProjectMember("p", "u", "owner") },
 			func() error {
@@ -146,7 +146,7 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 				return err
 			}
 		}
-		j := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, Phase: nullableString("agent_running"), CleanupComplete: boolPointer(false), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
+		j := store.JobRow{ID: "j", ProjectID: "p", Status: "running", Kind: "generate", InputReady: true, Phase: store.NullableString("agent_running"), CleanupComplete: boolPointer(false), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}}
 		switch strings.Split(stage, "/")[0] {
 		case "input":
 			j.Status = "queued"
@@ -156,16 +156,16 @@ func seedCrashStorage(t *testing.T, root, stage string) {
 			j.Data.Run = nil
 		case "view":
 			j.Kind = "view"
-			j.ParentID = nullableString("parent")
+			j.ParentID = store.NullableString("parent")
 			j.Data.ViewTask = &store.ViewTaskData{ViewID: "v", Snapshot: "old"}
 			if e := q.PutView(store.ViewRow{ID: "v", ProjectID: "p", Slug: "map", Data: sqlTestViewData()}); e != nil {
 				return e
 			}
-			if e := q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: nullableString("j"), GenerationSnapshot: nullableString("old"), Data: store.JobData{UserID: "u", ViewGeneration: &store.GenerationData{Remaining: 100}, Views: []store.ViewResultData{{ViewID: "v"}}}}); e != nil {
+			if e := q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: store.NullableString("j"), GenerationSnapshot: store.NullableString("old"), Data: store.JobData{UserID: "u", ViewGeneration: &store.GenerationData{Remaining: 100}, Views: []store.ViewResultData{{ViewID: "v"}}}}); e != nil {
 				return e
 			}
 		case "cleanup":
-			j.GenerationSnapshot = nullableString("old")
+			j.GenerationSnapshot = store.NullableString("old")
 			j.Data.ViewGeneration = &store.GenerationData{Remaining: 100}
 		case "delete":
 			j.Status = "completed"

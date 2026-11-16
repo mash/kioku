@@ -153,7 +153,7 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	if err != nil {
 		return err
 	}
-	unlock, err := s.lockProject(ctx, p.ID)
+	unlock, err := s.storage.lock(ctx, p.ID)
 	if err != nil {
 		return err
 	}

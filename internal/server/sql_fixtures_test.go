@@ -210,7 +210,7 @@ func openFixtureDatabase(dir string) (*store.Database, error) {
 	return db, err
 }
 func fixtureRow(j fixtureJob) store.JobRow {
-	row := store.JobRow{ID: j.ID, ProjectID: j.ProjectID, Kind: j.Kind, Status: j.Status, Created: j.Created.UnixMilli(), Data: store.JobData{UserID: j.UserID, AgentID: nullableString(j.AgentID), AgentBudgetCents: j.AgentBudgetCents, Automatic: j.Automatic, Error: nullableString(j.Error), Revision: nullableString(j.Revision), WikiStatus: nullableString(j.WikiStatus), Unchanged: j.Unchanged, Views: []store.ViewResultData{}}}
+	row := store.JobRow{ID: j.ID, ProjectID: j.ProjectID, Kind: j.Kind, Status: j.Status, Created: j.Created.UnixMilli(), Data: store.JobData{UserID: j.UserID, AgentID: store.NullableString(j.AgentID), AgentBudgetCents: j.AgentBudgetCents, Automatic: j.Automatic, Error: store.NullableString(j.Error), Revision: store.NullableString(j.Revision), WikiStatus: store.NullableString(j.WikiStatus), Unchanged: j.Unchanged, Views: []store.ViewResultData{}}}
 	if j.Created.IsZero() {
 		row.Created = 0
 	}
@@ -218,12 +218,12 @@ func fixtureRow(j fixtureJob) store.JobRow {
 		row.Kind = "generate"
 	}
 	for _, v := range j.Views {
-		row.Data.Views = append(row.Data.Views, store.ViewResultData{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: nullableString(v.Error)})
+		row.Data.Views = append(row.Data.Views, store.ViewResultData{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: store.NullableString(v.Error)})
 	}
 	if j.ViewGeneration != nil {
 		g := j.ViewGeneration
 		row.GenerationSnapshot = &g.Snapshot
-		row.ChildID = nullableString(g.ChildID)
+		row.ChildID = store.NullableString(g.ChildID)
 		row.Data.ViewGeneration = &store.GenerationData{Pending: g.Pending, Remaining: g.Remaining, Next: g.Next}
 	}
 	if j.ViewTask != nil {
@@ -239,10 +239,10 @@ func fixtureRow(j fixtureJob) store.JobRow {
 		row.Phase = &phase
 		row.CleanupComplete = &r.CleanupComplete
 		row.InputReady = !r.CleanupComplete
-		row.SessionID = nullableString(r.Ref.ID)
-		row.OutputHash = nullableString(r.OutputHash)
+		row.SessionID = store.NullableString(r.Ref.ID)
+		row.OutputHash = store.NullableString(r.OutputHash)
 		ids := append([]string{}, r.InboxIDs...)
-		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, Provider: nullableString(r.Ref.Resources["provider"]), UploadStarted: r.Ref.Resources["upload_started"] == "true", InputFileID: nullableString(r.Ref.Resources["input_file_id"]), AbortReason: nullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: nullableString(r.OutputRejection), BudgetCents: r.BudgetCents, InboxIDs: ids}
+		row.Data.Run = &store.RunData{UsesProviderFiles: r.Ref.UsesProviderFiles, Provider: store.NullableString(r.Ref.Resources["provider"]), UploadStarted: r.Ref.Resources["upload_started"] == "true", InputFileID: store.NullableString(r.Ref.Resources["input_file_id"]), AbortReason: store.NullableString(r.AbortReason), PreparedAt: r.PreparedAt.UnixMilli(), Deadline: r.Deadline.UnixMilli(), OutputRejection: store.NullableString(r.OutputRejection), BudgetCents: r.BudgetCents, InboxIDs: ids}
 		if r.OutputWaitSince != nil {
 			n := r.OutputWaitSince.UnixMilli()
 			row.Data.Run.OutputWaitSince = &n
@@ -281,13 +281,13 @@ func fixtureJobProjection(t testing.TB, q *store.Queries, row store.JobRow) fixt
 	fixtureCheck(t, err)
 	j := fixtureJob{ID: pub.ID, ProjectID: pub.ProjectID, Kind: pub.Kind, Status: pub.Status, Created: pub.Created, UserID: pub.UserID, AgentID: pub.AgentID, AgentBudgetCents: pub.AgentBudgetCents, Automatic: pub.Automatic, Error: pub.Error, Revision: pub.Revision, WikiStatus: pub.WikiStatus, Unchanged: pub.Unchanged, Views: pub.Views}
 	if g := row.Data.ViewGeneration; g != nil {
-		j.ViewGeneration = &fixtureViewGeneration{Snapshot: valueString(row.GenerationSnapshot), Pending: g.Pending, Remaining: g.Remaining, Next: g.Next, ChildID: valueString(row.ChildID)}
+		j.ViewGeneration = &fixtureViewGeneration{Snapshot: store.ValueString(row.GenerationSnapshot), Pending: g.Pending, Remaining: g.Remaining, Next: g.Next, ChildID: store.ValueString(row.ChildID)}
 	}
 	if v := row.Data.ViewTask; v != nil {
-		j.ViewTask = &fixtureViewTask{ParentID: valueString(row.ParentID), ViewID: v.ViewID, Snapshot: v.Snapshot}
+		j.ViewTask = &fixtureViewTask{ParentID: store.ValueString(row.ParentID), ViewID: v.ViewID, Snapshot: v.Snapshot}
 	}
 	if r := row.Data.Run; r != nil {
-		j.Run = &fixtureAgentRun{InboxIDs: r.InboxIDs, Ref: sqlAttempt(row).Run, Phase: model.ManagedPhase(valueString(row.Phase)), CostCents: pub.Run.CostCents, CleanupComplete: valueBool(row.CleanupComplete), AbortReason: valueString(r.AbortReason), PreparedAt: storageDate(r.PreparedAt), Deadline: storageDate(r.Deadline), Attempt: fixtureAttempt{ID: row.ID}, BudgetCents: r.BudgetCents, OutputHash: valueString(row.OutputHash), OutputRejection: valueString(r.OutputRejection)}
+		j.Run = &fixtureAgentRun{InboxIDs: r.InboxIDs, Ref: sqlAttempt(row).Run, Phase: model.ManagedPhase(store.ValueString(row.Phase)), CostCents: pub.Run.CostCents, CleanupComplete: valueBool(row.CleanupComplete), AbortReason: store.ValueString(r.AbortReason), PreparedAt: storageDate(r.PreparedAt), Deadline: storageDate(r.Deadline), Attempt: fixtureAttempt{ID: row.ID}, BudgetCents: r.BudgetCents, OutputHash: store.ValueString(row.OutputHash), OutputRejection: store.ValueString(r.OutputRejection)}
 		if row.OutputHash != nil {
 			j.Run.OutputKey = sqlJobKey(row, "output-"+*row.OutputHash+".tar.gz")
 		}
@@ -336,7 +336,7 @@ func fixtureProjectsFind(t testing.TB, source any, id string) (fixtureProject, b
 	fixtureCheck(t, err)
 	p, err := projectProjection(q, row)
 	fixtureCheck(t, err)
-	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiCompleteRevision: p.WikiCompleteRevision, WikiUpdatedAt: p.WikiUpdatedAt, ViewEpoch: p.ViewEpoch, NextGenerateAt: optionalDate(row.NextGenerateAt), StorageBucket: valueString(row.Data.StorageBucket)}, true
+	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiCompleteRevision: p.WikiCompleteRevision, WikiUpdatedAt: p.WikiUpdatedAt, ViewEpoch: p.ViewEpoch, NextGenerateAt: optionalDate(row.NextGenerateAt), StorageBucket: store.ValueString(row.Data.StorageBucket)}, true
 }
 func fixtureProjectsGet(t testing.TB, source any, id string) fixtureProject {
 	if f, ok := source.(*fixture); ok {
@@ -376,17 +376,17 @@ func fixtureProjectsPut(t testing.TB, q *store.Queries, id string, p fixtureProj
 		row.Created = 0
 	}
 	row.Deleting = p.Deleting
-	row.WikiRevision = nullableString(p.Revision)
+	row.WikiRevision = store.NullableString(p.Revision)
 	row.WikiIncomplete = p.WikiIncomplete
-	row.ViewEpoch = nullableString(p.ViewEpoch)
+	row.ViewEpoch = store.NullableString(p.ViewEpoch)
 	row.NextGenerateAt = nil
 	if !p.NextGenerateAt.IsZero() {
 		n := p.NextGenerateAt.UnixMilli()
 		row.NextGenerateAt = &n
 	}
 	row.Data.Name = p.Name
-	row.Data.WikiCompleteRevision = nullableString(p.WikiCompleteRevision)
-	row.Data.StorageBucket = nullableString(p.StorageBucket)
+	row.Data.WikiCompleteRevision = store.NullableString(p.WikiCompleteRevision)
+	row.Data.StorageBucket = store.NullableString(p.StorageBucket)
 	row.Data.WikiUpdatedAt = nil
 	if !p.WikiUpdatedAt.IsZero() {
 		n := p.WikiUpdatedAt.UnixMilli()
@@ -515,7 +515,7 @@ func fixtureInboxPut(t testing.TB, q *store.Queries, id string, v model.InboxIte
 	if !v.Created.IsZero() {
 		created = v.Created.UnixMilli()
 	}
-	fixtureCheck(t, q.PutInbox(store.InboxRow{ID: id, ProjectID: v.ProjectID, SourceURL: v.SourceURL, Remove: v.Remove, RunID: nullableString(v.RunID), Created: created, Data: store.InboxData{Submitter: v.Submitter}}))
+	fixtureCheck(t, q.PutInbox(store.InboxRow{ID: id, ProjectID: v.ProjectID, SourceURL: v.SourceURL, Remove: v.Remove, RunID: store.NullableString(v.RunID), Created: created, Data: store.InboxData{Submitter: v.Submitter}}))
 }
 func fixtureRevisionsGet(t testing.TB, source any, id string) fixtureRevision {
 	if f, ok := source.(*fixture); ok {
@@ -593,7 +593,7 @@ func fixtureSessionsFind(t testing.TB, source any, id string) (fixtureSession, b
 	fixtureCheck(t, err)
 	var d store.IdentitySessionData
 	fixtureCheck(t, json.Unmarshal(row.Data, &d))
-	return fixtureSession{UserID: row.UserID, ProjectID: valueString(row.ProjectID), Created: creationDate(row.Created), Expires: storageDate(row.Expires), IdentityProvider: valueString(d.IdentityProvider), IdentityID: valueString(d.IdentityID), IdentityAccessToken: valueString(d.IdentityAccessToken), IdentityRefreshToken: valueString(d.IdentityRefreshToken)}, true
+	return fixtureSession{UserID: row.UserID, ProjectID: store.ValueString(row.ProjectID), Created: creationDate(row.Created), Expires: storageDate(row.Expires), IdentityProvider: store.ValueString(d.IdentityProvider), IdentityID: store.ValueString(d.IdentityID), IdentityAccessToken: store.ValueString(d.IdentityAccessToken), IdentityRefreshToken: store.ValueString(d.IdentityRefreshToken)}, true
 }
 func fixtureSessionsPut(t testing.TB, q *store.Queries, id string, v fixtureSession) {
 	old, err := q.Session(id)
@@ -604,10 +604,10 @@ func fixtureSessionsPut(t testing.TB, q *store.Queries, id string, v fixtureSess
 	if err == nil {
 		fixtureCheck(t, json.Unmarshal(old.Data, &data))
 	}
-	data.IdentityProvider = nullableString(v.IdentityProvider)
-	data.IdentityID = nullableString(v.IdentityID)
-	data.IdentityAccessToken = nullableString(v.IdentityAccessToken)
-	data.IdentityRefreshToken = nullableString(v.IdentityRefreshToken)
+	data.IdentityProvider = store.NullableString(v.IdentityProvider)
+	data.IdentityID = store.NullableString(v.IdentityID)
+	data.IdentityAccessToken = store.NullableString(v.IdentityAccessToken)
+	data.IdentityRefreshToken = store.NullableString(v.IdentityRefreshToken)
 	kind := old.Kind
 	if kind == "" {
 		kind = "web"
@@ -649,7 +649,7 @@ func fixtureDevicesGet(t testing.TB, source any, id string) fixtureDevice {
 	fixtureCheck(t, err)
 	var d store.CLILoginData
 	fixtureCheck(t, json.Unmarshal(row.Data, &d))
-	return fixtureDevice{UserID: row.UserID, SecretHash: row.ID, Expires: storageDate(row.Expires), Used: row.Status == "active", IdentityProvider: valueString(d.IdentityProvider), IdentityID: valueString(d.IdentityID), IdentityAccessToken: valueString(d.IdentityAccessToken), LoopbackChallenge: valueString(d.LoopbackChallenge), LoopbackRedirectURI: valueString(d.LoopbackRedirectURI), LoopbackState: valueString(d.LoopbackState), LoopbackCodeHash: valueString(d.LoopbackCodeHash)}
+	return fixtureDevice{UserID: row.UserID, SecretHash: row.ID, Expires: storageDate(row.Expires), Used: row.Status == "active", IdentityProvider: store.ValueString(d.IdentityProvider), IdentityID: store.ValueString(d.IdentityID), IdentityAccessToken: store.ValueString(d.IdentityAccessToken), LoopbackChallenge: store.ValueString(d.LoopbackChallenge), LoopbackRedirectURI: store.ValueString(d.LoopbackRedirectURI), LoopbackState: store.ValueString(d.LoopbackState), LoopbackCodeHash: store.ValueString(d.LoopbackCodeHash)}
 }
 func fixtureDevicesPut(t testing.TB, q *store.Queries, id string, v fixtureDevice) {
 	key := auth.Hash(id)
@@ -661,12 +661,12 @@ func fixtureDevicesPut(t testing.TB, q *store.Queries, id string, v fixtureDevic
 	if err == nil {
 		fixtureCheck(t, json.Unmarshal(old.Data, &d))
 	}
-	d.IdentityProvider = nullableString(v.IdentityProvider)
-	d.IdentityID = nullableString(v.IdentityID)
-	d.LoopbackChallenge = nullableString(v.LoopbackChallenge)
-	d.LoopbackRedirectURI = nullableString(v.LoopbackRedirectURI)
-	d.LoopbackState = nullableString(v.LoopbackState)
-	d.LoopbackCodeHash = nullableString(v.LoopbackCodeHash)
+	d.IdentityProvider = store.NullableString(v.IdentityProvider)
+	d.IdentityID = store.NullableString(v.IdentityID)
+	d.LoopbackChallenge = store.NullableString(v.LoopbackChallenge)
+	d.LoopbackRedirectURI = store.NullableString(v.LoopbackRedirectURI)
+	d.LoopbackState = store.NullableString(v.LoopbackState)
+	d.LoopbackCodeHash = store.NullableString(v.LoopbackCodeHash)
 	status := "pending"
 	if v.Used {
 		status = "active"
@@ -689,8 +689,8 @@ func fixtureAgentTokensList(t testing.TB, source any) map[string]fixtureAgentTok
 	for _, row := range rows {
 		var d store.AgentSessionData
 		fixtureCheck(t, json.Unmarshal(row.Data, &d))
-		id := valueString(d.AgentID)
-		out[id] = fixtureAgentToken{ID: id, ProjectID: valueString(row.ProjectID), UserID: row.UserID, Name: d.Name, Role: valueString(d.Role), TokenHash: row.ID, Created: creationDate(row.Created), Expires: storageDate(row.Expires), RevokedAt: optionalDate(d.RevokedAt)}
+		id := store.ValueString(d.AgentID)
+		out[id] = fixtureAgentToken{ID: id, ProjectID: store.ValueString(row.ProjectID), UserID: row.UserID, Name: d.Name, Role: store.ValueString(d.Role), TokenHash: row.ID, Created: creationDate(row.Created), Expires: storageDate(row.Expires), RevokedAt: optionalDate(d.RevokedAt)}
 	}
 	return out
 }
@@ -705,7 +705,7 @@ func fixtureAgentTokensGet(t testing.TB, source any, id string) fixtureAgentToke
 }
 func fixtureAgentTokensPut(t testing.TB, q *store.Queries, id string, v fixtureAgentToken) {
 	v.ID = id
-	d := store.AgentSessionData{AgentID: &id, Role: nullableString(v.Role), Name: v.Name}
+	d := store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: &id, Role: store.NullableString(v.Role)}, Name: v.Name}
 	if !v.RevokedAt.IsZero() {
 		n := v.RevokedAt.UnixMilli()
 		d.RevokedAt = &n
@@ -796,7 +796,7 @@ func fixtureLoginCodesGet(t testing.TB, source any, id string) fixtureLoginCode 
 	fixtureCheck(t, err)
 	var d store.LoginCodeData
 	fixtureCheck(t, json.Unmarshal(row.Data, &d))
-	return fixtureLoginCode{UserID: row.UserID, ProjectID: valueString(row.ProjectID), GrantKey: d.GrantKey, Role: valueString(d.Role), Expires: storageDate(row.Expires)}
+	return fixtureLoginCode{UserID: row.UserID, ProjectID: store.ValueString(row.ProjectID), GrantKey: d.GrantKey, Role: store.ValueString(d.Role), Expires: storageDate(row.Expires)}
 }
 func fixtureLoginCodesPut(t testing.TB, q *store.Queries, id string, v fixtureLoginCode) {
 	fixtureCheck(t, q.PutSession(store.SessionRow{ID: id, Kind: "login_code", Status: "pending", UserID: v.UserID, ProjectID: &v.ProjectID, Expires: v.Expires.UnixMilli(), Data: fixtureJSON(t, store.LoginCodeData{GrantKey: v.GrantKey, Role: &v.Role})}))
@@ -828,7 +828,7 @@ func fixtureInvitesList(t testing.TB, source any) map[string]fixtureInvite {
 		rows, err := q.ProjectInvites(pid)
 		fixtureCheck(t, err)
 		for _, row := range rows {
-			out[row.ID] = fixtureInvite{ID: row.ID, ProjectID: pid, Email: valueString(row.Data.Email), CreatedBy: row.CreatedBy, Expires: storageDate(row.Expires), UsedBy: valueString(row.UsedBy), TokenHash: row.TokenHash}
+			out[row.ID] = fixtureInvite{ID: row.ID, ProjectID: pid, Email: store.ValueString(row.Data.Email), CreatedBy: row.CreatedBy, Expires: storageDate(row.Expires), UsedBy: store.ValueString(row.UsedBy), TokenHash: row.TokenHash}
 		}
 	}
 	return out
@@ -915,10 +915,10 @@ func fixtureViewBundle(t testing.TB, f *fixture, pid, id, jid, snapshot string, 
 		if err != nil {
 			return err
 		}
-		v.BundleHash = nullableString(string(hash))
+		v.BundleHash = store.NullableString(string(hash))
 		v.ViewEpoch = p.ViewEpoch
 		n := time.Now().UnixMilli()
-		v.Data.Status = nullableString("completed")
+		v.Data.Status = store.NullableString("completed")
 		v.Data.JobID = &jid
 		v.Data.WikiSnapshotID = &snapshot
 		v.Data.GeneratedAt = &n

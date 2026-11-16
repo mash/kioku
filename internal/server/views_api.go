@@ -31,7 +31,7 @@ type viewCreateRequest struct {
 
 func (s *Server) createView(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
-	unlock, err := s.lockProject(r.Context(), pid)
+	unlock, err := s.storage.lock(r.Context(), pid)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (s *Server) createView(w http.ResponseWriter, r *http.Request, uid string) 
 
 func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
-	unlock, err := s.lockProject(r.Context(), pid)
+	unlock, err := s.storage.lock(r.Context(), pid)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 
 func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
-	unlock, err := s.lockProject(r.Context(), pid)
+	unlock, err := s.storage.lock(r.Context(), pid)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func viewSettingText(raw json.RawMessage) (*string, error) {
 
 func (s *Server) deleteView(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
-	unlock, err := s.lockProject(r.Context(), pid)
+	unlock, err := s.storage.lock(r.Context(), pid)
 	if err != nil {
 		return err
 	}

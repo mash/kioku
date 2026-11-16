@@ -14,7 +14,7 @@ import (
 
 // wikiFiles holds the project lock until the caller finishes reading files.
 func (s *Server) wikiFiles(ctx context.Context, uid, pid string) (model.Revision, func(), error) {
-	unlock, err := s.lockProject(ctx, pid)
+	unlock, err := s.storage.lock(ctx, pid)
 	if err != nil {
 		return model.Revision{}, nil, err
 	}

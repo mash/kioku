@@ -26,7 +26,7 @@ func (s *Server) RunWorker(ctx context.Context) error {
 		return err
 	}
 	if err := s.reconcileAgentJobs(ctx); err != nil {
-		s.reportFatal(s.databaseError(ctx, err))
+		s.databaseError(ctx, err)
 		slog.Error("agent reconciliation deferred", "error", err)
 	}
 	maintenanceCtx, cancel := context.WithCancel(ctx)
@@ -46,7 +46,7 @@ func (s *Server) RunWorker(ctx context.Context) error {
 		case <-ticker.C:
 		}
 		if err := s.runQueuedJobs(ctx); err != nil {
-			s.reportFatal(s.databaseError(ctx, err))
+			s.databaseError(ctx, err)
 			slog.Error("generation work deferred", "error", err)
 		}
 	}
@@ -69,9 +69,7 @@ func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
 	var deferredStarts []string
 	for ctx.Err() == nil {
 		if err = s.advanceViewGenerations(ctx, deferredViews); err != nil {
-			var fatal *store.FatalDatabaseError
-			var unknown *store.UnknownCommit
-			if errors.As(err, &fatal) || errors.As(err, &unknown) {
+			if store.IsAbort(err) {
 				return err
 			}
 			errs = append(errs, err)
@@ -95,9 +93,7 @@ func (s *Server) runQueuedJobs(ctx context.Context) (err error) {
 			return nil
 		}
 		if err != nil {
-			var fatal *store.FatalDatabaseError
-			var unknown *store.UnknownCommit
-			if errors.As(err, &fatal) || errors.As(err, &unknown) {
+			if store.IsAbort(err) {
 				return err
 			}
 			errs = append(errs, err)
@@ -118,18 +114,18 @@ func (s *Server) runMaintenance(ctx context.Context) {
 		now := time.Now()
 		if now.Sub(lastReconcile) >= 30*time.Second {
 			if err := s.reconcileAgentJobs(ctx); err != nil {
-				s.reportFatal(s.databaseError(ctx, err))
+				s.databaseError(ctx, err)
 				slog.Error("agent reconciliation deferred", "error", err)
 			}
 			lastReconcile = now
 		}
 		if err := s.scheduleGenerations(now); err != nil {
-			s.reportFatal(s.databaseError(ctx, err))
+			s.databaseError(ctx, err)
 			slog.Error("generation scheduling deferred", "error", err)
 		}
 		if now.Sub(lastGC) >= time.Hour {
 			if _, err := s.storage.collectAllGarbage(ctx); err != nil {
-				s.reportFatal(s.databaseError(ctx, err))
+				s.databaseError(ctx, err)
 				slog.Warn("garbage collection deferred", "error", err)
 			}
 			lastGC = now

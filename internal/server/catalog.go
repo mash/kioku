@@ -18,21 +18,9 @@ type catalog interface {
 
 // resolveExchange never regenerates or returns a secret after an ambiguous commit.
 func (s *Server) resolveExchange(ctx context.Context, err error, status int) error {
-	var fatal *store.FatalDatabaseError
-	if errors.As(err, &fatal) {
-		s.reportFatal(err)
-		return err
-	}
-	var unknown *store.UnknownCommit
-	if !errors.As(err, &unknown) {
-		return err
-	}
-	if e := s.Store.ResolveCommit(ctx, func(q *store.Queries) error { return q.Healthy() }); e != nil {
-		s.reportFatal(e)
-		return e
-	}
-	return fail(status, "exchange outcome unknown; sign in again")
+	return s.classifyStorageError(ctx, err, status, "exchange outcome unknown; sign in again")
 }
+
 func (s *Server) reportFatal(err error) {
 	var fatal *store.FatalDatabaseError
 	if errors.As(err, &fatal) {
@@ -40,6 +28,9 @@ func (s *Server) reportFatal(err error) {
 	}
 }
 func (s *Server) databaseError(ctx context.Context, err error) error {
+	return s.classifyStorageError(ctx, err, 503, "storage commit outcome unknown; retry the request")
+}
+func (s *Server) classifyStorageError(ctx context.Context, err error, status int, message string) error {
 	var fatal *store.FatalDatabaseError
 	if errors.As(err, &fatal) {
 		s.reportFatal(err)
@@ -50,7 +41,7 @@ func (s *Server) databaseError(ctx context.Context, err error) error {
 		if e := s.Store.ResolveCommit(ctx, func(q *store.Queries) error { return q.Healthy() }); e != nil {
 			err = e
 		} else {
-			return fail(503, "storage commit outcome unknown; retry the request")
+			return fail(status, message)
 		}
 	}
 	s.reportFatal(err)

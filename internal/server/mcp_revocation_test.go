@@ -69,7 +69,7 @@ func TestConnectorWikiRechecksGrantAfterSelection(t *testing.T) {
 			expectSQLStatus(t, err, want)
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			unlock, err = f.s.lockProject(ctx, p.ID)
+			unlock, err = f.s.storage.lock(ctx, p.ID)
 			fixtureCheck(t, err)
 			unlock()
 		})

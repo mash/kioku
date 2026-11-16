@@ -86,3 +86,16 @@ type ViewData struct {
 	WikiSnapshotID *string `json:"wiki_snapshot_id"`
 	GeneratedAt    *int64  `json:"generated_at"`
 }
+
+func NullableString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+func ValueString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}

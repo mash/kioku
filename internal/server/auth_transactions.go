@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -37,8 +36,8 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 	if err != nil {
 		return store.SessionRow{}, err
 	}
-	var data store.CLILoginData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.CLILoginData](v)
+	if err != nil {
 		return store.SessionRow{}, err
 	}
 	if v.UserID == "" || data.LoopbackCodeHash == nil || *data.LoopbackCodeHash != auth.Hash(code) || data.LoopbackChallenge == nil || *data.LoopbackChallenge != auth.Challenge(verifier) {
@@ -50,7 +49,7 @@ func exchangeCLILogin(q *store.Queries, device, code, verifier, token string, no
 		}
 		return store.SessionRow{}, err
 	}
-	raw, err := json.Marshal(data.IdentitySessionData)
+	raw, err := store.EncodeSessionData(data.IdentitySessionData)
 	if err != nil {
 		return store.SessionRow{}, err
 	}
@@ -76,8 +75,8 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	if len(name) < 1 || len(name) > 100 {
 		return reject(fail(400, "name must contain 1–100 bytes"))
 	}
-	var data store.LoginCodeData
-	if err = json.Unmarshal(v.Data, &data); err != nil {
+	data, err := store.SessionData[store.LoginCodeData](v)
+	if err != nil {
 		return store.SessionRow{}, "", err
 	}
 	if v.ProjectID == nil {
@@ -90,8 +89,8 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	if err != nil {
 		return store.SessionRow{}, "", err
 	}
-	var access store.MCPData
-	if err = json.Unmarshal(grant.Data, &access); err != nil {
+	access, err := store.SessionData[store.MCPData](grant)
+	if err != nil {
 		return store.SessionRow{}, "", err
 	}
 	if grant.Kind != "mcp" || grant.UserID != v.UserID || !access.Active || access.TokenKind != "access" || !slices.Contains(access.ProjectIDs, *v.ProjectID) {
@@ -121,11 +120,11 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 	active := 0
 	var replaced []string
 	for _, old := range agents {
-		if old.Status != "active" || old.Expires <= now.UnixMilli() {
+		if !old.Active(now.UnixMilli()) {
 			continue
 		}
-		var a store.AgentSessionData
-		if err = json.Unmarshal(old.Data, &a); err != nil {
+		a, err := store.SessionData[store.AgentSessionData](old)
+		if err != nil {
 			return store.SessionRow{}, "", err
 		}
 		if a.RevokedAt != nil {
@@ -141,7 +140,7 @@ func exchangeAgentLogin(q *store.Queries, code, name, namespace, agentID, secret
 		return reject(fail(429, "too many active project agents"))
 	}
 	raw := "kioku_agent." + agentID + "." + secret
-	payload, err := json.Marshal(store.AgentSessionData{AgentID: &agentID, Role: data.Role, Name: name})
+	payload, err := store.EncodeSessionData(store.AgentSessionData{SessionRoleData: store.SessionRoleData{AgentID: &agentID, Role: data.Role}, Name: name})
 	if err != nil {
 		return store.SessionRow{}, "", err
 	}

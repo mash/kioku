@@ -4,14 +4,7 @@ import "github.com/mash/kioku/internal/model"
 
 // UsageSample contains provider-reported values only. A nil value is unknown,
 // never an estimate or a known zero. It carries no billing/principal metadata.
-type UsageSample struct {
-	Model                    *string
-	InputTokens              *int64
-	OutputTokens             *int64
-	CacheReadInputTokens     *int64
-	CacheCreationInputTokens *int64
-	CostCents                *int64
-}
+type UsageSample = model.UsageMeasurements
 
 func SumUsage(samples []UsageSample) UsageSample {
 	if len(samples) == 0 {

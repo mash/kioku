@@ -76,7 +76,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 }
 
 func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agentID string, budget int64, automatic bool, now time.Time) (store.JobRow, error) {
-	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: nullableString(agentID), AgentBudgetCents: budget, Automatic: automatic, WikiStatus: nullableString("pending"), Views: []store.ViewResultData{}}}
+	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: store.NullableString(agentID), AgentBudgetCents: budget, Automatic: automatic, WikiStatus: store.NullableString("pending"), Views: []store.ViewResultData{}}}
 	_, pending, err := q.ProjectCounts(p.ID)
 	if err != nil {
 		return job, err
@@ -163,9 +163,7 @@ func (s *Server) scheduleGenerations(now time.Time) error {
 		})
 		if err != nil {
 			errs = append(errs, err)
-			var fatal *store.FatalDatabaseError
-			var unknown *store.UnknownCommit
-			if errors.As(err, &fatal) || errors.As(err, &unknown) {
+			if store.IsAbort(err) {
 				break
 			}
 		} else if added {

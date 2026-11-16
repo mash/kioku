@@ -33,8 +33,12 @@ func ViewContentKey(project, view string, hash ContentHash) blob.Key {
 
 // UsageValues preserves unknown measurements as null, including after cleanup.
 type UsageValues struct {
-	OrgID                    string  `json:"org_id"`
-	UserID                   string  `json:"user_id"`
+	OrgID  string `json:"org_id"`
+	UserID string `json:"user_id"`
+	UsageMeasurements
+}
+
+type UsageMeasurements struct {
 	Model                    *string `json:"model"`
 	InputTokens              *int64  `json:"input_tokens"`
 	OutputTokens             *int64  `json:"output_tokens"`

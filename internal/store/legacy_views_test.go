@@ -66,20 +66,20 @@ func TestMigrationSelectsCommittedViewResultAndSettings(t *testing.T) {
 				if e != nil {
 					return e
 				}
-				if valueMigrationString(v.Data.Title) != "edited title" || valueMigrationString(v.Data.Prompt) != "edited prompt" || v.CreatedAt == nil || *v.CreatedAt != 100123 {
+				if ValueString(v.Data.Title) != "edited title" || ValueString(v.Data.Prompt) != "edited prompt" || v.CreatedAt == nil || *v.CreatedAt != 100123 {
 					t.Fatal(v)
 				}
 				switch which {
 				case "next preserves latest failure":
-					if valueMigrationString(v.Data.Status) != "failed" || valueMigrationString(v.Data.Error) != "latest failure" || valueMigrationString(v.BundleHash) != nextHash {
+					if ValueString(v.Data.Status) != "failed" || ValueString(v.Data.Error) != "latest failure" || ValueString(v.BundleHash) != nextHash {
 						t.Fatal(v)
 					}
 				case "prior restores result":
-					if valueMigrationString(v.Data.Status) != "completed" || v.Data.Error != nil || valueMigrationString(v.Data.JobID) != "old-job" || valueMigrationString(v.BundleHash) != priorHash {
+					if ValueString(v.Data.Status) != "completed" || v.Data.Error != nil || ValueString(v.Data.JobID) != "old-job" || ValueString(v.BundleHash) != priorHash {
 						t.Fatal(v)
 					}
 				case "stale epoch clears references":
-					if v.BundleHash != nil || v.ViewEpoch != nil || v.Data.JobID != nil || v.Data.WikiSnapshotID != nil || v.Data.GeneratedAt != nil || valueMigrationString(v.Data.Status) != "failed" || valueMigrationString(v.Data.Error) != "latest failure" {
+					if v.BundleHash != nil || v.ViewEpoch != nil || v.Data.JobID != nil || v.Data.WikiSnapshotID != nil || v.Data.GeneratedAt != nil || ValueString(v.Data.Status) != "failed" || ValueString(v.Data.Error) != "latest failure" {
 						t.Fatal(v)
 					}
 				}

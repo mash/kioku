@@ -182,7 +182,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request, uid string)
 		Views      []viewPageItem
 		Presets    []viewPreset
 	}{}
-	unlock, err := s.lockProject(r.Context(), r.PathValue("project"))
+	unlock, err := s.storage.lock(r.Context(), r.PathValue("project"))
 	if err != nil {
 		return err
 	}

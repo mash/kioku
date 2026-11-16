@@ -128,7 +128,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 		return err
 	}
 	if buckets, ok := s.Blobs.(interface{ Bucket(string) string }); ok {
-		row.Data.StorageBucket = nullableString(buckets.Bucket(row.ID))
+		row.Data.StorageBucket = store.NullableString(buckets.Bucket(row.ID))
 	}
 	var result model.Project
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
@@ -193,7 +193,7 @@ func (s *Server) members(w http.ResponseWriter, r *http.Request, uid string) err
 			}
 			for _, inv := range invites {
 				if inv.UsedBy == nil && inv.Expires > time.Now().UnixMilli() {
-					out = append(out, map[string]any{"id": inv.ID, "email": valueString(inv.Data.Email), "role": "member", "status": "invited", "expires": storageDate(inv.Expires)})
+					out = append(out, map[string]any{"id": inv.ID, "email": store.ValueString(inv.Data.Email), "role": "member", "status": "invited", "expires": storageDate(inv.Expires)})
 				}
 			}
 		}
@@ -217,7 +217,7 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request, uid string) erro
 		return fail(400, "invalid email")
 	}
 	token := auth.Token()
-	inv := store.InviteRow{ID: auth.Token()[:20], ProjectID: r.PathValue("project"), CreatedBy: uid, Expires: time.Now().Add(7 * 24 * time.Hour).UnixMilli(), TokenHash: auth.Hash(token), Data: store.InviteData{Email: nullableString(req.Email)}}
+	inv := store.InviteRow{ID: auth.Token()[:20], ProjectID: r.PathValue("project"), CreatedBy: uid, Expires: time.Now().Add(7 * 24 * time.Hour).UnixMilli(), TokenHash: auth.Hash(token), Data: store.InviteData{Email: store.NullableString(req.Email)}}
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
 		if _, e := owner(q, inv.ProjectID, uid); e != nil {
 			return e
@@ -256,7 +256,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request, uid string) error 
 	var boundEmail string
 	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
 		inv, e := activeInvite(q, hash)
-		boundEmail = valueString(inv.Data.Email)
+		boundEmail = store.ValueString(inv.Data.Email)
 		return e
 	}); err != nil {
 		return err

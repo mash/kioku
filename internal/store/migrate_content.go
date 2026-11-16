@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"math"
 	"path"
 	"strings"
 	"time"
@@ -38,7 +37,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 	if content.Inbox == nil || content.Jobs == nil || content.Audit == nil {
 		return errors.New("missing legacy project content collection")
 	}
-	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), WikiIncomplete: content.Incomplete, NextGenerateAt: migrationTime(content.NextGenerateAt), ViewEpoch: migrationString(content.ViewEpoch), Data: ProjectData{Name: old.Name, StorageBucket: migrationString(old.StorageBucket), WikiCompleteRevision: migrationString(content.WikiCompleteRevision), WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
+	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), WikiIncomplete: content.Incomplete, NextGenerateAt: migrationTime(content.NextGenerateAt), ViewEpoch: NullableString(content.ViewEpoch), Data: ProjectData{Name: old.Name, StorageBucket: NullableString(old.StorageBucket), WikiCompleteRevision: NullableString(content.WikiCompleteRevision), WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
 	if content.NextGenerateAt.After(time.Time{}) && !content.NextGenerateAt.IsZero() {
 		return errors.New("complete scheduled generation before migration")
 	}
@@ -58,7 +57,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 				return err
 			}
 		}
-		p.inbox = append(p.inbox, InboxRow{ID: id, ProjectID: old.ID, SourceURL: item.SourceURL, Remove: item.Remove, Created: migrationCreated(item.Created), RunID: migrationString(item.RunID), Data: InboxData{Submitter: item.Submitter}})
+		p.inbox = append(p.inbox, InboxRow{ID: id, ProjectID: old.ID, SourceURL: item.SourceURL, Remove: item.Remove, Created: migrationCreated(item.Created), RunID: NullableString(item.RunID), Data: InboxData{Submitter: item.Submitter}})
 	}
 	if w := content.Wiki; w != nil {
 		if w.Files == nil {
@@ -92,10 +91,11 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			if prior, ok := w.FileBytes[name]; ok && prior != size {
 				return errors.New("legacy Wiki size mismatch")
 			}
-			if total > math.MaxInt64-size {
+			sum := model.SumMeasurements(&total, &size)
+			if sum == nil {
 				return errors.New("legacy Wiki size overflow")
 			}
-			total += size
+			total = *sum
 			p.wiki = append(p.wiki, WikiFileRow{ProjectID: old.ID, Path: name, Hash: hash, Data: WikiFileData{Bytes: size}})
 			p.copies[model.WikiContentKey(old.ID, model.ContentHash(hash))] = body
 		}
@@ -113,13 +113,13 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		if job.Status == "queued" || job.Status == "running" {
 			return errors.New("finish queued and running jobs before migration")
 		}
-		row := JobRow{ID: id, ProjectID: old.ID, Status: job.Status, Created: migrationCreated(job.Created), Kind: job.Kind, Data: JobData{UserID: job.UserID, AgentID: migrationString(job.AgentID), AgentBudgetCents: job.AgentBudgetCents, Automatic: job.Automatic, Error: migrationString(job.Error), Revision: migrationString(job.Revision), WikiStatus: migrationString(job.WikiStatus), Unchanged: job.Unchanged, Views: []ViewResultData{}}}
+		row := JobRow{ID: id, ProjectID: old.ID, Status: job.Status, Created: migrationCreated(job.Created), Kind: job.Kind, Data: JobData{UserID: job.UserID, AgentID: NullableString(job.AgentID), AgentBudgetCents: job.AgentBudgetCents, Automatic: job.Automatic, Error: NullableString(job.Error), Revision: NullableString(job.Revision), WikiStatus: NullableString(job.WikiStatus), Unchanged: job.Unchanged, Views: []ViewResultData{}}}
 		for _, v := range job.Views {
-			row.Data.Views = append(row.Data.Views, ViewResultData{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: migrationString(v.Error)})
+			row.Data.Views = append(row.Data.Views, ViewResultData{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: NullableString(v.Error)})
 		}
 		if g := job.ViewGeneration; g != nil {
 			row.GenerationSnapshot = &g.Snapshot
-			row.ChildID = migrationString(g.ChildID)
+			row.ChildID = NullableString(g.ChildID)
 			row.Data.ViewGeneration = &GenerationData{Pending: g.Pending, Remaining: g.Remaining, Next: g.Next}
 		}
 		if task := job.ViewTask; task != nil {
@@ -133,14 +133,14 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			complete := true
 			row.CleanupComplete = &complete
 			row.Phase = &run.Phase
-			row.SessionID = migrationString(run.Ref.ID)
-			row.OutputHash = migrationString(run.OutputHash)
-			row.Data.Run = &RunData{UsesProviderFiles: run.Ref.UsesProviderFiles, Provider: migrationString(run.Ref.Resources["provider"]), UploadStarted: run.Ref.Resources["upload_started"] == "true", InputFileID: migrationString(run.Ref.Resources["input_file_id"]), AbortReason: migrationString(run.AbortReason), PreparedAt: migrationCreated(run.PreparedAt), Deadline: migrationCreated(run.Deadline), OutputWaitSince: migrationOptionalTime(run.OutputWaitSince), OutputRejection: migrationString(run.OutputRejection), BudgetCents: run.BudgetCents, InboxIDs: run.InboxIDs}
+			row.SessionID = NullableString(run.Ref.ID)
+			row.OutputHash = NullableString(run.OutputHash)
+			row.Data.Run = &RunData{UsesProviderFiles: run.Ref.UsesProviderFiles, Provider: NullableString(run.Ref.Resources["provider"]), UploadStarted: run.Ref.Resources["upload_started"] == "true", InputFileID: NullableString(run.Ref.Resources["input_file_id"]), AbortReason: NullableString(run.AbortReason), PreparedAt: migrationCreated(run.PreparedAt), Deadline: migrationCreated(run.Deadline), OutputWaitSince: migrationOptionalTime(run.OutputWaitSince), OutputRejection: NullableString(run.OutputRejection), BudgetCents: run.BudgetCents, InboxIDs: run.InboxIDs}
 			cost := run.CostCents
 			if cost != nil && *cost < 0 {
 				cost = nil
 			}
-			p.usage = append(p.usage, UsageRow{AttemptID: id, ProjectID: old.ID, JobID: id, RecordedAt: now.UnixMilli(), Data: model.UsageValues{OrgID: old.OrgID, UserID: job.UserID, CostCents: cost}})
+			p.usage = append(p.usage, UsageRow{AttemptID: id, ProjectID: old.ID, JobID: id, RecordedAt: now.UnixMilli(), Data: model.UsageValues{OrgID: old.OrgID, UserID: job.UserID, UsageMeasurements: model.UsageMeasurements{CostCents: cost}}})
 		}
 		p.jobs = append(p.jobs, row)
 	}

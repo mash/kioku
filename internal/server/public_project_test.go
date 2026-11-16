@@ -85,7 +85,7 @@ func TestProjectPageShowsFiveRecentGenerations(t *testing.T) {
 				return err
 			}
 		}
-		if err := q.PutJob(store.JobRow{ID: "view-child", ProjectID: p.ID, Status: "completed", Kind: "view", Created: 10, ParentID: nullableString("latest-b"), Data: store.JobData{ViewTask: &store.ViewTaskData{}}}); err != nil {
+		if err := q.PutJob(store.JobRow{ID: "view-child", ProjectID: p.ID, Status: "completed", Kind: "view", Created: 10, ParentID: store.NullableString("latest-b"), Data: store.JobData{ViewTask: &store.ViewTaskData{}}}); err != nil {
 			return err
 		}
 		return q.PutJob(store.JobRow{ID: "unrelated", ProjectID: "other", Status: "completed", Kind: "generate", Created: 10})

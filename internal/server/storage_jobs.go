@@ -57,7 +57,7 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 			if err != nil {
 				return err
 			}
-			if parent.Status != "running" || valueString(parent.ChildID) != id || j.Data.ViewTask == nil || p.WikiIncomplete || valueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
+			if parent.Status != "running" || store.ValueString(parent.ChildID) != id || j.Data.ViewTask == nil || p.WikiIncomplete || store.ValueString(p.WikiRevision) != j.Data.ViewTask.Snapshot {
 				return fail(409, "Wiki または生成ジョブが変更されました")
 			}
 			v, err := q.View(p.ID, j.Data.ViewTask.ViewID)
@@ -152,9 +152,9 @@ func (o *storageOperations) prepareInput(ctx context.Context, id string, file bo
 		j.Phase = &phase
 		j.CleanupComplete = &complete
 		j.InputReady = true
-		j.Data.Run = &store.RunData{UsesProviderFiles: file, Provider: nullableString(provider), PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget, InboxIDs: []string{}}
+		j.Data.Run = &store.RunData{UsesProviderFiles: file, Provider: store.NullableString(provider), PreparedAt: now.UnixMilli(), Deadline: now.Add(o.config.AgentJobTimeout).UnixMilli(), BudgetCents: budget, InboxIDs: []string{}}
 		if j.Data.WikiStatus != nil {
-			j.Data.WikiStatus = nullableString("running")
+			j.Data.WikiStatus = store.NullableString("running")
 		}
 		for _, item := range selected.Inbox {
 			current, err := q.Inbox(item.ID)
@@ -198,9 +198,9 @@ func (o *storageOperations) failPreparation(ctx context.Context, id string, caus
 			return nil
 		}
 		j.Status = "failed"
-		j.Data.Error = nullableString(cause.Error())
+		j.Data.Error = store.NullableString(cause.Error())
 		if j.Data.WikiStatus != nil {
-			j.Data.WikiStatus = nullableString("failed")
+			j.Data.WikiStatus = store.NullableString("failed")
 		}
 		if err = q.PutJob(j); err != nil {
 			return err
@@ -244,7 +244,7 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		if err != nil {
 			return err
 		}
-		if !current.InputReady || valueString(current.Phase) == "finalizing" || current.GenerationSnapshot != nil {
+		if !current.InputReady || store.ValueString(current.Phase) == "finalizing" || current.GenerationSnapshot != nil {
 			return fail(409, "job no longer accepts output")
 		}
 		j = current
@@ -254,7 +254,7 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		return "", err
 	}
 	hash := string(model.HashContent(body))
-	changed := valueString(j.OutputHash) != hash
+	changed := store.ValueString(j.OutputHash) != hash
 	if changed {
 		prefix := "projects/" + j.ProjectID + "/.kioku/jobs/" + id + "/"
 		keys, err := o.objects.List(ctx, prefix)
@@ -263,7 +263,7 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		}
 		for _, key := range keys {
 			name := strings.TrimPrefix(string(key), prefix)
-			if strings.HasPrefix(name, "output-") && strings.HasSuffix(name, ".tar.gz") && name != "output-"+valueString(j.OutputHash)+".tar.gz" {
+			if strings.HasPrefix(name, "output-") && strings.HasSuffix(name, ".tar.gz") && name != "output-"+store.ValueString(j.OutputHash)+".tar.gz" {
 				if err = o.objects.Delete(ctx, key); err != nil {
 					return "", fail(503, "previous output cleanup pending")
 				}
@@ -279,7 +279,7 @@ func (o *storageOperations) saveOutput(ctx context.Context, id string, body []by
 		}
 		if changed {
 			j.OutputHash = &hash
-			j.Phase = nullableString("output_received")
+			j.Phase = store.NullableString("output_received")
 			j.Data.Run.OutputRejection = nil
 			if err := q.PutJob(j); err != nil {
 				return err
@@ -303,7 +303,7 @@ func (o *storageOperations) beginFileWait(ctx context.Context, id string) (store
 		if err != nil {
 			return err
 		}
-		if !j.Data.Run.UsesProviderFiles || valueString(j.Phase) != "agent_running" {
+		if !j.Data.Run.UsesProviderFiles || store.ValueString(j.Phase) != "agent_running" {
 			return fail(409, "job no longer accepts managed agent output")
 		}
 		now := o.now().UnixMilli()
@@ -330,7 +330,7 @@ func (o *storageOperations) failJob(ctx context.Context, id, reason string, stat
 		}
 		if j.Data.Run != nil {
 			run := j.Data.Run
-			if onlyWithoutOutput && !run.UsesProviderFiles && run.AbortReason == nil && (j.ParentID == nil || status == nil || !status.Failed) && (valueString(j.Phase) == "output_received" || valueString(j.Phase) == "finalizing") {
+			if onlyWithoutOutput && !run.UsesProviderFiles && run.AbortReason == nil && (j.ParentID == nil || status == nil || !status.Failed) && (store.ValueString(j.Phase) == "output_received" || store.ValueString(j.Phase) == "finalizing") {
 				if err = sqlJobAuthorization(q, j, o.now().UnixMilli()); err == nil {
 					outputWins = true
 					return nil
@@ -343,7 +343,7 @@ func (o *storageOperations) failJob(ctx context.Context, id, reason string, stat
 			}
 			stopped := status != nil && (status.State == runner.StateStopped || status.State == runner.StateNone && (o.now().UnixMilli() >= run.PreparedAt+300000 || run.UsesProviderFiles && !run.UploadStarted))
 			if run.AbortReason == nil {
-				run.AbortReason = nullableString(reason)
+				run.AbortReason = store.NullableString(reason)
 			} else {
 				reason = *run.AbortReason
 			}
@@ -352,9 +352,9 @@ func (o *storageOperations) failJob(ctx context.Context, id, reason string, stat
 			}
 		}
 		j.Status = "failed"
-		j.Data.Error = nullableString(reason)
+		j.Data.Error = store.NullableString(reason)
 		if j.Data.WikiStatus != nil {
-			j.Data.WikiStatus = nullableString("failed")
+			j.Data.WikiStatus = store.NullableString("failed")
 		}
 		if err = q.ReleaseInbox(j.ProjectID, j.ID); err != nil {
 			return err

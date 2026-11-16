@@ -289,7 +289,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request, _ string
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err != nil || (current.Kind != "web" && current.Kind != "cli") || current.Status != "active" || current.UserID != session.UserID || current.Expires <= time.Now().UnixMilli() {
+		if err != nil || (current.Kind != "web" && current.Kind != "cli") || current.UserID != session.UserID || !current.Active(time.Now().UnixMilli()) {
 			return fail(401, "browser session expired")
 		}
 		slices.Sort(namespaces)

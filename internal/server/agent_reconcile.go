@@ -26,7 +26,7 @@ func (s *Server) reconcileAgentJobs(ctx context.Context) error {
 			return ctx.Err()
 		}
 		if err := s.reconcileAgentJob(ctx, job); err != nil {
-			s.reportFatal(s.databaseError(ctx, err))
+			s.databaseError(ctx, err)
 			if fatal := s.fatalError.Load(); fatal != nil {
 				return fatal
 			}
@@ -39,7 +39,7 @@ func agentRunFinished(j store.JobRow) bool {
 	return j.GenerationSnapshot != nil || j.Status == "completed" || j.Status == "failed" || j.Status == "skipped"
 }
 func (s *Server) reconcileAgentJob(ctx context.Context, job store.JobRow) error {
-	unlock, err := s.lockProject(ctx, "generate:"+job.ProjectID)
+	unlock, err := s.storage.lock(ctx, "generate:"+job.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 			}
 			return s.failAgentJobLocked(ctx, job, reason, &status)
 		}
-		if valueString(job.Phase) == "output_received" || valueString(job.Phase) == "finalizing" {
+		if store.ValueString(job.Phase) == "output_received" || store.ValueString(job.Phase) == "finalizing" {
 			return s.finalizeAgentJobLocked(ctx, job, status)
 		}
 		if files {
@@ -179,7 +179,7 @@ func (s *Server) collectAgentOutput(ctx context.Context, r runner.Runner, job st
 		if err != nil {
 			return err
 		}
-		if !j.Data.Run.UsesProviderFiles || !equalOptional(j.SessionID, job.SessionID) || valueString(j.Phase) != "agent_running" {
+		if !j.Data.Run.UsesProviderFiles || !equalOptional(j.SessionID, job.SessionID) || store.ValueString(j.Phase) != "agent_running" {
 			return fail(409, "job no longer accepts managed agent output")
 		}
 		if fileOutputExpired(j.Data.Run, s.storage.now().UnixMilli()) {
@@ -208,10 +208,10 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job store.JobRow, s
 		if err != nil {
 			return err
 		}
-		if j.OutputHash == nil || (valueString(j.Phase) != "output_received" && valueString(j.Phase) != "finalizing") {
+		if j.OutputHash == nil || (store.ValueString(j.Phase) != "output_received" && store.ValueString(j.Phase) != "finalizing") {
 			return nil
 		}
-		j.Phase = nullableString("finalizing")
+		j.Phase = store.NullableString("finalizing")
 		job = j
 		proceed = true
 		return q.PutJob(j)
@@ -221,7 +221,7 @@ func (s *Server) finalizeAgentJobLocked(ctx context.Context, job store.JobRow, s
 	if !proceed {
 		return nil
 	}
-	unlock, err := s.lockProject(ctx, job.ProjectID)
+	unlock, err := s.storage.lock(ctx, job.ProjectID)
 	if err != nil {
 		return err
 	}

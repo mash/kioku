@@ -11,27 +11,14 @@ func (q *Queries) UsersByEmail(email string) ([]UserRow, error) {
 	return q.listUser("WHERE kioku_equal_fold(email,?) ORDER BY id", email)
 }
 func (q *Queries) OrganizationBySlug(slug string) (OrganizationRow, error) {
-	return scanOrganization(q.row("SELECT id,slug,data FROM organizations WHERE slug=?", slug))
+	return scanOrganization(q.row("SELECT "+organizationsColumns+" FROM organizations WHERE slug=?", slug))
 }
 func (q *Queries) PutIdentity(user, provider, id string) error {
 	_, err := q.exec("INSERT INTO user_identities VALUES(?,?,?) ON CONFLICT(user_id,provider) DO UPDATE SET identity_id=excluded.identity_id", user, provider, id)
 	return err
 }
 func (q *Queries) Identities(user string) (map[string]string, error) {
-	rows, err := q.rows("SELECT provider,identity_id FROM user_identities WHERE user_id=? ORDER BY provider", user)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var p, id string
-		if err := rows.Scan(&p, &id); err != nil {
-			return nil, err
-		}
-		out[p] = id
-	}
-	return out, rows.Err()
+	return q.members("SELECT provider,identity_id FROM user_identities WHERE user_id=? ORDER BY provider", user)
 }
 func (q *Queries) ProjectRole(project, user string) (string, error) {
 	var role string

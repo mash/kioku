@@ -30,7 +30,7 @@ func TestConcurrentPutReadPublishAndGC(t *testing.T) {
 		func(i int) error {
 			id := fmt.Sprintf("j-%d", i)
 			if err := o.db.Write(t.Context(), func(q *store.Queries) error {
-				return q.PutJob(store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", Phase: nullableString("output_received"), CleanupComplete: boolPointer(false), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}})
+				return q.PutJob(store.JobRow{ID: id, ProjectID: "p", Status: "running", Kind: "generate", Phase: store.NullableString("output_received"), CleanupComplete: boolPointer(false), Data: store.JobData{UserID: "u", Run: &store.RunData{PreparedAt: 1000, Deadline: 3601000, BudgetCents: 100}}})
 			}); err != nil {
 				return err
 			}
@@ -140,7 +140,7 @@ func TestViewContinuationRechecksAuthorization(t *testing.T) {
 		if err := q.PutView(store.ViewRow{ID: "v", ProjectID: "p", Slug: "map", Data: sqlTestViewData()}); err != nil {
 			return err
 		}
-		if err := q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", GenerationSnapshot: nullableString("snapshot"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v", Status: "pending"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}}); err != nil {
+		if err := q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", GenerationSnapshot: store.NullableString("snapshot"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v", Status: "pending"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}}); err != nil {
 			return err
 		}
 		return q.DeleteProjectMember("p", "u")
@@ -168,13 +168,13 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 	child := storageRunning(t, o, "child")
 	child.Status = "completed"
 	child.Kind = "view"
-	child.ParentID = nullableString("parent")
+	child.ParentID = store.NullableString("parent")
 	child.Data.ViewTask = &store.ViewTaskData{ViewID: "v1", Snapshot: "w"}
 	sqlWrite(t, o.db, func(q *store.Queries) error {
 		if err := q.PutJob(child); err != nil {
 			return err
 		}
-		return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: nullableString("child"), GenerationSnapshot: nullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
+		return q.PutJob(store.JobRow{ID: "parent", ProjectID: "p", Status: "running", Kind: "generate", ChildID: store.NullableString("child"), GenerationSnapshot: store.NullableString("w"), Data: store.JobData{UserID: "u", Views: []store.ViewResultData{{ViewID: "v1"}}, ViewGeneration: &store.GenerationData{Remaining: 100}}})
 	})
 	cost := int64(40)
 	status := runner.Status{State: runner.StateStopped, Usage: runner.UsageSample{CostCents: &cost}}
@@ -195,7 +195,7 @@ func TestProjectDeletionWaitsForChildCleanupAndRetainsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent := readSQLJob(t, o, "parent")
-	if parent.Data.ViewGeneration.Remaining != 100 || valueString(parent.ChildID) != "child" {
+	if parent.Data.ViewGeneration.Remaining != 100 || store.ValueString(parent.ChildID) != "child" {
 		t.Fatal("charged before cleanup", parent)
 	}
 	expectSQLStatus(t, o.deleteProject(t.Context(), "p", cleanup), 503)

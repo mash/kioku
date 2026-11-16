@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) error {
-	unlock, err := s.lockProject(r.Context(), r.PathValue("project"))
+	unlock, err := s.storage.lock(r.Context(), r.PathValue("project"))
 	if err != nil {
 		return err
 	}
@@ -38,7 +38,7 @@ func (s *Server) agentInput(w http.ResponseWriter, r *http.Request, uid string) 
 	return err
 }
 func (s *Server) outputContext(ctx context.Context, job store.JobRow) (map[string]string, []model.InboxItem, error) {
-	unlock, err := s.lockProject(ctx, job.ProjectID)
+	unlock, err := s.storage.lock(ctx, job.ProjectID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -66,7 +66,7 @@ func (s *Server) outputContext(ctx context.Context, job store.JobRow) (map[strin
 			if err != nil {
 				return err
 			}
-			if valueString(item.RunID) != job.ID {
+			if store.ValueString(item.RunID) != job.ID {
 				return fail(409, "generation inbox missing")
 			}
 			items = append(items, inboxProjection(item))
@@ -104,7 +104,7 @@ func (s *Server) agentOutputLimit(job store.JobRow) int64 {
 	return s.outputLimits().MaxCompressed
 }
 func (s *Server) agentOutput(w http.ResponseWriter, r *http.Request, uid string) error {
-	unlock, err := s.lockProject(r.Context(), "agent-io:"+r.PathValue("project"))
+	unlock, err := s.storage.lock(r.Context(), "agent-io:"+r.PathValue("project"))
 	if err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func (s *Server) recordViewOutputRejection(ctx context.Context, id string, check
 			return err
 		}
 		if j.OutputHash == nil {
-			j.Data.Run.OutputRejection = nullableString(rejection.Error())
+			j.Data.Run.OutputRejection = store.NullableString(rejection.Error())
 			return q.PutJob(j)
 		}
 		return nil

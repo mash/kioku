@@ -12,10 +12,10 @@ import (
 )
 
 func sqlAttempt(j store.JobRow) runner.Attempt {
-	ref := runner.RunRef{ID: valueString(j.SessionID), Resources: map[string]string{}}
+	ref := runner.RunRef{ID: store.ValueString(j.SessionID), Resources: map[string]string{}}
 	if run := j.Data.Run; run != nil {
 		ref.UsesProviderFiles = run.UsesProviderFiles
-		ref.Resources["provider"] = valueString(run.Provider)
+		ref.Resources["provider"] = store.ValueString(run.Provider)
 		if run.UploadStarted {
 			ref.Resources["upload_started"] = "true"
 		}
@@ -28,14 +28,14 @@ func sqlAttempt(j store.JobRow) runner.Attempt {
 func applyRunRef(j *store.JobRow, ref runner.RunRef) {
 	if ref.ID != "" {
 		j.SessionID = &ref.ID
-		if valueString(j.Phase) == "preparing" {
-			j.Phase = nullableString("agent_running")
+		if store.ValueString(j.Phase) == "preparing" {
+			j.Phase = store.NullableString("agent_running")
 		}
 	}
 	j.Data.Run.UsesProviderFiles = ref.UsesProviderFiles
-	j.Data.Run.Provider = nullableString(ref.Resources["provider"])
+	j.Data.Run.Provider = store.NullableString(ref.Resources["provider"])
 	j.Data.Run.UploadStarted = ref.Resources["upload_started"] == "true"
-	j.Data.Run.InputFileID = nullableString(ref.Resources["input_file_id"])
+	j.Data.Run.InputFileID = store.NullableString(ref.Resources["input_file_id"])
 }
 func (o *storageOperations) cleanup(ctx context.Context, id string, status runner.Status, providerCleanup func(context.Context, runner.Attempt) error) (bool, error) {
 	// The caller holds the project generation gate across inspection and
@@ -77,7 +77,7 @@ func (o *storageOperations) cleanup(ctx context.Context, id string, status runne
 		if current.Data.Run == nil {
 			return errors.New("attempt disappeared")
 		}
-		data := model.UsageValues{UserID: j.Data.UserID, Model: status.Usage.Model, InputTokens: status.Usage.InputTokens, OutputTokens: status.Usage.OutputTokens, CacheCreationInputTokens: status.Usage.CacheCreationInputTokens, CacheReadInputTokens: status.Usage.CacheReadInputTokens, CostCents: status.Usage.CostCents}
+		data := model.UsageValues{UserID: j.Data.UserID, UsageMeasurements: status.Usage}
 		p, e := q.Project(j.ProjectID)
 		if e != nil {
 			return e

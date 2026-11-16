@@ -159,12 +159,12 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 			}
 			if j.Data.Run == nil || j.GenerationSnapshot != nil {
 				j.Status = "failed"
-				j.Data.Error = nullableString("project deleted")
+				j.Data.Error = store.NullableString("project deleted")
 				if e = q.ReleaseInbox(project, j.ID); e != nil {
 					return e
 				}
 			} else if j.Data.Run.AbortReason == nil {
-				j.Data.Run.AbortReason = nullableString("project deleted")
+				j.Data.Run.AbortReason = store.NullableString("project deleted")
 			}
 			if e = q.PutJob(j); e != nil {
 				return e

@@ -67,9 +67,6 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 	default:
 		return fail(400, "provide one file, or remove: true with source_url; put source_url and updated_at in the file frontmatter; the source_url argument is only for remove")
 	}
-	if r, ok := ctx.Value(mutationRequestKey{}).(*http.Request); ok {
-		identity, _ := r.Context().Value(authContextKey{}).(requestIdentity)
-		hooks = append(hooks, mutationHook{check: func(q *store.Queries) error { return s.checkMutation(q, r, identity.principal.UserID, pid) }, audit: func(q *store.Queries) error { return s.auditMutation(q, r, uid, pid) }})
-	}
+	hooks = append(hooks, s.requestHook(ctx, pid))
 	return s.storage.putInbox(ctx, store.InboxRow{ID: item.ID, ProjectID: pid, SourceURL: item.SourceURL, Remove: item.Remove, Created: item.Created.UnixMilli(), Data: store.InboxData{Submitter: uid}}, []byte(body), hooks...)
 }

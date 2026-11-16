@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/internal/wiki"
@@ -257,7 +256,7 @@ func (s *Server) lockConnectorProject(ctx context.Context, key, namespace string
 	if err != nil {
 		return model.Project{}, nil, err
 	}
-	unlock, err := s.lockProject(ctx, p.ID)
+	unlock, err := s.storage.lock(ctx, p.ID)
 	if err != nil {
 		return model.Project{}, nil, err
 	}
@@ -412,10 +411,7 @@ func (s *Server) mcpSourcePut(ctx context.Context, key, namespace string, req mo
 		}
 		return nil
 	}, audit: func(q *store.Queries) error {
-		if err := q.PutAudit(store.AuditRow{ID: auth.Token()[:20], ProjectID: project.ID, Created: time.Now().UnixMilli(), Data: store.AuditData{UserID: uid, Action: "POST", Detail: "mcp source_put"}}); err != nil {
-			return err
-		}
-		return q.CompactHistory(project.ID, nil)
+		return recordAudit(q, uid, project.ID, "POST", "mcp source_put")
 	}}); err != nil {
 		return nil, err
 	}

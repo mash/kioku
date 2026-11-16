@@ -92,7 +92,7 @@ func TestBackupDoesNotNeedContentStorage(t *testing.T) {
 func TestAgentCredentialMetadataSurvivesRestartAndBackup(t *testing.T) {
 	d := newCatalog(t)
 	now := time.Now().UnixMilli()
-	raw, e := json.Marshal(AgentSessionData{AgentID: pointer("delegation"), Name: "Cloud", Role: pointer("read")})
+	raw, e := json.Marshal(AgentSessionData{SessionRoleData: SessionRoleData{AgentID: pointer("delegation"), Role: pointer("read")}, Name: "Cloud"})
 	if e != nil {
 		t.Fatal(e)
 	}

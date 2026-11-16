@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -54,7 +53,7 @@ func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string)
 		return fail(400, "invalid state")
 	}
 	id := auth.Token()
-	data, err := json.Marshal(store.CLILoginData{LoopbackChallenge: &req.Challenge, LoopbackRedirectURI: &req.RedirectURI, LoopbackState: &req.State})
+	data, err := store.EncodeSessionData(store.CLILoginData{LoopbackChallenge: &req.Challenge, LoopbackRedirectURI: &req.RedirectURI, LoopbackState: &req.State})
 	if err != nil {
 		return err
 	}
@@ -94,11 +93,11 @@ func (s *Server) loopbackToken(w http.ResponseWriter, r *http.Request, _ string)
 		if e != nil {
 			return e
 		}
-		var data store.IdentitySessionData
-		if e = json.Unmarshal(issued.Data, &data); e != nil {
+		data, e := store.SessionData[store.IdentitySessionData](issued)
+		if e != nil {
 			return e
 		}
-		provider = valueString(data.IdentityProvider)
+		provider = store.ValueString(data.IdentityProvider)
 		account, e = q.User(issued.UserID)
 		return e
 	})
@@ -123,11 +122,11 @@ func pendingLoopback(q *store.Queries, id string) (store.SessionRow, store.CLILo
 	if row.Kind != "cli_login" {
 		return row, store.CLILoginData{}, false, nil
 	}
-	var data store.CLILoginData
-	if err = json.Unmarshal(row.Data, &data); err != nil {
+	data, err := store.SessionData[store.CLILoginData](row)
+	if err != nil {
 		return row, data, false, err
 	}
-	return row, data, row.Status == "pending" && row.UserID == "" && row.Expires > time.Now().UnixMilli() && valueString(data.LoopbackChallenge) != "", nil
+	return row, data, row.Status == "pending" && row.UserID == "" && row.Expires > time.Now().UnixMilli() && store.ValueString(data.LoopbackChallenge) != "", nil
 }
 func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, reason string) error {
 	target := ""
@@ -137,7 +136,7 @@ func (s *Server) loopbackFailure(w http.ResponseWriter, r *http.Request, id, rea
 			return e
 		}
 		if ok {
-			target = valueString(d.LoopbackRedirectURI) + "?" + url.Values{"error": {reason}, "state": {valueString(d.LoopbackState)}}.Encode()
+			target = store.ValueString(d.LoopbackRedirectURI) + "?" + url.Values{"error": {reason}, "state": {store.ValueString(d.LoopbackState)}}.Encode()
 		}
 		return nil
 	}); err != nil {
@@ -159,7 +158,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) er
 	if err != nil {
 		return err
 	}
-	payload := auth.OAuthCookie{Provider: provider, Verifier: auth.Token(), ReturnPath: nullableString(returnPath), CLILogin: nullableString(r.URL.Query().Get("device")), Expires: time.Now().Add(10 * time.Minute).UnixMilli()}
+	payload := auth.OAuthCookie{Provider: provider, Verifier: auth.Token(), ReturnPath: store.NullableString(returnPath), CLILogin: store.NullableString(r.URL.Query().Get("device")), Expires: time.Now().Add(10 * time.Minute).UnixMilli()}
 	if payload.CLILogin != nil {
 		if err = s.Store.Read(r.Context(), func(q *store.Queries) error {
 			_, _, ok, e := pendingLoopback(q, *payload.CLILogin)
@@ -195,7 +194,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	if err != nil {
 		return fail(403, "OAuth request expired")
 	}
-	device := valueString(pending.CLILogin)
+	device := store.ValueString(pending.CLILogin)
 	if device != "" && r.URL.Query().Has("error") {
 		return s.loopbackFailure(w, r, device, "access_denied")
 	}
@@ -247,17 +246,17 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 			login.UserID = user.ID
 			login.Expires = time.Now().Add(time.Minute).UnixMilli()
 			loginData.IdentitySessionData = data
-			loginData.LoopbackCodeHash = nullableString(auth.Hash(code))
-			login.Data, e = json.Marshal(loginData)
+			loginData.LoopbackCodeHash = store.NullableString(auth.Hash(code))
+			login.Data, e = store.EncodeSessionData(loginData)
 			if e != nil {
 				return e
 			}
 			if e = q.PutSession(login); e != nil {
 				return e
 			}
-			loopbackURL = valueString(loginData.LoopbackRedirectURI) + "?" + url.Values{"code": {code}, "state": {valueString(loginData.LoopbackState)}}.Encode()
+			loopbackURL = store.ValueString(loginData.LoopbackRedirectURI) + "?" + url.Values{"code": {code}, "state": {store.ValueString(loginData.LoopbackState)}}.Encode()
 		}
-		raw, e := json.Marshal(data)
+		raw, e := store.EncodeSessionData(data)
 		if e != nil {
 			return e
 		}
@@ -291,7 +290,7 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 		return "", err
 	}
 	saved := principal.Identity
-	providerName, id := valueString(saved.IdentityProvider), valueString(saved.IdentityID)
+	providerName, id := store.ValueString(saved.IdentityProvider), store.ValueString(saved.IdentityID)
 	if principal.UserID != uid || saved.IdentityAccessToken == nil || providerName == "" || id == "" {
 		return "", fail(401, "sign in again to verify your email before accepting this invitation")
 	}
@@ -322,8 +321,8 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 		if e != nil {
 			return e
 		}
-		var current store.IdentitySessionData
-		if e = json.Unmarshal(row.Data, &current); e != nil {
+		current, e := store.SessionData[store.IdentitySessionData](row)
+		if e != nil {
 			return e
 		}
 		if row.UserID != uid || row.Expires <= time.Now().UnixMilli() || !equalOptional(current.IdentityAccessToken, saved.IdentityAccessToken) || !equalOptional(current.IdentityRefreshToken, saved.IdentityRefreshToken) {
@@ -339,7 +338,7 @@ func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 		next := identityData(s.Cipher, fresh, uid, providerName, id)
 		next.AgentID = current.AgentID
 		next.Role = current.Role
-		row.Data, e = json.Marshal(next)
+		row.Data, e = store.EncodeSessionData(next)
 		if e != nil {
 			return e
 		}

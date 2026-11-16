@@ -41,7 +41,7 @@ func TestGCDoesNothingOnReferenceOrListFailure(t *testing.T) {
 func TestGCProtectsEveryContentReference(t *testing.T) {
 	o, b := storageFixture(t)
 	j := storageRunning(t, o, "j")
-	j.OutputHash = nullableString(strings.Repeat("a", 64))
+	j.OutputHash = store.NullableString(strings.Repeat("a", 64))
 	h := string(model.HashContent([]byte("wiki")))
 	vh := string(model.HashContent([]byte("zip")))
 	sqlWrite(t, o.db, func(q *store.Queries) error {
@@ -124,7 +124,7 @@ func TestProjectDeletionRetainsUsageAndSessions(t *testing.T) {
 		if e := q.RecordUsage(store.UsageRow{AttemptID: "j", JobID: "j", ProjectID: "p"}); e != nil {
 			return e
 		}
-		if e := q.InsertSession(store.SessionRow{ID: "agent", UserID: "u", Kind: "agent", Status: "active", ProjectID: nullableString("p"), Expires: 999999, Data: json.RawMessage(`{}`)}); e != nil {
+		if e := q.InsertSession(store.SessionRow{ID: "agent", UserID: "u", Kind: "agent", Status: "active", ProjectID: store.NullableString("p"), Expires: 999999, Data: json.RawMessage(`{}`)}); e != nil {
 			return e
 		}
 		if e := q.PutWikiFile(store.WikiFileRow{ProjectID: "p", Path: "wiki/index.md", Hash: string(model.HashContent([]byte("x")))}); e != nil {

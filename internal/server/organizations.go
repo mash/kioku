@@ -172,14 +172,10 @@ func namespaceProject(q *store.Queries, orgSlug, slug, uid string, allowDeleting
 		return model.Project{}, err
 	}
 	if len(allowDeleting) > 0 && allowDeleting[0] {
-		role, e := q.ProjectRole(p.ID, uid)
-		if errors.Is(e, sql.ErrNoRows) || e == nil && role != "owner" {
-			return model.Project{}, fail(404, "project not found")
+		if err := deleteOwner(q, p.ID, uid); err != nil {
+			return model.Project{}, err
 		}
-		if e != nil {
-			return model.Project{}, e
-		}
-		if _, e = q.User(uid); e != nil {
+		if _, e := q.User(uid); e != nil {
 			return model.Project{}, e
 		}
 		return projectProjection(q, p)

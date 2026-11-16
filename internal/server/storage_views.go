@@ -16,8 +16,8 @@ func beginSQLViews(q *store.Queries, j *store.JobRow, p store.ProjectRow, budget
 	if err != nil {
 		return err
 	}
-	j.Data.WikiStatus = nullableString("completed")
-	snapshot := valueString(p.WikiRevision)
+	j.Data.WikiStatus = store.NullableString("completed")
+	snapshot := store.ValueString(p.WikiRevision)
 	if _, e := q.WikiFile(p.ID, "wiki/index.md"); errors.Is(e, sql.ErrNoRows) {
 		snapshot = ""
 	} else if e != nil {
@@ -27,7 +27,7 @@ func beginSQLViews(q *store.Queries, j *store.JobRow, p store.ProjectRow, budget
 		snapshot = ""
 	}
 	if snapshot == "" {
-		j.Data.WikiStatus = nullableString("unavailable")
+		j.Data.WikiStatus = store.NullableString("unavailable")
 	}
 	j.Data.Views = []store.ViewResultData{}
 	for _, v := range views {
@@ -93,16 +93,16 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			v, e := q.View(p.ProjectID, result.ViewID)
 			if errors.Is(e, sql.ErrNoRows) {
 				result.Status = "skipped"
-				result.Error = nullableString(viewDeleted)
+				result.Error = store.NullableString(viewDeleted)
 				return nil
 			}
 			if e != nil {
 				return e
 			}
 			result.Status = status
-			result.Error = nullableString(reason)
-			v.Data.Status = nullableString(status)
-			v.Data.Error = nullableString(reason)
+			result.Error = store.NullableString(reason)
+			v.Data.Status = store.NullableString(status)
+			v.Data.Error = store.NullableString(reason)
 			return q.PutView(v)
 		}
 		if p.ChildID != nil {
@@ -128,7 +128,7 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 			result.Status = child.Status
 			result.Error = child.Data.Error
 			if child.Status != "completed" {
-				if e = setStatus(result, child.Status, valueString(child.Data.Error)); e != nil {
+				if e = setStatus(result, child.Status, store.ValueString(child.Data.Error)); e != nil {
 					return e
 				}
 			}
@@ -170,7 +170,7 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 				}
 			}
 			p.Status = "failed"
-			p.Data.Error = nullableString(authErr.Error())
+			p.Data.Error = store.NullableString(authErr.Error())
 			p.GenerationSnapshot = nil
 			p.Data.ViewGeneration = nil
 			if e = q.PutJob(p); e != nil {
@@ -181,7 +181,7 @@ func (o *storageOperations) advanceViews(ctx context.Context, id string) error {
 		for g.Next < len(p.Data.Views) {
 			result := &p.Data.Views[g.Next]
 			reason := ""
-			if valueString(p.GenerationSnapshot) == "" {
+			if store.ValueString(p.GenerationSnapshot) == "" {
 				reason = "Wiki が未生成"
 				if p.Data.Revision != nil {
 					reason = "Wiki の公開が未完了"
@@ -236,7 +236,7 @@ func (o *storageOperations) finishView(ctx context.Context, id, status, reason s
 			return fail(409, "not a View generation job")
 		}
 		j.Status = status
-		j.Data.Error = nullableString(reason)
+		j.Data.Error = store.NullableString(reason)
 		if e = q.PutJob(j); e != nil {
 			return e
 		}

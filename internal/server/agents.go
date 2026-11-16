@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -43,7 +42,7 @@ func (s *Server) authorizeAgent(r *http.Request, principal authenticatedSession)
 	return fail(403, "agent credential does not permit this operation")
 }
 func publicAgent(row store.SessionRow, data store.AgentSessionData) map[string]any {
-	return map[string]any{"id": valueString(data.AgentID), "issuer_id": row.UserID, "name": data.Name, "role": valueString(data.Role), "created": creationDate(row.Created), "expires": storageDate(row.Expires), "revoked_at": optionalDate(data.RevokedAt)}
+	return map[string]any{"id": store.ValueString(data.AgentID), "issuer_id": row.UserID, "name": data.Name, "role": store.ValueString(data.Role), "created": creationDate(row.Created), "expires": storageDate(row.Expires), "revoked_at": optionalDate(data.RevokedAt)}
 }
 func (s *Server) agents(w http.ResponseWriter, r *http.Request, uid string) error {
 	out := []map[string]any{}
@@ -60,8 +59,8 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request, uid string) erro
 			if row.UserID != uid && p.Members[uid] != "owner" {
 				continue
 			}
-			var data store.AgentSessionData
-			if e = json.Unmarshal(row.Data, &data); e != nil {
+			data, e := store.SessionData[store.AgentSessionData](row)
+			if e != nil {
 				return e
 			}
 			out = append(out, publicAgent(row, data))
@@ -82,15 +81,15 @@ func revokeAgentSession(q *store.Queries, key string, now int64) error {
 	if row.Kind != "agent" {
 		return fail(404, "agent credential not found")
 	}
-	var data store.AgentSessionData
-	if err = json.Unmarshal(row.Data, &data); err != nil {
+	data, err := store.SessionData[store.AgentSessionData](row)
+	if err != nil {
 		return err
 	}
 	if data.RevokedAt != nil {
 		return nil
 	}
 	data.RevokedAt = &now
-	row.Data, err = json.Marshal(data)
+	row.Data, err = store.EncodeSessionData(data)
 	if err != nil {
 		return err
 	}
@@ -107,11 +106,11 @@ func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request, uid string)
 			return e
 		}
 		for _, row := range rows {
-			var data store.AgentSessionData
-			if e = json.Unmarshal(row.Data, &data); e != nil {
+			data, e := store.SessionData[store.AgentSessionData](row)
+			if e != nil {
 				return e
 			}
-			if valueString(data.AgentID) == r.PathValue("agent") && (row.UserID == uid || p.Members[uid] == "owner") {
+			if store.ValueString(data.AgentID) == r.PathValue("agent") && (row.UserID == uid || p.Members[uid] == "owner") {
 				return revokeAgentSession(q, row.ID, time.Now().UnixMilli())
 			}
 		}
@@ -128,7 +127,7 @@ func revokeAgents(q *store.Queries, uid, pid string) error {
 		return err
 	}
 	for _, row := range rows {
-		if pid != "" && valueString(row.ProjectID) != pid {
+		if pid != "" && store.ValueString(row.ProjectID) != pid {
 			continue
 		}
 		if err = revokeAgentSession(q, row.ID, time.Now().UnixMilli()); err != nil {

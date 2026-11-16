@@ -50,7 +50,7 @@ func (s *Server) defaultWikiPrompt() string {
 }
 
 func (s *Server) wikiViewDefinition(row store.ViewRow, project model.Project) viewDefinition {
-	view := viewDefinition{ID: row.ID, Slug: wikiViewSlug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt), CreatedAt: &project.Created, Status: "pending"}
+	view := viewDefinition{ID: row.ID, Slug: wikiViewSlug, Title: store.ValueString(row.Data.Title), Prompt: store.ValueString(row.Data.Prompt), CreatedAt: &project.Created, Status: "pending"}
 	if view.Title == "" {
 		view.Title = "Wiki"
 	}
@@ -83,7 +83,7 @@ func (s *Server) viewProjection(row store.ViewRow, p model.Project) viewDefiniti
 	if row.Slug == wikiViewSlug {
 		return s.wikiViewDefinition(row, p)
 	}
-	v := viewDefinition{ID: row.ID, Slug: row.Slug, Title: valueString(row.Data.Title), Prompt: valueString(row.Data.Prompt), Status: valueString(row.Data.Status), Error: valueString(row.Data.Error), JobID: valueString(row.Data.JobID), WikiSnapshotID: valueString(row.Data.WikiSnapshotID)}
+	v := viewDefinition{ID: row.ID, Slug: row.Slug, Title: store.ValueString(row.Data.Title), Prompt: store.ValueString(row.Data.Prompt), Status: store.ValueString(row.Data.Status), Error: store.ValueString(row.Data.Error), JobID: store.ValueString(row.Data.JobID), WikiSnapshotID: store.ValueString(row.Data.WikiSnapshotID)}
 	if row.CreatedAt != nil {
 		t := storageDate(*row.CreatedAt)
 		v.CreatedAt = &t
@@ -92,7 +92,7 @@ func (s *Server) viewProjection(row store.ViewRow, p model.Project) viewDefiniti
 		t := storageDate(*row.Data.GeneratedAt)
 		v.GeneratedAt = &t
 	}
-	if row.BundleHash != nil && valueString(row.ViewEpoch) != p.ViewEpoch {
+	if row.BundleHash != nil && store.ValueString(row.ViewEpoch) != p.ViewEpoch {
 		v.JobID = ""
 		v.WikiSnapshotID = ""
 		v.GeneratedAt = nil
@@ -193,7 +193,7 @@ func (s *Server) createViewLocked(ctx context.Context, pid, slug, title, prompt 
 			return err
 		}
 		now := time.Now().UnixMilli()
-		row := store.ViewRow{ID: id, ProjectID: pid, Slug: slug, CreatedAt: &now, Data: store.ViewData{Title: &title, Prompt: &prompt, Status: nullableString("pending")}}
+		row := store.ViewRow{ID: id, ProjectID: pid, Slug: slug, CreatedAt: &now, Data: store.ViewData{Title: &title, Prompt: &prompt, Status: store.NullableString("pending")}}
 		if err := q.PutView(row); err != nil {
 			return err
 		}
@@ -278,7 +278,7 @@ func (s *Server) readViewBundleLocked(ctx context.Context, pid string, v viewDef
 		if err != nil {
 			return err
 		}
-		if row.BundleHash == nil || valueString(row.Data.JobID) != v.JobID || !equalOptional(row.ViewEpoch, p.ViewEpoch) {
+		if row.BundleHash == nil || store.ValueString(row.Data.JobID) != v.JobID || !equalOptional(row.ViewEpoch, p.ViewEpoch) {
 			return fail(404, "view result not found")
 		}
 		return nil

@@ -83,7 +83,7 @@ func TestWikiViewSettingsAndReservedSlug(t *testing.T) {
 		t.Fatalf("title-only = %+v", got)
 	}
 	row := fixtureViewRow(t, f, p.ID, id)
-	if row.CreatedAt != nil || row.BundleHash != nil || row.ViewEpoch != nil || valueString(row.Data.Title) != "Notes" || row.Data.Prompt != nil {
+	if row.CreatedAt != nil || row.BundleHash != nil || row.ViewEpoch != nil || store.ValueString(row.Data.Title) != "Notes" || row.Data.Prompt != nil {
 		t.Fatal(row)
 	}
 	if got := patch(map[string]string{"prompt": "Saved"}); got.Title != "Notes" || got.Prompt != "Saved" {
@@ -183,14 +183,14 @@ func TestWikiViewListCreationOrder(t *testing.T) {
 		t.Fatal(code, created)
 	}
 	fixtureViewCreated(t, f, p.ID, created.ID, p.Created.Add(time.Second))
-	unlock, err := f.s.lockProject(ctx, p.ID)
+	unlock, err := f.s.storage.lock(ctx, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
 	fixtureCheck(t, f.stateStore.Write(ctx, func(q *store.Queries) error {
 		for _, slug := range []string{"b-legacy", "a-legacy"} {
-			if err := q.PutView(store.ViewRow{ID: "vw_" + slug, ProjectID: p.ID, Slug: slug, Data: store.ViewData{Title: &slug, Prompt: nullableString("x"), Status: nullableString("pending")}}); err != nil {
+			if err := q.PutView(store.ViewRow{ID: "vw_" + slug, ProjectID: p.ID, Slug: slug, Data: store.ViewData{Title: &slug, Prompt: store.NullableString("x"), Status: store.NullableString("pending")}}); err != nil {
 				return err
 			}
 		}

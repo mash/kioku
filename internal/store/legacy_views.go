@@ -113,7 +113,7 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			}
 		}
 		created := now.UnixMilli()
-		p.views = append(p.views, ViewRow{ProjectID: project.ID, ID: "vw_" + auth.Hash(project.ID + "/project-map")[:20], Slug: "project-map", CreatedAt: &created, Data: ViewData{Title: migrationString("Project map"), Prompt: migrationString("Wiki をもとに、プロジェクトの現在地、日程、次のマイルストーン、直近の判断、根拠を示す。"), Status: migrationString("pending")}})
+		p.views = append(p.views, ViewRow{ProjectID: project.ID, ID: "vw_" + auth.Hash(project.ID + "/project-map")[:20], Slug: "project-map", CreatedAt: &created, Data: ViewData{Title: NullableString("Project map"), Prompt: NullableString("Wiki をもとに、プロジェクトの現在地、日程、次のマイルストーン、直近の判断、根拠を示す。"), Status: NullableString("pending")}})
 		return nil
 	}
 	var index legacyViewIndex
@@ -143,8 +143,8 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			if entry.ID != wikiID {
 				return errors.New("legacy Wiki View identity mismatch")
 			}
-			wikiRow.Data.Title = migrationString(v.Title)
-			wikiRow.Data.Prompt = migrationString(v.Prompt)
+			wikiRow.Data.Title = NullableString(v.Title)
+			wikiRow.Data.Prompt = NullableString(v.Prompt)
 			continue
 		}
 		if raw, ok := existing[entry.ID+"/edit.json"]; ok {
@@ -178,7 +178,7 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			return errors.New("legacy View result disagrees with index")
 		}
 		title, prompt, status := v.Title, v.Prompt, v.Status
-		row := ViewRow{ProjectID: project.ID, ID: entry.ID, Slug: slug, CreatedAt: migrationOptionalTime(v.CreatedAt), BundleHash: migrationString(entry.Hash), ViewEpoch: migrationString(entry.Epoch), Data: ViewData{Title: &title, Prompt: &prompt, Status: &status, Error: migrationString(v.Error), JobID: migrationString(v.JobID), WikiSnapshotID: migrationString(v.WikiSnapshotID), GeneratedAt: migrationOptionalTime(v.GeneratedAt)}}
+		row := ViewRow{ProjectID: project.ID, ID: entry.ID, Slug: slug, CreatedAt: migrationOptionalTime(v.CreatedAt), BundleHash: NullableString(entry.Hash), ViewEpoch: NullableString(entry.Epoch), Data: ViewData{Title: &title, Prompt: &prompt, Status: &status, Error: NullableString(v.Error), JobID: NullableString(v.JobID), WikiSnapshotID: NullableString(v.WikiSnapshotID), GeneratedAt: migrationOptionalTime(v.GeneratedAt)}}
 		if entry.Result != "" {
 			if _, e := model.ParseContentHash(entry.Hash); e != nil {
 				return e
@@ -203,13 +203,13 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 			if e := validateLegacyViewZIP(selected); e != nil {
 				return e
 			}
-			if entry.Epoch == valueMigrationString(project.ViewEpoch) {
+			if entry.Epoch == ValueString(project.ViewEpoch) {
 				p.copies[model.ViewContentKey(project.ID, entry.ID, model.ContentHash(entry.Hash))] = selected
 			}
 		} else if entry.Hash != "" {
 			return errors.New("legacy View hash without result")
 		}
-		if entry.Epoch != valueMigrationString(project.ViewEpoch) {
+		if entry.Epoch != ValueString(project.ViewEpoch) {
 			row.BundleHash = nil
 			row.ViewEpoch = nil
 			row.Data.JobID = nil
@@ -223,12 +223,7 @@ func (p *migrationPlan) readViews(ctx context.Context, project ProjectRow, objec
 	}
 	return nil
 }
-func valueMigrationString(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
-}
+
 func validateLegacyViewZIP(body []byte) error {
 	if len(body) > 16<<20 {
 		return errors.New("legacy View ZIP exceeds size limit")

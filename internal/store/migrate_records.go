@@ -76,7 +76,7 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if v.ID != r.id {
 				return errors.New("invite identity mismatch")
 			}
-			p.invites = append(p.invites, InviteRow{ID: v.ID, ProjectID: v.ProjectID, CreatedBy: v.CreatedBy, Expires: migrationCreated(v.Expires), UsedBy: migrationString(v.UsedBy), TokenHash: v.TokenHash, Data: InviteData{Email: migrationString(v.Email)}})
+			p.invites = append(p.invites, InviteRow{ID: v.ID, ProjectID: v.ProjectID, CreatedBy: v.CreatedBy, Expires: migrationCreated(v.Expires), UsedBy: NullableString(v.UsedBy), TokenHash: v.TokenHash, Data: InviteData{Email: NullableString(v.Email)}})
 		case "oauth_clients":
 			var v legacyV2OAuthClient
 			if e := decodeLegacyJSON(r.body, &v); e != nil {
@@ -99,9 +99,9 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if e != nil {
 				return e
 			}
-			data.AgentID = migrationString(v.AgentID)
-			data.Role = migrationString(v.Role)
-			if e = p.addSession(SessionRow{ID: r.id, Kind: "web", Status: "active", UserID: v.UserID, ProjectID: migrationString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, data); e != nil {
+			data.AgentID = NullableString(v.AgentID)
+			data.Role = NullableString(v.Role)
+			if e = p.addSession(SessionRow{ID: r.id, Kind: "web", Status: "active", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, data); e != nil {
 				return e
 			}
 		case "agent_tokens":
@@ -116,7 +116,7 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 				p.discardedRecords++
 				continue
 			}
-			if e := p.addSession(SessionRow{ID: v.TokenHash, Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: migrationString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, AgentSessionData{AgentID: migrationString(v.ID), Role: migrationString(v.Role), Name: v.Name, RevokedAt: migrationTime(v.RevokedAt)}); e != nil {
+			if e := p.addSession(SessionRow{ID: v.TokenHash, Kind: "agent", Status: "active", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires), Created: migrationCreated(v.Created)}, AgentSessionData{SessionRoleData: SessionRoleData{AgentID: NullableString(v.ID), Role: NullableString(v.Role)}, Name: v.Name, RevokedAt: migrationTime(v.RevokedAt)}); e != nil {
 				return e
 			}
 		case "devices":
@@ -132,7 +132,7 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if v.Used {
 				status = "active"
 			}
-			if e = p.addSession(SessionRow{ID: auth.Hash(r.id), Kind: "cli_login", Status: status, UserID: v.UserID, Expires: migrationCreated(v.Expires)}, CLILoginData{IdentitySessionData: identity, LoopbackChallenge: migrationString(v.LoopbackChallenge), LoopbackRedirectURI: migrationString(v.LoopbackRedirectURI), LoopbackState: migrationString(v.LoopbackState), LoopbackCodeHash: migrationString(v.LoopbackCodeHash)}); e != nil {
+			if e = p.addSession(SessionRow{ID: auth.Hash(r.id), Kind: "cli_login", Status: status, UserID: v.UserID, Expires: migrationCreated(v.Expires)}, CLILoginData{IdentitySessionData: identity, LoopbackChallenge: NullableString(v.LoopbackChallenge), LoopbackRedirectURI: NullableString(v.LoopbackRedirectURI), LoopbackState: NullableString(v.LoopbackState), LoopbackCodeHash: NullableString(v.LoopbackCodeHash)}); e != nil {
 				return e
 			}
 		case "oauth_codes":
@@ -185,7 +185,7 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if e := decodeLegacyJSON(r.body, &v); e != nil {
 				return e
 			}
-			if e := p.addSession(SessionRow{ID: r.id, Kind: "login_code", Status: "pending", UserID: v.UserID, ProjectID: migrationString(v.ProjectID), Expires: migrationCreated(v.Expires)}, LoginCodeData{GrantKey: v.GrantKey, Role: migrationString(v.Role)}); e != nil {
+			if e := p.addSession(SessionRow{ID: r.id, Kind: "login_code", Status: "pending", UserID: v.UserID, ProjectID: NullableString(v.ProjectID), Expires: migrationCreated(v.Expires)}, LoginCodeData{GrantKey: v.GrantKey, Role: NullableString(v.Role)}); e != nil {
 				return e
 			}
 		case "oauth", "periods", "holds", "outbox", "alerts", "stripe_events":
@@ -211,7 +211,7 @@ func (p *migrationPlan) addSession(row SessionRow, data any) error {
 	return nil
 }
 func migrateIdentity(cipher *auth.Cipher, user, provider, id, encrypted string) (IdentitySessionData, error) {
-	data := IdentitySessionData{IdentityProvider: migrationString(provider), IdentityID: migrationString(id)}
+	data := IdentitySessionData{IdentityProvider: NullableString(provider), IdentityID: NullableString(id)}
 	if encrypted == "" {
 		return data, nil
 	}

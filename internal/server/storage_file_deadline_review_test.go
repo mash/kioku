@@ -73,10 +73,10 @@ func TestFileOutputRechecksDeadlineAfterIO(t *testing.T) {
 			}
 			got := readSQLJob(t, f.s.storage, j.ID)
 			if tc.expired {
-				if got.Status != "failed" || got.OutputHash != nil || valueString(got.Data.Error) != "managed agent output did not become available before the deadline" {
+				if got.Status != "failed" || got.OutputHash != nil || store.ValueString(got.Data.Error) != "managed agent output did not become available before the deadline" {
 					t.Fatalf("late output was accepted: %+v", got)
 				}
-			} else if valueString(got.Data.WikiStatus) != "completed" || got.OutputHash == nil {
+			} else if store.ValueString(got.Data.WikiStatus) != "completed" || got.OutputHash == nil {
 				t.Fatalf("on-time output was rejected: %+v", got)
 			}
 		})

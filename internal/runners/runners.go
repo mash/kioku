@@ -11,14 +11,11 @@ import (
 
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/runner/claudemanaged"
-	openairunner "github.com/mash/kioku/internal/runner/openai"
 )
 
 type Config struct {
 	Prompts         *prompts.Rendered
 	Type            string
-	OpenAIAPIKey    string
-	OpenAIModel     string
 	Command         []string
 	DataDir         string
 	AnthropicAPIKey string
@@ -31,9 +28,8 @@ type Config struct {
 }
 
 type Set struct {
-	config       Config
-	execRunner   *execrunner.Runner
-	openaiRunner *openairunner.Runner
+	config     Config
+	execRunner *execrunner.Runner
 }
 
 func Load(c Config, onExit func(string)) (*Set, error) {
@@ -50,8 +46,6 @@ func (s *Set) Close(ctx context.Context) error { return s.execRunner.Close(ctx) 
 // New returns the configured runner.
 func (s *Set) New() (runner.Runner, error) {
 	switch s.config.Type {
-	case "openai":
-		return s.openaiRunner, nil
 	case "exec":
 		return s.execRunner, nil
 	}

@@ -33,12 +33,11 @@ func TestPromptValidationForSelectedRunner(t *testing.T) {
 	overhead := utf8.RuneCountInString(sample.FileSystem()) - 1
 	for _, count := range []int{100000, 100001} {
 		rendered := loadPrompts(t, map[string]string{prompts.SystemFile: strings.Repeat("あ", count-overhead)})
-		for _, kind := range []string{"", "claudemanaged", "exec", "openai"} {
+		for _, kind := range []string{"", "claudemanaged", "exec"} {
 			c := execConfig(t)
 			c.Type, c.Prompts = kind, rendered
 			c.MAAgentID, c.MAEnvironmentID, c.AnthropicAPIKey = "agent", "env", "key"
 			c.BaseURL = "https://kioku.test"
-			c.OpenAIAPIKey, c.OpenAIModel = "key", "model"
 			set, err := Load(c, nil)
 			want := ""
 			if kind == "exec" {

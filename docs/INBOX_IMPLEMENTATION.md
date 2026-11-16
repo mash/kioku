@@ -16,7 +16,7 @@ inbox はクライアントが送った本文と削除の依頼を保存する�
 - 出力の (a)〜(e) は source_url の完全一致で検査する。URL の正規化やリダイレクト先への置換をしない。slug、原文の忠実な保持、引用、index の分類、log の100項目・秘密除去はプロンプト規則であり、サーバーは内容を検査しない。
 - source_url はクライアントが申告する出典である。サーバーは URL の形式を検査するが、本文と原本の一致や投稿者の原本への閲覧権限を検証しない。
 - runner は remove フラグで本文と削除の依頼を区別して処理する。managed runner の入出力はプロバイダーのファイルAPIで受け渡す。Google／GitHub の OAuth はログインに使う。
-- Claudeの環境テンプレートでは allowed_hosts を空にする。運用者が環境を用意し、kiokud が起動前のprovider API照合で通信制限を確認する。OpenAIはセッション作成時に通信を無効にする。
+- Claudeの環境テンプレートでは allowed_hosts を空にする。運用者が環境を用意し、kiokud が起動前のprovider API照合で通信制限を確認する。
 - macOS の Unix socket のパス長に合わせ、バックアップのテスト用ソケットには短い相対パスを使った。製品のバックアップ API は変えていない。
 - source_url 検査の HTTP 応答テストを PR-5、source ページ名・slug 衝突の公開往復テストを PR-6 で補った。実装の依存順は変えていない。
 

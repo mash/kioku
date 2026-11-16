@@ -45,7 +45,7 @@ Each put request is at most 1 MiB including JSON overhead (413 on excess). Each 
 
 ## One current wiki
 
-Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, WIKI.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md contains the job ID and project namespace. Exec also receives the input and output URLs in JOB.md. WIKI.md contains the Wiki View's saved prompt verbatim, or the default Wiki prompt when none is saved. The runner follows it when choosing, splitting and structuring pages and wiki/index.md; conflicting system rules take precedence. Instructions and output rules are in the system prompt. The outer YAML contains source_url, submitter and remove true only for removals. The runner copies updated_at from the submitted file frontmatter inside the item body into the source page YAML frontmatter and uses source times to date facts. Nested frontmatter remains source content; only the outer YAML controls the remove flag. No provider tokens enter this tar. Expanded input, including WIKI.md, is limited to 256 MiB. WIKI.md also counts toward OpenAI's 50 MiB compressed input limit. A large combined inbox/wiki/prompt can exceed this limit even when individual puts are valid; the run fails and retains items instead of silently dropping input.
+Generation atomically pins all eligible waiting items to one run before reading bodies. The input tar contains JOB.md, WIKI.md, inbox/<id>.md with server-owned outer YAML and verbatim submitted bodies, and the entire existing wiki/. JOB.md contains the job ID and project namespace. Exec also receives the input and output URLs in JOB.md. WIKI.md contains the Wiki View's saved prompt verbatim, or the default Wiki prompt when none is saved. The runner follows it when choosing, splitting and structuring pages and wiki/index.md; conflicting system rules take precedence. Instructions and output rules are in the system prompt. The outer YAML contains source_url, submitter and remove true only for removals. The runner copies updated_at from the submitted file frontmatter inside the item body into the source page YAML frontmatter and uses source times to date facts. Nested frontmatter remains source content; only the outer YAML controls the remove flag. No provider tokens enter this tar. Expanded input, including WIKI.md, is limited to 256 MiB.
 
 The runner uses the remove flag to process submitted bodies and removal requests, edits source pages and organizes other pages according to WIKI.md, and returns the complete wiki/*.md set. Existing sources are identified by exact frontmatter source_url and keep their filenames. New slug collisions use -2, -3, etc. The index omits source pages; log.md records changes, newest first, up to 100 entries. The prompt requires these content rules and forbids tokens and signed URL secrets in log.md.
 
@@ -63,13 +63,13 @@ The debounce period (`--generate-debounce`, default 10s) restarts at each saved 
 
 ## Generation runner type
 
-`KIOKU_RUNNER` selects `claudemanaged`, `openai` or `exec`. When unset, all three of `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` enable Managed Agents; partial settings fail startup. With no configured runner, the server can accept inbox items and serve a wiki, but generation fails. There is no deterministic fallback. OpenAI requires `OPENAI_API_KEY` and `KIOKU_OPENAI_MODEL`. Exec requires the command below. Unknown names fail startup.
+`KIOKU_RUNNER` selects `claudemanaged` or `exec`. When unset, all three of `ANTHROPIC_API_KEY`, `KIOKU_MA_AGENT_ID` and `KIOKU_MA_ENVIRONMENT_ID` enable Managed Agents; partial settings fail startup. With no configured runner, the server can accept inbox items and serve a wiki, but generation fails. There is no deterministic fallback. Exec requires the command below. Unknown names fail startup.
 
 Generation uses the operator's runner configuration. Personal generation keys require self-hosting. Do not change runner type until running attempts and cleanup finish.
 
 Each attempt persists its ID, pinned inbox, phase, budget and deadline before it creates external resources. Managed attempts also persist their provider, transport, and resource IDs. Exec persists its job token identity. Recovery uses the saved provider and attempt metadata.
 
-Project generation gives the Wiki the full requested budget first, then generates the project's other Views in creation order: oldest `created_at` first, ties by `view_id` in string order. Views without `created_at` follow those with it, in slug order. Web and MCP lists use the same order; the Wiki View uses the project's creation time and comes first. After each attempt the server subtracts its reported cost from the remaining budget. If the runner cannot report a settled cost, that attempt leaves the remaining allowance unchanged. OpenAI does not currently report a settled per-session cost through this integration, so the total bill can exceed the generation request's amount.
+Project generation gives the Wiki the full requested budget first, then generates the project's other Views in creation order: oldest `created_at` first, ties by `view_id` in string order. Views without `created_at` follow those with it, in slug order. Web and MCP lists use the same order; the Wiki View uses the project's creation time and comes first. After each attempt the server subtracts its reported cost from the remaining budget. If the runner cannot report a settled cost, that attempt leaves the remaining allowance unchanged.
 
 The Wiki and each other View run in separate runner sessions under one project generation job. Each non-Wiki View session receives the complete Wiki and its saved prompt in `VIEW.md`. It returns a gzip-compressed tar archive with `index.html` at the root and optional images and CSS under `assets/`, plus optional `summary.md` and `data.json`. Kioku validates those files before writing the View ZIP.
 
@@ -93,9 +93,9 @@ All Wiki runners receive this fixed paragraph immediately after the rendered sys
 
 File-based runners append their fixed input/output instructions after this paragraph. Exec includes the paragraph in its JSON `prompt`.
 
-MA sessions always receive `agent_with_overrides`: rendered system, model when present, the fixed Go tool list, and empty non-nil `mcp_servers` and `skills`. `KIOKU_MA_AGENT_VERSION` still pins the referenced agent version. The MA system limit is 100,000 Unicode runes, checked at startup after adding the fixed paragraph, including when MA is selected implicitly. Agent resources carry the placeholder documented in README; environment resources must be separate for each deployment. OpenAI uses the rendered system with `KIOKU_OPENAI_MODEL`. Exec receives the rendered system and user message on stdin.
+MA sessions always receive `agent_with_overrides`: rendered system, model when present, the fixed Go tool list, and empty non-nil `mcp_servers` and `skills`. `KIOKU_MA_AGENT_VERSION` still pins the referenced agent version. The MA system limit is 100,000 Unicode runes, checked at startup after adding the fixed paragraph, including when MA is selected implicitly. Agent resources carry the placeholder documented in README; environment resources must be separate for each deployment. Exec receives the rendered system and user message on stdin.
 
-Existing MA/OpenAI sessions retain their original prompts and input archive, including WIKI.md, across restart. Discovery of an uncertain start resumes that session without creating another one; a new generation uses current prompts. Exec stops on restart. MA session-create 4xx errors log `session create rejected status=... type=...`; 429 remains temporary, while other 4xx fail the attempt. Error conversion retains only the HTTP status and SDK error type, never the provider message or request.
+Existing MA sessions retain their original prompts and input archive, including WIKI.md, across restart. Discovery of an uncertain start resumes that session without creating another one; a new generation uses current prompts. Exec stops on restart. MA session-create 4xx errors log `session create rejected status=... type=...`; 429 remains temporary, while other 4xx fail the attempt. Error conversion retains only the HTTP status and SDK error type, never the provider message or request.
 
 ## Job credential and network policy
 
@@ -111,9 +111,6 @@ manager exceptions. Kioku also clears inherited MCP servers and skills, disables
 web fetch and web search, and pins the inspected single-agent version. Manage
 the environment per deployment and avoid modifying it while the deployment runs.
 
-OpenAI uses a hosted environment with networking disabled. Kioku confirms the
-effective policy before sending the first turn. The input is limited to 50 MiB
-compressed, and an oversized input fails without dropping any inbox items.
 Use provider projects or workspaces dedicated to the corresponding trust
 boundary before attaching real tenant data. In Anthropic, uploaded files are
 workspace-scoped even when their mounted copies are session-scoped.

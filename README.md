@@ -485,7 +485,7 @@ model:
 ---
 ```
 
-MA は指定された model を送信し、省略時は Agent 側の model を使います。model の文字列指定や effort を省いた map は、MA 側の effort をモデル既定に戻し、省略した inference_geo を消します。維持したい値は map に明示してください。exec は model の id だけを使い、他のフィールドがあれば起動時に警告を1件出します。exec で model を省略すると起動しません。OpenAI は frontmatter の model を使わず、`KIOKU_OPENAI_MODEL` を使います。
+MA は指定された model を送信し、省略時は Agent 側の model を使います。model の文字列指定や effort を省いた map は、MA 側の effort をモデル既定に戻し、省略した inference_geo を消します。維持したい値は map に明示してください。exec は model の id だけを使い、他のフィールドがあれば起動時に警告を1件出します。exec で model を省略すると起動しません。
 
 `wiki-agent.default-prompt.md` は UTF-8 のテキストで、先頭の BOM を除きます。空白以外の文字がない本文は `prompts: wiki-agent.default-prompt.md: empty body (line 1)`、先頭が `---` の本文は `prompts: wiki-agent.default-prompt.md: syntax (line 1)` で起動エラーになります。保存済みの Wiki の prompt は既定値より優先します。
 
@@ -493,30 +493,9 @@ MA は指定された model を送信し、省略時は Agent 側の model を�
 
 起動ログは4ファイルそれぞれに `source=default|override` と `sha256` を出します。ハッシュは有効な内容の JSON 表現から計算します（system は model を含み、user はテンプレート本文とデプロイ変数を含み、MCP は既定値とのマージ後）。`wiki-agent.default-prompt.md` だけは BOM を除いた本文のバイト列から計算します。本文自体はログに出しません。差し替えたファイルには、将来の既定値の改善が自動では反映されません。
 
-起動済みの MA・OpenAI セッションは作成時の文を使い続け、新しい生成ジョブは新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
+起動済みの MA セッションは作成時の文を使い続け、新しい生成ジョブは新しい文を使います。作成結果が不明な attempt は既存セッションを検索し、別の文で作り直しません。exec は従来どおり再起動で停止します。MCP は `listChanged` を通知しないため、client は再接続まで古い説明を使う場合があります。既定の `instructions` はありません。
 
 MA がセッション作成を4xxで拒否すると `session create rejected status=... type=...` を記録します。429 は既存の一時エラー扱いを維持し、それ以外の4xxは attempt を失敗させます。プロバイダーのエラー本文はログに出しません。
-
-### OpenAI Agents API runner
-
-`KIOKU_RUNNER=openai` selects the OpenAI-managed agent and hosted sandbox for
-operator-key generation. Set `OPENAI_API_KEY` and `KIOKU_OPENAI_MODEL` explicitly.
-The application key needs access to Agents sessions and the Files API. The runner
-creates a small hosted environment with networking disabled, attaches the
-input archive, and checks the effective network policy before starting the turn.
-It retrieves the expected artifact from that completed turn. The input archive
-must fit within the Files attachment limit of 50 MiB.
-
-Kioku sends the per-job budget as `spend_control.limit`. Provider spend is
-provisional, so the runner leaves the common settled cost unknown.
-After completion or cancellation, Kioku deletes artifacts, the session and
-the input file. Keep the configured credentials and runner type available
-until pending cleanup finishes.
-
-This integration is covered by local HTTP contract tests; real API permissions,
-budget enforcement, hosted networking, and generated wiki quality still require
-an isolated live smoke test before production rollout.
-See the [Agents API documentation](https://developers.openai.com/api/docs/guides/agents-api/overview).
 
 ## Codex plugin
 

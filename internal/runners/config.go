@@ -9,12 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/runner/claudemanaged"
 	execrunner "github.com/mash/kioku/internal/runner/exec"
-	openairunner "github.com/mash/kioku/internal/runner/openai"
 	"github.com/mash/kioku/prompts"
 )
 
@@ -73,11 +71,6 @@ func (s *Set) prepareRunner(onExit func(string)) error {
 		if s.config.ManagedAgents == nil {
 			return errors.New("KIOKU_RUNNER=claudemanaged requires Managed Agents configuration")
 		}
-	case "openai":
-		if strings.TrimSpace(s.config.OpenAIAPIKey) == "" || strings.TrimSpace(s.config.OpenAIModel) == "" {
-			return errors.New("KIOKU_RUNNER=openai requires OPENAI_API_KEY and KIOKU_OPENAI_MODEL")
-		}
-		s.openaiRunner = openairunner.New(openairunner.Config{APIKey: s.config.OpenAIAPIKey, Model: s.config.OpenAIModel, Prompt: s.config.Prompts.FileSystem()})
 	case "exec":
 		model := s.config.Prompts.Model()
 		if model.ID == "" {

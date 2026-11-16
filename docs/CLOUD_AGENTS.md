@@ -95,13 +95,11 @@ LLM wiki generation uses a third role, `job`, issued only by kiokud. Users canno
 
 Kioku attaches the input archive to an offline managed session and retrieves
 the output from the provider API. Claude requires a cloud environment with an
-empty host allowlist and disables network tools. OpenAI uses a hosted environment
-with networking disabled. New managed attempts carry no vault or job token.
+empty host allowlist and disables network tools. New managed attempts carry no vault or job token.
 See [worker operations](WORKERS.md#job-credential-and-network-policy).
 
 The runner tracks the session and input file for cleanup. Deleting a Claude
-session removes its scoped output files. Kioku deletes OpenAI artifacts before
-deleting the session. Cleanup retries across restarts and blocks job retries
+session removes its scoped output files. Cleanup retries across restarts and blocks job retries
 until it completes.
 
 The input contains JOB.md, server-owned inbox metadata and the current wiki.

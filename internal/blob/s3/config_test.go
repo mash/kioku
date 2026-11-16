@@ -2,8 +2,9 @@ package s3
 
 import (
 	"context"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 )
 
 func TestConfigUsesEndpointAndRegion(t *testing.T) {
@@ -13,7 +14,7 @@ func TestConfigUsesEndpointAndRegion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		options := s.Template.Client.Options()
+		options := s.Client.Options()
 		creds, err := options.Credentials.Retrieve(context.Background())
 		if err != nil {
 			t.Fatal(err)

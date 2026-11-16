@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -130,17 +129,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 	}
 	row := store.ProjectRow{ID: auth.Token()[:20], Slug: req.Slug, Created: time.Now().UnixMilli(), Data: store.ProjectData{Name: req.Name, ViewsInitialized: true}}
 	// Check access before committing the organization, project and default Views.
-	if manager, ok := s.Blobs.(interface {
-		EnsureProject(context.Context, string) error
-	}); ok {
-		if err := manager.EnsureProject(r.Context(), row.ID); err != nil {
-			return err
-		}
-	} else if _, err := s.Blobs.List(r.Context(), "projects/"+row.ID+"/"); err != nil {
+	if _, err := s.Blobs.List(r.Context(), "projects/"+row.ID+"/"); err != nil {
 		return err
-	}
-	if buckets, ok := s.Blobs.(interface{ Bucket(string) string }); ok {
-		row.Data.StorageBucket = store.NullableString(buckets.Bucket(row.ID))
 	}
 	var result model.Project
 	if err := s.mutation(r, uid, func(q *store.Queries) error {

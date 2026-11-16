@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -22,8 +23,10 @@ type Config struct {
 	HTTPClient      *http.Client
 }
 
+var sharedBucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
+
 // New configures an S3-compatible store without provider-specific behavior.
-func New(c Config) (*Projects, error) {
+func New(c Config) (*Store, error) {
 	u, err := url.Parse(c.Endpoint)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("S3_ENDPOINT must be an HTTP(S) origin")
@@ -44,5 +47,5 @@ func New(c Config) (*Projects, error) {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	return &Projects{Template: Store{Bucket: c.Bucket, Client: sdk}}, nil
+	return &Store{Bucket: c.Bucket, Client: sdk}, nil
 }

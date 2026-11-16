@@ -8,11 +8,10 @@ type UserData struct {
 	Name string `json:"name"`
 }
 type ProjectData struct {
-	Name             string  `json:"name"`
-	StorageBucket    *string `json:"storage_bucket"`
-	WikiCreated      *int64  `json:"wiki_created"`
-	WikiUpdatedAt    *int64  `json:"wiki_updated_at"`
-	ViewsInitialized bool    `json:"views_initialized"`
+	Name             string `json:"name"`
+	WikiCreated      *int64 `json:"wiki_created"`
+	WikiUpdatedAt    *int64 `json:"wiki_updated_at"`
+	ViewsInitialized bool   `json:"views_initialized"`
 }
 type InviteData struct {
 	Email *string `json:"email"`

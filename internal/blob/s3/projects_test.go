@@ -12,6 +12,7 @@ import (
 )
 
 func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	buckets := map[string]map[string][]byte{}
 	buckets["kioku-projects"] = map[string][]byte{}
@@ -79,9 +80,6 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, pid := range []string{"alpha", "beta"} {
-		if err := projects.EnsureProject(ctx, pid); err != nil {
-			t.Fatal(err)
-		}
 		key := Key("projects/" + pid + "/original")
 		if err := projects.Put(ctx, key, []byte(pid)); err != nil {
 			t.Fatal(err)
@@ -91,12 +89,6 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 			t.Fatal("round trip", err)
 		}
 	}
-	if projects.Bucket("alpha") != "kioku-projects" || projects.Bucket("beta") != "kioku-projects" {
-		t.Fatal("unexpected bucket")
-	}
-	if err := projects.EnsureProject(ctx, "alpha"); err != nil {
-		t.Fatal(err)
-	}
 	keys, err := projects.List(ctx, "projects/alpha/")
 	if err != nil || len(keys) != 1 || keys[0] != "projects/alpha/original" {
 		t.Fatal(keys, err)
@@ -104,23 +96,16 @@ func TestProjectBucketIsolationAndLifecycle(t *testing.T) {
 	if err = projects.Delete(ctx, keys[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err = projects.DeleteProject(ctx, "alpha"); err != nil {
-		t.Fatal(err)
+	if err := projects.ValidateLegacyBucket("old-bucket"); err == nil {
+		t.Fatal("silent migration allowed")
 	}
-	{
-		projects.RegisterProjectBucket("legacy", "old-bucket")
-		if err := projects.EnsureProject(ctx, "legacy"); err == nil {
-			t.Fatal("silent migration allowed")
+	for _, bucket := range []string{"", "kioku-projects"} {
+		if err := projects.ValidateLegacyBucket(bucket); err != nil {
+			t.Fatal(err)
 		}
-		if _, err := projects.Get(ctx, "projects/legacy/original"); err == nil {
-			t.Fatal("legacy bucket accessed")
-		}
-		if err := projects.DeleteProject(ctx, "legacy"); err == nil {
-			t.Fatal("legacy deletion accepted")
-		}
-		if keys, err := projects.List(ctx, "projects/"); err != nil || len(keys) != 1 || keys[0] != "projects/beta/original" {
-			t.Fatal("full project list", keys, err)
-		}
+	}
+	if keys, err := projects.List(ctx, "projects/"); err != nil || len(keys) != 1 || keys[0] != "projects/beta/original" {
+		t.Fatal("full project list", keys, err)
 	}
 	b, err := projects.Get(ctx, "projects/beta/original")
 	if err != nil || string(b) != "beta" {

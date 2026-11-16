@@ -23,7 +23,6 @@ import (
 // not reconstruct a State snapshot or read any legacy stored representation.
 
 type fixtureProject struct {
-	StorageBucket  string            `json:"storage_bucket,omitempty"`
 	WikiIncomplete bool              `json:"wiki_incomplete,omitempty"`
 	WikiUpdatedAt  time.Time         `json:"wiki_updated_at,omitempty"`
 	NextGenerateAt time.Time         `json:"next_generate_at,omitempty"`
@@ -330,7 +329,7 @@ func fixtureProjectsFind(t testing.TB, source any, id string) (fixtureProject, b
 	fixtureCheck(t, err)
 	p, err := projectProjection(q, row)
 	fixtureCheck(t, err)
-	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: optionalDate(row.NextGenerateAt), StorageBucket: store.ValueString(row.Data.StorageBucket)}, true
+	return fixtureProject{ID: p.ID, OrgID: p.OrgID, Slug: p.Slug, Namespace: p.Namespace, Name: p.Name, Members: p.Members, Created: p.Created, Deleting: p.Deleting, Revision: p.Revision, WikiIncomplete: p.WikiIncomplete, WikiUpdatedAt: p.WikiUpdatedAt, NextGenerateAt: optionalDate(row.NextGenerateAt)}, true
 }
 func fixtureProjectsGet(t testing.TB, source any, id string) fixtureProject {
 	if f, ok := source.(*fixture); ok {
@@ -363,7 +362,6 @@ func fixtureProjectsPut(t testing.TB, q *store.Queries, id string, p fixtureProj
 		row.NextGenerateAt = &n
 	}
 	row.Data.Name = p.Name
-	row.Data.StorageBucket = store.NullableString(p.StorageBucket)
 	row.Data.WikiUpdatedAt = nil
 	if !p.WikiUpdatedAt.IsZero() {
 		n := p.WikiUpdatedAt.UnixMilli()

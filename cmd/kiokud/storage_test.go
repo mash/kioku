@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
+	"testing"
+
 	"github.com/mash/kioku/internal/blob"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/blob/s3"
-	"testing"
 )
 
 func TestOpenStorageEnvironment(t *testing.T) {
@@ -26,11 +27,11 @@ func TestOpenStorageEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, ok := objects.(*s3.Projects)
+	remote, ok := objects.(*s3.Store)
 	if !ok {
 		t.Fatal("unexpected backend")
 	}
-	options := remote.Template.Client.Options()
+	options := remote.Client.Options()
 	creds, err := options.Credentials.Retrieve(context.Background())
 	if err != nil {
 		t.Fatal(err)

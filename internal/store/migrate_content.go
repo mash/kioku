@@ -40,7 +40,7 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 	if content.Incomplete {
 		return errors.New("complete Wiki publication before migration")
 	}
-	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), NextGenerateAt: migrationTime(content.NextGenerateAt), Data: ProjectData{Name: old.Name, StorageBucket: NullableString(old.StorageBucket), WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
+	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), NextGenerateAt: migrationTime(content.NextGenerateAt), Data: ProjectData{Name: old.Name, WikiUpdatedAt: migrationTime(content.WikiUpdatedAt), ViewsInitialized: true}}
 	if content.NextGenerateAt.After(time.Time{}) && !content.NextGenerateAt.IsZero() {
 		return errors.New("complete scheduled generation before migration")
 	}

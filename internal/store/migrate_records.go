@@ -62,8 +62,10 @@ func (p *migrationPlan) readRecords(ctx context.Context, records []legacyV2Recor
 			if v.StorageRoot != "" && v.StorageRoot != "projects/"+v.ID+"/" {
 				return errors.New("unsupported project storage root")
 			}
-			if router, ok := objects.(interface{ RegisterProjectBucket(string, string) }); ok {
-				router.RegisterProjectBucket(v.ID, v.StorageBucket)
+			if validator, ok := objects.(interface{ ValidateLegacyBucket(string) error }); ok {
+				if err := validator.ValidateLegacyBucket(v.StorageBucket); err != nil {
+					return err
+				}
 			}
 			if e := p.readProject(ctx, v, objects, now); e != nil {
 				return fmt.Errorf("project %s migration: %w", v.ID, e)

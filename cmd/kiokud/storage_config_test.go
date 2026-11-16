@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
-	"github.com/mash/kioku/internal/blob"
-	"github.com/mash/kioku/internal/blob/local"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/blob/local"
 
 	"github.com/mash/kioku/internal/blob/s3"
 )
@@ -45,7 +46,7 @@ func TestOpenS3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := store.(*s3.Projects); !ok {
+	if _, ok := store.(*s3.Store); !ok {
 		t.Fatalf("unexpected backend %T", store)
 	}
 	if err := store.Put(context.Background(), "projects/p/wiki/index.md", []byte("wiki")); err == nil {

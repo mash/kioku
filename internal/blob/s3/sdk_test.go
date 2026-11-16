@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func testStore(t *testing.T, handler http.HandlerFunc) *Projects {
+func testStore(t *testing.T, handler http.HandlerFunc) *Store {
 	t.Helper()
 	server := httptest.NewTLSServer(handler)
 	t.Cleanup(server.Close)

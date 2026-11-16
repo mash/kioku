@@ -101,3 +101,12 @@ func objectReadLimit(key Key) int64 {
 	}
 	return MaxObject
 }
+
+// ValidateLegacyBucket refuses to silently move v2 objects to another bucket.
+// After migration every project uses the configured bucket and a project prefix.
+func (s Store) ValidateLegacyBucket(bucket string) error {
+	if bucket != "" && bucket != s.Bucket {
+		return errors.New("project bucket differs from S3_BUCKET; explicit migration required")
+	}
+	return nil
+}

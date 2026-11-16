@@ -31,113 +31,6 @@ func newSQLOAuth(q *store.Queries, cipher *auth.Cipher, resource string, now tim
 	return compose.Compose(config, s, strategy, compose.OAuth2AuthorizeExplicitFactory, compose.OAuth2RefreshTokenGrantFactory, compose.OAuth2PKCEFactory), s
 }
 
-func encodeSQLRequest(r fosite.Requester) (json.RawMessage, error) {
-	b, err := json.Marshal(r)
-	if err != nil {
-		return nil, err
-	}
-	var v map[string]json.RawMessage
-	if err = json.Unmarshal(b, &v); err != nil {
-		return nil, err
-	}
-	for _, key := range []string{"scopes", "grantedScopes", "requestedAudience", "grantedAudience"} {
-		if len(v[key]) == 0 || string(v[key]) == "null" {
-			v[key] = json.RawMessage(`[]`)
-		}
-	}
-	var client map[string]json.RawMessage
-	if err = json.Unmarshal(v["client"], &client); err != nil {
-		return nil, err
-	}
-	for _, key := range []string{"redirect_uris", "grant_types", "response_types", "scopes", "audience"} {
-		if len(client[key]) == 0 || string(client[key]) == "null" {
-			client[key] = json.RawMessage(`[]`)
-		}
-	}
-	v["client"], err = json.Marshal(client)
-	if err != nil {
-		return nil, err
-	}
-	var requested time.Time
-	if err = json.Unmarshal(v["requestedAt"], &requested); err != nil {
-		return nil, err
-	}
-	v["requestedAt"], err = json.Marshal(requested.UnixMilli())
-	if err != nil {
-		return nil, err
-	}
-	var session map[string]json.RawMessage
-	if err = json.Unmarshal(v["session"], &session); err != nil {
-		return nil, err
-	}
-	var expiries map[string]time.Time
-	if err = json.Unmarshal(session["expires_at"], &expiries); err != nil {
-		return nil, err
-	}
-	stored := map[string]*int64{}
-	for _, kind := range []string{"authorize_code", "access_token", "refresh_token"} {
-		var ms *int64
-		if t := expiries[kind]; !t.IsZero() {
-			n := t.UnixMilli()
-			ms = &n
-		}
-		stored[kind] = ms
-	}
-	session["expires_at"], err = json.Marshal(stored)
-	if err != nil {
-		return nil, err
-	}
-	delete(session, "project_ids")
-	v["session"], err = json.Marshal(session)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(v)
-}
-func decodeSQLRequest(raw json.RawMessage, user string, projects []string) (*fosite.Request, error) {
-	var v map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, err
-	}
-	var requested int64
-	if err := json.Unmarshal(v["requestedAt"], &requested); err != nil {
-		return nil, err
-	}
-	var err error
-	v["requestedAt"], err = json.Marshal(time.UnixMilli(requested).UTC())
-	if err != nil {
-		return nil, err
-	}
-	var session map[string]json.RawMessage
-	if err = json.Unmarshal(v["session"], &session); err != nil {
-		return nil, err
-	}
-	var expiries map[string]*int64
-	if err = json.Unmarshal(session["expires_at"], &expiries); err != nil {
-		return nil, err
-	}
-	restored := map[string]time.Time{}
-	for _, kind := range []string{"authorize_code", "access_token", "refresh_token"} {
-		t := time.Time{}
-		if ms := expiries[kind]; ms != nil {
-			t = time.UnixMilli(*ms).UTC()
-		}
-		restored[kind] = t
-	}
-	session["expires_at"], err = json.Marshal(restored)
-	if err != nil {
-		return nil, err
-	}
-	v["session"], err = json.Marshal(session)
-	if err != nil {
-		return nil, err
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	return oauthRequest(b, user, projects)
-}
 func (s *oauthSQL) GetClient(_ context.Context, id string) (fosite.Client, error) {
 	c, err := s.q.OAuthClient(id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -175,7 +68,7 @@ func (s *oauthSQL) read(id, kind string) (store.SessionRow, error) {
 	return v, nil
 }
 func (s *oauthSQL) CreateAuthorizeCodeSession(_ context.Context, key string, r fosite.Requester) error {
-	request, err := encodeSQLRequest(r)
+	request, err := json.Marshal(r)
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -195,7 +88,7 @@ func (s *oauthSQL) GetAuthorizeCodeSession(_ context.Context, key string, _ fosi
 	if err != nil {
 		return nil, s.storageError(err)
 	}
-	r, err := decodeSQLRequest(data.Request, v.UserID, data.ProjectIDs)
+	r, err := oauthRequest(data.Request, v.UserID, data.ProjectIDs)
 	if err != nil {
 		return nil, s.storageError(err)
 	}
@@ -227,7 +120,7 @@ func (s *oauthSQL) CreatePKCERequestSession(_ context.Context, key string, r fos
 	if err != nil {
 		return s.storageError(err)
 	}
-	data.PKCE, err = encodeSQLRequest(r)
+	data.PKCE, err = json.Marshal(r)
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -246,7 +139,7 @@ func (s *oauthSQL) GetPKCERequestSession(_ context.Context, key string, _ fosite
 	if err != nil {
 		return nil, s.storageError(err)
 	}
-	return decodeSQLRequest(data.PKCE, v.UserID, data.ProjectIDs)
+	return oauthRequest(data.PKCE, v.UserID, data.ProjectIDs)
 }
 func (s *oauthSQL) DeletePKCERequestSession(_ context.Context, key string) error {
 	v, err := s.read(key, "oauth_code")
@@ -265,7 +158,7 @@ func (s *oauthSQL) DeletePKCERequestSession(_ context.Context, key string) error
 	return s.storageError(s.q.PutSession(v))
 }
 func (s *oauthSQL) createToken(key, kind string, r fosite.Requester) error {
-	request, err := encodeSQLRequest(r)
+	request, err := json.Marshal(r)
 	if err != nil {
 		return s.storageError(err)
 	}
@@ -292,7 +185,7 @@ func (s *oauthSQL) getToken(key, kind string) (fosite.Requester, error) {
 	if data.TokenKind != kind {
 		return nil, fosite.ErrNotFound
 	}
-	r, err := decodeSQLRequest(data.Request, v.UserID, data.ProjectIDs)
+	r, err := oauthRequest(data.Request, v.UserID, data.ProjectIDs)
 	if err != nil {
 		return nil, s.storageError(err)
 	}

@@ -245,48 +245,5 @@ func migrateOAuthRequest(raw json.RawMessage) (json.RawMessage, int64, error) {
 	if err := json.Unmarshal(raw, &value); err != nil || value.ID == "" || value.Client == nil || value.Client.GetID() == "" || value.Session == nil {
 		return nil, 0, errors.New("invalid legacy OAuth request")
 	}
-	var request map[string]json.RawMessage
-	if e := decodeLegacyJSON(raw, &request); e != nil {
-		return nil, 0, e
-	}
-	var requested time.Time
-	if e := json.Unmarshal(request["requestedAt"], &requested); e != nil {
-		return nil, 0, errors.New("invalid legacy OAuth request date")
-	}
-	created := migrationCreated(requested)
-	request["requestedAt"], _ = json.Marshal(created)
-	for _, key := range []string{"scopes", "grantedScopes", "requestedAudience", "grantedAudience"} {
-		if len(request[key]) == 0 || string(request[key]) == "null" {
-			request[key] = json.RawMessage(`[]`)
-		}
-	}
-	var client map[string]json.RawMessage
-	if e := decodeLegacyJSON(request["client"], &client); e != nil {
-		return nil, 0, e
-	}
-	for _, key := range []string{"redirect_uris", "grant_types", "response_types", "scopes", "audience"} {
-		if len(client[key]) == 0 || string(client[key]) == "null" {
-			client[key] = json.RawMessage(`[]`)
-		}
-	}
-	request["client"], _ = json.Marshal(client)
-	var session map[string]json.RawMessage
-	if e := decodeLegacyJSON(request["session"], &session); e != nil {
-		return nil, 0, e
-	}
-	var expires map[string]time.Time
-	if len(session["expires_at"]) > 0 {
-		if e := json.Unmarshal(session["expires_at"], &expires); e != nil {
-			return nil, 0, errors.New("invalid legacy OAuth expiry")
-		}
-	}
-	stored := map[string]*int64{}
-	for _, key := range []string{"authorize_code", "access_token", "refresh_token"} {
-		stored[key] = migrationTime(expires[key])
-	}
-	session["expires_at"], _ = json.Marshal(stored)
-	delete(session, "project_ids")
-	request["session"], _ = json.Marshal(session)
-	body, e := json.Marshal(request)
-	return body, created, e
+	return raw, migrationCreated(value.RequestedAt), nil
 }

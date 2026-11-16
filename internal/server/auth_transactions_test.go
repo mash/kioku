@@ -5,17 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"path/filepath"
-	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/store"
-	"github.com/ory/fosite"
 )
 
 func sqlAuthFixture(t *testing.T) (*store.Database, *auth.Cipher) {
@@ -170,37 +166,4 @@ func TestAgentLoginCapacityRejectionKeepsExistingCredential(t *testing.T) {
 		_, err = q.Session(auth.Hash("kioku_agent.new.secret"))
 		return err
 	}))
-}
-
-func sqlOAuthRequest(now time.Time) *fosite.Request {
-	session := &connectorSession{DefaultSession: fosite.DefaultSession{Subject: "u", ExpiresAt: map[fosite.TokenType]time.Time{fosite.AuthorizeCode: now.Add(time.Minute), fosite.AccessToken: now.Add(time.Hour), fosite.RefreshToken: now.Add(24 * time.Hour)}}, ProjectIDs: []string{"p"}}
-	return &fosite.Request{ID: "family", RequestedAt: now, Client: &fosite.DefaultClient{ID: "client", Public: true, RedirectURIs: []string{"https://example.com/callback"}}, Session: session, Form: url.Values{"code_challenge": {"challenge"}, "code_challenge_method": {"S256"}}}
-}
-func TestSQLFositeRequestUsesMillisecondsAndParentSelection(t *testing.T) {
-	t.Parallel()
-	r := sqlOAuthRequest(time.Now().UTC())
-	r.Session.(*connectorSession).Extra = map[string]any{"nested": map[string]any{"value": true}}
-	b, err := encodeSQLRequest(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(b), "project_ids") || strings.Contains(string(b), "0001-01-01") {
-		t.Fatal("redundant or old timestamp persisted")
-	}
-	for _, key := range []string{"scopes", "grantedScopes", "requestedAudience", "grantedAudience"} {
-		if !strings.Contains(string(b), `"`+key+`":[]`) {
-			t.Fatalf("empty array missing: %s", key)
-		}
-	}
-	out, err := decodeSQLRequest(b, "other", []string{"another"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := out.Session.(*connectorSession)
-	if s.Subject != "other" || !reflect.DeepEqual(s.ProjectIDs, []string{"another"}) || s.Extra["nested"] == nil {
-		t.Fatal("parent selection or extra lost")
-	}
-	if out.RequestedAt.UnixMilli() != r.RequestedAt.UnixMilli() {
-		t.Fatal("time changed")
-	}
 }

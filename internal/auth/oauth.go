@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mash/kioku/internal/connector"
-	"github.com/mash/kioku/internal/connector/registry"
 	"golang.org/x/oauth2"
 )
 
@@ -37,13 +35,11 @@ func (p Provider) oauthContext(ctx context.Context) context.Context {
 }
 
 func (p Provider) config(verifier string) (oauth2.Config, []oauth2.AuthCodeOption, error) {
-	implementation, ok := registry.ByName(p.Name)
-	if !ok {
-		return oauth2.Config{}, nil, fmt.Errorf("unsupported provider %q", p.Name)
+	v, err := p.idp()
+	if err != nil {
+		return oauth2.Config{}, nil, err
 	}
-	settings := implementation.OAuth(verifier)
-
-	return oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: p.RedirectURL, Endpoint: settings.Endpoint, Scopes: settings.Scopes}, settings.Options, nil
+	return oauth2.Config{ClientID: p.ClientID, ClientSecret: p.ClientSecret, RedirectURL: p.RedirectURL, Endpoint: v.endpoint, Scopes: v.scopes}, v.options(verifier), nil
 }
 
 func (p Provider) URL(state, verifier string) string {
@@ -62,20 +58,20 @@ func credential(token *oauth2.Token) Credential {
 
 // Exchange verifies the login identity before returning credentials to the caller.
 // ID tokens are transient and are never persisted in a session.
-func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, connector.Identity, error) {
+func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, Identity, error) {
 	ctx = p.oauthContext(ctx)
 	config, _, err := p.config(verifier)
 	if err != nil {
-		return Credential{}, connector.Identity{}, err
+		return Credential{}, Identity{}, err
 	}
 	token, err := config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return Credential{}, connector.Identity{}, err
+		return Credential{}, Identity{}, err
 	}
-	implementation, _ := registry.ByName(p.Name)
-	identity, err := implementation.LoginIdentity(ctx, p.get, p.ClientID, token, verifier)
+	v, _ := p.idp()
+	identity, err := v.login(ctx, p, token, verifier)
 	if err != nil {
-		return Credential{}, connector.Identity{}, err
+		return Credential{}, Identity{}, err
 	}
 
 	return credential(token), identity, nil
@@ -100,12 +96,12 @@ func (p Provider) Refresh(ctx context.Context, c Credential) (Credential, error)
 	}
 	return credential(fresh), nil
 }
-func (p Provider) Identity(ctx context.Context, token string) (connector.Identity, error) {
-	implementation, ok := registry.ByName(p.Name)
-	if !ok {
-		return connector.Identity{}, fmt.Errorf("unsupported provider %q", p.Name)
+func (p Provider) Identity(ctx context.Context, token string) (Identity, error) {
+	v, err := p.idp()
+	if err != nil {
+		return Identity{}, err
 	}
-	return implementation.Identity(ctx, p.get, token)
+	return v.identity(ctx, p, token)
 }
 func Get(ctx context.Context, u, token string, out any) error {
 	return (Provider{}).get(ctx, u, token, out)

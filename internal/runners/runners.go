@@ -29,7 +29,7 @@ type Config struct {
 	MAAgentVersion       int64
 	MAEnvironmentID      string
 	MABaseURL            string
-	ManagedAgents        claudemanaged.Client
+	ManagedAgents        claudemanaged.FileClient
 	BaseURL              string
 	AgentMaxSessions     int
 	AgentJobTimeout      time.Duration
@@ -76,7 +76,7 @@ func (s *Set) New(job store.JobRow) (runner.Runner, error) {
 			}
 			return s.openaiRunner, nil
 		case "claudemanaged":
-			if _, ok := s.config.ManagedAgents.(claudemanaged.FileClient); !ok {
+			if s.config.ManagedAgents == nil {
 				return nil, errors.New("Claude file runner unavailable")
 			}
 			return s.claudeRunner(), nil
@@ -99,12 +99,5 @@ func (s *Set) New(job store.JobRow) (runner.Runner, error) {
 
 func (s *Set) claudeRunner() runner.Runner {
 	c := s.config
-	r := claudemanaged.New(func() (claudemanaged.Client, error) { return c.ManagedAgents, nil },
-		c.MAAgentID, c.MAAgentVersion, c.MAEnvironmentID, c.Prompts.System(), c.Prompts.Model())
-	// The production SDK client always supports file transport. The narrow
-	// Client interface also supports injected legacy lifecycle test fixtures.
-	if files, ok := c.ManagedAgents.(claudemanaged.FileClient); ok {
-		return r.WithFiles(files, c.Prompts.FileSystem())
-	}
-	return r
+	return claudemanaged.New(c.ManagedAgents, c.MAAgentID, c.MAAgentVersion, c.MAEnvironmentID, c.Prompts.FileSystem(), c.Prompts.Model())
 }

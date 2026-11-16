@@ -3,7 +3,6 @@ package claudemanaged
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +42,7 @@ func (c *partialCleanupClient) DeleteSession(_ context.Context, id string) error
 
 func TestClaudeCleanupRecoversAfterPartialSessionDeletion(t *testing.T) {
 	c := &partialCleanupClient{remaining: map[string]bool{"first": true, "second": true}}
-	r := (&Runner{}).WithFiles(c, "")
+	r := &Runner{files: c}
 	a := runner.Attempt{Key: runner.AttemptKey{JobID: "job", AttemptID: "attempt", ProjectID: "project"}, Run: runner.RunRef{ID: "first", UsesProviderFiles: true}}
 	status, err := r.Inspect(t.Context(), a)
 	if err != nil || status.State != runner.StateStopped {
@@ -66,7 +65,7 @@ func TestClaudeFileExecutionFailureSurvivesOutputReceipt(t *testing.T) {
 	ref := start(t, r, spec)
 	for _, state := range []string{"idle", "terminated"} {
 		f.SetStatus(ref.ID, state, "retries_exhausted", 40)
-		status, err := inspectSessions(t.Context(), NewAPI(f.URL(), "key", nil), runner.Attempt{Key: spec.Key, Run: ref}, []string{ref.ID}, true)
+		status, err := inspectSessions(t.Context(), NewAPI(f.URL(), "key", nil), runner.Attempt{Key: spec.Key, Run: ref}, []string{ref.ID})
 		if err != nil || status.State != runner.StateStopped || !status.Failed {
 			t.Fatalf("execution failure would permit saved output publication: %+v %v", status, err)
 		}
@@ -86,42 +85,36 @@ func TestClaudeDiscoveryRejectsEmptySessionID(t *testing.T) {
 }
 
 func TestCleanupWaitsForSessionsDiscoveredAfterInspection(t *testing.T) {
-	for _, file := range []bool{false, true} {
-		for _, state := range []string{"running", "unknown"} {
-			t.Run(fmt.Sprintf("file=%t/%s", file, state), func(t *testing.T) {
-				r, f, spec := fixture(t)
-				ref := start(t, r, spec)
-				ref.UsesProviderFiles = file
-				var provider runner.Runner = r
-				if file {
-					provider = r.WithFiles(NewAPI(f.URL(), "key", nil), "")
+	for _, state := range []string{"running", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			r, f, spec := fixture(t)
+			ref := start(t, r, spec)
+			var provider runner.Runner = r
+			a := runner.Attempt{Key: spec.Key, Run: ref}
+			f.SetStatus(ref.ID, "idle", "end_turn", 40)
+			status, err := provider.Inspect(t.Context(), a)
+			if err != nil || status.State != runner.StateStopped {
+				t.Fatal(status, err)
+			}
+			late := f.Session(ref.ID)
+			late.ID, late.Status = "late", state
+			f.SetSession(late)
+			before := len(f.Requests())
+			if err := provider.Cleanup(t.Context(), a); !errors.Is(err, runner.ErrTemporary) {
+				t.Fatal("cleanup accepted an unconfirmed stop", err)
+			}
+			for _, request := range f.Requests()[before:] {
+				if request.Method == "DELETE" || strings.HasSuffix(request.Path, "/archive") {
+					t.Fatal("cleanup destroyed resources before all sessions stopped", request)
 				}
-				a := runner.Attempt{Key: spec.Key, Run: ref}
-				f.SetStatus(ref.ID, "idle", "end_turn", 40)
-				status, err := provider.Inspect(t.Context(), a)
-				if err != nil || status.State != runner.StateStopped {
-					t.Fatal(status, err)
-				}
-				late := f.Session(ref.ID)
-				late.ID, late.Status = "late", state
-				f.SetSession(late)
-				before := len(f.Requests())
-				if err := provider.Cleanup(t.Context(), a); !errors.Is(err, runner.ErrTemporary) {
-					t.Fatal("cleanup accepted an unconfirmed stop", err)
-				}
-				for _, request := range f.Requests()[before:] {
-					if request.Method == "DELETE" || strings.HasSuffix(request.Path, "/archive") {
-						t.Fatal("cleanup destroyed resources before all sessions stopped", request)
-					}
-				}
-				if err := provider.Stop(t.Context(), a); err != nil {
-					t.Fatal(err)
-				}
-				f.SetStatus(late.ID, "idle", "end_turn", 60)
-				if err := provider.Cleanup(t.Context(), a); err != nil {
-					t.Fatal("cleanup did not resume after stop", err)
-				}
-			})
-		}
+			}
+			if err := provider.Stop(t.Context(), a); err != nil {
+				t.Fatal(err)
+			}
+			f.SetStatus(late.ID, "idle", "end_turn", 60)
+			if err := provider.Cleanup(t.Context(), a); err != nil {
+				t.Fatal("cleanup did not resume after stop", err)
+			}
+		})
 	}
 }

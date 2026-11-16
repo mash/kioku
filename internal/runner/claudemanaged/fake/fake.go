@@ -25,26 +25,24 @@ type Request struct {
 type Session struct {
 	ID, Status, CostAmount, Currency string
 	Metadata                         map[string]string
-	VaultIDs                         []string
 	CreatedAt                        time.Time
-	Archived, Interrupted            bool
+	Archived, Deleted, Interrupted   bool
 	Events                           []map[string]any
 }
 type Server struct {
-	HTTP          *httptest.Server
-	mu            sync.Mutex
-	requests      []Request
-	sessions      map[string]Session
-	credentials   map[string]string
-	vaults        map[string]bool
-	vaultMetadata map[string]map[string]any
-	errors        map[string]int
-	pageSize      int
-	onSession     func(string)
+	HTTP      *httptest.Server
+	mu        sync.Mutex
+	requests  []Request
+	sessions  map[string]Session
+	files     map[string]file
+	outputs   map[string][]byte
+	errors    map[string]int
+	pageSize  int
+	onSession func(string)
 }
 
 func New() *Server {
-	f := &Server{sessions: map[string]Session{}, credentials: map[string]string{}, vaults: map[string]bool{}, vaultMetadata: map[string]map[string]any{}, errors: map[string]int{}, pageSize: 100}
+	f := &Server{sessions: map[string]Session{}, files: map[string]file{}, outputs: map[string][]byte{}, errors: map[string]int{}, pageSize: 100}
 	f.HTTP = httptest.NewServer(http.HandlerFunc(f.serve))
 	return f
 }
@@ -68,12 +66,6 @@ func (f *Server) Requests() []Request {
 	defer f.mu.Unlock()
 	return append([]Request(nil), f.requests...)
 }
-func (f *Server) Credential(id string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.credentials[id]
-}
-func (f *Server) VaultArchived(id string) bool { f.mu.Lock(); defer f.mu.Unlock(); return f.vaults[id] }
 func (f *Server) Session(id string) Session {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,7 +73,6 @@ func (f *Server) Session(id string) Session {
 }
 func cloneSession(s Session) Session {
 	s.Metadata = maps.Clone(s.Metadata)
-	s.VaultIDs = append([]string(nil), s.VaultIDs...)
 	s.Events = append([]map[string]any(nil), s.Events...)
 	return s
 }
@@ -108,7 +99,7 @@ func jsonResponse(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 func wireSession(s Session) map[string]any {
-	v := map[string]any{"id": s.ID, "type": "session", "status": s.Status, "metadata": s.Metadata, "vault_ids": s.VaultIDs, "created_at": s.CreatedAt.Format(time.RFC3339Nano), "usage": map[string]any{"list_cost": map[string]string{"amount": s.CostAmount, "currency": s.Currency}}}
+	v := map[string]any{"id": s.ID, "type": "session", "status": s.Status, "metadata": s.Metadata, "created_at": s.CreatedAt.Format(time.RFC3339Nano), "usage": map[string]any{"list_cost": map[string]string{"amount": s.CostAmount, "currency": s.Currency}}}
 	if s.Archived {
 		v["archived_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -116,7 +107,7 @@ func wireSession(s Session) map[string]any {
 }
 func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{}
-	if r.Body != nil {
+	if r.Body != nil && !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
 	}
 	f.mu.Lock()
@@ -132,42 +123,18 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, 404, map[string]string{"error": "not found"})
 		return
 	}
-	if parts[1] == "vaults" {
-		var response any = map[string]string{"id": "credential"}
-		status := 200
-		switch {
-		case len(parts) == 2 && r.Method == "POST":
-			id := fmt.Sprintf("vault_%d", len(f.vaults)+1)
-			f.vaults[id] = false
-			f.vaultMetadata[id], _ = body["metadata"].(map[string]any)
-			response = map[string]string{"id": id}
-		case len(parts) == 2 && r.Method == "GET":
-			var ids []string
-			for id, archived := range f.vaults {
-				if !archived {
-					ids = append(ids, id)
-				}
-			}
-			sort.Strings(ids)
-			data := make([]any, 0, len(ids))
-			for _, id := range ids {
-				data = append(data, map[string]any{"id": id, "metadata": f.vaultMetadata[id]})
-			}
-			response = f.page(data, r.URL.Query().Get("page"))
-		case len(parts) == 4 && parts[3] == "credentials" && r.Method == "POST":
-			auth, _ := body["auth"].(map[string]any)
-			secret, _ := auth["secret_value"].(string)
-			if auth["secret_name"] == "KIOKU_JOB_TOKEN" {
-				f.credentials[parts[2]] = secret
-			}
-		case len(parts) == 4 && parts[3] == "archive" && r.Method == "POST":
-			f.vaults[parts[2]] = true
-			response = map[string]string{"id": parts[2]}
-		default:
-			status = 404
-		}
+	if parts[1] == "agents" && len(parts) == 3 {
 		f.mu.Unlock()
-		jsonResponse(w, status, response)
+		jsonResponse(w, 200, map[string]any{"id": parts[2], "version": 3, "execution_identity": map[string]string{"type": "service_account"}})
+		return
+	}
+	if parts[1] == "environments" && len(parts) == 3 {
+		f.mu.Unlock()
+		jsonResponse(w, 200, map[string]any{"id": parts[2], "config": map[string]any{"type": "cloud", "networking": map[string]any{"type": "limited", "allowed_hosts": []string{}}}})
+		return
+	}
+	if parts[1] == "files" {
+		f.serveFiles(w, r, parts)
 		return
 	}
 	if parts[1] != "sessions" {
@@ -183,15 +150,7 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 				metadata[k], _ = v.(string)
 			}
 		}
-		var vaults []string
-		if v, ok := body["vault_ids"].([]any); ok {
-			for _, id := range v {
-				if s, ok := id.(string); ok {
-					vaults = append(vaults, s)
-				}
-			}
-		}
-		s := Session{ID: id, Status: "running", CostAmount: "0", Currency: "USD", Metadata: metadata, VaultIDs: vaults, CreatedAt: time.Now().UTC()}
+		s := Session{ID: id, Status: "running", CostAmount: "0", Currency: "USD", Metadata: metadata, CreatedAt: time.Now().UTC()}
 		f.sessions[id] = s
 		hook := f.onSession
 		f.mu.Unlock()
@@ -204,7 +163,7 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && r.Method == "GET" {
 		ids := make([]string, 0, len(f.sessions))
 		for id, s := range f.sessions {
-			if !s.Archived || r.URL.Query().Get("include_archived") == "true" {
+			if !s.Deleted && (!s.Archived || r.URL.Query().Get("include_archived") == "true") {
 				ids = append(ids, id)
 			}
 		}
@@ -224,7 +183,7 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, ok := f.sessions[parts[2]]
-	if !ok {
+	if !ok || s.Deleted {
 		f.mu.Unlock()
 		jsonResponse(w, 404, nil)
 		return
@@ -234,8 +193,8 @@ func (f *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 3 && r.Method == "GET":
 		result = wireSession(s)
-	case len(parts) == 4 && parts[3] == "archive" && r.Method == "POST":
-		s.Archived = true
+	case len(parts) == 3 && r.Method == "DELETE":
+		s.Deleted = true
 		f.sessions[s.ID] = s
 		result = wireSession(s)
 	case len(parts) == 4 && parts[3] == "events" && r.Method == "GET":
@@ -266,4 +225,71 @@ func (f *Server) page(data []any, cursor string) map[string]any {
 		next = strconv.Itoa(end)
 	}
 	return map[string]any{"data": data[start:end], "next_page": next}
+}
+
+// file contents and session output stand in for the external LLM provider only.
+type file struct {
+	name string
+	body []byte
+}
+
+func (f *Server) SetOutput(session string, body []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outputs[session] = append([]byte(nil), body...)
+}
+func (f *Server) Input(id string) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]byte(nil), f.files[id].body...)
+}
+func (f *Server) FileExists(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.files[id]
+	return ok
+}
+func (f *Server) serveFiles(w http.ResponseWriter, r *http.Request, parts []string) {
+	defer f.mu.Unlock()
+	switch {
+	case len(parts) == 2 && r.Method == "POST":
+		part, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "invalid file", 400)
+			return
+		}
+		defer part.Close()
+		body, err := io.ReadAll(part)
+		if err != nil {
+			http.Error(w, "invalid file", 400)
+			return
+		}
+		id := fmt.Sprintf("file_%d", len(f.files)+1)
+		f.files[id] = file{header.Filename, body}
+		jsonResponse(w, 200, map[string]string{"id": id})
+	case len(parts) == 2 && r.Method == "GET":
+		data := []any{}
+		if scope := r.URL.Query().Get("scope_id"); scope != "" {
+			if _, ok := f.outputs[scope]; ok {
+				data = append(data, map[string]any{"id": "output-" + scope, "filename": "output.tar.gz", "downloadable": true, "scope": map[string]string{"type": "session", "id": scope}})
+			}
+		} else {
+			for id, file := range f.files {
+				data = append(data, map[string]any{"id": id, "filename": file.name})
+			}
+		}
+		jsonResponse(w, 200, map[string]any{"data": data})
+	case len(parts) == 4 && parts[3] == "content" && r.Method == "GET":
+		body, ok := f.outputs[strings.TrimPrefix(parts[2], "output-")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(body)
+	case len(parts) == 3 && r.Method == "DELETE":
+		delete(f.files, parts[2])
+		jsonResponse(w, 200, map[string]string{"id": parts[2]})
+	default:
+		http.NotFound(w, r)
+	}
 }

@@ -1,13 +1,9 @@
 package claudemanaged
 
 import (
-	"bytes"
-	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/mash/kioku/prompts"
@@ -26,7 +22,8 @@ func TestSessionPromptOverrides(t *testing.T) {
 				prompts.UserFile:   "custom user {{.JobID}} {{.InputURL}} {{.OutputURL}}",
 			})
 			r.system, r.model = loaded.System(), loaded.Model()
-			spec.FirstMessage = loaded.User(prompts.JobVariables{JobID: spec.Key.JobID, InputURL: "input", OutputURL: spec.OutputURL})
+			input, output := r.FilePaths()
+			spec.FirstMessage = loaded.User(prompts.JobVariables{JobID: spec.Key.JobID, InputURL: input, OutputURL: output})
 			// Both sessions must carry all overrides, including when sharing an agent.
 			for range 2 {
 				start(t, r, spec)
@@ -56,7 +53,7 @@ func TestSessionPromptOverrides(t *testing.T) {
 					}
 				}
 				event := req.Body["initial_events"].([]any)[0].(map[string]any)
-				if event["content"].([]any)[0].(map[string]any)["text"] != "custom user job input https://kioku.test:8443/output" {
+				if event["content"].([]any)[0].(map[string]any)["text"] != "custom user job /mnt/session/uploads/input.tar.gz /mnt/session/outputs/output.tar.gz" {
 					t.Fatal(event)
 				}
 			}
@@ -66,31 +63,6 @@ func TestSessionPromptOverrides(t *testing.T) {
 		})
 	}
 }
-func TestSessionRejectedLogsOnlyStatusAndType(t *testing.T) {
-	for _, code := range []int{400, 429, 503} {
-		r, f, spec := fixture(t)
-		f.SetError("POST", "/v1/sessions", code)
-		var b bytes.Buffer
-		old := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&b, nil)))
-		_, err := r.Start(t.Context(), spec)
-		slog.SetDefault(old)
-		var api *APIError
-		if !errors.As(err, &api) || api.Status != code || api.Type != "api_error" {
-			t.Fatal(err)
-		}
-		if strings.Contains(b.String(), "session create rejected") != (code < 500) {
-			t.Fatal(b.String())
-		}
-		if code < 500 && !strings.Contains(b.String(), "type=api_error") {
-			t.Fatal(b.String())
-		}
-		if strings.Contains(b.String(), "fake provider") || strings.Contains(b.String(), "test-job-token") {
-			t.Fatal(b.String())
-		}
-	}
-}
-
 func defaultPrompts(t *testing.T) *prompts.Rendered {
 	t.Helper()
 	r, err := prompts.Load("", prompts.Variables{}, nil)

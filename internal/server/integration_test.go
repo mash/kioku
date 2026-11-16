@@ -223,10 +223,7 @@ func (f *fixture) driveViewGeneration(parent fixtureJob) {
 	}
 	if child.Run.OutputHash == "" {
 		body := outputArchive(f.t, map[string]string{"index.html": "<h1>Project map</h1>"})
-		token := f.auto.Credential(child.Run.Ref.Resources["vault_id"])
-		if status, response := agentRequest(f.t, f, child, token, "PUT", "output", body); status != http.StatusOK {
-			f.t.Fatalf("View output: HTTP %d: %s", status, response)
-		}
+		f.auto.SetOutput(child.Run.Ref.ID, body)
 	}
 	f.auto.SetStatus(child.Run.Ref.ID, "idle", "end_turn", 1)
 	if err := f.s.reconcileAgentJob(ctx, fixtureRow(child)); err != nil {
@@ -429,7 +426,7 @@ func configureAutoRunner(t *testing.T, f *fixture) {
 	ma := fake.New()
 	t.Cleanup(ma.Close)
 	f.auto = ma
-	f.runnerConfig = runners.Config{Prompts: f.s.Config.Prompts, AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: legacyManagedClient{claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client())}, BaseURL: f.s.Config.BaseURL}
+	f.runnerConfig = runners.Config{Prompts: f.s.Config.Prompts, AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 }
 func sourcePage(id string) string {

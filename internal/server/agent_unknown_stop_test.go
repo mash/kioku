@@ -19,7 +19,7 @@ func TestUnknownCostFailureStillStopsSessionAfterRecovery(t *testing.T) {
 	path := "/v1/sessions/" + j.Run.Ref.ID
 	ma.SetError("POST", path+"/events", 503)
 	ma.SetError("GET", path, 503)
-	ma.SetError("POST", path+"/archive", 503)
+	ma.SetError("DELETE", path, 503)
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-11 * time.Minute)
@@ -40,7 +40,7 @@ func TestUnknownCostFailureStillStopsSessionAfterRecovery(t *testing.T) {
 	restartManagedFixture(t, f)
 	ma.SetError("POST", path+"/events", 0)
 	ma.SetError("GET", path, 0)
-	ma.SetError("POST", path+"/archive", 0)
+	ma.SetError("DELETE", path, 0)
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 200)
 	if err := f.s.reconcileAgentJobs(context.Background()); err != nil {
 		t.Fatal(err)

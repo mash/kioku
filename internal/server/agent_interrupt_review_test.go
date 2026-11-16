@@ -17,7 +17,7 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "running", "", 100)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/events", 503)
-	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 503)
+	ma.SetError("DELETE", "/v1/sessions/"+j.Run.Ref.ID, 503)
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Deadline = time.Now().Add(-time.Second)
@@ -39,7 +39,7 @@ func TestManagedInterruptFailureDefersFinalCost(t *testing.T) {
 	})
 	restartManagedFixture(t, f)
 	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/events", 0)
-	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 0)
+	ma.SetError("DELETE", "/v1/sessions/"+j.Run.Ref.ID, 0)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 200)
 	j = reconcileManaged(t, f, j)
 	if j.Status != "failed" {

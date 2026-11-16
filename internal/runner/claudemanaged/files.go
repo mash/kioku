@@ -9,23 +9,13 @@ import (
 	"github.com/mash/kioku/internal/runner"
 )
 
-type FileRunner struct {
-	*Runner
-	files  FileClient
-	system string
-}
+func (*Runner) Provider() string { return "claudemanaged" }
 
-func (r *Runner) WithFiles(client FileClient, system string) *FileRunner {
-	return &FileRunner{Runner: r, files: client, system: system}
-}
-
-func (*FileRunner) Provider() string { return "claudemanaged" }
-
-func (*FileRunner) FilePaths() (string, string) {
+func (*Runner) FilePaths() (string, string) {
 	return "/mnt/session/uploads/input.tar.gz", "/mnt/session/outputs/" + runner.OutputArchiveName
 }
 
-func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
+func (r *Runner) Start(ctx context.Context, spec runner.RunSpec) (runner.RunRef, error) {
 	if spec.BudgetCents < 50 || len(spec.InputArchive) > 500_000_000 {
 		return runner.RunRef{}, errors.New("Claude generation budget or input archive size is out of range")
 	}
@@ -57,34 +47,28 @@ func (r *FileRunner) Start(ctx context.Context, spec runner.RunSpec) (runner.Run
 		})
 }
 
-func (r *FileRunner) sessions(ctx context.Context, a runner.Attempt) ([]string, error) {
+func (r *Runner) sessions(ctx context.Context, a runner.Attempt) ([]string, error) {
 	if a.Run.ID == "" && a.Run.Resources["upload_started"] != "true" {
 		return nil, nil
 	}
 	return discoverSessions(ctx, r.files, a)
 }
-func (r *FileRunner) Inspect(ctx context.Context, a runner.Attempt) (runner.Status, error) {
-	if !a.Run.UsesProviderFiles {
-		return r.Runner.Inspect(ctx, a)
-	}
+func (r *Runner) Inspect(ctx context.Context, a runner.Attempt) (runner.Status, error) {
 	ids, err := r.sessions(ctx, a)
 	if err != nil {
 		return runner.Status{}, err
 	}
-	return inspectSessions(ctx, r.files, a, ids, true)
+	return inspectSessions(ctx, r.files, a, ids)
 }
 
-func (r *FileRunner) CollectOutput(ctx context.Context, a runner.Attempt, status runner.Status, limit int64) ([]byte, error) {
+func (r *Runner) CollectOutput(ctx context.Context, a runner.Attempt, status runner.Status, limit int64) ([]byte, error) {
 	if a.Run.ID == "" || status.Run.ID != a.Run.ID || status.State != runner.StateStopped || status.Reason != "" {
 		return nil, errors.New("Claude output requires a matching completed session")
 	}
 	return r.files.DownloadOutput(ctx, a.Run.ID, limit)
 }
 
-func (r *FileRunner) Stop(ctx context.Context, a runner.Attempt) error {
-	if !a.Run.UsesProviderFiles {
-		return r.Runner.Stop(ctx, a)
-	}
+func (r *Runner) Stop(ctx context.Context, a runner.Attempt) error {
 	ids, err := r.sessions(ctx, a)
 	if err != nil {
 		return err
@@ -96,15 +80,12 @@ func (r *FileRunner) Stop(ctx context.Context, a runner.Attempt) error {
 	return errors.Join(errs...)
 }
 
-func (r *FileRunner) Cleanup(ctx context.Context, a runner.Attempt) error {
-	if !a.Run.UsesProviderFiles {
-		return r.Runner.Cleanup(ctx, a)
-	}
+func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 	ids, err := r.sessions(ctx, a)
 	if err != nil {
 		return err
 	}
-	if err = confirmCleanupStopped(ctx, r.files, a, ids, true); err != nil {
+	if err = confirmCleanupStopped(ctx, r.files, a, ids); err != nil {
 		return err
 	}
 	for _, id := range ids {

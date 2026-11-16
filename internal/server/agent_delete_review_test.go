@@ -33,7 +33,7 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 	if c := f.request("DELETE", path, token, nil, nil); c != 200 {
 		t.Fatal(c)
 	}
-	if !ma.Session(j.Run.Ref.ID).Interrupted || !ma.Session(j.Run.Ref.ID).Archived {
+	if !ma.Session(j.Run.Ref.ID).Interrupted || !ma.Session(j.Run.Ref.ID).Deleted {
 		t.Error("unrecorded session orphaned")
 	}
 }
@@ -44,12 +44,12 @@ func TestManagedDeleteDefersProviderRejections(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
 			j := startManaged(t, f, token, p.ID, true)
-			endpoint := "/v1/sessions/" + j.Run.Ref.ID + "/events"
+			method, endpoint := "POST", "/v1/sessions/"+j.Run.Ref.ID+"/events"
 			if operation == "cleanup" {
 				ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-				endpoint = "/v1/sessions/" + j.Run.Ref.ID + "/archive"
+				method, endpoint = "DELETE", "/v1/sessions/"+j.Run.Ref.ID
 			}
-			ma.SetError("POST", endpoint, 403)
+			ma.SetError(method, endpoint, 403)
 			path := "/api/projects/" + p.ID
 			if code := f.request("DELETE", path, token, nil, nil); code != 503 {
 				t.Fatalf("provider %s rejection must leave deletion pending: %d", operation, code)
@@ -57,7 +57,7 @@ func TestManagedDeleteDefersProviderRejections(t *testing.T) {
 			if !fixtureProjectsGet(t, f, p.ID).Deleting || storedJob(t, f, j.ID).Run.CleanupComplete {
 				t.Fatal("provider failure lost pending deletion or cleanup")
 			}
-			ma.SetError("POST", endpoint, 0)
+			ma.SetError(method, endpoint, 0)
 			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 			if code := f.request("DELETE", path, token, nil, nil); code != 200 {
 				t.Fatalf("deletion did not resume after provider recovery: %d", code)

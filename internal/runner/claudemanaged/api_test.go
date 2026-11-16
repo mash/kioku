@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -24,83 +23,11 @@ func newClient(t *testing.T) (*claudemanaged.API, *fake.Server) {
 }
 func createSession(t *testing.T, a *claudemanaged.API, job string) string {
 	t.Helper()
-	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", VaultID: "vault", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job, "kioku_attempt_id": job}, FirstMessage: "Input and output URLs"})
+	id, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{MAAgentID: "agent", EnvironmentID: "env", InputFileID: "input", BudgetCents: 1000, Metadata: map[string]string{"kioku_job_id": job, "kioku_attempt_id": job}, FirstMessage: "Input and output URLs"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return id
-}
-func TestClientLifecycleAndWireContract(t *testing.T) {
-	a, f := newClient(t)
-	ctx := context.Background()
-	vault, err := a.CreateJobVault(ctx, claudemanaged.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "test-job-secret", AllowedHosts: []string{"kioku.test"}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, err := a.CreateSession(ctx, claudemanaged.SessionInput{MAAgentID: "agent", MAAgentVersion: 3, EnvironmentID: "env", VaultID: vault, BudgetCents: 1234, Title: "Wiki job", Metadata: map[string]string{"kioku_job_id": "job", "kioku_attempt_id": "job"}, FirstMessage: "Read input then upload output"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.SetStatus(id, "idle", "end_turn", 123)
-	s, err := a.GetSession(ctx, id)
-	if err != nil || s.LastStopReason != "end_turn" || (s.Usage.CostCents == nil || *s.Usage.CostCents != 123) || s.Status != "idle" {
-		t.Fatal(s, err)
-	}
-	if got, err := a.FindAttemptSessions(ctx, runner.AttemptKey{JobID: "job", AttemptID: "job", ProjectID: "project"}); err != nil || !reflect.DeepEqual(got, []string{id}) {
-		t.Fatal(got, err)
-	}
-	if err := a.Interrupt(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.ArchiveSession(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.ArchiveVault(ctx, vault); err != nil {
-		t.Fatal(err)
-	}
-	if !f.Session(id).Interrupted || !f.Session(id).Archived || !f.VaultArchived(vault) {
-		t.Fatal("cleanup not sent")
-	}
-	foundCredential, foundSession, foundInterrupt := false, false, false
-	for _, r := range f.Requests() {
-		if r.Header.Get("Authorization") != "Bearer test-api-key" || !strings.Contains(r.Header.Get("anthropic-beta"), "managed-agents-2026-04-01") {
-			t.Fatal("missing authentication/beta headers", r.Header)
-		}
-		switch {
-		case strings.HasSuffix(r.Path, "/credentials"):
-			foundCredential = true
-			auth := r.Body["auth"].(map[string]any)
-			network := auth["networking"].(map[string]any)
-			injection := auth["injection_location"].(map[string]any)
-			if auth["type"] != "environment_variable" || auth["secret_name"] != "KIOKU_JOB_TOKEN" || auth["secret_value"] != "test-job-secret" || network["type"] != "limited" || !reflect.DeepEqual(network["allowed_hosts"], []any{"kioku.test"}) || !reflect.DeepEqual(injection, map[string]any{"header": true}) {
-				t.Fatal(r.Body)
-			}
-		case r.Path == "/v1/sessions" && r.Method == "POST":
-			foundSession = true
-			budget := r.Body["budget"].(map[string]any)
-			money := budget["max_list_cost"].(map[string]any)
-			agent := r.Body["agent"].(map[string]any)
-			if budget["type"] != "limit" || money["amount"] != "1234" || money["currency"] != "USD" || agent["id"] != "agent" || agent["version"] != float64(3) || r.Body["environment_id"] != "env" || !reflect.DeepEqual(r.Body["vault_ids"], []any{vault}) {
-				t.Fatal(r.Body)
-			}
-			events := r.Body["initial_events"].([]any)
-			event := events[0].(map[string]any)
-			content := event["content"].([]any)[0].(map[string]any)
-			metadata := r.Body["metadata"].(map[string]any)
-			if event["type"] != "user.message" || content["text"] != "Read input then upload output" || metadata["kioku_job_id"] != "job" {
-				t.Fatal(r.Body)
-			}
-		case r.Method == "POST" && strings.HasSuffix(r.Path, "/events"):
-			foundInterrupt = true
-			event := r.Body["events"].([]any)[0].(map[string]any)
-			if event["type"] != "user.interrupt" {
-				t.Fatal(r.Body)
-			}
-		}
-	}
-	if !foundCredential || !foundSession || !foundInterrupt {
-		t.Fatal("missing requests")
-	}
 }
 func TestClientPaginatesAndUsesEventTimestamps(t *testing.T) {
 	a, f := newClient(t)
@@ -108,9 +35,9 @@ func TestClientPaginatesAndUsesEventTimestamps(t *testing.T) {
 	createSession(t, a, "other")
 	old := createSession(t, a, "target")
 	latest := createSession(t, a, "target")
-	if err := a.ArchiveSession(t.Context(), old); err != nil {
-		t.Fatal(err)
-	}
+	archived := f.Session(old)
+	archived.Archived = true
+	f.SetSession(archived)
 	s := f.Session(latest)
 	s.Events = []map[string]any{
 		{"id": "e3", "type": "session.status_idle", "processed_at": "2026-11-01T03:00:00Z", "stop_reason": map[string]string{"type": "budget_reached"}},
@@ -168,11 +95,6 @@ func TestClientFailuresAndInvalidCosts(t *testing.T) {
 	if got, err := a.GetSession(context.Background(), id); err != nil || got.Usage.CostCents != nil {
 		t.Fatal("non-USD cost must remain unknown", got, err)
 	}
-	f.SetError("POST", "/v1/vaults/vault_1/credentials", 503)
-	vault, err := a.CreateJobVault(context.Background(), claudemanaged.VaultInput{JobID: "job", Credentials: []runner.Credential{{Name: "KIOKU_JOB_TOKEN", Value: "secret", AllowedHosts: []string{"kioku.test"}}}})
-	if vault != "vault_1" || !errors.Is(err, claudemanaged.ErrTemporary) {
-		t.Fatal("lost vault cleanup handle", vault, err)
-	}
 	before := len(f.Requests())
 	f.SetError("POST", "/v1/sessions", 503)
 	if _, err := a.CreateSession(context.Background(), claudemanaged.SessionInput{BudgetCents: 50}); !errors.Is(err, claudemanaged.ErrTemporary) {
@@ -209,7 +131,7 @@ func TestClientCleanupTreatsOnlyNotFoundAsSuccess(t *testing.T) {
 			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"not_found_error","message":"missing"}}`))
 		}))
 		a := claudemanaged.NewAPI(f.URL, "test-key", f.Client())
-		for _, operation := range []func(context.Context, string) error{a.ArchiveVault, a.ArchiveSession, a.Interrupt} {
+		for _, operation := range []func(context.Context, string) error{a.DeleteFile, a.DeleteSession, a.Interrupt} {
 			err := operation(t.Context(), "missing")
 			if (err == nil) != (status == http.StatusNotFound) {
 				t.Errorf("HTTP %d: %v", status, err)

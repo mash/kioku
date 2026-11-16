@@ -14,10 +14,10 @@ func TestManagedRecoveryNeverAttributesPreviousAttempt(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	first := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(first.Run.Ref.ID, "idle", "retries_exhausted", 100)
-	ma.SetError("POST", "/v1/sessions/"+first.Run.Ref.ID+"/archive", 503)
+	ma.SetError("DELETE", "/v1/sessions/"+first.Run.Ref.ID, 503)
 	reconcileManaged(t, f, first)
 	oldSession := ma.Session(first.Run.Ref.ID)
-	ma.SetError("POST", "/v1/sessions/"+first.Run.Ref.ID+"/archive", 0)
+	ma.SetError("DELETE", "/v1/sessions/"+first.Run.Ref.ID, 0)
 	reconcileManaged(t, f, first)
 	if got := costOf(storedJob(t, f, first.ID).Run.CostCents); got != 100 {
 		t.Fatal("first attempt cost lost", got)

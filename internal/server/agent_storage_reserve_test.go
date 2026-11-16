@@ -15,10 +15,7 @@ func TestManagedAcceptedLargeOutputCanPublish(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	pages := map[string]string{"wiki/index.md": "# Large wiki", "wiki/source-original.md": "---\nsource_url: https://example.com/missing\n---\nSource body"}
 	pages["wiki/large.md"] = strings.Repeat("a", (1<<20)+100)
-	code, body := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages))
-	if code != 200 {
-		t.Fatalf("upload: %d %s", code, body)
-	}
+	ma.SetOutput(j.Run.Ref.ID, outputArchive(t, pages))
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	j = reconcileManaged(t, f, j)
 	if j.Status != "completed" {

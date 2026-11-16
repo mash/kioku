@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -26,14 +27,14 @@ import (
 )
 
 // This harness creates state only through kiokud's public HTTP and MCP routes.
-// Each test owns a real catalog and local objects; only the identity provider is fake.
+// Each test owns a real catalog and local objects; only external providers are fake.
 type e2e struct {
 	t      *testing.T
 	url    string
 	client *http.Client
 }
 
-func newE2E(t *testing.T) *e2e {
+func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
 	t.Helper()
 	dir := t.TempDir()
 	objects := local.Store{Dir: filepath.Join(dir, "objects")}
@@ -45,15 +46,36 @@ func newE2E(t *testing.T) *e2e {
 	}
 	t.Cleanup(func() { db.Close() })
 	s := New(Config{Prompts: defaultPrompts(t), GenerateDebounce: time.Hour}, db, objects, cipher)
-	rs, err := runners.Load(runners.Config{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.SetRunners(rs)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	s.Config.BaseURL = ts.URL
 	s.Config.Providers = map[string]auth.Provider{"google": testOIDCProvider(t, ts.URL)}
+	config := runners.Config{Prompts: s.Config.Prompts, BaseURL: ts.URL, DataDir: dir}
+	for _, setup := range configure {
+		setup(s, &config)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	rs, err := runners.Load(config, func(job, attempt string) { s.ReconcileJob(ctx, job, attempt) })
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	s.SetRunners(rs)
+	done := make(chan error, 1)
+	if len(configure) > 0 {
+		go func() { done <- s.RunWorker(ctx) }()
+	} else {
+		done <- nil
+	}
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+		if err := rs.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &e2e{t: t, url: ts.URL, client: client}

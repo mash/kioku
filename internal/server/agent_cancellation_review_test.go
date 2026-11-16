@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,12 +14,11 @@ import (
 
 type cancelOutputRead struct {
 	blob.Store
-	key     blob.Key
 	entered chan struct{}
 }
 
 func (b *cancelOutputRead) Get(ctx context.Context, key blob.Key) ([]byte, error) {
-	if key == b.key {
+	if strings.Contains(string(key), "/.kioku/jobs/") && strings.Contains(string(key), "/output-") {
 		close(b.entered)
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -34,7 +34,7 @@ func TestManagedCancellationPreservesFinalizingForRestart(t *testing.T) {
 	j = storedJob(t, f, j.ID)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
 	objects := f.s.Blobs
-	paused := &cancelOutputRead{Store: objects, key: j.Run.OutputKey, entered: make(chan struct{})}
+	paused := &cancelOutputRead{Store: objects, entered: make(chan struct{})}
 	f.s.Blobs = paused
 	f.s.storage.objects = f.s.Blobs
 	ctx, cancel := context.WithCancel(context.Background())
@@ -70,6 +70,10 @@ func TestManagedFinalizingResumesAfterDeadline(t *testing.T) {
 	j := startManaged(t, f, token, p.ID, false)
 	sendOutput(t, f, ma, j, "Finish publication")
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+	objects := f.s.storage.objects
+	f.s.storage.objects = failWikiPublication{objects}
+	deferredPublication(t, f, j)
+	f.s.storage.objects = objects
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.Phase = model.PhaseFinalizing

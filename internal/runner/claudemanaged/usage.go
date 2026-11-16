@@ -66,8 +66,8 @@ func discoverSessions(ctx context.Context, client Client, a runner.Attempt) ([]s
 
 // Cleanup discovers again after usage was recorded. Any newly visible session
 // must stop before its resources disappear and reconciliation loses its ID.
-func confirmCleanupStopped(ctx context.Context, client Client, a runner.Attempt, ids []string, file bool) error {
-	status, err := inspectSessions(ctx, client, a, ids, file)
+func confirmCleanupStopped(ctx context.Context, client Client, a runner.Attempt, ids []string) error {
+	status, err := inspectSessions(ctx, client, a, ids)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func confirmCleanupStopped(ctx context.Context, client Client, a runner.Attempt,
 	return nil
 }
 
-func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids []string, file bool) (runner.Status, error) {
+func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids []string) (runner.Status, error) {
 	out := runner.Status{Run: a.Run, State: runner.StateNone}
 	if len(ids) == 0 {
 		return out, nil
@@ -111,27 +111,15 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 			state = runner.StateRunning
 		case "terminated":
 			state = runner.StateStopped
-			reason = "session terminated"
-			if file {
-				reason = "Claude session terminated"
-			}
+			reason = "Claude session terminated"
 		case "idle":
 			state = runner.StateStopped
-			if file {
-				switch s.LastStopReason {
-				case "end_turn":
-				case "":
-					state = runner.StateRunning
-				default:
-					reason = "Claude session did not finish successfully"
-				}
-			} else {
-				switch s.LastStopReason {
-				case "retries_exhausted":
-					reason = "agent gave up after errors"
-				case "requires_action":
-					reason = "agent requires action"
-				}
+			switch s.LastStopReason {
+			case "end_turn":
+			case "":
+				state = runner.StateRunning
+			default:
+				reason = "Claude session did not finish successfully"
 			}
 		}
 		if state == runner.StateUnknown {

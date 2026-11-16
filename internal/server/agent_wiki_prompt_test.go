@@ -63,7 +63,7 @@ func TestWikiPromptGeneration(t *testing.T) {
 				if req.Method == "POST" && req.Path == "/v1/sessions" {
 					agent := req.Body["agent"].(map[string]any)
 					system, _ := agent["system"].(string)
-					if system != f.s.Config.Prompts.System() || !strings.HasSuffix(system, "\n\n"+prompts.WikiInstructionsParagraph) {
+					if system != f.s.Config.Prompts.FileSystem() || !strings.Contains(system, prompts.WikiInstructionsParagraph) {
 						t.Fatalf("unexpected runner system: %q", system)
 					}
 					systemSeen = true

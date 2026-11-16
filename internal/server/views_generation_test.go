@@ -72,10 +72,8 @@ func nextTestViewTask(t *testing.T, f *fixture, parent fixtureJob) fixtureJob {
 func completeTestViewTask(t *testing.T, f *fixture, ma *fake.Server, child fixtureJob, html string, cost int64) {
 	t.Helper()
 	payload := outputArchive(t, map[string]string{"index.html": html, "summary.md": "# Delivery"})
-	token := ma.Credential(child.Run.Ref.Resources["vault_id"])
-	if status, body := agentRequest(t, f, child, token, "PUT", "output", payload); status != 200 {
-		t.Fatalf("View upload returned %d: %s", status, body)
-	}
+
+	ma.SetOutput(child.Run.Ref.ID, payload)
 	ma.SetStatus(child.Run.Ref.ID, "idle", "end_turn", cost)
 	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(child)); err != nil {
 		t.Fatal(err)
@@ -111,11 +109,8 @@ func TestProjectGenerationPublishesViewsInBudgetOrder(t *testing.T) {
 	if got := first.Run.Deadline.Sub(first.Run.PreparedAt); got != f.s.Config.AgentJobTimeout {
 		t.Fatalf("first View timeout = %s, want %s", got, f.s.Config.AgentJobTimeout)
 	}
-	raw := ma.Credential(first.Run.Ref.Resources["vault_id"])
-	status, body := agentRequest(t, f, first, raw, "GET", "input", nil)
-	if status != 200 {
-		t.Fatalf("View input returned %d: %s", status, body)
-	}
+
+	body := ma.Input(first.Run.Ref.Resources["input_file_id"])
 	input := readInput(t, body)
 	if input["VIEW.md"] != projectMap.Prompt || !strings.Contains(input["wiki/index.md"], "Complete Wiki") {
 		t.Fatal("View did not receive its prompt and completed Wiki")
@@ -336,16 +331,14 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 
 	parent = queueTestViewGeneration(t, f, token, p)
 	child = nextTestViewTask(t, f, parent)
-	raw := ma.Credential(child.Run.Ref.Resources["vault_id"])
-	if code, _ := agentRequest(t, f, child, raw, "PUT", "output", outputArchive(t, map[string]string{"index.html": "<form>Invalid element</form>"})); code != 400 {
-		t.Fatalf("invalid View returned %d", code)
-	}
+
+	ma.SetOutput(child.Run.Ref.ID, outputArchive(t, map[string]string{"index.html": "<form>Invalid element</form>"}))
 	ma.SetStatus(child.Run.Ref.ID, "idle", "end_turn", 50)
 	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(child)); err != nil {
 		t.Fatal(err)
 	}
 	advance(parent)
-	if v := detail(); v.Status != "failed" || v.JobID != initial.JobID || v.Error != errViewHTML.Error() {
+	if v := detail(); v.Status != "failed" || v.JobID != initial.JobID || v.Error != "invalid output: "+errViewHTML.Error() {
 		t.Fatalf("failed generation should keep the previous result: %+v", v)
 	}
 
@@ -417,11 +410,8 @@ func TestViewPromptEditsUseArchiveBuildTime(t *testing.T) {
 			}
 			checkPrompt := func(child fixtureJob, wantNew bool) {
 				t.Helper()
-				raw := ma.Credential(child.Run.Ref.Resources["vault_id"])
-				code, body := agentRequest(t, f, child, raw, "GET", "input", nil)
-				if code != 200 {
-					t.Fatalf("input: %d", code)
-				}
+
+				body := ma.Input(child.Run.Ref.Resources["input_file_id"])
 				prompt := readInput(t, body)["VIEW.md"]
 				if (prompt == edited.Prompt) != wantNew || prompt == "" {
 					t.Fatalf("prompt = %q, want new = %v", prompt, wantNew)
@@ -616,10 +606,10 @@ func TestViewGenerationCreationOrderAndPendingCapture(t *testing.T) {
 				t.Fatal(parent.Views)
 			}
 			child := startTestGeneration(t, f, parent.ViewGeneration.ChildID)
-			raw := ma.Credential(child.Run.Ref.Resources["vault_id"])
-			code, body := agentRequest(t, f, child, raw, "GET", "input", nil)
-			if code != 200 || readInput(t, body)["VIEW.md"] != "zeta" {
-				t.Fatalf("first child input = %d: %s", code, body)
+
+			body := ma.Input(child.Run.Ref.Resources["input_file_id"])
+			if readInput(t, body)["VIEW.md"] != "zeta" {
+				t.Fatalf("first child input: %s", body)
 			}
 		})
 	}

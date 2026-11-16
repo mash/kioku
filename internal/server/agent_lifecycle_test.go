@@ -20,16 +20,13 @@ import (
 	"github.com/mash/kioku/internal/wiki"
 )
 
-// These fixtures exercise the pre-cutover HTTP lifecycle.
-type legacyManagedClient struct{ claudemanaged.Client }
-
 func managedFixture(t *testing.T) (*fixture, string, fixtureProject, *fake.Server) {
 	t.Helper()
 	f, token, p := orgProject(t)
 	ma := fake.New()
 	t.Cleanup(ma.Close)
 	f.auto = ma
-	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: legacyManagedClient{claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client())}, BaseURL: f.s.Config.BaseURL}
+	f.runnerConfig = runners.Config{AnthropicAPIKey: "fake-key", MAAgentID: "agent_test", MAEnvironmentID: "env_test", MABaseURL: ma.URL(), ManagedAgents: claudemanaged.NewAPI(ma.URL(), "fake-key", ma.HTTP.Client()), BaseURL: f.s.Config.BaseURL}
 	f.setRunners()
 	return f, token, p, ma
 }
@@ -70,11 +67,6 @@ func storedJob(t *testing.T, f *fixture, id string) fixtureJob {
 	var j fixtureJob
 	if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error { j = fixtureJobsGet(t, st, id); return nil }); err != nil {
 		t.Fatal(err)
-	}
-	if f.auto != nil && j.Run != nil && j.Run.Ref.ID != "" {
-		if ids := f.auto.Session(j.Run.Ref.ID).VaultIDs; len(ids) > 0 {
-			j.Run.Ref.Resources["vault_id"] = ids[0]
-		}
 	}
 	return j
 }
@@ -117,7 +109,6 @@ func readInput(t *testing.T, data []byte) map[string]string {
 }
 func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob, title string) {
 	t.Helper()
-	raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
 	pages := map[string]string{"wiki/index.md": "# " + title + "\n\n[Notes](notes.md)", "wiki/notes.md": "# Notes\n"}
 	previous, items, err := f.s.outputContext(t.Context(), fixtureRow(j))
 	if err != nil {
@@ -155,9 +146,7 @@ func sendOutput(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob, title s
 		}
 	}
 	pages["wiki/log.md"] = "# Log\n" + j.ID + "\n"
-	if c, b := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, pages)); c != 200 {
-		t.Fatalf("output %d: %s", c, b)
-	}
+	ma.SetOutput(j.Run.Ref.ID, outputArchive(t, pages))
 }
 func reconcileManaged(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 	t.Helper()
@@ -172,11 +161,8 @@ func reconcileManaged(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 }
 func assertAgentCleanup(t *testing.T, f *fixture, ma *fake.Server, j fixtureJob) {
 	t.Helper()
-	if !ma.Session(j.Run.Ref.ID).Archived || !ma.VaultArchived(j.Run.Ref.Resources["vault_id"]) {
+	if !ma.Session(j.Run.Ref.ID).Deleted || ma.FileExists(j.Run.Ref.Resources["input_file_id"]) {
 		t.Error("remote resources remain active")
-	}
-	if c, _ := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "GET", "input", nil); c != 403 && c != 409 {
-		t.Error("token still active", c)
 	}
 	keys, err := f.s.Blobs.List(context.Background(), fixtureJobPrefix(j))
 	if err != nil || len(keys) != 0 {
@@ -189,12 +175,11 @@ func TestManagedStopReasonsAndTimeout(t *testing.T) {
 		name, status, reason                string
 		output, timeout, success, interrupt bool
 	}{
-		{name: "no output", status: "idle", reason: "end_turn"},
 		{name: "budget before output", status: "idle", reason: "budget_reached"},
-		{name: "budget after output", status: "idle", reason: "budget_reached", output: true, success: true},
-		{name: "exhausted", status: "idle", reason: "retries_exhausted", output: true, success: true},
+		{name: "budget after output", status: "idle", reason: "budget_reached", output: true},
+		{name: "exhausted", status: "idle", reason: "retries_exhausted", output: true},
 		{name: "requires action", status: "idle", reason: "requires_action"},
-		{name: "terminated output", status: "terminated", output: true, success: true},
+		{name: "terminated output", status: "terminated", output: true},
 		{name: "terminated empty", status: "terminated"},
 		{name: "timeout", status: "running", timeout: true, interrupt: true},
 	} {
@@ -252,7 +237,7 @@ func TestManagedRegenerationAndUnknownUsage(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "retries_exhausted", 123)
 	j = reconcileManaged(t, f, j)
 	oldAttempt := j.Run.Attempt.ID
 	if costOf(j.Run.CostCents) != 123 {

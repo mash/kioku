@@ -32,10 +32,8 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	}
 	publish := func(j fixtureJob) {
 		t.Helper()
-		raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
-		if c, b := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, pages)); c != 200 {
-			t.Fatal(c, string(b))
-		}
+
+		ma.SetOutput(j.Run.Ref.ID, outputArchive(t, pages))
 		ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
 		if j = reconcileManaged(t, f, j); j.Status != "completed" {
 			t.Fatal(j)
@@ -44,10 +42,7 @@ func TestSourcePagesRoundTripPreservesNamesAndSlugCollision(t *testing.T) {
 	publish(startManaged(t, f, token, p.ID, false))
 	putText(urls[0], "# Title\nFirst\nUpdated from same URL")
 	j := startManaged(t, f, token, p.ID, false)
-	c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "GET", "input", nil)
-	if c != 200 {
-		t.Fatal(c, string(b))
-	}
+	b := ma.Input(j.Run.Ref.Resources["input_file_id"])
 	input := readInput(t, b)
 	for name, body := range pages {
 		if input[name] != body {

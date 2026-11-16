@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
 )
 
@@ -16,7 +15,6 @@ func TestManagedLiveSessionCannotPublish(t *testing.T) {
 			putFile(t, f, token, p.ID, "x.md", "evidence")
 			j := startManaged(t, f, token, p.ID, false)
 			sendOutput(t, f, ma, j, "Final result")
-			setManagedPhase(t, f, j, model.PhaseFinalizing, "running")
 			ma.SetStatus(j.Run.Ref.ID, status, "", 100)
 			j = reconcileManaged(t, f, j)
 			if j.Status != "running" {

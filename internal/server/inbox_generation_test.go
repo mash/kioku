@@ -21,11 +21,8 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 		t.Fatal(c)
 	}
 	j := startManaged(t, f, token, p.ID, false)
-	raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
-	c, b := agentRequest(t, f, j, raw, "GET", "input", nil)
-	if c != 200 {
-		t.Fatal(c)
-	}
+
+	b := ma.Input(j.Run.Ref.Resources["input_file_id"])
 	input := readInput(t, b)
 	if !strings.Contains(input["inbox/"+first.ID+".md"], "First body") || input["CHANGES.md"] != "" {
 		t.Fatal(input)
@@ -44,10 +41,7 @@ func TestInboxRunPinsAndConsumesOnlyPublishedItems(t *testing.T) {
 		return nil
 	})
 	next := startManaged(t, f, token, p.ID, false)
-	c, b = agentRequest(t, f, next, ma.Credential(next.Run.Ref.Resources["vault_id"]), "GET", "input", nil)
-	if c != 200 {
-		t.Fatal(c)
-	}
+	b = ma.Input(next.Run.Ref.Resources["input_file_id"])
 	input = readInput(t, b)
 	if input["wiki/index.md"] == "" || input["wiki/log.md"] == "" || input["inbox/"+first.ID+".md"] != "" {
 		t.Fatal(input)
@@ -64,7 +58,7 @@ func TestInboxFailureReleasesForNewGeneration(t *testing.T) {
 		t.Fatal(c)
 	}
 	replacement := waitingInboxItem(t, f, p.ID, url)
-	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "retries_exhausted", 1)
 	j = reconcileManaged(t, f, j)
 	if j.Status != "failed" {
 		t.Fatal(j)
@@ -248,7 +242,7 @@ func TestInboxFailurePrefersWaitingReplacementRegardlessOfClock(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
+			ma.SetStatus(j.Run.Ref.ID, "idle", "retries_exhausted", 1)
 			if got := reconcileManaged(t, f, j); got.Status != "failed" {
 				t.Fatal(got)
 			}
@@ -371,9 +365,7 @@ func TestIncompleteOversizedPublicationCanRetry(t *testing.T) {
 				"wiki/large.md": strings.Repeat("a", (1<<20)+100),
 				"wiki/z.md":     "# Last page",
 			}
-			if c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages)); c != 200 {
-				t.Fatalf("output %d: %s", c, b)
-			}
+			ma.SetOutput(j.Run.Ref.ID, outputArchive(t, pages))
 			objects := f.s.Blobs
 			f.s.Blobs = failAfterLargeWikiWrite{objects}
 			f.s.storage.objects = f.s.Blobs
@@ -427,9 +419,7 @@ func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
 		t.Fatal(c)
 	}
 	pages := map[string]string{"wiki/index.md": "# Index", "wiki/large.md": strings.Repeat("a", (1<<20)+100)}
-	if c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages)); c != 200 {
-		t.Fatalf("output %d: %s", c, b)
-	}
+	ma.SetOutput(j.Run.Ref.ID, outputArchive(t, pages))
 	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 1)
 	if got := reconcileManaged(t, f, j); got.Status != "completed" {
 		t.Fatal(got)
@@ -440,9 +430,7 @@ func TestInterruptedRemovalKeepsPublishedQuotaRestriction(t *testing.T) {
 	j = startManaged(t, f, token, p.ID, false)
 	pages["wiki/large.md"] = "# Smaller"
 	pages["wiki/z.md"] = "# Last page"
-	if c, b := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, pages)); c != 200 {
-		t.Fatalf("output %d: %s", c, b)
-	}
+	ma.SetOutput(j.Run.Ref.ID, outputArchive(t, pages))
 	objects := f.s.Blobs
 	f.s.Blobs = failAfterLargeWikiWrite{objects}
 	f.s.storage.objects = f.s.Blobs
@@ -694,7 +682,7 @@ func TestFailedAutomaticJobIsNotRequeued(t *testing.T) {
 		t.Fatal(err)
 	}
 	job = storedJob(t, f, job.ID)
-	ma.SetStatus(job.Run.Ref.ID, "idle", "end_turn", 1)
+	ma.SetStatus(job.Run.Ref.ID, "idle", "retries_exhausted", 1)
 	if got := reconcileManaged(t, f, job); got.Status != "failed" {
 		t.Fatal(got)
 	}

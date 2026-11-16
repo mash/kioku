@@ -16,12 +16,9 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-type unavailableCleanupClient struct{ claudemanaged.Client }
+type unavailableCleanupClient struct{ claudemanaged.FileClient }
 
-func (unavailableCleanupClient) ArchiveSession(context.Context, string) error {
-	return claudemanaged.ErrTemporary
-}
-func (unavailableCleanupClient) ArchiveVault(context.Context, string) error {
+func (unavailableCleanupClient) DeleteSession(context.Context, string) error {
 	return claudemanaged.ErrTemporary
 }
 
@@ -72,7 +69,11 @@ func TestManagedTerminalCleanupSurvivesRestart(t *testing.T) {
 			if success {
 				sendOutput(t, f, ma, j, "Complete")
 			}
-			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+			reason := "end_turn"
+			if !success {
+				reason = "retries_exhausted"
+			}
+			ma.SetStatus(j.Run.Ref.ID, "idle", reason, 123)
 			client, objects := f.runnerConfig.ManagedAgents, f.s.Blobs
 			f.runnerConfig.ManagedAgents = unavailableCleanupClient{client}
 			f.setRunners()
@@ -111,8 +112,8 @@ func TestManagedPendingCleanupPreservesDeletionAndAllowsNewGeneration(t *testing
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 100)
-	ma.SetError("POST", "/v1/sessions/"+j.Run.Ref.ID+"/archive", 503)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "retries_exhausted", 100)
+	ma.SetError("DELETE", "/v1/sessions/"+j.Run.Ref.ID, 503)
 	j = reconcileManaged(t, f, j)
 	if j.Run.CleanupComplete {
 		t.Fatal("failed cleanup marked complete")

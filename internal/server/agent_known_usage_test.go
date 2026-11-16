@@ -9,7 +9,7 @@ import (
 )
 
 type failSecondSessionLookup struct {
-	claudemanaged.Client
+	claudemanaged.FileClient
 	calls int
 }
 
@@ -18,7 +18,7 @@ func (c *failSecondSessionLookup) GetSession(ctx context.Context, id string) (cl
 	if c.calls == 2 {
 		return claudemanaged.Session{}, claudemanaged.ErrTemporary
 	}
-	return c.Client.GetSession(ctx, id)
+	return c.FileClient.GetSession(ctx, id)
 }
 func TestManagedRetainsObservedTerminalUsage(t *testing.T) {
 	t.Parallel()
@@ -26,7 +26,7 @@ func TestManagedRetainsObservedTerminalUsage(t *testing.T) {
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
 	ma.SetStatus(j.Run.Ref.ID, "idle", "retries_exhausted", 123)
-	f.runnerConfig.ManagedAgents = &failSecondSessionLookup{Client: f.runnerConfig.ManagedAgents}
+	f.runnerConfig.ManagedAgents = &failSecondSessionLookup{FileClient: f.runnerConfig.ManagedAgents}
 	f.setRunners()
 	j = reconcileManaged(t, f, j)
 	restartManagedFixture(t, f)

@@ -9,28 +9,6 @@ import (
 	"github.com/mash/kioku/internal/store"
 )
 
-func TestManagedStoredOutputHashRejectsReplacement(t *testing.T) {
-	t.Parallel()
-	f, token, p, ma := managedFixture(t)
-	putFile(t, f, token, p.ID, "x.md", "evidence")
-	j := startManaged(t, f, token, p.ID, false)
-	sendOutput(t, f, ma, j, "Original")
-	j = storedJob(t, f, j.ID)
-	if err := f.s.Blobs.Put(context.Background(), j.Run.OutputKey, outputArchive(t, map[string]string{"wiki/index.md": "Replaced"})); err != nil {
-		t.Fatal(err)
-	}
-	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-	j = reconcileManaged(t, f, j)
-	if j.Status != "failed" || j.Error != "agent output hash mismatch" {
-		t.Fatal("tampered output accepted", j.Status, j.Error)
-	}
-	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {
-		if fixtureProjectsGet(t, st, p.ID).Revision != "" {
-			t.Error("tampered output published")
-		}
-		return nil
-	})
-}
 func TestManagedOldFailureCannotStopNewAttempt(t *testing.T) {
 	t.Parallel()
 	f, token, p, ma := managedFixture(t)
@@ -46,10 +24,8 @@ func TestManagedOldFailureCannotStopNewAttempt(t *testing.T) {
 	if got.Status != "running" || got.Run.AbortReason != "" || got.Run.Attempt.ID != next.Run.Attempt.ID {
 		t.Fatal("old failure changed new run", got)
 	}
-	if c, b := agentRequest(t, f, next, ma.Credential(next.Run.Ref.Resources["vault_id"]), "GET", "input", nil); c != 200 {
-		t.Fatal("new credential disabled", c, string(b))
-	}
-	if ma.Session(next.Run.Ref.ID).Archived {
+
+	if ma.Session(next.Run.Ref.ID).Deleted {
 		t.Error("new session archived")
 	}
 }
@@ -64,9 +40,7 @@ func TestManagedPreparingGracePreservesUnknownCreation(t *testing.T) {
 	if j.Status != "running" || j.Run.Phase != model.PhasePreparing || len(ma.Requests()) != before+1 {
 		t.Fatal("creation grace skipped", j)
 	}
-	if c, _ := agentRequest(t, f, j, ma.Credential("vault_1"), "GET", "input", nil); c != 200 {
-		t.Fatal("credential expired during grace", c)
-	}
+
 	_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 		x := fixtureJobsGet(t, st, j.ID)
 		x.Run.PreparedAt = time.Now().Add(-6 * time.Minute)

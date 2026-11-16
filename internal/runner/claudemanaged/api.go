@@ -16,30 +16,22 @@ import (
 )
 
 type Client interface {
-	CreateJobVault(context.Context, VaultInput) (string, error)
-	FindJobVaults(context.Context, string, string) ([]string, error)
-	ArchiveVault(context.Context, string) error
 	CreateSession(context.Context, SessionInput) (string, error)
 	GetSession(context.Context, string) (Session, error)
 	FindAttemptSessions(context.Context, runner.AttemptKey) ([]string, error)
 	Interrupt(context.Context, string) error
-	ArchiveSession(context.Context, string) error
-}
-type VaultInput struct {
-	JobID, AttemptID, ProjectID string
-	Credentials                 []runner.Credential
 }
 type SessionInput struct {
-	System                 string
-	Model                  prompts.Model
-	MAAgentID              string
-	MAAgentVersion         int64
-	EnvironmentID, VaultID string
-	BudgetCents            int64
-	Title                  string
-	Metadata               map[string]string
-	FirstMessage           string
-	InputFileID            string
+	System         string
+	Model          prompts.Model
+	MAAgentID      string
+	MAAgentVersion int64
+	EnvironmentID  string
+	BudgetCents    int64
+	Title          string
+	Metadata       map[string]string
+	FirstMessage   string
+	InputFileID    string
 }
 type Session struct {
 	ID, Status, LastStopReason string
@@ -94,64 +86,6 @@ func apiError(err error) error {
 	return fmt.Errorf("%w: request failed", ErrTemporary)
 }
 
-func (a *API) CreateJobVault(ctx context.Context, in VaultInput) (string, error) {
-	v, err := a.sdk.Vaults.New(ctx, anthropic.BetaVaultNewParams{DisplayName: "kioku-job-" + in.JobID, Metadata: map[string]string{"kioku_job_id": in.JobID, "kioku_attempt_id": in.AttemptID}})
-	if err != nil {
-		return "", apiError(err)
-	}
-	if v.ID == "" {
-		return "", errors.New("managed agents: missing vault ID")
-	}
-	for _, c := range in.Credentials {
-		_, err = a.sdk.Vaults.Credentials.New(ctx, v.ID, anthropic.BetaVaultCredentialNewParams{Auth: anthropic.BetaVaultCredentialNewParamsAuthUnion{OfEnvironmentVariable: &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{SecretName: c.Name, SecretValue: string(c.Value), Networking: anthropic.BetaManagedAgentsCredentialNetworkingParamsOfLimited(c.AllowedHosts), InjectionLocation: anthropic.BetaManagedAgentsInjectionLocationParams{Header: anthropic.Bool(true)}}}})
-		if err != nil {
-			return v.ID, apiError(err)
-		}
-	}
-	return v.ID, nil
-}
-
-// FindJobVaults recovers vaults whose create response or local ID commit was lost.
-// The hold ID distinguishes retries that share a job ID.
-func (a *API) FindJobVaults(ctx context.Context, jobID, attemptID string) ([]string, error) {
-	if jobID == "" || attemptID == "" {
-		return nil, errors.New("managed agents: vault lookup requires job and attempt IDs")
-	}
-	var ids []string
-	cursor := ""
-	seen := map[string]bool{}
-	for {
-		params := anthropic.BetaVaultListParams{}
-		if cursor != "" {
-			params.Page = anthropic.String(cursor)
-		}
-		page, err := a.sdk.Vaults.List(ctx, params)
-		if err != nil {
-			return nil, apiError(err)
-		}
-		for _, vault := range page.Data {
-			if vault.Metadata["kioku_job_id"] == jobID && vault.Metadata["kioku_attempt_id"] == attemptID && vault.ArchivedAt.IsZero() {
-				ids = append(ids, vault.ID)
-			}
-		}
-		if page.NextPage == "" {
-			return ids, nil
-		}
-		if seen[page.NextPage] {
-			return nil, fmt.Errorf("%w: repeated vault cursor", ErrTemporary)
-		}
-		seen[page.NextPage] = true
-		cursor = page.NextPage
-	}
-}
-func (a *API) ArchiveVault(ctx context.Context, id string) error {
-	_, err := a.sdk.Vaults.Archive(ctx, id, anthropic.BetaVaultArchiveParams{})
-	err = apiError(err)
-	if isNotFound(err) {
-		return nil
-	}
-	return err
-}
 func (a *API) CreateSession(ctx context.Context, in SessionInput) (string, error) {
 	if in.BudgetCents < 50 {
 		return "", errors.New("managed agents: budget must be at least 50 cents")
@@ -184,8 +118,6 @@ func (a *API) CreateSession(ctx context.Context, in SessionInput) (string, error
 		params.Resources = []anthropic.BetaSessionNewParamsResourceUnion{{OfFile: &anthropic.BetaManagedAgentsFileResourceParams{
 			FileID: in.InputFileID, MountPath: anthropic.String("/input.tar.gz"),
 		}}}
-	} else if in.VaultID != "" {
-		params.VaultIDs = []string{in.VaultID}
 	}
 	v, err := a.sdk.Sessions.New(ctx, params)
 	if err != nil {
@@ -236,14 +168,6 @@ func (a *API) GetSession(ctx context.Context, id string) (Session, error) {
 }
 func (a *API) Interrupt(ctx context.Context, id string) error {
 	_, err := a.sdk.Sessions.Events.Send(ctx, id, anthropic.BetaSessionEventSendParams{Events: []anthropic.BetaManagedAgentsEventParamsUnion{{OfUserInterrupt: &anthropic.BetaManagedAgentsUserInterruptEventParams{}}}})
-	err = apiError(err)
-	if isNotFound(err) {
-		return nil
-	}
-	return err
-}
-func (a *API) ArchiveSession(ctx context.Context, id string) error {
-	_, err := a.sdk.Sessions.Archive(ctx, id, anthropic.BetaSessionArchiveParams{})
 	err = apiError(err)
 	if isNotFound(err) {
 		return nil

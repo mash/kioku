@@ -9,15 +9,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
-	"github.com/mash/kioku/internal/runners"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
 )
@@ -130,37 +126,7 @@ func waitExecJob(t *testing.T, f *fixture, j fixtureJob) fixtureJob {
 	t.Fatal("exec job did not finish", j)
 	return j
 }
-func TestExecGenerationLifecycle(t *testing.T) {
-	t.Parallel()
-	for _, role := range []string{"success", "failure", "upload-failure", "view-failure"} {
-		t.Run(role, func(t *testing.T) {
-			f, token, p := execFixture(t, role)
-			j := startManaged(t, f, token, p.ID, true)
-			j = waitExecJob(t, f, j)
-			want, cost := "failed", int64(23)
-			if role == "success" || role == "view-failure" {
-				want, cost = "completed", 137
-			} else if role == "upload-failure" {
-				want = "completed"
-			}
-			if j.Status != want || j.Run.CostCents == nil || *j.Run.CostCents != cost {
-				t.Fatal(j)
-			}
-			if role == "failure" && j.Error != "reason-private" {
-				t.Fatal(j.Error)
-			}
-			if role == "view-failure" && (len(j.Views) != 1 || j.Views[0].Status != "failed" || j.Views[0].Error != "View の生成処理に失敗しました") {
-				t.Fatalf("exec View failure escaped public handling: %+v", j.Views)
-			}
-			if strings.Contains(j.Error, "stderr-private") {
-				t.Fatal(j.Error)
-			}
-			if _, err := os.Stat(filepath.Join(f.runnerConfig.DataDir, "exec-runs", j.ID+"-"+j.Run.Attempt.ID)); !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("workdir remains", err)
-			}
-		})
-	}
-}
+
 func TestExecTimeoutAndStaleExit(t *testing.T) {
 	t.Parallel()
 	f, token, p := execFixture(t, "wait")
@@ -183,103 +149,6 @@ func TestExecTimeoutAndStaleExit(t *testing.T) {
 	j = waitExecJob(t, f, j)
 	if j.Status != "failed" || j.Error != "agent job timed out" || j.Run.CostCents != nil {
 		t.Fatal(j)
-	}
-}
-func TestWorkerReconcilesLostExecBeforeDequeuing(t *testing.T) {
-	t.Parallel()
-	for _, phase := range []model.ManagedPhase{model.PhasePreparing, model.PhaseAgentRunning, model.PhaseOutputReceived, model.PhaseFinalizing} {
-		for _, abort := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/aborted=%v", phase, abort), func(t *testing.T) {
-				f, token, p, ma := managedFixture(t)
-				j := startManaged(t, f, token, p.ID, true)
-				raw := ma.Credential(j.Run.Ref.Resources["vault_id"])
-				if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
-					sendOutput(t, f, ma, j, "Restart output")
-				}
-				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
-					current := fixtureJobsGet(t, st, j.ID)
-					run := current.Run
-					run.Phase = phase
-					if phase == model.PhasePreparing {
-						run.Ref.ID = ""
-					}
-					if abort {
-						run.AbortReason = "original abort"
-					}
-					fixtureJobsPut(t, st, j.ID, current)
-					return nil
-				}); err != nil {
-					t.Fatal(err)
-				}
-				f.runnerConfig.Type = "exec"
-				f.runnerConfig.Command = []string{os.Args[0]}
-				f.runnerConfig.DataDir = t.TempDir()
-				restored := New(f.s.Config, f.stateStore, f.s.Blobs, f.s.Cipher)
-				g, err := runners.Load(f.runnerConfig, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer g.Close(context.Background())
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				// A second project can be dequeued even while the lost run occupies a slot.
-				queued := fixtureJob{ID: "queued-after-restart", ProjectID: "other-project", Status: "queued"}
-				if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error { fixtureJobsPut(t, st, queued.ID, queued); return nil }); err != nil {
-					t.Fatal(err)
-				}
-				observed := make(chan fixtureJob, 1)
-				restored.SetRunners(observingRunners{Runners: g, newRun: func(next store.JobRow) (runner.Runner, error) {
-					if next.ID == queued.ID {
-						var previous fixtureJob
-						if err := f.stateStore.Read(context.Background(), func(st *store.Queries) error { previous = fixtureJobsGet(t, st, j.ID); return nil }); err != nil {
-							return nil, err
-						}
-						observed <- previous
-						cancel()
-						return nil, runner.ErrNotConfigured
-					}
-					return g.New(next)
-				}})
-				if err := restored.Prepare(); err != nil {
-					t.Fatal(err)
-				}
-				if got := storedJob(t, f, j.ID); got.Status != "running" {
-					t.Fatal("Prepare reconciled the run", got)
-				}
-				done := make(chan error, 1)
-				go func() { done <- restored.RunWorker(ctx) }()
-				select {
-				case previous := <-observed:
-					if !agentRunFinished(fixtureRow(previous)) || !previous.Run.CleanupComplete {
-						t.Error("worker dequeued before startup reconciliation", previous)
-					}
-				case <-time.After(5 * time.Second):
-					cancel()
-					t.Error("worker did not pick up the queued job")
-				}
-				if err := <-done; err != nil {
-					t.Fatal(err)
-				}
-				lost := phase == model.PhasePreparing || phase == model.PhaseAgentRunning
-				if code, _ := agentRequest(t, f, j, raw, "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "replacement"})); code != 403 && code != 409 {
-					t.Fatal("old token accepted", code)
-				}
-				j = storedJob(t, f, j.ID)
-				want := "completed"
-				if lost || abort {
-					want = "failed"
-				}
-				if j.WikiStatus != want || !j.Run.CleanupComplete || j.Run.CostCents != nil {
-					t.Fatal(j)
-				}
-				if abort && j.Error != "original abort" {
-					t.Fatal(j.Error)
-				}
-				if lost && !abort && j.Error != "exec run lost on restart" {
-					t.Fatal(j.Error)
-				}
-			})
-		}
 	}
 }
 

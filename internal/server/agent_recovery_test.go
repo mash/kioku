@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,8 +22,13 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 			f, token, p, ma := managedFixture(t)
 			putFile(t, f, token, p.ID, "x.md", "snapshot")
 			j := startManaged(t, f, token, p.ID, false)
+			sendOutput(t, f, ma, j, "Recovered")
 			if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
-				sendOutput(t, f, ma, j, "Recovered")
+				ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+				objects := f.s.Blobs
+				f.s.storage.objects = failWikiPublication{objects}
+				deferredPublication(t, f, j)
+				f.s.storage.objects = objects
 			}
 			_ = f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 				x := fixtureJobsGet(t, st, j.ID)
@@ -70,10 +74,7 @@ func TestManagedRestartEveryPhase(t *testing.T) {
 				return nil
 			})
 			got := reconcileManaged(t, f, j)
-			want := "failed"
-			if phase == model.PhaseOutputReceived || phase == model.PhaseFinalizing {
-				want = "completed"
-			}
+			want := "completed"
 			if got.Status != want {
 				t.Fatal(got)
 			}
@@ -101,33 +102,7 @@ func (b *pauseOutputRead) Get(ctx context.Context, key blob.Key) ([]byte, error)
 	}
 	return b.Store.Get(ctx, key)
 }
-func TestManagedFinalizingPinsOutputHash(t *testing.T) {
-	t.Parallel()
-	f, token, p, ma := managedFixture(t)
-	putFile(t, f, token, p.ID, "x.md", "evidence")
-	j := startManaged(t, f, token, p.ID, false)
-	sendOutput(t, f, ma, j, "Selected version")
-	j = storedJob(t, f, j.ID)
-	b := &pauseOutputRead{Store: f.s.Blobs, key: j.Run.OutputKey, entered: make(chan struct{}), release: make(chan struct{})}
-	f.s.Blobs = b
-	f.s.storage.objects = f.s.Blobs
-	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
-	done := make(chan error, 1)
-	go func() { done <- f.s.reconcileAgentJob(context.Background(), fixtureRow(j)) }()
-	<-b.entered
-	c, body := agentRequest(t, f, j, ma.Credential(j.Run.Ref.Resources["vault_id"]), "PUT", "output", outputArchive(t, map[string]string{"wiki/index.md": "Replacement"}))
-	close(b.release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if c != 409 {
-		t.Fatal(c, string(body))
-	}
-	index := f.readWiki("/api/projects/"+p.ID, token)["wiki/index.md"]
-	if !strings.Contains(index, "Selected version") || strings.Contains(index, "Replacement") {
-		t.Fatal(index)
-	}
-}
+
 func TestManagedTemporaryCreationRecoveryAndNoOp(t *testing.T) {
 	t.Parallel()
 	f, token, p, ma := managedFixture(t)

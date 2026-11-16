@@ -9,21 +9,21 @@ import (
 )
 
 type pauseSessionClient struct {
-	claudemanaged.Client
+	claudemanaged.FileClient
 	entered, release chan struct{}
 	once             sync.Once
 }
 
 func (c *pauseSessionClient) GetSession(ctx context.Context, id string) (claudemanaged.Session, error) {
 	c.once.Do(func() { close(c.entered); <-c.release })
-	return c.Client.GetSession(ctx, id)
+	return c.FileClient.GetSession(ctx, id)
 }
 func TestManagedOutputArrivingDuringSessionInspectionIsPublished(t *testing.T) {
 	t.Parallel()
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")
 	j := startManaged(t, f, token, p.ID, false)
-	c := &pauseSessionClient{Client: f.runnerConfig.ManagedAgents, entered: make(chan struct{}), release: make(chan struct{})}
+	c := &pauseSessionClient{FileClient: f.runnerConfig.ManagedAgents, entered: make(chan struct{}), release: make(chan struct{})}
 	f.runnerConfig.ManagedAgents = c
 	f.setRunners()
 	done := make(chan error, 1)

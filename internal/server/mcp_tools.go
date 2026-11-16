@@ -184,16 +184,24 @@ func (s *Server) mcpProjects(key string) (any, error) {
 }
 
 func (s *Server) connectorWikiFiles(ctx context.Context, key, namespace string) (model.Revision, func(), error) {
-	var project model.Project
-	var uid string
-	if err := s.Store.Read(ctx, func(q *store.Queries) error {
-		var err error
-		project, uid, err = connectorProject(q, key, namespace)
-		return err
-	}); err != nil {
+	project, unlock, err := s.lockConnectorProject(ctx, key, namespace)
+	if err != nil {
 		return model.Revision{}, nil, err
 	}
-	return s.wikiFiles(ctx, uid, project.ID)
+	var rev model.Revision
+	err = s.Store.Read(ctx, func(q *store.Queries) error {
+		row, err := q.Project(project.ID)
+		if err != nil {
+			return err
+		}
+		rev, err = wikiProjection(q, row)
+		return err
+	})
+	if err != nil {
+		unlock()
+		return model.Revision{}, nil, err
+	}
+	return rev, unlock, nil
 }
 
 func (s *Server) mcpWikiRead(ctx context.Context, key, namespace, name string, offset int) (any, error) {

@@ -37,6 +37,58 @@ func TestManagedDeleteRecoversUnrecordedSession(t *testing.T) {
 	}
 }
 
+func TestManagedDeleteDefersProviderRejections(t *testing.T) {
+	for _, operation := range []string{"stop", "cleanup"} {
+		t.Run(operation, func(t *testing.T) {
+			f, token, p, ma := managedFixture(t)
+			j := startManaged(t, f, token, p.ID, true)
+			endpoint := "/v1/sessions/" + j.Run.Ref.ID + "/events"
+			if operation == "cleanup" {
+				ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+				endpoint = "/v1/sessions/" + j.Run.Ref.ID + "/archive"
+			}
+			ma.SetError("POST", endpoint, 403)
+			path := "/api/projects/" + p.ID
+			if code := f.request("DELETE", path, token, nil, nil); code != 503 {
+				t.Fatalf("provider %s rejection must leave deletion pending: %d", operation, code)
+			}
+			if !fixtureProjectsGet(t, f, p.ID).Deleting || storedJob(t, f, j.ID).Run.CleanupComplete {
+				t.Fatal("provider failure lost pending deletion or cleanup")
+			}
+			ma.SetError("POST", endpoint, 0)
+			ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+			if code := f.request("DELETE", path, token, nil, nil); code != 200 {
+				t.Fatalf("deletion did not resume after provider recovery: %d", code)
+			}
+			fixtureCheck(t, f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+				usage, err := q.Usage(j.ID)
+				if err == nil && (usage.Data.CostCents == nil || *usage.Data.CostCents != 123) {
+					t.Fatal("deletion lost usage", usage)
+				}
+				return err
+			}))
+		})
+	}
+}
+
+func TestManagedDeleteStorageFailureRemainsInternalError(t *testing.T) {
+	f, token, p, ma := managedFixture(t)
+	j := startManaged(t, f, token, p.ID, true)
+	ma.SetStatus(j.Run.Ref.ID, "idle", "end_turn", 123)
+	objects := f.s.Blobs
+	f.s.Blobs = unavailableCleanupStore{objects}
+	f.s.storage.objects = f.s.Blobs
+	path := "/api/projects/" + p.ID
+	if code := f.request("DELETE", path, token, nil, nil); code != 500 {
+		t.Fatalf("storage cleanup failure must remain a storage error: %d", code)
+	}
+	f.s.Blobs = objects
+	f.s.storage.objects = objects
+	if code := f.request("DELETE", path, token, nil, nil); code != 200 {
+		t.Fatalf("deletion did not resume after storage recovery: %d", code)
+	}
+}
+
 func TestRemovedSourceDeletionRouteLeavesGenerationRunning(t *testing.T) {
 	f, token, p, ma := managedFixture(t)
 	putFile(t, f, token, p.ID, "x.md", "evidence")

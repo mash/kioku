@@ -180,6 +180,26 @@ func TestCleanupJoinsFailures(t *testing.T) {
 	}
 }
 
+func TestCleanupAcceptsMissingVault(t *testing.T) {
+	for _, discovered := range []bool{false, true} {
+		t.Run(fmt.Sprint("discovered=", discovered), func(t *testing.T) {
+			r, f, spec := fixture(t)
+			ref := start(t, r, spec)
+			f.SetStatus(ref.ID, "idle", "end_turn", 0)
+			f.SetError("POST", "/v1/vaults/"+ref.Resources["vault_id"]+"/archive", 404)
+			if discovered {
+				ref.Resources = nil
+			}
+			if err := r.Cleanup(t.Context(), runner.Attempt{Key: spec.Key, Run: ref}); err != nil {
+				t.Fatalf("deleted vault must not block cleanup: %v", err)
+			}
+			if !f.Session(ref.ID).Archived {
+				t.Fatal("session not archived")
+			}
+		})
+	}
+}
+
 func TestVaultContainsOnlyJobTokenWithHeaderDestination(t *testing.T) {
 	r, f, spec := fixture(t)
 	ref := start(t, r, spec)

@@ -294,7 +294,7 @@ func (s *Server) finishFailedAgentJobLocked(ctx context.Context, job store.JobRo
 		return fmt.Errorf("%w: %v", runner.ErrTemporary, err)
 	}
 	if err = r.Stop(ctx, sqlAttempt(job)); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", runner.ErrTemporary, err)
 	}
 	return fmt.Errorf("%w: waiting for agent session to stop", runner.ErrTemporary)
 }
@@ -314,19 +314,24 @@ func (s *Server) cleanupAgentJob(ctx context.Context, job store.JobRow, status *
 	if status == nil {
 		v, err := r.Inspect(ctx, sqlAttempt(job))
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", runner.ErrTemporary, err)
 		}
 		status = &v
 	}
 	if status.State == runner.StateRunning || status.State == runner.StateUnknown {
 		if err := r.Stop(ctx, sqlAttempt(job)); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", runner.ErrTemporary, err)
 		}
 		return runner.ErrTemporary
 	}
 	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	complete, err := s.storage.cleanup(cleanupCtx, job.ID, *status, r.Cleanup)
+	complete, err := s.storage.cleanup(cleanupCtx, job.ID, *status, func(ctx context.Context, a runner.Attempt) error {
+		if err := r.Cleanup(ctx, a); err != nil {
+			return fmt.Errorf("%w: %w", runner.ErrTemporary, err)
+		}
+		return nil
+	})
 	if err == nil && complete {
 		s.notify()
 	}

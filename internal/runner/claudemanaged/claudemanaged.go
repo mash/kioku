@@ -122,7 +122,9 @@ func (r *Runner) Cleanup(ctx context.Context, a runner.Attempt) error {
 		record("agent vault discovery failed", err)
 	}
 	for _, id := range vaults {
-		record("agent vault archive failed", client.ArchiveVault(ctx, id))
+		if err := client.ArchiveVault(ctx, id); !isNotFound(err) {
+			record("agent vault archive failed", err)
+		}
 	}
 	return errors.Join(errs...)
 }

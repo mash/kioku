@@ -11,6 +11,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   -n cannot be combined with project join.
 
   version                             Show client build information
+  session list                        List local projects and trigger words
   session hook [--event EVENT] --prompts DIR     Handle Claude Code hook JSON on stdin
   agent login CODE | list|revoke      Manage project-scoped agent credentials
   account status|sessions|revoke-session|revoke-all|unlink|delete
@@ -19,6 +20,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org create SLUG | org list
   project create [--description TEXT]          Create and bind the selected directory
   project join [--description TEXT] INVITE_URL       Join and bind cwd (or -C)
+  project triggers [WORD...]                  Replace trigger words
   project list                                List participating projects
   project share list
   project share invite [EMAIL]                 Single-use invite; expires in 7 days

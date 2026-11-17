@@ -169,3 +169,32 @@ func (a *App) projectEntryResult(err error, recovery string) error {
 	}
 	return nil
 }
+
+// foldProjects preserves file order and the first path for each projectKey.
+func foldProjects(ps []projectEntry) []projectEntry {
+	descriptions := make(map[string]string)
+	for _, p := range ps {
+		if descriptions[p.Namespace] == "" {
+			descriptions[p.Namespace] = p.Description
+		}
+	}
+	var result []projectEntry
+	indexes := make(map[string]int)
+	for _, p := range ps {
+		triggers := p.Triggers
+		key := projectKey(p)
+		i, exists := indexes[key]
+		if !exists {
+			i = len(result)
+			indexes[key] = i
+			p.Description = descriptions[p.Namespace]
+			p.Triggers = nil
+			result = append(result, p)
+		}
+		words, err := normalizeTriggers(append(append([]string{}, result[i].Triggers...), triggers...))
+		if err == nil {
+			result[i].Triggers = words
+		}
+	}
+	return result
+}

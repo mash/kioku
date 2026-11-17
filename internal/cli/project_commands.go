@@ -4,9 +4,11 @@ import "fmt"
 
 func (a *App) project(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: kioku project create|join|list|delete|share|usage|audit")
+		return fmt.Errorf("usage: kioku project create|join|list|delete|share|usage|audit|triggers")
 	}
 	switch args[0] {
+	case "triggers":
+		return a.projectTriggers(args[1:])
 	case "create":
 		return a.createProject(args[1:])
 	case "join":

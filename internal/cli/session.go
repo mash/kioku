@@ -243,6 +243,27 @@ func (a *App) session(args []string) error {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return errors.New("usage: kioku session list")
+		}
+		authDir, err := defaultAuthDir()
+		if err != nil {
+			return err
+		}
+		catalog, err := readProjects((&App{AuthDir: authDir}).projectsPath())
+		if err != nil {
+			return err
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		vars := templateVars(exe, defaultServer, "", "")
+		if list := renderProjectList(vars["kioku"], foldProjects(catalog.Projects), nil, 0); list != "" {
+			_, err = fmt.Fprintln(a.Out, list)
+		}
+		return err
 	case "hook":
 		return a.sessionHook(args[1:], os.Stdin)
 	default:

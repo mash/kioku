@@ -3,15 +3,17 @@
 ## Claude Code の取り込み担当
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-フックは URL を通知しない。
-Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
-親は送信する URL を決め、Agent で `kioku-capture` を背景で起動する。
-親は URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
-同じ URL の子が動いている間は次の子を起動しない。
-子は put の直前に原本を全文で取得し、この文書の取得規則と送信前の確認を守る。
-子は URL ごとに URL・namespace・結果（受付済み / 未保存 / 受付不明）・理由を1行で返す。
-親は送らない理由や子の結果をユーザーに伝える。
-Codex では今どおり直接 put する。Claude Chat と Cowork も以下の手順で直接 put する。
+以下は Claude Code の local mode にだけ適用する。Codex では今どおり直接 put する。Claude Chat と Cowork、remote mode も以下の共通手順で直接 put する。
+
+親は参照・作成した重要な文書と、結論を変えた文書の HTTPS URL を、`kioku -n NAMESPACE queue add URL "何をしたか"` で1行ずつ足す。NOTE は記録であり、put の本文に入れない。ローカルファイルはキューの対象外で、原本 URL がある資料を従来どおり直接 put する。
+Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -n NAMESPACE capture run --min 1` を実行する。
+親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
+
+capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は curl で原文を取る。資料は文の一時ディレクトリに書き、mktemp を実行しない。
+各 URL の結果（受付済み / 未保存 / 受付不明）と理由を出力に1行書き、`kioku -n NAMESPACE queue remove URL` を実行する。受付不明・未保存も消し、失敗や不明を自動で再送しない。最後に `kioku -n NAMESPACE capture unlock` を実行する。
+結果は `claude logs <id>` で確認する。キュー追加・起動・unlock だけで受付済みや Wiki 生成済みと伝えない。
+
+Claude Code の local mode の起動・一時ディレクトリ・キュー処理には、この節と agent の手順を優先する。後述の親からの取り込み依頼は queue add を指し、親が別途子を起動する意味ではない。後述の mktemp は capture セッションでは使わない。hook は自動選択時だけ CLI 経由で選択状態を書き、capture の hook は選択状態を変えない。
 
 ## 共通の取得規則
 

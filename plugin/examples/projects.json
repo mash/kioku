@@ -3,8 +3,9 @@
     {
       "server": "https://kioku.example.com",
       "namespace": "acme/platform",
-      "description": "Platform project: acme-platform and PlatformGateway",
-      "path": "/Users/you/.local/share/kioku/projects/acme/platform"
+      "description": "Platform API と認証の改善。語彙: PlatformGateway、SSO、platform-api。repo: acme/platform",
+      "path": "/Users/you/.local/share/kioku/projects/acme/platform",
+      "triggers": ["PlatformGateway", "SSO", "platform-api"]
     }
   ]
 }

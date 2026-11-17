@@ -17,13 +17,12 @@ Kioku への送信には、local mode で CLI、remote mode で MCP（Model Cont
 ## 原資料の取り込みを任せる
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-フックは URL を通知しない。
-Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
-親は送信する URL を決め、Agent で `kioku-capture` を背景で起動する。
-親は URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
-同じ URL の子が動いている間は、次の子を起動しない。
-子は URL ごとに全文取得・検証・put を行い、URL・namespace・結果・理由を1行で返す。
-`kioku-capture` として親から対象を受け取ったときは、対象選択と pull を繰り返さず、[capture.md](references/capture.md) の手順で取り込む。
+以下のキュー手順は Claude Code の local mode に適用する。remote mode の送信手順は変えない。
+参照・作成した重要な文書や、結論を変えた文書の HTTPS URL は、`kioku -n NAMESPACE queue add URL "何をしたか"` で1行足す。字句修正や日常のコマンド出力は足さない。
+URL と NOTE はキューに残り、セッションをまたいで同じ project が共有する。同じ URL の再追加は日付と NOTE を更新し、末尾へ移す。
+Stop は5件以上、SessionEnd は1件以上で、フックが背景の `capture run` を起動する。親は Agent で取り込みを起動しない。
+利用者が今すぐ送るよう頼んだら、`kioku -n NAMESPACE capture run --min 1` を実行する。起動結果の id を使い、`claude logs <id>` で URL ごとの受付結果を確認する。キュー追加や起動だけで受付済みとは伝えない。
+`kioku-capture` として capture セッションへの文を受け取った場合は、対象選択と pull を繰り返さず、文の一時ディレクトリを使い、[capture.md](references/capture.md) と agent の手順に従う。
 Codex では今どおり直接 put する。Claude Chat と Cowork も直接 put する。
 
 ## モード選択
@@ -92,21 +91,20 @@ remote mode の接続先は `https://kioku.magicians.ee` だけ。
 `~/.config/kioku/projects.json` や `.kioku/config` が別の接続先を示す場合、remote mode へ切り替えない。
 `kioku version` が失敗し、接続先も不明なら、接続先を `https://kioku.magicians.ee` とする。
 
-Claude Code の UserPromptSubmit フックは、未選択なら毎ターン候補を示す。
-親は作業と候補が合えば、[selection.md](references/selection.md) に従って pull し、Wiki を読む。
-候補が違う時や、対象を決められない時はユーザーへ確認する。
-候補の提示だけでは対象は確定しない。候補がなければ、同じ手順で対象を選ぶ。
-選択済みなら、フックが毎ターン `P/wiki/` の参照と原資料を渡す規則を示す。
-最後の pull が失敗した場合は、同じ文書の失敗時の手順に従う。
+Claude Code の UserPromptSubmit フックは、未選択か Kioku なしなら trigger 語を照合する。
+1 project だけに当たれば自動選択し、背景で pull を始め、手元コピーの入口を渡す。
+一覧が出たら、親は最初のメッセージと description からユーザーに聞かずに1つ選び、`kioku -n NAMESPACE session select` を実行する。同じくらい合う場合も1つに決め、合うものが無ければ `kioku session select --none` を実行する。
+出力の入口を読み、選択したターンの返答の冒頭に「Kioku: NAMESPACE の wiki を読み込みました（理由: …）」を1行書く。Kioku なしなら「Kioku: 合う project が無いので Kioku なしで進めます」と書く。
+利用者が訂正したら、指定された project で `session select` を実行する。話題が変わった場合は `kioku session list` から選び直せる。
+選択済みなら、フックは入口 index.md のパスと queue add の規則を示す。背景の pull 中や失敗の文があれば、その状態を成功・最新と扱わない。失敗時は [selection.md](references/selection.md) の復旧手順に従う。
 
-local mode では、作業開始時に [selection.md](references/selection.md) で対象と認証方法を確定する。
+その他の環境の local mode では、作業開始時に [selection.md](references/selection.md) で対象と認証方法を確定する。
 既存の人の認証を優先し、必要な場合だけ [connector.md](references/connector.md) へ進む。
 対象を選んだ直後に pull し、完了を待つ。
 新規作成時と projects.json に description（プロジェクトの説明）がない時は、[selection.md](references/selection.md) に従って説明案を作り、ユーザーの確認後に `--description` で渡す。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
-Claude Code では、親がプロンプトの URL と自分で開いた URL・作った URL から送信する URL を決める。
-親は毎ターンの規則に従い、`kioku-capture` に渡す。
+Claude Code の local mode では、親が共有できる重要な文書の URL を決め、毎ターンの規則に従って `queue add` で記録する。
 その他の環境では、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送信する。
 操作や要約の「記録」を別途 put しない。
 複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。
@@ -121,7 +119,7 @@ Claude Code では、親がプロンプトの URL と自分で開いた URL・�
 - local mode: `P` は CLI が選んだプロジェクトの保存先の絶対パス。CLI が projects.json の `path` に記録する。
   接続先と namespace は `P/.kioku/config`、Wiki は `P/wiki/` に置く。
   CLI は操作対象のディレクトリの設定を使う。
-  Claude Code のフックだけが、候補を探すために cwd からファイルシステムのルートまでの設定を読む。
+  Claude Code のフックだけが、ヒントとブランチ名を探すために cwd からファイルシステムのルートまでの設定を読む。
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに最後の書き込みから30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。

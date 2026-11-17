@@ -125,47 +125,56 @@ startup・clear・fork では、フックが取得とバージョン確認を省
 通常のプラグインは PATH の `kioku` を使わない。
 `/reload-plugins` は CLI を取得しない。新しいバージョンの CLI は次の startup などが取得する。
 
-フックは SessionStart・PreCompact・UserPromptSubmit で動く。
-PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。
-フックは URL を抽出・通知しない。
-Claude が開いた URL・作った URL は、毎ターンの規則に従い、Claude 自身が `kioku-capture` に渡す。
-親は共有範囲・機密・保存禁止を確認して送信の要否を決める。
-送る場合は `kioku-capture` を背景で起動し、URL 一覧・namespace・server・mode・P・CLI の絶対パス・除外条件を渡す。
-子は sonnet で各 URL の全文取得・検証・put を行い、URL・namespace・結果・理由を1行ずつ返す。
-同じ URL の子を並行に起動しない。Codex は今どおり直接 put する。
+フックは SessionStart・PreCompact・UserPromptSubmit・Stop・SessionEnd で動く。
+PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。Kioku なしも要約に残す。
+compact・resume は保存済みの選択か Kioku なしを復元し、Wiki の本文は再注入しない。
+UserPromptSubmit・Stop・SessionEnd は `agent_id` がある入力では何も行わない。
 
-CLI は `CLAUDE_CODE_SESSION_ID` がある場合だけ、成功した pull・project join・project create の選択を保存する。
-保存先は `${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/<sid>.json` とする。
-状態には `server`・`namespace`・`mode`・`path` を残す。
-pull の後は `last_pull_at`・`last_pull_result` に日時と成否を残す。未実行なら両方のキーを省く。
-失敗した pull は、保存済みの server・namespace・path がすべて一致する場合だけ更新する。
-失敗した project create・project join は状態を書き換えない。
-CLI は読み取りと削除の期限をファイルの mtime から30日で判定する。
-CLI だけが状態ファイルを書き、期限切れのファイルを消す。フックは読むだけにする。
-状態ファイルを送信先や認証・共有権限の正本にしない。
-受付状態を手元に記録しない。
-UserPromptSubmit は入力に `agent_id` がある場合には何も出さない。
-UserPromptSubmit は未選択なら毎ターン、次の順で最初に一致する段の候補を示す。
+UserPromptSubmit は未選択か Kioku なしの時に、projects.json の trigger 語をプロンプトと cwd のブランチ名に照合する。
+ASCII だけの語は大文字小文字を区別せず、前後が `[a-z0-9]` でない位置に一致する。その他は部分一致で、ASCII 部分の大文字小文字を区別しない。
+Git を起動せず `.git/HEAD` を読み、worktree の `.git` ファイルにも対応する。detached HEAD や Git の外ではブランチ名を使わない。
+1 project だけに当たれば、hook が選択を保存し、背景で `kioku --server SERVER -n NAMESPACE pull` を起動する。
+手元コピーの index.md・overview.md と選択理由を渡し、pull の完了を待たずに戻る。コピーがなければ背景で取得中と伝える。
+背景 pull は、その完了時も server・namespace・path が同じ場合だけ結果を保存する。選択変更や Kioku なしを上書きしない。
 
-1. プロンプトに含まれる projects.json の namespace 全体。
-2. stdin の cwd から親をたどり、最初の `.kioku/config` を使う。ルートも調べる。
+未選択で trigger 語が0件か複数 project に当たる場合は、全 project の namespace・description を一覧で出す。
+同じ server・namespace を1件にまとめ、trigger 語に当たった project を先頭へ並べる。namespace 完全一致と最寄りの `.kioku/config` はヒントとして表示する。
+既定以外の server も表示する。projects.json が無い・空・不正なら、最寄りの設定を1行のヒントとして出す。それもなければ出力しない。
+親は内容と description からユーザーに聞かずに1つ選び、`kioku -n NAMESPACE session select` を実行する。同じくらい合っても1つに決める。どれも合わなければ `kioku session select --none` を実行する。
+Kioku なしでは一覧を繰り返さず、選び直し方と該当するヒントを1行で示す。プロンプトに namespace も trigger 語も無ければ、親ディレクトリ探索は行わない。
+選択済みなら trigger 語を照合せず、毎ターン index.md の場所と queue add の規則を出す。背景 pull 中と失敗の文を区別する。
 
-フックは Git を呼ばず、project 部分・ブランチ名・description を照合しない。
-候補が0件なら何も出さない。候補は namespace で区別する。
-フックは同じ namespace を1件にまとめ、候補に server を表示しない。
-候補を出しても選択状態を書かず、CLI が成功を記録するまで同じ入力には同じ候補を示す。
-親は候補が作業と合えば skill で pull し、Wiki を読む。違う時や決められない時はユーザーへ確認する。
-選択済みなら毎ターン `P/wiki/` の参照と原資料を渡す規則を出す。
-最後の pull が失敗なら失敗の文を続ける。URL を含むターンも規則だけを出す。
+`session select` は通常の pull と同じ認証・保存先を使い、成功時に選択と結果を保存する。
+stdout は Wiki の入口と冒頭の1行の指示だけを返し、通常の pull の JSON や「最新です」は出さない。
+pull に失敗しても実行前の手元コピーがあれば、そのコピーと警告を返して failure を保存する。コピーがなければ選択を変えずに失敗する。
+入口の読み取りは1ファイル40 KiBまで、出力は指示を含め10,000文字までとし、overview.md、index.md の順で末尾を省略する。
+選択したターンは「Kioku: NAMESPACE の wiki を読み込みました（理由: …）」を返答の冒頭に1行書く。
+利用者の訂正には別の `session select` で対応する。`session list` は description と trigger 語の全件を表示する。
 
-sh は stdin を読み、`session hook [--event EVENT] --prompts DIR` に JSON の解析と状態の読み取りを任せる。
-この CLI コマンドは通信・対象選択・認証を行わない。jq と Python は不要。
-フックはツール名やドメインの一覧を持たない。
-Stop hook・`session skip` は実装しない。
-スキルは最初のユーザーメッセージから対象を選び、会話ごとに一度 pull の完了を待つ。
-pull の後に `wiki/index.md` と関連ページを grep やファイルツールで読む。
-追加の pull は、ユーザーの依頼か、作業に新しい内容が必要な場合だけ実行する。
-pull に失敗した場合は、既存コピーを最新と呼ばない。
+CLI は `CLAUDE_CODE_SESSION_ID` がある場合、選択を `${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/<sid>.json` に保存する。
+選択時は `server`・`namespace`・`mode`・`path` を残し、pull 後は `last_pull_at`・`last_pull_result` を残す。
+`session select --none` は `declined_at` だけに置き換える。SID がない --none は失敗する。
+従来の pull・create・join の成功による選択は維持する。通常の pull の失敗は同じ対象の結果だけを更新し、create・join の失敗は選択を変えない。
+状態ファイルは0600、ディレクトリは0700、期限は mtime から30日。CLI が書いた後に期限切れを削除する。
+hook が状態を書くのは自動選択時だけ。状態ファイルを送信先や認証・共有権限の正本にしない。
+
+Claude Code の local mode では、親は共有範囲・機密・保存禁止を確認し、重要な文書の URL を `kioku -n NAMESPACE queue add URL "何をしたか"` で記録する。
+`P/.kioku/queue.tsv` は日付・HTTPS URL・NOTE の3列、0600。同じ URL の再追加は日付と NOTE を更新して末尾へ移す。`queue list` で読み、`queue remove URL...` で消す。
+キューはセッションをまたいで project ごとに共有する。NOTE は put 本文に入れない。Codex・Claude Chat・Cowork と remote mode の直接 put は変えない。
+
+Stop は5件以上、SessionEnd は1件以上で、ロックが無いか30分を超えて古い時だけ背景の `capture run --min N` を起動する。hook は出力せず、子を待たない。
+`capture run` の既定の閾値は5件。今すぐ送る依頼では `capture run --min 1` を使う。
+子は `P/.kioku/capture.lock` を排他作成し、信頼済みの作業 cwd で絶対パスの `claude --bg` を起動する。文は位置引数で渡し、`-p` は使わない。
+この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料を書く一時ディレクトリは cwd と別に作り、文で指定する。
+URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に capture unlock する。処理中に追加された URL は次の run が拾う。
+起動失敗はロックを消してキューを残す。id が読めない場合も起動成功としてロックを保持し、前回の片付けは行わない。
+ロックは pid の生死ではなく30分の期限で判定する。unlock は bg_id を `capture.last` に保存してロックを消す。
+capture セッションは idle で残り、次の run が前回の bg_id に `claude rm` を試す。結果は `claude agents` と `claude logs <id>` で確認する。
+背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、起動ごとに上書きする。`capture.last` も0600。
+
+sh は JSON の解析を `session hook --event EVENT --prompts DIR` に任せる。CLI の hook は直接通信せず、必要な子だけを起動する。jq と Python は不要。
+不正 JSON・不正 SID・8 MiB超の入力は無出力で終了する。sh は stderr を捨て、失敗してもセッションを止めない。
+追加の pull は、ユーザーの依頼か、作業に新しい内容が必要な場合だけ実行する。既存コピーを最新と呼ばない。
 Claude Code のサンドボックスを使う場合は、`kioku.magicians.ee` への通信を設定で許す。
 `~/.local/share/kioku/projects`・`~/.config/kioku`・`${XDG_STATE_HOME:-~/.local/state}/kioku/sessions` への書き込みも許す。
 既定以外のプロジェクトの path にも書き込みを許す。権限が足りないと pull が失敗する。
@@ -177,8 +186,9 @@ CLI は create・join・pull・agent login の紐づけ成功時と、毎回の 
 書き込みだけに失敗した場合は終了コード0と警告を返す。登録失敗には次の pull、削除失敗にはファイルの修復と該当項目の削除を案内する。壊れた JSON（データ交換形式）はファイル名を示して止まる。
 [examples/projects.json](examples/projects.json) に形式の例がある。
 
-新規作成時や description（プロジェクトの説明）がない時は、スキルがプロジェクト名・会話・Wiki から説明案を作り、ユーザーに確認か修正を求める。
+description は案件・主な語彙・対象 repo を1〜3文、200文字以内を目安に書く。選んだ project の説明が足りなければ、親は返答の末尾に1行の案を示す。新規作成時も説明案を確認する。
 確認後に create・join・pull の `--description` で渡す。スキルは projects.json を手書きしない。
+trigger 語は利用者が求めた時だけ `project triggers WORD...` で置き換え、語なしで消す。重複を除き、同じ server・namespace の全保存先に書く。通常の pull・create・join は既存の語を保つ。
 プロジェクトはプラグインのデータ領域の外に置き、アンインストール後も inbox を残す。
 
 人の `kioku login` が成功したら、スキルが `project list` を確認し、各 namespace で `kioku -n "$NAMESPACE" pull` を直列に実行する。

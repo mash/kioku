@@ -54,7 +54,9 @@ Connector agent credentials are stored per project in ~/.config/kioku/agents.
 With CLAUDE_CODE_SESSION_ID, successful pull/create/join remember selection in
 ${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/SID.json; no source acceptance ledger.
 State keeps server, namespace, mode, path, and optional last_pull_at/last_pull_result.
-Hooks only read state. Failed create/join do not write state. Failed pull
+session select --none stores only declined_at and requires CLAUDE_CODE_SESSION_ID.
+Hooks write selection only on trigger auto-selection; background pull only updates
+the same selection. Failed create/join do not write state. Failed pull
 updates the last pull only for the same server, namespace, and path.
 session select also records a failed pull when the local copy exists.
 State expires 30 days after file mtime; every write refreshes mtime.

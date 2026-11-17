@@ -11,10 +11,11 @@ import (
 )
 
 type projectEntry struct {
-	Server      string `json:"server"`
-	Namespace   string `json:"namespace"`
-	Path        string `json:"path"`
-	Description string `json:"description,omitempty"`
+	Triggers    []string `json:"triggers,omitempty"`
+	Server      string   `json:"server"`
+	Namespace   string   `json:"namespace"`
+	Path        string   `json:"path"`
+	Description string   `json:"description,omitempty"`
 }
 
 type projectsFile struct {
@@ -24,13 +25,20 @@ type projectsFile struct {
 type invalidProjectsError struct{ error }
 
 func readProjects(path string) (*projectsFile, error) {
-	p := &projectsFile{Projects: []projectEntry{}}
 	b, err := readRegular(path)
 	if os.IsNotExist(err) {
-		return p, nil
+		return &projectsFile{Projects: []projectEntry{}}, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	return parseProjects(path, b)
+}
+
+func parseProjects(path string, b []byte) (*projectsFile, error) {
+	p := &projectsFile{Projects: []projectEntry{}}
+	if b == nil {
+		return p, nil
 	}
 	if err := json.Unmarshal(b, p); err != nil {
 		return nil, &invalidProjectsError{fmt.Errorf("%s: %w", path, err)}
@@ -82,6 +90,21 @@ func (a *App) resolveProjectDir(origin, namespace string) (string, error) {
 // Call after localLock. Lock the directory so atomicfile.Write cannot replace the
 // locked inode, and no separate lock file is needed.
 func updateProjects(path string, change func(*projectsFile) bool) error {
+	return updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
+		p, err := parseProjects(path, data)
+		if err != nil {
+			return nil, false, err
+		}
+		if !change(p) {
+			return nil, false, nil
+		}
+		b, err := json.MarshalIndent(p, "", "  ")
+		return append(b, '\n'), true, err
+	})
+}
+
+// updateLockedFile locks the directory across reading and atomic replacement.
+func updateLockedFile(path string, change func([]byte) ([]byte, bool, error)) error {
 	if err := ensureDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -90,18 +113,15 @@ func updateProjects(path string, change func(*projectsFile) bool) error {
 		return err
 	}
 	defer f.Close()
-	p, err := readProjects(path)
-	if err != nil {
+	data, err := readRegular(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if !change(p) {
-		return nil
-	}
-	b, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
+	next, write, err := change(data)
+	if err != nil || !write {
 		return err
 	}
-	return atomicfile.Write(path, append(b, '\n'), 0600)
+	return atomicfile.Write(path, next, 0600)
 }
 
 func (a *App) addProjectEntry(server, namespace, dir string, description *string) error {

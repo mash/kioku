@@ -16,6 +16,7 @@ import (
 )
 
 type App struct {
+	backgroundPull   bool
 	AuthDir          string
 	Dir              string
 	Config           Config
@@ -78,9 +79,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return errors.New("KIOKU_AGENT_TOKEN is no longer supported; unset it and use kioku agent login")
 	}
 	a := &App{
-		AuthDir: authDir,
-		Client:  &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		Out:     out, Err: errOut, ctx: ctx,
+		AuthDir:        authDir,
+		backgroundPull: os.Getenv("KIOKU_SESSION_PULL") == "background",
+		Client:         &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		Out:            out, Err: errOut, ctx: ctx,
 	}
 	var projectSet, dirSet bool
 	global.Visit(func(f *flag.Flag) {

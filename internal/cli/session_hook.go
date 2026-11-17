@@ -61,7 +61,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	}
 	now := time.Now().UTC()
 	s, err := readSession(path, now)
-	if err != nil {
+	if err != nil || s.declined() {
 		if in.Event == "UserPromptSubmit" {
 			if line := candidateContext(*prompts, sessionCandidates(in.Prompt, in.Cwd)); line != "" {
 				return writeHookContext(a.Out, in.Event, line)

@@ -148,6 +148,23 @@ func TestProjectsConcurrentRegistrationAndPermissions(t *testing.T) {
 }
 
 func TestProjectConfigRegistersAndPullRepairsEntry(t *testing.T) {
+	t.Run("F2_4_preserve_triggers", func(t *testing.T) {
+		a, _, _, _ := syncFixture(t)
+		a.AuthDir = filepath.Join(t.TempDir(), "kioku", "auth")
+		path := writeProjectsFixture(t, a, fmt.Sprintf(`{"projects":[{"server":%q,"namespace":%q,"path":%q,"triggers":["Tesla","充電"]}]}`, a.Config.Server, a.Config.Namespace, a.Dir))
+		if err := a.pullCommand([]string{"--description", "new description"}); err != nil {
+			t.Fatal(err)
+		}
+		p, err := readProjects(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := p.Projects[0]
+		if got.Description != "new description" || strings.Join(got.Triggers, ",") != "Tesla,充電" {
+			t.Fatal(got)
+		}
+	})
+
 	a, _, _, _ := syncFixture(t)
 	a.AuthDir = filepath.Join(t.TempDir(), "kioku", "auth")
 	if err := a.bindPullProject("org/project"); err != nil {

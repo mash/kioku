@@ -28,13 +28,16 @@ const (
 
 // Only CLI project operations write selection and pull results.
 type sessionState struct {
-	Server         string            `json:"server"`
-	Namespace      string            `json:"namespace"`
-	Mode           string            `json:"mode"`
-	Path           string            `json:"path"`
+	DeclinedAt     time.Time         `json:"declined_at,omitzero"`
+	Server         string            `json:"server,omitempty"`
+	Namespace      string            `json:"namespace,omitempty"`
+	Mode           string            `json:"mode,omitempty"`
+	Path           string            `json:"path,omitempty"`
 	LastPullAt     time.Time         `json:"last_pull_at,omitzero"`
 	LastPullResult sessionPullResult `json:"last_pull_result,omitempty"`
 }
+
+func (s *sessionState) declined() bool { return !s.DeclinedAt.IsZero() }
 
 func sessionPath(sid string) (string, error) {
 	if !safeID(sid) {
@@ -70,6 +73,12 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, err
 	}
+	if s.declined() {
+		if s.Server != "" || s.Namespace != "" || s.Mode != "" || s.Path != "" || !s.LastPullAt.IsZero() || s.LastPullResult != sessionPullNone {
+			return nil, errors.New("invalid session state")
+		}
+		return &s, nil
+	}
 	if s.Mode != "local" || !filepath.IsAbs(s.Path) || !validNamespace(s.Namespace) {
 		return nil, errors.New("invalid session state")
 	}
@@ -91,8 +100,13 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	return &s, nil
 }
 
-// Save a complete CLI selection, then prune expired session files.
+// saveSession replaces selection through updateSession.
 func saveSession(sid string, now time.Time, s *sessionState) error {
+	return updateSession(sid, now, func(*sessionState) (*sessionState, bool) { return s, true })
+}
+
+// updateSession serializes selection, writes it atomically, and prunes expired files.
+func updateSession(sid string, now time.Time, decide func(old *sessionState) (*sessionState, bool)) error {
 	path, err := sessionPath(sid)
 	if err != nil {
 		return err
@@ -100,6 +114,20 @@ func saveSession(sid string, now time.Time, s *sessionState) error {
 	dir := filepath.Dir(path)
 	if err := ensureDirectory(dir); err != nil {
 		return err
+	}
+	lock, err := openLockedFile(dir, os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	old, readErr := readSession(path, now)
+	var pathErr *os.PathError
+	if errors.As(readErr, &pathErr) && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	s, write := decide(old)
+	if !write {
+		return nil
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -152,38 +180,20 @@ func (a *App) recordSession(lastPullResult sessionPullResult) {
 }
 
 func (a *App) saveSessionSelection(sid, namespace string, now time.Time, result sessionPullResult) error {
-	path, err := sessionPath(sid)
-	if err != nil {
-		return err
-	}
-	// Serialize CLI selections so a failed pull cannot restore an older target.
-	dir := filepath.Dir(path)
-	if err := ensureDirectory(dir); err != nil {
-		return err
-	}
-	lock, err := openLockedFile(dir, os.O_RDONLY)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	old, readErr := readSession(path, now)
-	// Replace missing, expired, or malformed state, but preserve unreadable state.
-	var pathErr *os.PathError
-	if errors.As(readErr, &pathErr) && !os.IsNotExist(readErr) {
-		return readErr
-	}
-	s := &sessionState{Server: a.Config.Server, Namespace: namespace, Mode: "local", Path: a.Dir}
-	sameProject := old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path
-	if result == sessionPullFailure && !sameProject {
-		return nil
-	}
-	if sameProject {
-		*s = *old
-	}
-	if result != sessionPullNone {
-		s.LastPullAt, s.LastPullResult = now, result
-	}
-	return saveSession(sid, now, s)
+	return updateSession(sid, now, func(old *sessionState) (*sessionState, bool) {
+		s := &sessionState{Server: a.Config.Server, Namespace: namespace, Mode: "local", Path: a.Dir}
+		sameProject := old != nil && old.Server == s.Server && old.Namespace == s.Namespace && old.Path == s.Path
+		if (a.backgroundPull || result == sessionPullFailure) && !sameProject {
+			return nil, false
+		}
+		if sameProject {
+			*s = *old
+		}
+		if result != sessionPullNone {
+			s.LastPullAt, s.LastPullResult = now, result
+		}
+		return s, true
+	})
 }
 
 type sessionAction int

@@ -226,6 +226,54 @@ func TestSessionProjectCommands(t *testing.T) {
 }
 
 func TestSessionSelectionPreservesOnlySameProjectPull(t *testing.T) {
+	for _, state := range []string{"missing", "server", "namespace", "path", "declined", "same"} {
+		for _, failed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("I5_I6_background/%s/failure=%v", state, failed), func(t *testing.T) {
+				sessionTestEnv(t)
+				now := time.Now().UTC()
+				old := sessionTestState(now)
+				switch state {
+				case "server":
+					old.Server = "https://other.example"
+				case "namespace":
+					old.Namespace = "org/other"
+				case "path":
+					old.Path = "/tmp/other"
+				case "declined":
+					old = &sessionState{DeclinedAt: now}
+				}
+				if state != "missing" {
+					if err := saveSession("session-1", now, old); err != nil {
+						t.Fatal(err)
+					}
+				}
+				path, _ := sessionPath("session-1")
+				before, _ := os.ReadFile(path)
+				info, _ := os.Stat(path)
+				a := &App{backgroundPull: true, Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
+				var pullErr error
+				want := sessionPullSuccess
+				if failed {
+					pullErr = errors.New("failed")
+					want = sessionPullFailure
+				}
+				a.recordSessionPull(pullErr)
+				if state == "same" {
+					got := mustSession(t)
+					if got.LastPullResult != want || got.LastPullAt.Before(now) {
+						t.Fatal(got)
+					}
+				} else {
+					after, _ := os.ReadFile(path)
+					updated, _ := os.Stat(path)
+					if !bytes.Equal(before, after) || (info != nil && !info.ModTime().Equal(updated.ModTime())) {
+						t.Fatal("background pull overwrote selection")
+					}
+				}
+			})
+		}
+	}
+
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/tmp/project"}
 	a.recordSessionPull(nil)
@@ -414,6 +462,40 @@ func TestSessionMtimeControlsExpiryAndRefresh(t *testing.T) {
 }
 
 func TestSessionLastPullValidation(t *testing.T) {
+	for _, mixed := range []string{"", "namespace", "last_pull", "server", "mode", "path"} {
+		t.Run("E19_declined/"+mixed, func(t *testing.T) {
+			sessionTestEnv(t)
+			now := time.Now().UTC()
+			s := &sessionState{DeclinedAt: now}
+			switch mixed {
+			case "namespace":
+				s.Namespace = "org/p"
+			case "last_pull":
+				s.LastPullAt, s.LastPullResult = now, sessionPullSuccess
+			case "server":
+				s.Server = defaultServer
+			case "mode":
+				s.Mode = "local"
+			case "path":
+				s.Path = "/tmp/project"
+			}
+			if err := saveSession("session-1", now, s); err != nil {
+				t.Fatal(err)
+			}
+			path, _ := sessionPath("session-1")
+			if _, err := readSession(path, now); (err == nil) != (mixed == "") {
+				t.Fatal(err)
+			}
+			if mixed == "" {
+				data, _ := os.ReadFile(path)
+				var fields map[string]any
+				if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 1 {
+					t.Fatal(string(data), err)
+				}
+			}
+		})
+	}
+
 	sessionTestEnv(t)
 	now := time.Now().UTC()
 	for _, tc := range []struct {

@@ -69,7 +69,9 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		project.WikiRevision = &w.ID
 		var total int64
 		for name, key := range w.Files {
-			if !wiki.ValidFile(name) || !blob.ValidKey(key) || !strings.HasPrefix(string(key), prefix) {
+			// v2 stored the derived link maps with the pages; v3 derives them.
+			legacyMap := name == "maps/graph.json" || name == "maps/graph.mmd"
+			if !(legacyMap || wiki.ValidFile(name)) || !blob.ValidKey(key) || !strings.HasPrefix(string(key), prefix) {
 				return errors.New("invalid legacy Wiki reference")
 			}
 			body, e := objects.Get(ctx, key)
@@ -89,6 +91,9 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 				return errors.New("legacy Wiki size overflow")
 			}
 			total = *sum
+			if legacyMap {
+				continue
+			}
 			p.wiki = append(p.wiki, WikiFileRow{ProjectID: old.ID, Path: name, Hash: hash, Data: WikiFileData{Bytes: size}})
 			p.copies[model.WikiContentKey(old.ID, model.ContentHash(hash))] = body
 		}

@@ -484,3 +484,18 @@ func TestMigrationFailsUnfinishedJobsAndKeepsScheduledGeneration(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestMigrationDropsLegacyWikiMaps(t *testing.T) {
+	path, b, c, content := migrationFixture(t)
+	page, graph := []byte("# Wiki\n"), []byte(`{"nodes":[],"edges":[]}`)
+	content.Wiki = &legacyV2Revision{ID: "w", ProjectID: "p", Created: time.UnixMilli(1001), Files: map[string]blob.Key{"wiki/index.md": "projects/p/wiki/index.md", "maps/graph.json": "projects/p/maps/graph.json"}, FileBytes: map[string]int64{}, FileHashes: map[string]string{}, StoredBytes: int64(len(page) + len(graph))}
+	b.values["projects/p/wiki/index.md"] = page
+	b.values["projects/p/maps/graph.json"] = graph
+	b.set(t, "projects/p/.kioku/state.json", content)
+	if e := migrateV2(t.Context(), path, b, c, time.UnixMilli(5000)); e != nil {
+		t.Fatal(e)
+	}
+	if b.puts != 1 {
+		t.Fatal("copied legacy map", b.puts)
+	}
+}

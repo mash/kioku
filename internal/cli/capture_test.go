@@ -137,7 +137,7 @@ func TestCaptureRun(t *testing.T) {
 		}
 		command := testKiokuCommand(a.Config.Server)
 		project := command + " -C " + shellQuote(a.Dir) + " -n org/a"
-		for _, rule := range []string{"Bash(" + command + " fetch:*)", "Bash(" + project + " put --capture-token " + lock.Token + ":*)", "Bash(" + project + " queue remove --capture-token " + lock.Token + ":*)", "Bash(" + project + " capture unlock --token " + lock.Token + ")", "Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)", "Read(/" + tmp + "/**)", "Write(/" + tmp + "/**)"} {
+		for _, rule := range []string{"Bash(" + command + " fetch:*)", "Bash(" + project + " put --capture-token " + lock.Token + ":*)", "Bash(" + project + " queue remove --capture-token " + lock.Token + ":*)", "Bash(" + project + " capture unlock --token " + lock.Token + ")", "Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)", "Read(/" + tmp + "/**)", "Edit(/" + tmp + "/**)"} {
 			if !slices.Contains(args, rule) {
 				t.Fatal("missing permission", rule, args)
 			}

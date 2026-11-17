@@ -244,7 +244,7 @@ func captureAllowedTools(exe, server, ns, p, tmp string) []string {
 		"Bash(" + command + " fetch:*)",
 		"Bash(" + project + " put --capture-token " + token + ":*)", "Bash(" + project + " queue remove --capture-token " + token + ":*)", "Bash(" + project + " capture unlock --token " + token + ")",
 		"Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)",
-		"Read(/" + tmp + "/**)", "Write(/" + tmp + "/**)",
+		"Read(/" + tmp + "/**)", "Edit(/" + tmp + "/**)",
 		"mcp__notion__notion-fetch", "mcp__notion__notion-search",
 		"mcp__claude_ai_Notion__notion-fetch",
 		"mcp__claude_ai_Notion__notion-search",

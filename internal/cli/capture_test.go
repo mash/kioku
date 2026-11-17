@@ -149,8 +149,40 @@ func TestCaptureRun(t *testing.T) {
 		}
 
 		prompt := args[len(args)-1]
-		command = project + " "
-		for _, part := range []string{"一時ディレクトリ: " + tmp + "（資料はここに書く）", "server: https://other.example", "P: " + a.Dir, command + "queue remove --capture-token " + lock.Token + " '<URL>' --reason '<理由>'", command + "put --capture-token " + lock.Token + " <FILE in tmp>", "fetch '<URL>' --capture-token " + lock.Token + " --dir " + shellQuote(tmp), command + "capture unlock", string(before)} {
+		parts := []string{"一時ディレクトリ: " + tmp + "（資料はここに書く）", "server: https://other.example", "P: " + a.Dir, string(before), "Bash 呼び出し1回につき1コマンドだけ", "シェル変数、;、&&、|、リダイレクト、echo、ls、cat、cd は使わない", "Read と Write ツール", "拒否されたら変形して再試行せず", "最後の操作として必ず"}
+		rows, err := parseQueue(before)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var commands []string
+		for i, row := range rows {
+			raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.raw", i+1))
+			source := filepath.Join(tmp, fmt.Sprintf("source-%03d.md", i+1))
+			commands = append(commands,
+				command+" fetch "+shellQuote(row.URL)+" --capture-token "+lock.Token+" --dir "+shellQuote(tmp)+" --out "+shellQuote(raw),
+				project+" put --capture-token "+lock.Token+" "+shellQuote(source),
+				project+" queue remove --capture-token "+lock.Token+" "+shellQuote(row.URL)+" --reason '<理由>'")
+		}
+		commands = append(commands, project+" capture unlock --token "+lock.Token)
+		for _, line := range commands {
+			parts = append(parts, "```sh\n"+line+"\n```")
+			allowed := false
+			for _, rule := range captureAllowedTools(os.Args[0], a.Config.Server, a.Config.Namespace, a.Dir, tmp) {
+				if !strings.HasPrefix(rule, "Bash(") {
+					continue
+				}
+				prefix := strings.TrimSuffix(strings.TrimPrefix(rule, "Bash("), ")")
+				wildcard := strings.HasSuffix(prefix, ":*")
+				prefix = strings.TrimSuffix(prefix, ":*")
+				if line == prefix || (wildcard && strings.HasPrefix(line, prefix+" ")) {
+					allowed = true
+				}
+			}
+			if !allowed {
+				t.Fatal("rendered command has no matching permission", line)
+			}
+		}
+		for _, part := range parts {
 			if !strings.Contains(prompt, part) {
 				t.Fatal("missing", part, prompt)
 			}
@@ -905,6 +937,26 @@ func TestCaptureRun(t *testing.T) {
 					t.Fatal(string(data), err)
 				}
 			})
+		}
+	})
+
+	t.Run("R6_literal_quoted_commands", func(t *testing.T) {
+		exe := "/tmp/CLI with 'quote/kioku"
+		projectDir := "/tmp/project with 'quote"
+		tmp := projectDir + "/.kioku/capture-tmp/" + strings.Repeat("a", 32)
+		token := filepath.Base(tmp)
+		url := "https://example.com/a'b?x=1&y=2"
+		command := kiokuCommand(exe, "https://other.example")
+		project := command + " -C " + shellQuote(projectDir) + " -n org/a"
+		got := captureCommands(command, project, tmp, token, []queueRow{{"2026-11-18", url, "read"}})
+		for _, line := range []string{
+			command + " fetch " + shellQuote(url) + " --capture-token " + token + " --dir " + shellQuote(tmp) + " --out " + shellQuote(tmp+"/source-001.raw"),
+			project + " put --capture-token " + token + " " + shellQuote(tmp+"/source-001.md"),
+			project + " queue remove --capture-token " + token + " " + shellQuote(url) + " --reason '<理由>'",
+		} {
+			if !strings.Contains(got, "```sh\n"+line+"\n```") {
+				t.Fatal(got, line)
+			}
 		}
 	})
 

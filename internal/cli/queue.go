@@ -60,6 +60,19 @@ func (a *App) queue(args []string, now time.Time) error {
 	if len(args) == 0 {
 		return usage
 	}
+	reason := ""
+	if args[0] == "remove" {
+		for i, arg := range args[1:] {
+			if arg == "--reason" {
+				if i+3 != len(args) {
+					return usage
+				}
+				reason = args[i+2]
+				args = args[:i+1]
+				break
+			}
+		}
+	}
 	switch args[0] {
 	case "add":
 		if len(args) != 3 || strings.TrimSpace(args[2]) == "" {
@@ -102,6 +115,11 @@ func (a *App) queue(args []string, now time.Time) error {
 		return err
 	}
 	defer unlock()
+	if reason != "" {
+		if err := a.captureNote(strings.Join(args[1:], " ") + ": " + reason); err != nil {
+			return err
+		}
+	}
 	return updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
 		rows, err := parseQueue(data)
 		if err != nil {

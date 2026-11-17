@@ -21,6 +21,14 @@ func (a *App) put(args []string) error {
 	if f.NArg() == 0 {
 		return errors.New("usage: kioku put FILE...")
 	}
+	captureDir := os.Getenv("KIOKU_CAPTURE_DIR")
+	if captureDir != "" {
+		for _, path := range f.Args() {
+			if _, err := captureSourcePath(captureDir, path); err != nil {
+				return err
+			}
+		}
+	}
 	p, err := a.projectPath()
 	if err != nil {
 		return err
@@ -64,7 +72,12 @@ func (a *App) put(args []string) error {
 			if info.Size() > 1<<20 {
 				return fmt.Errorf("%s exceeds 1 MiB", p)
 			}
-			b, err := os.ReadFile(p)
+			var b []byte
+			if captureDir == "" {
+				b, err = os.ReadFile(p)
+			} else {
+				b, err = readCaptureSource(captureDir, p)
+			}
 			if err != nil {
 				return err
 			}

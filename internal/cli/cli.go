@@ -73,6 +73,9 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		_, err = fmt.Fprint(out, help)
 		return err
 	}
+	if commands[0] == "fetch" {
+		return fetchCommand(ctx, commands[1:])
+	}
 	if commands[0] == "session" && (len(commands) < 2 || commands[1] != "select" || slices.Contains(commands[2:], "--none")) {
 		if len(commands) >= 2 && commands[1] == "select" && global.NFlag() != 0 {
 			return errors.New("usage: kioku session select --none (without global flags)")

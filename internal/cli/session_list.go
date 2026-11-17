@@ -10,18 +10,22 @@ import (
 const contextLimit = 10000
 
 func kiokuCommand(exe, server string) string {
-	// Quote only when exe needs shell escaping, preserving the common command form.
-	if strings.ContainsAny(exe, " \t\r\n'\"\\$`;&|<>()*?[]{}!#~") {
-		exe = "'" + strings.ReplaceAll(exe, "'", "'\"'\"'") + "'"
-	}
+	exe = shellQuote(exe)
 	if server != "" && server != defaultServer {
-		exe += " --server " + server
+		exe += " --server " + shellQuote(server)
 	}
 	return exe
 }
 
+func shellQuote(value string) string {
+	if strings.ContainsAny(value, " \t\r\n'\"\\$`;&|<>()*?[]{}!#~") {
+		value = "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	}
+	return value
+}
+
 func templateVars(exe, server, ns, p string) map[string]string {
-	return map[string]string{"kioku": kiokuCommand(exe, server), "server": server, "namespace": ns, "p": p, "wiki": filepath.Join(p, "wiki") + string(filepath.Separator)}
+	return map[string]string{"kioku": kiokuCommand(exe, server), "kioku_default": kiokuCommand(exe, defaultServer), "p_arg": shellQuote(p), "server": server, "namespace": ns, "p": p, "wiki": filepath.Join(p, "wiki") + string(filepath.Separator)}
 }
 
 func projectKey(p projectEntry) string { return p.Server + "\x00" + p.Namespace }

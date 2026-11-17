@@ -87,17 +87,20 @@ func (a *App) sessionSelect(args []string, now time.Time) error {
 	if pullErr == nil {
 		_, pullErr = a.syncProject()
 	}
-	if pullErr != nil && !localCopy {
+	ns := a.Config.Namespace
+	if a.projectNamespace != "" {
+		ns = a.projectNamespace
+	}
+	if pullErr != nil && (!localCopy || !validNamespace(ns)) {
 		return pullErr
+	}
+	if !validNamespace(ns) {
+		return errors.New("session select requires a valid project namespace")
 	}
 	result := sessionPullSuccess
 	if pullErr != nil {
 		result = sessionPullFailure
 		fmt.Fprintf(a.Err, "warning: pull failed: %v; using the local copy\n", pullErr)
-	}
-	ns := a.Config.Namespace
-	if a.projectNamespace != "" {
-		ns = a.projectNamespace
 	}
 	if sid := os.Getenv("CLAUDE_CODE_SESSION_ID"); sid != "" {
 		err := updateSession(sid, now, func(*sessionState) (*sessionState, bool) {

@@ -11,6 +11,27 @@ import (
 )
 
 func TestSessionSelect(t *testing.T) {
+	for _, ns := range []string{"", "invalid"} {
+		t.Run("R13_invalid_fallback/"+ns, func(t *testing.T) {
+			sessionTestEnv(t)
+			a, _, _, _ := syncFixture(t)
+			a.Config.Namespace = ns
+			if err := ensureDirectory(filepath.Join(a.Dir, "wiki")); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.sessionSelect(nil, time.Now()); err == nil {
+				t.Fatal("selected invalid namespace")
+			}
+			if a.Out.(*bytes.Buffer).Len() != 0 {
+				t.Fatal(a.Out)
+			}
+			path, _ := sessionPath("session-1")
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("wrote session", err)
+			}
+		})
+	}
+
 	t.Run("E8_bounded_stdout", func(t *testing.T) {
 		sessionTestEnv(t)
 		a, files, _, _ := syncFixture(t)

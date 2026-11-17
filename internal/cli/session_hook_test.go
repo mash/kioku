@@ -155,6 +155,16 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 }
 
 func TestStopAndSessionEndHook(t *testing.T) {
+	t.Run("R6_detached_child", func(t *testing.T) {
+		cmd := exec.Command("/usr/bin/true")
+		if err := startProcess(cmd); err != nil {
+			t.Fatal(err)
+		}
+		if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+			t.Fatal("child was not detached")
+		}
+	})
+
 	for _, tc := range []struct {
 		name, event, cwd, state, server string
 		rows                            int
@@ -266,7 +276,7 @@ func TestStopAndSessionEndHook(t *testing.T) {
 				if tc.event == "SessionEnd" {
 					min = "1"
 				}
-				want = append(want, "-n", "org/a", "capture", "run", "--min", min)
+				want = append(want, "-C", s.Path, "-n", "org/a", "capture", "run", "--min", min)
 				if !reflect.DeepEqual(c.Args, want) || c.Dir != cwd || c.Stdin != nil || c.Stdout != c.Stderr || c.Stdout.(*os.File).Name() != logPath {
 					t.Fatal(c)
 				}
@@ -276,7 +286,7 @@ func TestStopAndSessionEndHook(t *testing.T) {
 					}
 				}
 				logInfo, err := os.Stat(logPath)
-				if err != nil || logInfo.Size() != 0 || logInfo.Mode().Perm() != 0600 {
+				if err != nil || logInfo.Size() != int64(len("previous")) || logInfo.Mode().Perm() != 0600 {
 					t.Fatal(logInfo, err)
 				}
 			} else {

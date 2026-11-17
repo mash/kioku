@@ -28,7 +28,7 @@ Claude Code の local mode では、次の5項目に従う。状態ファイル�
 
 1. hook が trigger 語で選んだ場合は、その出力の入口を読む。pull は背景で始まっているため重ねて実行しない。手元コピーは1回前の内容の場合があり、入口が無ければ取得後の index.md を読む。
 2. hook の一覧が出たら、最初のメッセージと description から、ユーザーに聞かずに1つ選び、`kioku -n NAMESPACE session select` を1回実行する。同じくらい合う場合も1つに決める。［server: …］の行は `--server SERVER` を付ける。合うものが無ければ、大域フラグを付けずに `kioku session select --none` を実行する。選んだターンは出力に従って返答の冒頭に選択と理由を1行示す。利用者の訂正や話題の変化には `kioku session list` と別の `session select` で対応する。
-3. trigger 語はプロンプトと cwd の git ブランチ名に照合する。ASCII だけの語は大文字小文字を区別せず、前後が `[a-z0-9]` でない位置に一致する。他の語は部分一致で、ASCII 部分の大文字小文字を区別しない。選択済みでは照合しない。Kioku なしでプロンプトに namespace も trigger 語も無ければ、ブランチの探索もしない。語を変更するのは利用者が求めた時だけとし、`kioku -n NAMESPACE project triggers WORD...` で全体を置き換える。語なしで消す。空の語、タブ、改行は使わない。
+3. 未選択では trigger 語をプロンプトと cwd の git ブランチ名に照合する。Kioku なしではプロンプトだけに照合し、ブランチ名を使わない。ASCII だけの語は大文字小文字を区別せず、前後が `[a-z0-9]` でない位置に一致する。他の語は部分一致で、ASCII 部分の大文字小文字を区別しない。選択済みでは照合しない。Kioku なしでプロンプトに namespace も trigger 語も無ければ、ブランチの探索もしない。語を変更するのは利用者が求めた時だけとし、`kioku -n NAMESPACE project triggers WORD...` で全体を置き換える。語なしで消す。空の語、タブ、改行は使わない。
 4. `session select` の出力を Wiki の入口として読み、index.md から必要なページだけを開く。これで取得と参照を済ませ、通常の初回 pull を重ねない。失敗して手元コピーを返した場合は最新と呼ばない。手元コピーがなく失敗した場合は「取得に失敗した場合」へ進む。認証を回復した後は既存の取得手順を使う。
 5. description は、何の案件か・主な語彙（固有名、略語、識別子）・対象 repo を1〜3文、200文字以内を目安に書く。選んだ project の説明が基準を満たさなければ、返答の末尾に説明案を1行で提案する。利用者が認めた後にだけ `kioku -n NAMESPACE pull --description "説明"` で保存する。triggers と既存 path は保たれる。
 

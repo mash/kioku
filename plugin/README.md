@@ -42,7 +42,7 @@ CLI はユーザー共通領域で接続先別に認証を管理する。スキ�
 
 ## 原資料の送信
 
-送信する原資料は `mktemp -d` で作った一時ディレクトリに Markdown として書き、`kioku -n "$NAMESPACE" put FILE` で送信する。`mktemp -d` は単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使う。シェル変数や `$(...)` は使わない。
+Claude Code の capture セッションは文で指定された一時ディレクトリを使う。その他の環境で送信する原資料は `mktemp -d` で作った一時ディレクトリに Markdown として書き、`kioku -n "$NAMESPACE" put FILE` で送信する。`mktemp -d` は単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使う。シェル変数や `$(...)` は使わない。
 
 ユーザー自身の Claude が、コネクター、CLI、手元のファイル、ユーザーが貼った本文から原文を読む。
 資料の種類を問わず、全文を Markdown にする。
@@ -130,7 +130,7 @@ PreCompact は namespace・server・mode・P・最後の pull の時刻と結果
 compact・resume は保存済みの選択か Kioku なしを復元し、Wiki の本文は再注入しない。
 UserPromptSubmit・Stop・SessionEnd は `agent_id` がある入力では何も行わない。
 
-UserPromptSubmit は未選択か Kioku なしの時に、projects.json の trigger 語をプロンプトと cwd のブランチ名に照合する。
+UserPromptSubmit は未選択時に、projects.json の trigger 語をプロンプトと cwd のブランチ名に照合する。Kioku なしではプロンプトだけに照合する。
 ASCII だけの語は大文字小文字を区別せず、前後が `[a-z0-9]` でない位置に一致する。その他は部分一致で、ASCII 部分の大文字小文字を区別しない。
 Git を起動せず `.git/HEAD` を読み、worktree の `.git` ファイルにも対応する。detached HEAD や Git の外ではブランチ名を使わない。
 1 project だけに当たれば、hook が選択を保存し、背景で `kioku --server SERVER -n NAMESPACE pull` を起動する。
@@ -165,12 +165,12 @@ Claude Code の local mode では、親は共有範囲・機密・保存禁止�
 Stop は5件以上、SessionEnd は1件以上で、ロックが無いか30分を超えて古い時だけ背景の `capture run --min N` を起動する。hook は出力せず、子を待たない。
 `capture run` の既定の閾値は5件。今すぐ送る依頼では `capture run --min 1` を使う。
 子は `P/.kioku/capture.lock` を排他作成し、信頼済みの作業 cwd で絶対パスの `claude --bg` を起動する。文は位置引数で渡し、`-p` は使わない。
-この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料を書く一時ディレクトリは cwd と別に作り、文で指定する。
-URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に capture unlock する。処理中に追加された URL は次の run が拾う。
-起動失敗はロックを消してキューを残す。id が読めない場合も起動成功としてロックを保持し、前回の片付けは行わない。
-ロックは pid の生死ではなく30分の期限で判定する。unlock は bg_id を `capture.last` に保存してロックを消す。
-capture セッションは idle で残り、次の run が前回の bg_id に `claude rm` を試す。結果は `claude agents` と `claude logs <id>` で確認する。
-背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、起動ごとに上書きする。`capture.last` も0600。
+この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料は P/.kioku/capture-tmp/<token> に書き、所有トークンの一致する unlock が削除する。次の run は稼働ロック以外の一時ディレクトリを削除する。
+URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に所有トークンを付けて capture unlock する。処理中に追加された URL は次の run が拾う。
+起動失敗はロックを消してキューを残す。id が読めない場合は警告と capture.log に残してロックを保持し、前回の片付けは行わない。
+ロックは pid の生死ではなく30分の期限で判定する。unlock は所有トークンが一致した時だけ bg_id を `capture.last` に保存してロックを消す。
+capture セッションは idle で残り、次の run が capture.last の完了済み bg_id だけに `claude rm` を試す。期限切れロックの所有セッションは削除しない。結果は `claude agents` と `claude logs <id>` で確認する。
+背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、起動ごとに追記する。`capture.last` も0600。
 
 sh は JSON の解析を `session hook --event EVENT --prompts DIR` に任せる。CLI の hook は直接通信せず、必要な子だけを起動する。jq と Python は不要。
 不正 JSON・不正 SID・8 MiB超の入力は無出力で終了する。sh は stderr を捨て、失敗してもセッションを止めない。

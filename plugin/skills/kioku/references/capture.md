@@ -9,11 +9,10 @@ Claude Code では、親が共有範囲・機密・保存禁止を確認し、�
 Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -n NAMESPACE capture run --min 1` を実行する。
 親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
 
-capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は curl で原文を取る。資料は文の一時ディレクトリに書き、mktemp を実行しない。
-各 URL の結果（受付済み / 未保存 / 受付不明）と理由を出力に1行書き、`kioku -n NAMESPACE queue remove URL` を実行する。受付不明・未保存も消し、失敗や不明を自動で再送しない。最後に `kioku -n NAMESPACE capture unlock` を実行する。
+capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の CLI の `fetch URL --out FILE` で原文を取る（HTTPS・20 MiBまで）。資料は文の一時ディレクトリに書き、mktemp を実行しない。
+各 URL の結果（受付済み / 未保存 / 受付不明）と理由を出力に1行書き、文の project CLI で `kioku -n NAMESPACE queue remove URL --reason "結果と理由"` を実行する。受付不明・未保存も消し、失敗や不明を自動で再送しない。権限不足は未保存として理由を明記する。queue remove の --reason が capture.log に追記する。最後に文の project CLI とトークンで `kioku -n NAMESPACE capture unlock --token TOKEN` を実行する。
+許可する connector は Notion の fetch/search、Slack の thread/channel 読み取り、Google Drive の read/download の完全名だけ。送信・作成・更新は許可しない。利用できない取得経路を権限拡大で回避しない。
 結果は `claude logs <id>` で確認する。キュー追加・起動・unlock だけで受付済みや Wiki 生成済みと伝えない。
-
-Claude Code の local mode の起動・一時ディレクトリ・キュー処理には、この節と agent の手順を優先する。後述の親からの取り込み依頼は queue add を指し、親が別途子を起動する意味ではない。後述の mktemp は capture セッションでは使わない。hook は自動選択時だけ CLI 経由で選択状態を書き、capture の hook は選択状態を変えない。
 
 ## 共通の取得規則
 
@@ -113,14 +112,17 @@ updated_at: "2026-11-07T18:00:00+09:00"
 
 - **GitHub のファイル**: commit SHA（コミット識別子）を確定し、同じ版の原文を読む。
   `source_url` は SHA を含むファイルの `blob` URL、`version` は SHA とする。
-  例: `gh api 'repos/O/R/contents/PATH?ref=SHA' -H 'Accept: application/vnd.github.raw+json'`。
+  capture セッションでは公開ファイルの固定 commit の raw HTTPS URL を `kioku fetch URL --out FILE` で取る。
+  その他の環境では `gh api 'repos/O/R/contents/PATH?ref=SHA' -H 'Accept: application/vnd.github.raw+json'` も使える。
 - **GitHub の Issue**: 題名、本文、全コメントを含める。
   例: `gh issue view N --repo O/R --json title,body,author,createdAt,updatedAt,url,comments`。
 - **GitHub の Pull Request（PR、変更の提案）**: 題名、本文、全コメント・レビューを含める。
   例: `gh pr view N --repo O/R --json title,body,author,createdAt,updatedAt,url,comments,reviews,changedFiles`。
-  変更ファイルは `gh api --paginate repos/O/R/pulls/N/files` で全ページを読む。
+  capture セッションでは `gh pr diff N --repo O/R` で差分を読み、変更ファイルの一覧は `gh pr view N --repo O/R --json files` で確認する。
+  その他の環境では変更ファイルを `gh api --paginate repos/O/R/pulls/N/files` で全ページ読む。
   ファイル一覧の件数を `changedFiles` と照合する。差が残れば欠落件数と未保存を伝える。
-  行コメントは `gh api --paginate repos/O/R/pulls/N/comments` で読み、ファイル名と行を付ける。
+  capture セッションでは gh api を使わない。行コメントなどを許可された読み取りツールで取得できなければ、完全性を確認できない資料は未保存にする。
+  その他の環境では行コメントを `gh api --paginate repos/O/R/pulls/N/comments` で読み、ファイル名と行を付ける。
   古い行コメントには元の行と版を付ける。変更ファイルの一覧は含め、diff は送信しない。
   Issue と PR はコメント・レビューの件数も照合し、省略分をページ送りで補う。
 - **Google Docs**: コネクターで全タブと入れ子のタブを読み、タブ名と本文を保つ。
@@ -137,14 +139,15 @@ updated_at: "2026-11-07T18:00:00+09:00"
   値・数式のどちらを採用したか明記し、両方が必要なら両方を含める。
   シート名・行列の見出しを保ち、除外シートと理由を本文冒頭に列挙する。
 - **公開 Web**: ページ本文を読み、ナビゲーションと広告を除く。
-  シェルを使える場合は `curl -fsSL -- 'https://example.com/page'` などで原文を取得する。
+  capture セッションでは `kioku fetch URL --out FILE` で、文の一時ディレクトリ内の新しいファイルへ原文を取得する。
+  その他の環境でシェルを使える場合は `curl -fsSL -- 'https://example.com/page'` などで原文を取得する。
   WebFetch はモデルの要約を返すため使わない。他の取得ツールも全文か確認する。
   読み込み待ちや要約・抜粋だけなら、共通規則に従って別の方法を試す。
 
 ## 共有範囲と送信
 
 Claude Code では、親がプロンプトの URL と自分で開いた URL・作った URL から送信する URL を決める。
-親は毎ターンの規則に従い、`kioku-capture` に渡して選択したプロジェクトへ原資料を送信する。
+Claude Code の local mode の親は毎ターンの規則に従って queue add で記録し、Stop・SessionEnd が capture セッションを起動する。URL ごとの Agent は起動しない。
 その他の環境では、重要文書を参照・作成した時、結論を変えた文書を確定した時に送信する。
 ユーザーが共有を許可した範囲で行い、機密・別チームの資料・保存禁止を除く。
 共有先が曖昧なら送信せず確認する。`auto_put:false` などの自動送信禁止を守る。
@@ -153,14 +156,15 @@ Claude Code では、親がプロンプトの URL と自分で開いた URL・�
 字句修正、日常のコマンド出力、生成 Wiki の再読は送信の対象にしない。
 
 remote mode は、本文を準備してから [remote.md](remote.md) の MCP（Model Context Protocol）で送信する。
-local mode は、`mktemp -d` を単独の Bash 呼び出しで実行して一時ディレクトリを作る。
+Claude Code の capture セッションは文の一時ディレクトリを使い、unlock に削除を任せる。
+Claude Code 以外の local mode は、`mktemp -d` を単独の Bash 呼び出しで実行して一時ディレクトリを作る。
 出力した絶対パスをそのまま書き、シェル変数や `$(...)` は使わない。
 そのディレクトリに原資料の Markdown を書き、`kioku -n "$NAMESPACE" put FILE` で送信する。
 `kioku` は [SKILL.md](../SKILL.md) の CLI のパス、`FILE` は `.md` ファイルの絶対パスを指す。
 `FILE` には実際の絶対パスをそのまま書く。受付状態を手元に記録しない。
 Claude Code の local mode では、CLI が状態ファイルに会話の選択を残す。
 状態ファイルの期限は最後の書き込みから30日とする。
-フックは状態ファイルを読むだけにする。
+フックが状態ファイルを書くのは trigger 語の自動選択時だけにする。
 受付状態はサーバーで確認する。
 コマンドの成功を確認し、Kioku がファイルを受け付けたとユーザーに伝える。
 複数ファイルは CLI が1件ずつ送信する。途中で失敗した場合は、受付済みと未保存を分ける。

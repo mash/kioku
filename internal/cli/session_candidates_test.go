@@ -18,16 +18,33 @@ import (
 )
 
 const listHeaderText = "Kioku: このセッションは project が未選択。このメッセージの内容と各 description から最も合う project を、ユーザーに聞かずに 1 つ選び、%[1]s -n <namespace> session select を 1 回実行する。同じくらい合う project が複数あっても 1 つに決める。［server: …］の付いた行は %[1]s --server <server> -n <namespace> session select を使う。どれも合わなければ %[1]s session select --none を実行し、Kioku なしで進める。select が失敗したら kioku skill の失敗時の手順に従う。［ヒント: trigger 語 …］は、このメッセージかブランチ名が、その project の trigger 語に当たったことを示す。"
-const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -n %[1]s queue add <URL> \"<何をしたか>\" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。"
+const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -C %[4]s -n %[1]s queue add <URL> \"<何をしたか>\" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
-const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。ユーザーに聞かずに 1 つ選び、kioku -n <namespace> session select を実行する。合うものが無ければ kioku session select --none を実行する。\n"
+const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。一覧に示された CLI の絶対パスと手順に従い、ユーザーに聞かずに project を選ぶか Kioku なしを選ぶ。\n"
+
+func candidateTestDir(t *testing.T) string {
+	t.Helper()
+	boundary := t.TempDir()
+	writeHookFixture(t, filepath.Join(boundary, ".kioku/config"), Config{Server: defaultServer, Namespace: "boundary/unused"})
+	if err := os.Mkdir(filepath.Join(boundary, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(boundary, ".git/HEAD"), []byte(strings.Repeat("a", 40)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(boundary, "workspace")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
 
 func testKiokuCommand(server string) string {
 	exe, _ := os.Executable()
 	return kiokuCommand(exe, server)
 }
 func testTurnRule(ns, p, server string) string {
-	return fmt.Sprintf(turnRuleText, ns, p, testKiokuCommand(server))
+	return fmt.Sprintf(turnRuleText, ns, p, testKiokuCommand(server), shellQuote(p))
 }
 func testHintList(ns string) string {
 	return fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer)) + "\n- " + ns + ": （説明なし）［ヒント: cwd の .kioku/config］"
@@ -107,6 +124,8 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		{name: "E32_declined_multiple", prompt: "Tesla の充電", declined: true},
 		{name: "I11_unreadable_state", prompt: "Tesla", blocked: true},
 		{name: "I13_other_server", prompt: "Tesla", other: true, auto: "org/a"},
+		{name: "R14_declined_namespace_ignores_branch", prompt: "org/b を続けて", declined: true, branch: "feat/tesla-x"},
+		{name: "R14_declined_prompt_ignores_conflicting_branch", prompt: "Tesla", declined: true, branch: "feat/充電", auto: "org/a"},
 		{name: "I15_declined_without_prompt_hits", prompt: "続けて", declined: true, branch: "feat/tesla-x"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,7 +133,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				t.Skip("root bypasses permissions")
 			}
 			home := sessionTestEnv(t)
-			cwd := t.TempDir()
+			cwd := candidateTestDir(t)
 			ps := []projectEntry{{Server: defaultServer, Namespace: "org/a", Path: t.TempDir(), Description: "A 案件の説明", Triggers: []string{"tesla"}}, {Server: defaultServer, Namespace: "org/b", Path: t.TempDir(), Triggers: []string{"充電"}}}
 			if tc.other {
 				ps[0].Server = "https://other.example"
@@ -179,6 +198,11 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				input["agent_id"] = "child-1"
 			}
 			got := runPromptHook(t, input)
+			if tc.name == "I13_other_server" {
+				if !strings.Contains(got, testKiokuCommand(defaultServer)+" session select --none") || strings.Contains(got, testKiokuCommand("https://other.example")+" session select --none") {
+					t.Fatal("decline carries global flags", got)
+				}
+			}
 			if tc.blocked {
 				_ = os.Chmod(statePath, 0600)
 			}
@@ -239,7 +263,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					}
 				case tc.declined:
 					expected := "Kioku: このセッションは Kioku なしで進めている。話題が project に合ったら " + testKiokuCommand(defaultServer) + " -n <namespace> session select で選ぶ。一覧は " + testKiokuCommand(defaultServer) + " session list が出す。"
-					if tc.name == "E10_declined_namespace_hint" {
+					if tc.name == "E10_declined_namespace_hint" || tc.name == "R14_declined_namespace_ignores_branch" {
 						expected += "［ヒント: プロンプトに namespace］org/b"
 					}
 					if tc.name == "E32_declined_multiple" {
@@ -290,7 +314,7 @@ func TestPromptHookSelectionTransitions(t *testing.T) {
 	for _, scenario := range []string{"E25_pending", "E25_success", "E25_failure", "I12_start_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			home := sessionTestEnv(t)
-			root := t.TempDir()
+			root := candidateTestDir(t)
 			writeHookFixture(t, filepath.Join(home, ".config/kioku/projects.json"), projectsFile{Projects: []projectEntry{{Server: defaultServer, Namespace: "org/a", Path: root, Triggers: []string{"tesla"}}}})
 			oldStart := startProcess
 			t.Cleanup(func() { startProcess = oldStart })
@@ -382,7 +406,7 @@ func TestSessionStartE21ExactText(t *testing.T) {
 func TestCandidateDiscoveryHandlesBrokenFiles(t *testing.T) {
 	home := sessionTestEnv(t)
 	catalog := filepath.Join(home, ".config/kioku/projects.json")
-	root := t.TempDir()
+	root := candidateTestDir(t)
 	config := filepath.Join(root, ".kioku/config")
 	writeHookFixture(t, config, Config{Server: defaultServer, Namespace: "org/p"})
 	input := map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "cwd": root, "prompt": "続けて"}
@@ -402,14 +426,14 @@ func TestCandidateDiscoveryHandlesBrokenFiles(t *testing.T) {
 	if err := os.WriteFile(config, []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got := runPromptHook(t, input); got != "" {
+	if got := runPromptHook(t, input); got != testHintList("boundary/unused") {
 		t.Fatal(got)
 	}
 }
 
 func TestPromptHookE26WalksAboveGitRoot(t *testing.T) {
 	sessionTestEnv(t)
-	outer := t.TempDir()
+	outer := candidateTestDir(t)
 	root := filepath.Join(outer, "repo")
 	cwd := filepath.Join(root, "src")
 	if err := os.MkdirAll(cwd, 0700); err != nil {
@@ -445,7 +469,7 @@ func TestCandidateDiscoveryMatchesOnlyFullNamespacesAndConfig(t *testing.T) {
 	}
 	for _, kind := range []string{"directory", "worktree_absolute", "worktree_relative", "detached", "outside"} {
 		t.Run("I2_I3/"+kind, func(t *testing.T) {
-			root := t.TempDir()
+			root := candidateTestDir(t)
 			git := filepath.Join(root, ".git")
 			if kind != "outside" {
 				if strings.HasPrefix(kind, "worktree") {
@@ -482,7 +506,7 @@ func TestCandidateDiscoveryMatchesOnlyFullNamespacesAndConfig(t *testing.T) {
 		})
 	}
 	t.Run("I8_large_entry", func(t *testing.T) {
-		root := t.TempDir()
+		root := candidateTestDir(t)
 		if err := os.Mkdir(filepath.Join(root, "wiki"), 0700); err != nil {
 			t.Fatal(err)
 		}

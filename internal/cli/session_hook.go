@@ -172,9 +172,13 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 	if s != nil && s.declined() && len(hits) == 0 && len(nsHits) == 0 {
 		return declinedLine
 	}
-	branch, configNS := walkAncestors(in.Cwd)
-	if branch != "" {
-		hits, words = matchTriggers(ps, in.Prompt+"\n"+branch)
+	configNS := ""
+	if s == nil {
+		branch, ns := walkAncestors(in.Cwd)
+		configNS = ns
+		if branch != "" {
+			hits, words = matchTriggers(ps, in.Prompt+"\n"+branch)
+		}
 	}
 	if len(hits) == 1 {
 		if line := autoSelect(in, hits[0], words[projectKey(hits[0])], prompts, now); line != "" {
@@ -260,6 +264,7 @@ func autoSelect(in sessionHookInput, p projectEntry, words []string, prompts str
 }
 
 var startProcess = func(c *exec.Cmd) error {
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := c.Start(); err != nil {
 		return err
 	}
@@ -270,7 +275,7 @@ func backgroundLog(path string) (*os.File, error) {
 	if err := ensureDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +330,7 @@ func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time) {
 	if s.Server != defaultServer {
 		args = append(args, "--server", s.Server)
 	}
-	args = append(args, "-n", s.Namespace, "capture", "run", "--min", strconv.Itoa(min))
+	args = append(args, "-C", s.Path, "-n", s.Namespace, "capture", "run", "--min", strconv.Itoa(min))
 	log, err := backgroundLog(filepath.Join(s.Path, ".kioku/capture.log"))
 	if err != nil {
 		return

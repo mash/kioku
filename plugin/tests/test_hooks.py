@@ -421,6 +421,10 @@ class SessionHooksTest(unittest.TestCase):
             'last_pull_at': '2026-11-11T11:40:00Z', 'last_pull_result': 'success',
         }
         self.save_state()
+        (self.work / '.git').mkdir()
+        (self.work / '.git/HEAD').write_text('a' * 40 + '\n')
+        (self.work / '.kioku').mkdir()
+        (self.work / '.kioku/config').write_text(json.dumps({'server':'https://kioku.magicians.ee','namespace':'boundary/unused'}))
 
     def save_state(self):
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -631,7 +635,7 @@ class SessionHooksTest(unittest.TestCase):
             command += ' --server ' + state['server']
         line = (f'Kioku: {state["namespace"]}（wiki: {state["path"]}/wiki/、入口は index.md）。'
                 '調べる時はここを grep する。参照・作成した重要な文書の URL は '
-                f'{command} -n {state["namespace"]} queue add <URL> "<何をしたか>" で 1 行足す。'
+                f'{command} -C {shlex.quote(state["path"])} -n {state["namespace"]} queue add <URL> "<何をしたか>" で 1 行足す。'
                 '共有範囲・機密・保存禁止を確かめてから足す。')
         if 'last_pull_result' not in state:
             line += '\n背景の pull は終わっていない。wiki/ は 1 回前の pull のままか、まだ無い。'
@@ -809,10 +813,7 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 
     def test_E15_E22_startup_and_declined_text(self):
-        expected = ('Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。'
-                    '1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。'
-                    'ユーザーに聞かずに 1 つ選び、kioku -n <namespace> session select を実行する。'
-                    '合うものが無ければ kioku session select --none を実行する。\n')
+        expected = 'Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。一覧に示された CLI の絶対パスと手順に従い、ユーザーに聞かずに project を選ぶか Kioku なしを選ぶ。\n'
         self.assertEqual(self.hook('SessionStart', source='startup'), expected)
         self.state = {'declined_at': '2026-11-17T01:00:00Z'}
         self.save_state()
@@ -975,8 +976,8 @@ for _ in range(200):
     time.sleep(.025)
 cli = os.environ['CAPTURE_FIXTURE_CLI']
 urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().splitlines()]
-subprocess.run([cli, '-n', 'org/a', 'queue', 'remove', *urls], check=True)
-subprocess.run([cli, '-n', 'org/a', 'capture', 'unlock'], check=True)
+subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'queue', 'remove', *urls], check=True)
+subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'unlock', '--token', lock['token']], check=True)
 """
 subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -993,7 +994,10 @@ print('backgrounded · 1a2b3c4d')
                 metadata = root / '.kioku'
                 metadata.mkdir(parents=True)
                 (metadata / 'config').write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': 'org/a'}))
-                catalog.write_text(json.dumps({'projects': [{'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'path': str(root)}]}))
+                other = self.work / ('other-' + event + str(declined))
+                (other / '.kioku').mkdir(parents=True)
+                (other / '.kioku/config').write_text((metadata / 'config').read_text())
+                catalog.write_text(json.dumps({'projects': [{'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'path': str(p)} for p in (other, root)]}))
                 self.state = ({'declined_at': '2026-11-18T01:00:00Z'} if declined else
                               {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)})
                 self.save_state()
@@ -1010,7 +1014,7 @@ print('backgrounded · 1a2b3c4d')
                     self.assertEqual(queue.read_text(), queued)
                     continue
                 self.wait_until(lambda: (metadata / 'capture.last').exists())
-                self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude agents で見る。' in (metadata / 'capture.log').read_text())
+                self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
                 self.assertEqual(queue.read_text(), '')
                 self.assertFalse((metadata / 'capture.lock').exists())
                 self.assertEqual((metadata / 'capture.last').read_text(), '1a2b3c4d\n')

@@ -250,7 +250,7 @@ func TestSessionSelect(t *testing.T) {
 			t.Fatal(err)
 		}
 		files, err := readEntryFiles(dir)
-		if err != nil || len(files) != 1 || !files[0].Truncated || len(files[0].Body) > 40<<10 || !utf8.ValidString(files[0].Body) {
+		if err != nil || len(files) != 1 || !files[0].Truncated || len(files[0].Body) > contextLimit*4 || !utf8.ValidString(files[0].Body) {
 			t.Fatal(files, err)
 		}
 		got := fitEntry(files, "instruction", contextLimit)

@@ -155,6 +155,21 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 }
 
 func TestStopAndSessionEndHook(t *testing.T) {
+	t.Run("R4_bounded_queue_count", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "queue.tsv")
+		for _, tc := range []struct {
+			body      string
+			min, want int
+		}{{"\n\n", 5, 0}, {"row\n\nother", 5, 2}, {"row\nother\nthird", 1, 1}, {strings.Repeat("x", 9<<20), 5, 1}} {
+			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := countQueueRows(path, tc.min)
+			if err != nil || got != tc.want {
+				t.Fatal(got, err)
+			}
+		}
+	})
 	t.Run("R6_detached_child", func(t *testing.T) {
 		cmd := exec.Command("/usr/bin/true")
 		if err := startProcess(cmd); err != nil {
@@ -276,7 +291,8 @@ func TestStopAndSessionEndHook(t *testing.T) {
 				if tc.event == "SessionEnd" {
 					min = "1"
 				}
-				want = append(want, "-C", s.Path, "-n", "org/a", "capture", "run", "--min", min)
+				pluginRoot, _ := filepath.Abs("../..")
+				want = append(want, "-C", s.Path, "-n", "org/a", "capture", "run", "--min", min, "--plugin-root", pluginRoot)
 				if !reflect.DeepEqual(c.Args, want) || c.Dir != cwd || c.Stdin != nil || c.Stdout != c.Stderr || c.Stdout.(*os.File).Name() != logPath {
 					t.Fatal(c)
 				}

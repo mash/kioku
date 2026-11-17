@@ -22,7 +22,7 @@ type entryFile struct {
 }
 
 func readEntryFiles(p string) ([]entryFile, error) {
-	const maxEntryBytes = 40 << 10
+	const maxEntryBytes = contextLimit * 4
 	var files []entryFile
 	for _, name := range []string{"index.md", "overview.md"} {
 		path := filepath.Join(p, "wiki", name)
@@ -40,15 +40,12 @@ func readEntryFiles(p string) ([]entryFile, error) {
 		if err != nil {
 			return nil, err
 		}
-		b, err := io.ReadAll(io.LimitReader(f, maxEntryBytes+1))
+		b, err := io.ReadAll(io.LimitReader(f, maxEntryBytes))
 		closeErr := f.Close()
 		if err != nil || closeErr != nil {
 			return nil, errors.Join(err, closeErr)
 		}
-		truncated := len(b) > maxEntryBytes
-		if truncated {
-			b = b[:maxEntryBytes]
-		}
+		truncated := info.Size() > int64(len(b))
 		files = append(files, entryFile{Path: path, Body: strings.ToValidUTF8(string(b), ""), Truncated: truncated})
 	}
 	return files, nil
@@ -67,11 +64,16 @@ func fitEntry(files []entryFile, tail string, limit int) string {
 		}
 		return strings.Join(append(parts, tail), "\n")
 	}
-	for i := len(files) - 1; i >= 0 && utf8.RuneCountInString(render()) > limit; i-- {
-		files[i].Truncated = true
-		over := utf8.RuneCountInString(render()) - limit
+	remaining := limit - utf8.RuneCountInString(render())
+	for i := len(files) - 1; i >= 0 && remaining < 0; i-- {
+		if !files[i].Truncated {
+			files[i].Truncated = true
+			remaining -= utf8.RuneCountInString(fmt.Sprintf("\n…（上限 10,000 文字で以降を省いた。続きは %s を読む）。", files[i].Path))
+		}
 		body := []rune(files[i].Body)
-		files[i].Body = string(body[:max(0, len(body)-over)])
+		cut := min(len(body), -remaining)
+		files[i].Body = string(body[:len(body)-cut])
+		remaining += cut
 	}
 	return render()
 }

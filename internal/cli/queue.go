@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,29 +61,43 @@ func (a *App) queue(args []string, now time.Time) error {
 	if len(args) == 0 {
 		return usage
 	}
-	reason := ""
-	token := ""
-	if args[0] == "remove" && len(args) > 1 && args[1] == "--capture-token" {
-		if len(args) < 4 {
-			return usage
-		}
-		token = args[2]
-		if !captureTokenPattern.MatchString(token) {
-			return usage
-		}
-		args = append([]string{"remove"}, args[3:]...)
-	}
+	reason, token := "", ""
 	if args[0] == "remove" {
-		for i, arg := range args[1:] {
-			if arg == "--reason" {
-				if i+3 != len(args) {
-					return usage
-				}
-				reason = args[i+2]
-				args = args[:i+1]
+		f := flag.NewFlagSet("queue remove", flag.ContinueOnError)
+		f.SetOutput(a.Err)
+		f.StringVar(&reason, "reason", "", "capture result")
+		tokenSet := false
+		f.Func("capture-token", "capture ownership token", func(value string) error {
+			if tokenSet || !captureTokenPattern.MatchString(value) {
+				return errors.New("invalid or repeated capture token")
+			}
+			token, tokenSet = value, true
+			return nil
+		})
+		var flags, urls []string
+		for i := 1; i < len(args); i++ {
+			arg := args[i]
+			if arg == "--" {
+				urls = append(urls, args[i+1:]...)
 				break
 			}
+			if strings.HasPrefix(arg, "-") {
+				flags = append(flags, arg)
+				if !strings.Contains(arg, "=") {
+					i++
+					if i >= len(args) {
+						return usage
+					}
+					flags = append(flags, args[i])
+				}
+			} else {
+				urls = append(urls, arg)
+			}
 		}
+		if err := f.Parse(flags); err != nil {
+			return err
+		}
+		args = append([]string{"remove"}, urls...)
 	}
 	switch args[0] {
 	case "add":
@@ -142,7 +157,7 @@ func (a *App) queue(args []string, now time.Time) error {
 			if token == "" {
 				rows = removeRows(rows, args[1:])
 			} else {
-				dir, err := a.captureTokenDir(token)
+				dir, err := resolveCaptureDir(token, a.captureTmp(token))
 				if err != nil {
 					return nil, false, err
 				}

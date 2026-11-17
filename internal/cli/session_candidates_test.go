@@ -118,6 +118,8 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		{name: "E26_without_wiki", prompt: "Tesla", auto: "org/a", noWiki: true},
 		{name: "E27_word_boundary", prompt: "teslax のログ"},
 		{name: "E28_substring", prompt: "急速充電器の件", auto: "org/b"},
+		{name: "R4_prompt_and_branch_same_hit", prompt: "Tesla", branch: "feat/tesla-x", auto: "org/a"},
+		{name: "R4_prompt_and_branch_conflicting_hits", prompt: "充電", branch: "feat/tesla-x"},
 		{name: "E29_branch", prompt: "続けて", branch: "feat/tesla-x", auto: "org/a"},
 		{name: "E30_selected_ignores_triggers", prompt: "充電の件も", selected: "org/a"},
 		{name: "E31_declined_auto_select", prompt: "Tesla", declined: true, auto: "org/a"},
@@ -285,7 +287,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					if tc.config != "" {
 						aLine += "［ヒント: cwd の .kioku/config］"
 					}
-					if tc.name == "E23_two_triggers" {
+					if tc.name == "E23_two_triggers" || tc.name == "R4_prompt_and_branch_conflicting_hits" {
 						aLine += "［ヒント: trigger 語 tesla］"
 						bLine += "［ヒント: trigger 語 充電］"
 					}

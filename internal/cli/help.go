@@ -8,7 +8,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   -C with -n binds the specified directory to that namespace on pull.
   Without -n, commands use cwd (or -C) .kioku/config; create requires -n.
   Command flags must precede positional arguments, except fetch URL --out FILE and queue remove URL... --reason TEXT.
-  put and queue remove accept --capture-token TOKEN before files or URLs.
+  put accepts --capture-token TOKEN before files; queue remove flags may precede or follow URLs.
   -n cannot be combined with project join.
 
   version                             Show client build information
@@ -30,8 +30,8 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove sources at the next generation
-  fetch URL --out FILE [--dir DIR]  HTTPS GET (20 MiB max) into the owned capture directory.
-  capture run [--min N] | capture unlock --token TOKEN
+  fetch URL --capture-token TOKEN --dir DIR --out FILE  HTTPS GET (20 MiB max) into the owned capture directory.
+  capture run [--min N] [--plugin-root DIR] | capture unlock --token TOKEN
   queue add URL NOTE | queue list | queue remove [--capture-token TOKEN] URL... [--reason TEXT]
   put [--capture-token TOKEN] FILE...                        Save sources from files or directories
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)

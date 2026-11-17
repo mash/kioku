@@ -29,6 +29,8 @@ type captureLock struct {
 	invalid        bool
 }
 
+const captureLockTTL = 30 * time.Minute
+
 var captureWaitDelay = 5 * time.Second
 
 var errCaptureBusy = errors.New("capture already running")
@@ -54,7 +56,7 @@ func readCaptureLock(path string) (*captureLock, error) {
 	return &lock, nil
 }
 func lockBusy(lock *captureLock, now time.Time) bool {
-	return lock != nil && now.Sub(lock.StartedAt) <= 30*time.Minute
+	return lock != nil && now.Sub(lock.StartedAt) <= captureLockTTL
 }
 func acquireCaptureLock(path string, now time.Time) (*captureLock, error) {
 	if err := ensureDirectory(filepath.Dir(path)); err != nil {
@@ -115,6 +117,7 @@ func (a *App) capture(args []string, now time.Time) error {
 		f := flag.NewFlagSet("capture run", flag.ContinueOnError)
 		f.SetOutput(a.Err)
 		min := f.Int("min", 5, "minimum queued sources")
+		pluginRoot := f.String("plugin-root", "", "plugin root directory")
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -125,7 +128,7 @@ func (a *App) capture(args []string, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		return a.captureRun(*min, cwd, now)
+		return a.captureRun(*min, cwd, now, *pluginRoot)
 	case "unlock":
 		f := flag.NewFlagSet("capture unlock", flag.ContinueOnError)
 		f.SetOutput(a.Err)
@@ -154,7 +157,7 @@ func (a *App) cleanupCaptureTmp(now time.Time) error {
 		return err
 	}
 	defer guard.Close()
-	lock, err := readCaptureLock(filepath.Join(a.metadataDir(), "capture.lock"))
+	lock, err := readCaptureLock(a.captureLockPath())
 	if err != nil {
 		return err
 	}
@@ -171,14 +174,17 @@ func (a *App) cleanupCaptureTmp(now time.Time) error {
 		if err != nil {
 			return err
 		}
-		if now.Sub(info.ModTime()) <= 30*time.Minute {
+		if now.Sub(info.ModTime()) <= captureLockTTL {
 			continue
 		}
 		if err := os.Remove(receipt); err != nil {
 			return err
 		}
 	}
-	root := filepath.Join(a.metadataDir(), "capture-tmp")
+	return removeCaptureTmpExcept(filepath.Join(a.metadataDir(), "capture-tmp"), live)
+}
+
+func removeCaptureTmpExcept(root, keep string) error {
 	info, err := os.Lstat(root)
 	if os.IsNotExist(err) {
 		return nil
@@ -194,7 +200,7 @@ func (a *App) cleanupCaptureTmp(now time.Time) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() != live {
+		if entry.Name() != keep {
 			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
 				return err
 			}
@@ -209,7 +215,7 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 		return "", err
 	}
 	defer guard.Close()
-	lock, err := readCaptureLock(filepath.Join(a.metadataDir(), "capture.lock"))
+	lock, err := readCaptureLock(a.captureLockPath())
 	if err != nil {
 		return "", err
 	}
@@ -220,16 +226,8 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 	if err := ensureDirectory(root); err != nil {
 		return "", err
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
+	if err := removeCaptureTmpExcept(root, token); err != nil {
 		return "", err
-	}
-	for _, entry := range entries {
-		if entry.Name() != token {
-			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
-				return "", err
-			}
-		}
 	}
 	tmp := a.captureTmp(token)
 	if err := os.Mkdir(tmp, 0700); err != nil {
@@ -265,7 +263,7 @@ func (a *App) captureNote(note string) error {
 	_, err = fmt.Fprintln(log, strings.NewReplacer("\r", " ", "\n", " ").Replace(note))
 	return err
 }
-func (a *App) captureRun(min int, cwd string, now time.Time) error {
+func (a *App) captureRun(min int, cwd string, now time.Time, pluginRoots ...string) error {
 	if err := a.cleanupCaptureTmp(now); err != nil {
 		return err
 	}
@@ -277,7 +275,7 @@ func (a *App) captureRun(min int, cwd string, now time.Time) error {
 		_, err = fmt.Fprintf(a.Out, "kioku: capture run: キューは %d 件で、--min %d に足りない。\n", len(rows), min)
 		return err
 	}
-	path := filepath.Join(a.metadataDir(), "capture.lock")
+	path := a.captureLockPath()
 	lock, err := acquireCaptureLock(path, now)
 	if errors.Is(err, errCaptureBusy) {
 		id := "不明"
@@ -318,14 +316,26 @@ func (a *App) captureRun(min int, cwd string, now time.Time) error {
 	}
 	vars := templateVars(exe, a.Config.Server, a.Config.Namespace, a.Dir)
 	vars["tmp"], vars["queue"], vars["token"] = tmp, string(formatQueue(rows)), lock.Token
+	vars["tmp_arg"] = shellQuote(tmp)
 	vars["project_kioku"] = vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
 	prompt := renderTemplate(prompts.CaptureRun, vars)
-	args := []string{"--bg", "--settings", `{"disableAllHooks":true,"permissions":{"deny":["Glob","Grep","WebFetch","WebSearch","Edit","NotebookEdit","Bash(curl:*)","Bash(wget:*)","Read(./**)","Read(~/.ssh/**)","Read(~/.aws/**)","Read(~/.config/**)","Read(~/.claude/**)","Read(~/.netrc)"]}}`, "--permission-mode", "dontAsk", "--allowedTools"}
+	settings, err := a.captureSettings(cwd, tmp)
+	if err != nil {
+		return err
+	}
+	args := []string{"--bg", "--settings", settings, "--permission-mode", "dontAsk", "--allowedTools"}
 	args = append(args, captureAllowedTools(exe, a.Config.Server, a.Config.Namespace, a.Dir, tmp)...)
+	if len(pluginRoots) > 0 && pluginRoots[0] != "" {
+		root, err := filepath.Abs(pluginRoots[0])
+		if err != nil {
+			return err
+		}
+		args = append(args, "Read(/"+filepath.Join(root, "skills")+"/**)", "Read(/"+filepath.Join(root, "agents")+"/**)")
+	}
 	args = append(args, "--agent", "kioku:kioku-capture", "--", prompt)
 	cmd := exec.Command(claude, args...)
 	cmd.Dir = cwd
-	cmd.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", "KIOKU_CAPTURE_DIR"), "KIOKU_CAPTURE_DIR="+tmp)
+	cmd.Env = processEnv("CLAUDE_CODE_SESSION_ID")
 	cmd.WaitDelay = captureWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -358,68 +368,58 @@ func (a *App) captureRun(min int, cwd string, now time.Time) error {
 		if err := a.captureNote(warning); err != nil {
 			return err
 		}
-	} else {
-		last := filepath.Join(a.metadataDir(), "capture.last")
-		previous := ""
-		if data, err := readRegular(last); err == nil {
-			previous = strings.TrimSpace(string(data))
-		}
-		if err := a.recordCaptureID(path, lock.Token, id); err != nil {
+
+		_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。\n", a.Config.Namespace, len(rows))
+		return err
+	}
+	last := filepath.Join(a.metadataDir(), "capture.last")
+	previous := ""
+	if data, err := readRegular(last); err == nil {
+		previous = strings.TrimSpace(string(data))
+	}
+	if err := a.recordCaptureID(path, lock.Token, id); err != nil {
+		return err
+	}
+	if previous != "" && previous != id {
+		cleanup := exec.Command(claude, "rm", previous)
+		cleanup.Dir = cwd
+		cleanup.Env = processEnv("CLAUDE_CODE_SESSION_ID")
+		cleanup.WaitDelay = captureWaitDelay
+		_ = cleanup.Run()
+		guard, err := openLockedFile(a.metadataDir(), os.O_RDONLY)
+		if err != nil {
 			return err
 		}
-		if previous != "" && previous != id {
-			cleanup := exec.Command(claude, "rm", previous)
-			cleanup.Dir = cwd
-			cleanup.Env = processEnv("CLAUDE_CODE_SESSION_ID")
-			cleanup.WaitDelay = 5 * time.Second
-			_ = cleanup.Run()
-			guard, err := openLockedFile(a.metadataDir(), os.O_RDONLY)
-			if err != nil {
-				return err
-			}
-			if data, err := readRegular(last); err == nil && strings.TrimSpace(string(data)) == previous {
-				_ = os.Remove(last)
-			}
-			guard.Close()
+		if data, err := readRegular(last); err == nil && strings.TrimSpace(string(data)) == previous {
+			_ = os.Remove(last)
 		}
+		guard.Close()
 	}
-	if id == "" {
-		_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。\n", a.Config.Namespace, len(rows))
-	} else {
-		_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id %s）。claude logs %s で見る。\n", a.Config.Namespace, len(rows), id, id)
-	}
+	_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id %s）。claude logs %s で見る。\n", a.Config.Namespace, len(rows), id, id)
 	return err
 }
 func (a *App) captureReceipt(token string) string {
 	return filepath.Join(a.metadataDir(), "capture-unlocked-"+token)
 }
 func (a *App) recordCaptureID(path, token, id string) error {
-	return updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
-		var lock captureLock
-		if data != nil {
-			if err := decodeJSON(data, &lock); err != nil {
-				return nil, false, err
-			}
-		}
-		if data == nil || lock.Token != token {
+	return updateCaptureLock(path, func(lock *captureLock) error {
+		if lock == nil || lock.Token != token {
 			receipt := a.captureReceipt(token)
 			if _, err := readRegular(receipt); err != nil {
 				if os.IsNotExist(err) {
-					return nil, false, nil
+					return nil
 				}
-				return nil, false, err
+				return err
 			}
 			if id != "" {
 				if err := atomicfile.Write(filepath.Join(a.metadataDir(), "capture.last"), []byte(id+"\n"), 0600); err != nil {
-					return nil, false, err
+					return err
 				}
 			}
-			return nil, false, os.Remove(receipt)
+			return os.Remove(receipt)
 		}
-		lock.BgID = id
-		lock.LaunchComplete = true
-		next, err := json.Marshal(lock)
-		return append(next, '\n'), true, err
+		lock.BgID, lock.LaunchComplete = id, true
+		return nil
 	})
 }
 func (a *App) captureUnlock(token string) error {
@@ -431,16 +431,16 @@ func (a *App) captureUnlock(token string) error {
 		return err
 	}
 	defer guard.Close()
-	path := filepath.Join(a.metadataDir(), "capture.lock")
+	path := a.captureLockPath()
 	lock, err := readCaptureLock(path)
 	if err != nil || lock == nil {
 		return err
 	}
-	if !lock.invalid && (!captureTokenPattern.MatchString(token) || lock.Token != token) {
-		_, err = fmt.Fprintln(a.Out, "kioku: capture unlock: token が合わないので、ロックを残した。")
-		return err
-	}
 	if !lock.invalid {
+		if !captureTokenPattern.MatchString(token) || lock.Token != token {
+			_, err = fmt.Fprintln(a.Out, "kioku: capture unlock: token が合わないので、ロックを残した。")
+			return err
+		}
 		if lock.BgID != "" {
 			err = atomicfile.Write(filepath.Join(a.metadataDir(), "capture.last"), []byte(lock.BgID+"\n"), 0600)
 		} else if !lock.LaunchComplete {
@@ -456,4 +456,48 @@ func (a *App) captureUnlock(token string) error {
 		}
 	}
 	return os.Remove(path)
+}
+
+func (a *App) captureLockPath() string { return filepath.Join(a.metadataDir(), "capture.lock") }
+func captureLockPathFromTmp(dir string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(dir)), "capture.lock")
+}
+func updateCaptureLock(path string, change func(*captureLock) error) error {
+	return updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
+		var lock *captureLock
+		if data != nil {
+			lock = &captureLock{}
+			if err := decodeJSON(data, lock); err != nil {
+				return nil, false, err
+			}
+		}
+		if err := change(lock); err != nil {
+			return nil, false, err
+		}
+		if lock == nil {
+			return nil, false, nil
+		}
+		next, err := json.Marshal(lock)
+		return next, !bytes.Equal(bytes.TrimSpace(data), next), err
+	})
+}
+func (a *App) captureSettings(cwd, tmp string) (string, error) {
+	deny := []string{"Glob", "Grep", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "Read(~/.netrc)", "Read(~/.claude.json)", "Read(~/.claude/.credentials.json)"}
+	cwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(cwd, tmp)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsLocal(rel) {
+		if err := a.captureNote("capture: 一時ディレクトリが起動 cwd 内にあるため Read(./**) の deny を省いた。"); err != nil {
+			return "", err
+		}
+	} else {
+		deny = append(deny, "Read(./**)")
+	}
+	data, err := json.Marshal(map[string]any{"disableAllHooks": true, "permissions": map[string]any{"deny": deny}})
+	return string(data), err
 }

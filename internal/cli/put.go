@@ -30,17 +30,14 @@ func (a *App) put(args []string) error {
 	if f.NArg() == 0 {
 		return errors.New("usage: kioku put FILE...")
 	}
-	captureDir := os.Getenv("KIOKU_CAPTURE_DIR")
+	captureDir := ""
 	if token != "" {
 		if _, err := a.projectPath(); err != nil {
 			return err
 		}
-		dir, err := a.captureTokenDir(token)
+		dir, err := resolveCaptureDir(token, a.captureTmp(token))
 		if err != nil {
 			return err
-		}
-		if captureDir != "" && filepath.Clean(captureDir) != dir {
-			return errors.New("capture directory differs from token")
 		}
 		captureDir = dir
 	}

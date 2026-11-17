@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -78,7 +79,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		if in.Event == "SessionEnd" {
 			min = 1
 		}
-		stopHook(in, s, min, now)
+		stopHook(in, s, min, now, filepath.Dir(*prompts))
 		return nil
 	}
 	return writeHookContext(a.Out, in.Event, promptHook(in, s, *prompts, now))
@@ -157,10 +158,6 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 			ps = foldProjects(catalog.Projects)
 		}
 	}
-	exe, _ := os.Executable()
-	vars := templateVars(exe, defaultServer, "", "")
-	declinedLine, _ := readHookPrompt(prompts, "hook-declined.txt")
-	declinedLine = renderTemplate(declinedLine, vars)
 	var nsHits []projectEntry
 	for _, p := range ps {
 		if validNamespace(p.Namespace) && strings.Contains(in.Prompt, p.Namespace) {
@@ -170,14 +167,30 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 	hits, words := matchTriggers(ps, in.Prompt)
 	// I15: declined sessions without prompt hints do not walk ancestors.
 	if s != nil && s.declined() && len(hits) == 0 && len(nsHits) == 0 {
-		return declinedLine
+		return declinedPrompt(prompts)
 	}
+	exe, _ := os.Executable()
+	vars := templateVars(exe, defaultServer, "", "")
 	configNS := ""
 	if s == nil {
 		branch, ns := walkAncestors(in.Cwd)
 		configNS = ns
 		if branch != "" {
-			hits, words = matchTriggers(ps, in.Prompt+"\n"+branch)
+			_, branchWords := matchTriggers(ps, branch)
+			hits = nil
+			for _, p := range ps {
+				key := projectKey(p)
+				matched := append(words[key], branchWords[key]...)
+				words[key] = nil
+				for _, word := range p.Triggers {
+					if slices.Contains(matched, word) {
+						words[key] = append(words[key], word)
+					}
+				}
+				if len(words[key]) > 0 {
+					hits = append(hits, p)
+				}
+			}
 		}
 	}
 	if len(hits) == 1 {
@@ -186,7 +199,7 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 		}
 	}
 	if s != nil && s.declined() {
-		return renderDeclined(declinedLine, nsHits, hits, words)
+		return renderDeclined(declinedPrompt(prompts), nsHits, hits, words)
 	}
 	if len(ps) == 0 && configNS != "" {
 		ps = []projectEntry{{Namespace: configNS}}
@@ -313,15 +326,15 @@ func startBackgroundPull(in sessionHookInput, p projectEntry, exe string) error 
 	return startProcess(c)
 }
 
-func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time) {
+func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time, pluginRoot string) {
 	if s == nil || s.declined() || !filepath.IsAbs(in.Cwd) {
 		return
 	}
-	rows, err := readQueue(filepath.Join(s.Path, ".kioku/queue.tsv"))
-	if err != nil || len(rows) < min {
+	count, err := countQueueRows(filepath.Join(s.Path, ".kioku/queue.tsv"), min)
+	if err != nil || count < min {
 		return
 	}
-	lock, err := readCaptureLock(filepath.Join(s.Path, ".kioku/capture.lock"))
+	lock, err := readCaptureLock((&App{Dir: s.Path}).captureLockPath())
 	if err != nil || lockBusy(lock, now) {
 		return
 	}
@@ -329,11 +342,15 @@ func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time) {
 	if err != nil {
 		return
 	}
+	pluginRoot, err = filepath.Abs(pluginRoot)
+	if err != nil {
+		return
+	}
 	args := []string{}
 	if s.Server != defaultServer {
 		args = append(args, "--server", s.Server)
 	}
-	args = append(args, "-C", s.Path, "-n", s.Namespace, "capture", "run", "--min", strconv.Itoa(min))
+	args = append(args, "-C", s.Path, "-n", s.Namespace, "capture", "run", "--min", strconv.Itoa(min), "--plugin-root", pluginRoot)
 	log, err := backgroundLog(filepath.Join(s.Path, ".kioku/capture.log"))
 	if err != nil {
 		return
@@ -344,4 +361,48 @@ func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time) {
 	c.Env = processEnv("KIOKU_SERVER", "CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL")
 	c.Stdout, c.Stderr = log, log
 	_ = startProcess(c)
+}
+
+func declinedPrompt(prompts string) string {
+	exe, _ := os.Executable()
+	line, _ := readHookPrompt(prompts, "hook-declined.txt")
+	return renderTemplate(line, templateVars(exe, defaultServer, "", ""))
+}
+func countQueueRows(path string, min int) (int, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, errors.New("queue must be a regular file")
+	}
+	const maxQueueBytes = 8 << 20
+	reader := bufio.NewReader(io.LimitReader(f, maxQueueBytes))
+	count, nonempty := 0, false
+	for count < min {
+		b, err := reader.ReadByte()
+		if err == io.EOF {
+			if nonempty {
+				count++
+			}
+			return count, nil
+		}
+		if err != nil {
+			return count, err
+		}
+		if b == '\n' {
+			if nonempty {
+				count++
+			}
+			nonempty = false
+		} else {
+			nonempty = true
+		}
+	}
+	return count, nil
 }

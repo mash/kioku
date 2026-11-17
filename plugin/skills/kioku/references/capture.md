@@ -9,7 +9,7 @@ Claude Code では、親が共有範囲・機密・保存禁止を確認し、�
 Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -n NAMESPACE capture run --min 1` を実行する。
 親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
 
-capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の CLI の `fetch URL --out FILE` で原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ。資料は文の一時ディレクトリに書き、文の project CLI の `put --capture-token TOKEN FILE` で送信する。mktemp を実行しない。
+capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の CLI の `fetch '<URL>' --capture-token TOKEN --dir TMP --out FILE` で原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ（GitHub の blob → raw 変換は下記の例外）。資料は文の一時ディレクトリに書き、文の project CLI の `put --capture-token TOKEN FILE` で送信する。mktemp を実行しない。
 各 URL の結果（受付済み / 未保存 / 受付不明）と理由を出力に1行書き、文の project CLI で `kioku -n NAMESPACE queue remove --capture-token TOKEN '<URL>' --reason '<理由>'` を実行する。受付不明・未保存も消し、失敗や不明を自動で再送しない。権限不足は未保存として理由を明記する。queue remove の --reason が capture.log に追記する。最後に文の project CLI とトークンで `kioku -n NAMESPACE capture unlock --token TOKEN` を実行する。
 許可する connector は Notion の fetch/search、Slack の thread/channel 読み取り、Google Drive の read/download の完全名だけ。送信・作成・更新は許可しない。利用できない取得経路を権限拡大で回避しない。
 結果は `claude logs <id>` で確認する。キュー追加・起動・unlock だけで受付済みや Wiki 生成済みと伝えない。
@@ -112,7 +112,7 @@ updated_at: "2026-11-07T18:00:00+09:00"
 
 - **GitHub のファイル**: commit SHA（コミット識別子）を確定し、同じ版の原文を読む。
   `source_url` は SHA を含むファイルの `blob` URL、`version` は SHA とする。
-  capture セッションではスナップショットにある公開ファイルの固定 commit の raw HTTPS URL を `kioku fetch URL --out FILE` で取る。
+  capture セッションではスナップショットにある公開ファイルの `https://github.com/O/R/blob/REF/PATH` URL をそのまま `kioku fetch '<URL>' --capture-token TOKEN --dir TMP --out FILE` で取る。CLI が対応する `https://raw.githubusercontent.com/O/R/REF/PATH` に変換する。
   その他の環境では `gh api 'repos/O/R/contents/PATH?ref=SHA' -H 'Accept: application/vnd.github.raw+json'` も使える。
 - **GitHub の Issue**: 題名、本文、全コメントを含める。
   例: `gh issue view N --repo O/R --json title,body,author,createdAt,updatedAt,url,comments`。
@@ -139,7 +139,7 @@ updated_at: "2026-11-07T18:00:00+09:00"
   値・数式のどちらを採用したか明記し、両方が必要なら両方を含める。
   シート名・行列の見出しを保ち、除外シートと理由を本文冒頭に列挙する。
 - **公開 Web**: ページ本文を読み、ナビゲーションと広告を除く。
-  capture セッションでは `kioku fetch URL --out FILE` で、文の一時ディレクトリ内の新しいファイルへ原文を取得する。
+  capture セッションでは `kioku fetch '<URL>' --capture-token TOKEN --dir TMP --out FILE` で、文の一時ディレクトリ内の新しいファイルへ原文を取得する。
   その他の環境でシェルを使える場合は `curl -fsSL -- 'https://example.com/page'` などで原文を取得する。
   WebFetch はモデルの要約を返すため使わない。他の取得ツールも全文か確認する。
   読み込み待ちや要約・抜粋だけなら、共通規則に従って別の方法を試す。

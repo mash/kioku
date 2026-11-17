@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,46 +26,35 @@ func fetchCommand(ctx context.Context, args []string) (err error) {
 		}
 	}()
 	if len(args) == 0 {
-		return errors.New("usage: kioku fetch URL --out FILE [--dir DIR]")
+		return errors.New("usage: kioku fetch URL --capture-token TOKEN --dir DIR --out FILE")
 	}
 	f := flag.NewFlagSet("fetch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	out := f.String("out", "", "output file inside capture directory")
-	dir := f.String("dir", os.Getenv("KIOKU_CAPTURE_DIR"), "capture directory")
+	dir := f.String("dir", "", "capture directory")
+	token := f.String("capture-token", "", "capture ownership token")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *out == "" || *dir == "" {
 		return errors.New("--out と capture の一時ディレクトリを指定する必要がある")
 	}
-	if bound := os.Getenv("KIOKU_CAPTURE_DIR"); bound != "" && filepath.Clean(*dir) != filepath.Clean(bound) {
-		return errors.New("--dir が capture の一時ディレクトリと異なる")
+	resolved, err := resolveCaptureDir(*token, *dir)
+	if err != nil {
+		return err
 	}
-	return fetchURL(ctx, nil, args[0], *dir, *out)
+	return fetchURL(ctx, nil, args[0], resolved, *out)
 }
 
 func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, output string) error {
 	if !filepath.IsAbs(dir) || filepath.Base(filepath.Dir(dir)) != "capture-tmp" || filepath.Base(filepath.Dir(filepath.Dir(dir))) != ".kioku" || !captureTokenPattern.MatchString(filepath.Base(dir)) {
 		return errors.New("capture-tmp の所有トークン付きディレクトリが必要")
 	}
-	lock, err := readCaptureLock(filepath.Join(filepath.Dir(filepath.Dir(dir)), "capture.lock"))
-	if err != nil {
-		return err
-	}
-	if lock == nil || lock.Token != filepath.Base(dir) {
-		return errors.New("capture のロック所有者が変わった")
-	}
 	rows, err := captureSnapshot(dir)
 	if err != nil {
 		return err
 	}
-	found := false
-	for _, row := range rows {
-		if row.URL == rawURL {
-			found = true
-		}
-	}
-	if !found {
+	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.URL == rawURL }) {
 		return errors.New("URL は capture のスナップショットにない")
 	}
 	if filepath.IsAbs(output) {
@@ -107,6 +97,14 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 	}
 	if err := validate(u); err != nil {
 		return err
+	}
+	if u.Host == "github.com" {
+		parts := strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 5)
+		if len(parts) == 5 && parts[0] != "" && parts[1] != "" && parts[2] == "blob" && parts[3] != "" && parts[4] != "" {
+			u.Host = "raw.githubusercontent.com"
+			u.Path = "/" + strings.Join([]string{parts[0], parts[1], parts[3], parts[4]}, "/")
+			u.RawPath, u.RawQuery, u.Fragment = "", "", ""
+		}
 	}
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {

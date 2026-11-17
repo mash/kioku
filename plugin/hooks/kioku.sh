@@ -106,8 +106,14 @@ if [ "${1:-}" = precompact ]; then
     cat "$ROOT/prompts/hook-precompact.txt"
     exit 0
 fi
-if [ "${1:-}" = capture ]; then
-    "$TARGET" session hook --prompts "$ROOT/prompts"
+case ${1:-} in
+    capture) EVENT=UserPromptSubmit ;;
+    stop) EVENT=Stop ;;
+    end) EVENT=SessionEnd ;;
+    *) EVENT= ;;
+esac
+if [ -n "$EVENT" ]; then
+    "$TARGET" session hook --event "$EVENT" --prompts "$ROOT/prompts"
     exit 0
 fi
 if [ -n "${KIOKU_CLI:-}" ]; then

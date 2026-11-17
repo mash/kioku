@@ -8,6 +8,7 @@ import shutil
 import re
 import shlex
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -59,7 +60,16 @@ class ManifestTest(unittest.TestCase):
             'UserPromptSubmit': [{'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" capture', 'timeout': 10,
             }]}],
+            'Stop': [{'hooks': [{
+                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" stop', 'timeout': 10,
+            }]}],
+            'SessionEnd': [{'hooks': [{
+                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" end', 'timeout': 10,
+            }]}],
         }})
+        script = (ROOT / 'hooks/kioku.sh').read_text()
+        self.assertIn('capture) EVENT=UserPromptSubmit', script)
+        self.assertIn('"$TARGET" session hook --event "$EVENT" --prompts "$ROOT/prompts"', script)
         self.assertNotIn('python', json.dumps(config))
         self.assertEqual(list((ROOT / 'hooks').glob('*.py')), [])
 
@@ -868,6 +878,151 @@ class SessionHooksTest(unittest.TestCase):
             self.assertIn('- org/ses: （説明なし）', context)
             self.assertNotIn('［ヒント:', '\n'.join(context.splitlines()[1:]))
             self.assertFalse(self.state_path.exists())
+
+    def wait_until(self, predicate):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.05)
+        self.fail('background operation did not complete within 10 seconds')
+
+    def test_E24_E25_background_pull(self):
+        status = [200]
+        entered, release = threading.Event(), threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                entered.set()
+                release.wait(10)
+                if status[0] != 200:
+                    self.send_error(status[0])
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({'revision': 'r', 'files': {}}).encode())
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        origin = f'http://127.0.0.1:{server.server_port}'
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+        self.env['KIOKU_SERVER'] = 'https://wrong.example'
+        for result in ('success', 'failure'):
+            with self.subTest(result=result):
+                status[0] = 200 if result == 'success' else 403
+                entered.clear()
+                release.clear()
+                self.state_path.unlink(missing_ok=True)
+                root = self.work / result
+                (root / '.kioku').mkdir(parents=True)
+                (root / '.kioku/config').write_text(json.dumps({'server': origin, 'namespace': 'org/a'}))
+                (root / 'wiki').mkdir()
+                (root / 'wiki/index.md').write_text('# local copy')
+                catalog.write_text(json.dumps({'projects': [{'server': origin, 'namespace': 'org/a',
+                    'path': str(root), 'description': 'A', 'triggers': ['tesla']}]}))
+                try:
+                    began = time.monotonic()
+                    context = self.prompt_context(cwd=str(root), prompt='Tesla のログ')
+                    self.assertLess(time.monotonic() - began, 2)
+                    self.assertIn('# local copy', context)
+                    self.assertIn('理由: trigger 語 tesla', context)
+                    self.assertTrue(entered.wait(2))
+                    state = json.loads(self.state_path.read_text())
+                    self.assertEqual(state['namespace'], 'org/a')
+                    self.assertNotIn('last_pull_result', state)
+                    self.assertIn('背景の pull は終わっていない。', self.prompt_context(prompt='続けて'))
+                finally:
+                    release.set()
+                self.wait_until(lambda: json.loads(self.state_path.read_text()).get('last_pull_result') == result)
+                state = json.loads(self.state_path.read_text())
+                self.assertEqual(state['server'], origin)
+                expected = self.turn_rule(state)
+                if result == 'failure':
+                    expected += '\n最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。'
+                self.assertEqual(self.prompt_context(prompt='続けて'), expected)
+                log = root / '.kioku/pull.log'
+                self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+                self.assertTrue(log.read_text())
+                if result == 'failure':
+                    self.assertIn('kioku:', log.read_text())
+                self.assertFalse(self.state_path.with_name('environment-is-not-the-hook-id.json').exists())
+
+    def test_E13_E37_E38_background_capture(self):
+        restricted = self.work / 'restricted'
+        restricted.mkdir()
+        for command in ('sh', 'dirname'):
+            (restricted / command).symlink_to(shutil.which(command))
+        fake = restricted / 'claude'
+        fake.write_text('#!' + sys.executable + '\n' + r'''import json, os, pathlib, subprocess, sys
+log = pathlib.Path(os.environ['CAPTURE_FIXTURE_LOG'])
+if sys.argv[1] == 'rm':
+    sys.exit(0)
+log.write_text(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(),
+                          'sid': os.environ.get('CLAUDE_CODE_SESSION_ID')}))
+assert sys.stdin.read() == ''
+# A detached fixture session removes queued rows only after its launcher returns.
+code = """import json, os, pathlib, subprocess, time
+p = pathlib.Path(os.environ['CAPTURE_FIXTURE_PROJECT'])
+for _ in range(200):
+    lock = json.loads((p / '.kioku/capture.lock').read_text())
+    if lock.get('bg_id'): break
+    time.sleep(.025)
+cli = os.environ['CAPTURE_FIXTURE_CLI']
+urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().splitlines()]
+subprocess.run([cli, '-n', 'org/a', 'queue', 'remove', *urls], check=True)
+subprocess.run([cli, '-n', 'org/a', 'capture', 'unlock'], check=True)
+"""
+subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print('backgrounded · 1a2b3c4d')
+''')
+        fake.chmod(0o755)
+        self.env['PATH'] = str(restricted)
+        self.env['KIOKU_SERVER'] = 'https://wrong.example'
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+        for event, count, declined in [('Stop', 5, False), ('SessionEnd', 1, False), ('Stop', 7, True)]:
+            with self.subTest(event=event, declined=declined):
+                root = self.work / (event + str(declined))
+                metadata = root / '.kioku'
+                metadata.mkdir(parents=True)
+                (metadata / 'config').write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': 'org/a'}))
+                catalog.write_text(json.dumps({'projects': [{'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'path': str(root)}]}))
+                self.state = ({'declined_at': '2026-11-18T01:00:00Z'} if declined else
+                              {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)})
+                self.save_state()
+                queue = metadata / 'queue.tsv'
+                queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t読んだ\n' for i in range(count))
+                queue.write_text(queued)
+                log = root / 'fixture.json'
+                self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
+                                CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work))
+                self.assertEqual(self.hook(event, cwd=str(root)), '')
+                if declined:
+                    self.assertFalse(log.exists())
+                    self.assertFalse((metadata / 'capture.log').exists())
+                    self.assertEqual(queue.read_text(), queued)
+                    continue
+                self.wait_until(lambda: (metadata / 'capture.last').exists())
+                self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude agents で見る。' in (metadata / 'capture.log').read_text())
+                self.assertEqual(queue.read_text(), '')
+                self.assertFalse((metadata / 'capture.lock').exists())
+                self.assertEqual((metadata / 'capture.last').read_text(), '1a2b3c4d\n')
+                self.assertEqual((metadata / 'capture.log').stat().st_mode & 0o777, 0o600)
+                recorded = json.loads(log.read_text())
+                self.assertEqual(recorded['cwd'], str(root))
+                self.assertIsNone(recorded['sid'])
+                self.assertEqual(recorded['args'][0], '--bg')
+                self.assertNotIn('-p', recorded['args'])
+                self.assertIn(queued, recorded['args'][-1])
+                self.assertIn('capture unlock', recorded['args'][-1])
+
 
 
 

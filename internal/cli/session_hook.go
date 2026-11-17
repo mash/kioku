@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,7 +28,7 @@ type sessionHookInput struct {
 
 func allowedHookEvent(event string) bool {
 	switch event {
-	case "SessionStart", "UserPromptSubmit":
+	case "SessionStart", "UserPromptSubmit", "Stop", "SessionEnd":
 		return true
 	default:
 		return false
@@ -71,6 +72,14 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 			return nil
 		}
 		return writeHookContext(a.Out, in.Event, sessionContext(s))
+	}
+	if in.Event == "Stop" || in.Event == "SessionEnd" {
+		min := 5
+		if in.Event == "SessionEnd" {
+			min = 1
+		}
+		stopHook(in, s, min, now)
+		return nil
 	}
 	return writeHookContext(a.Out, in.Event, promptHook(in, s, *prompts, now))
 }
@@ -294,4 +303,37 @@ func startBackgroundPull(in sessionHookInput, p projectEntry, exe string) error 
 	c.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL"), "CLAUDE_CODE_SESSION_ID="+in.SessionID, "KIOKU_SESSION_PULL=background")
 	c.Stdout, c.Stderr = log, log
 	return startProcess(c)
+}
+
+func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time) {
+	if s == nil || s.declined() || !filepath.IsAbs(in.Cwd) {
+		return
+	}
+	rows, err := readQueue(filepath.Join(s.Path, ".kioku/queue.tsv"))
+	if err != nil || len(rows) < min {
+		return
+	}
+	lock, err := readCaptureLock(filepath.Join(s.Path, ".kioku/capture.lock"))
+	if err != nil || lockBusy(lock, now) {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	args := []string{}
+	if s.Server != defaultServer {
+		args = append(args, "--server", s.Server)
+	}
+	args = append(args, "-n", s.Namespace, "capture", "run", "--min", strconv.Itoa(min))
+	log, err := backgroundLog(filepath.Join(s.Path, ".kioku/capture.log"))
+	if err != nil {
+		return
+	}
+	defer log.Close()
+	c := exec.Command(exe, args...)
+	c.Dir = in.Cwd
+	c.Env = processEnv("KIOKU_SERVER", "CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL")
+	c.Stdout, c.Stderr = log, log
+	_ = startProcess(c)
 }

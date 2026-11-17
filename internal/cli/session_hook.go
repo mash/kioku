@@ -7,9 +7,13 @@ import (
 	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 type sessionHookInput struct {
@@ -60,22 +64,15 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		return nil
 	}
 	now := time.Now().UTC()
-	s, err := readSession(path, now)
-	if err != nil || s.declined() {
-		if in.Event == "UserPromptSubmit" {
-			if line := candidateContext(*prompts, sessionCandidates(in.Prompt, in.Cwd)); line != "" {
-				return writeHookContext(a.Out, in.Event, line)
-			}
-		}
-		return nil
-	}
+
+	s, _ := readSession(path, now)
 	if in.Event == "SessionStart" {
 		if in.Source != "compact" && in.Source != "resume" {
 			return nil
 		}
 		return writeHookContext(a.Out, in.Event, sessionContext(s))
 	}
-	return writeHookContext(a.Out, in.Event, promptTurnContext(*prompts, s))
+	return writeHookContext(a.Out, in.Event, promptHook(in, s, *prompts, now))
 }
 
 func readHookPrompt(prompts, name string) (string, error) {
@@ -91,4 +88,210 @@ func writeHookContext(out io.Writer, event, context string) error {
 		return nil
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": event, "additionalContext": context}})
+}
+
+const sessionPullPendingContext = "背景の pull は終わっていない。wiki/ は 1 回前の pull のままか、まだ無い。"
+
+func renderTemplate(text string, vars map[string]string) string {
+	pairs := make([]string, 0, len(vars)*2)
+	for _, key := range sortedKeys(vars) {
+		pairs = append(pairs, "{{"+key+"}}", vars[key])
+	}
+	return strings.NewReplacer(pairs...).Replace(text)
+}
+
+func promptTurnContext(prompts string, s *sessionState) string {
+	prompt, _ := readHookPrompt(prompts, "hook-turn.txt")
+	exe, _ := os.Executable()
+	line := renderTemplate(prompt, templateVars(exe, s.Server, s.Namespace, s.Path))
+	var suffix string
+	switch s.LastPullResult {
+	case sessionPullNone:
+		suffix = sessionPullPendingContext
+	case sessionPullFailure:
+		suffix = sessionPullFailedContext
+	}
+	if suffix != "" {
+		if line != "" {
+			line += "\n"
+		}
+		line += suffix
+	}
+	return line
+}
+
+func renderDeclined(line string, nsHits, triggerHits []projectEntry, words map[string][]string) string {
+	if len(nsHits) > 0 {
+		var names []string
+		for _, p := range nsHits {
+			names = append(names, p.Namespace)
+		}
+		line += "［ヒント: プロンプトに namespace］" + strings.Join(names, "、")
+	}
+	if len(triggerHits) > 1 {
+		var hints []string
+		for _, p := range triggerHits {
+			hints = append(hints, "［ヒント: trigger 語 "+strings.Join(words[projectKey(p)], "、")+"］"+p.Namespace)
+		}
+		line += strings.Join(hints, "、")
+	}
+	return line
+}
+
+func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.Time) string {
+	if s != nil && !s.declined() {
+		return promptTurnContext(prompts, s)
+	}
+	var ps []projectEntry
+	if authDir, err := defaultAuthDir(); err == nil {
+		if catalog, err := readProjects((&App{AuthDir: authDir}).projectsPath()); err == nil {
+			ps = foldProjects(catalog.Projects)
+		}
+	}
+	exe, _ := os.Executable()
+	vars := templateVars(exe, defaultServer, "", "")
+	declinedLine, _ := readHookPrompt(prompts, "hook-declined.txt")
+	declinedLine = renderTemplate(declinedLine, vars)
+	var nsHits []projectEntry
+	for _, p := range ps {
+		if validNamespace(p.Namespace) && strings.Contains(in.Prompt, p.Namespace) {
+			nsHits = append(nsHits, p)
+		}
+	}
+	hits, words := matchTriggers(ps, in.Prompt)
+	// I15: declined sessions without prompt hints do not walk ancestors.
+	if s != nil && s.declined() && len(hits) == 0 && len(nsHits) == 0 {
+		return declinedLine
+	}
+	branch, configNS := walkAncestors(in.Cwd)
+	if branch != "" {
+		hits, words = matchTriggers(ps, in.Prompt+"\n"+branch)
+	}
+	if len(hits) == 1 {
+		if line := autoSelect(in, hits[0], words[projectKey(hits[0])], prompts, now); line != "" {
+			return line
+		}
+	}
+	if s != nil && s.declined() {
+		return renderDeclined(declinedLine, nsHits, hits, words)
+	}
+	if len(ps) == 0 && configNS != "" {
+		ps = []projectEntry{{Namespace: configNS}}
+	}
+	if len(ps) == 0 {
+		return ""
+	}
+	hints := make(map[string][]string)
+	for _, p := range ps {
+		key := projectKey(p)
+		if strings.Contains(in.Prompt, p.Namespace) {
+			hints[key] = append(hints[key], "プロンプトに namespace")
+		}
+		if p.Namespace == configNS {
+			hints[key] = append(hints[key], "cwd の .kioku/config")
+		}
+		if len(words[key]) > 0 {
+			hints[key] = append(hints[key], "trigger 語 "+strings.Join(words[key], "、"))
+		}
+	}
+	header, _ := readHookPrompt(prompts, "hook-candidates.txt")
+	if header == "" {
+		return ""
+	}
+	header = renderTemplate(header, vars)
+	list := renderProjectList(vars["kioku"], ps, hints, contextLimit-utf8.RuneCountInString(header)-1)
+	return header + "\n" + list
+}
+
+func autoSelect(in sessionHookInput, p projectEntry, words []string, prompts string, now time.Time) string {
+	files, err := readEntryFiles(p.Path)
+	if err != nil {
+		return ""
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	prompt, err := readHookPrompt(prompts, "hook-trigger.txt")
+	if err != nil || prompt == "" {
+		return ""
+	}
+	wikiInfo, wikiErr := os.Stat(filepath.Join(p.Path, "wiki"))
+	localCopy := wikiErr == nil && wikiInfo.IsDir()
+	s := &sessionState{Server: p.Server, Namespace: p.Namespace, Mode: "local", Path: p.Path}
+	written := false
+	err = updateSession(in.SessionID, now, func(old *sessionState) (*sessionState, bool) {
+		if old != nil && !old.declined() {
+			return nil, false
+		}
+		written = true
+		return s, true
+	})
+	if err != nil || !written {
+		return ""
+	}
+	if err = startBackgroundPull(in, p, exe); err != nil {
+		a := &App{Dir: p.Path, Config: Config{Server: p.Server, Namespace: p.Namespace}, backgroundPull: true}
+		_ = a.saveSessionSelection(in.SessionID, p.Namespace, now, sessionPullFailure)
+		s.LastPullAt, s.LastPullResult = now, sessionPullFailure
+	}
+	vars := templateVars(exe, p.Server, p.Namespace, p.Path)
+	vars["words"] = strings.Join(words, "、")
+	turn, _ := readHookPrompt(prompts, "hook-turn.txt")
+	tail := renderTemplate(prompt, vars) + "\n" + renderTemplate(turn, vars)
+	if s.LastPullResult == sessionPullFailure {
+		tail += "\n" + sessionPullFailedContext
+	}
+	if !localCopy {
+		tail = "wiki は背景で取得中。" + filepath.Join(p.Path, "wiki/index.md") + " ができたら読む。\n" + tail
+	} else if len(files) == 0 {
+		tail = "wiki/index.md と overview.md が無い。" + vars["wiki"] + " を grep する。\n" + tail
+	}
+	return fitEntry(files, tail, contextLimit)
+}
+
+var startProcess = func(c *exec.Cmd) error {
+	if err := c.Start(); err != nil {
+		return err
+	}
+	return c.Process.Release()
+}
+
+func backgroundLog(path string) (*os.File, error) {
+	if err := ensureDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = f.Chmod(0600); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func processEnv(exclude ...string) []string {
+	var env []string
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if !slices.Contains(exclude, key) {
+			env = append(env, value)
+		}
+	}
+	return env
+}
+
+func startBackgroundPull(in sessionHookInput, p projectEntry, exe string) error {
+	log, err := backgroundLog(filepath.Join(p.Path, ".kioku/pull.log"))
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	c := exec.Command(exe, "--server", p.Server, "-n", p.Namespace, "pull")
+	c.Dir = p.Path
+	c.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL"), "CLAUDE_CODE_SESSION_ID="+in.SessionID, "KIOKU_SESSION_PULL=background")
+	c.Stdout, c.Stderr = log, log
+	return startProcess(c)
 }

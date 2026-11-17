@@ -607,87 +607,96 @@ class SessionHooksTest(unittest.TestCase):
         self.assertIn('最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。', output)
         self.assertNotIn('再 pull は不要', output)
 
-    @staticmethod
-    def candidate(namespace):
-        return (f'Kioku: このセッションではプロジェクトを未選択。候補は {namespace}。'
-                '作業がこのプロジェクトなら、kioku skill で pull して wiki を読む。違えばユーザーに聞く。')
+    def list_header(self):
+        return (self.root / 'prompts/hook-candidates.txt').read_text().strip().replace(
+            '{{kioku}}', shlex.quote(str(self.data / 'bin/kioku')))
+
+    def candidate(self, namespace):
+        return self.list_header() + f'\n- {namespace}: （説明なし）［ヒント: cwd の .kioku/config］'
 
     def turn_rule(self, state=None):
         state = self.state if state is None else state
-        return (f'Kioku: {state["namespace"]}（wiki: {state["path"]}/wiki/）。'
-                '調べる時はここを grep する。参照・作成した HTTPS URL の原本は kioku-capture に渡す。')
+        command = shlex.quote(str(self.data / 'bin/kioku'))
+        if state['server'] != 'https://kioku.magicians.ee':
+            command += ' --server ' + state['server']
+        line = (f'Kioku: {state["namespace"]}（wiki: {state["path"]}/wiki/、入口は index.md）。'
+                '調べる時はここを grep する。参照・作成した重要な文書の URL は '
+                f'{command} -n {state["namespace"]} queue add <URL> "<何をしたか>" で 1 行足す。'
+                '共有範囲・機密・保存禁止を確かめてから足す。')
+        if 'last_pull_result' not in state:
+            line += '\n背景の pull は終わっていない。wiki/ は 1 回前の pull のままか、まだ無い。'
+        return line
 
     def prompt_context(self, **fields):
         output = self.hook('UserPromptSubmit', **fields)
         return self.context(output, 'UserPromptSubmit') if output else ''
 
-    def test_E1_E2_E5_E6_E11_E13_E27_E28_candidates(self):
+    def test_E1_E2_E3_E23_candidates(self):
         self.state_path.unlink()
-        multiple = ('Kioku: このセッションではプロジェクトを未選択。候補は次のとおり。'
-                    'kioku skill で 1 つ選んで pull する。決められなければユーザーに聞く。')
-        # id, prompt, config, subdir, catalog namespaces, expected
         cases = [
-            ('E1', '続けて', 'org/p', False, [], self.candidate('org/p')),
-            ('E2', '続けて', 'org/p', True, [], self.candidate('org/p')),
-            ('E5', 'a/tesla', None, False, ['a/tesla', 'b/tesla'], self.candidate('a/tesla')),
-            ('E6', 'org/b', 'org/a', False, ['org/b'], self.candidate('org/b')),
-            ('E11', 'a/tesla と b/tesla', None, False, ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
-            ('E13', 'org/p', None, False, ['org/p', 'org/p'], self.candidate('org/p')),
-            ('E27', 'a/tesla と b/tesla を比較して', None, False, ['a/tesla', 'b/tesla'], multiple + '\na/tesla\nb/tesla'),
-            ('E28', 'org/p', None, False, ['org/p', 'org/p'], self.candidate('org/p')),
+            ('E1', 'テスト通して', None),
+            ('E2', 'org/b を続けて', None),
+            ('E3', '続けて', 'org/a'),
+            ('E23', 'Tesla の充電', None),
         ]
         catalog_path = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog_path.parent.mkdir(parents=True)
-        for example, prompt, config, subdir, namespaces, expected in cases:
+        for example, prompt, config in cases:
             with self.subTest(example=example):
                 root = self.work / example
-                root.mkdir()
-                cwd = root
-                if subdir:
-                    cwd = root / 'src'
-                    cwd.mkdir()
+                cwd = root / 'src'
+                cwd.mkdir(parents=True)
                 config_path = root / '.kioku/config'
                 if config:
                     config_path.parent.mkdir()
                     config_path.write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': config}))
-                projects = [{'server': 'https://other.example' if example in ('E13', 'E28') and i else 'https://kioku.magicians.ee',
-                             'namespace': ns, 'path': str(self.work / f'p{i}'), 'description': '電気自動車'}
-                            for i, ns in enumerate(namespaces)]
+                projects = [{'server': 'https://kioku.magicians.ee', 'namespace': 'org/a',
+                             'path': str(root), 'description': 'A 案件の説明', 'triggers': ['tesla']},
+                            {'server': 'https://kioku.magicians.ee', 'namespace': 'org/b',
+                             'path': str(root), 'triggers': ['充電']}]
                 catalog_path.write_text(json.dumps({'projects': projects}))
                 catalog_before = catalog_path.read_bytes()
                 config_before = config_path.read_bytes() if config else None
+                lines = ['- org/a: A 案件の説明', '- org/b: （説明なし）']
+                if example == 'E2':
+                    lines[1] += '［ヒント: プロンプトに namespace］'
+                if example == 'E3':
+                    lines[0] += '［ヒント: cwd の .kioku/config］'
+                if example == 'E23':
+                    lines[0] += '［ヒント: trigger 語 tesla］'
+                    lines[1] += '［ヒント: trigger 語 充電］'
+                expected = self.list_header() + '\n' + '\n'.join(lines)
                 for _ in range(2):
                     actual = self.prompt_context(cwd=str(cwd), prompt=prompt)
-                    self.assertEqual(actual.splitlines()[:1], expected.splitlines()[:1])
-                    self.assertCountEqual(actual.splitlines()[1:], expected.splitlines()[1:])
+                    self.assertEqual(actual, expected)
                     self.assertFalse(self.state_path.exists())
                     self.assertEqual(catalog_path.read_bytes(), catalog_before)
                     if config:
                         self.assertEqual(config_path.read_bytes(), config_before)
 
-    def test_E7_E8_E9_E10_E29_selected_output_and_state(self):
+    def test_E11_E25_E4_E30_selected_output_and_state(self):
         base = dict(self.state, namespace='org/p', path='/work/p', last_pull_at='2026-11-14T00:00:00Z')
         failure = '最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。'
         url = 'https://example.com/doc'
-        for example in ('E7', 'E8', 'E9', 'E10', 'E29'):
+        for example in ('E11', 'E25', 'E11_url', 'E4', 'E30'):
             with self.subTest(example=example):
                 self.state = dict(base)
-                if example == 'E8':
+                if example == 'E25':
                     self.state['last_pull_result'] = 'failure'
                 self.save_state()
                 before, mtime = self.state_path.read_bytes(), self.state_path.stat().st_mtime_ns
-                fields = {'prompt': url + ' を調べて' if example == 'E29' else url if example in ('E9', 'E10') else '続けて', 'cwd': '/work/p'}
+                fields = {'prompt': url + ' を調べて' if example == 'E30' else url if example in ('E11_url', 'E4') else '続けて', 'cwd': '/work/p'}
                 expected = self.turn_rule()
-                if example == 'E8':
+                if example == 'E25':
                     expected += '\n' + failure
-                if example == 'E10':
+                if example == 'E4':
                     fields['agent_id'] = 'child-1'
                     expected = ''
                 self.assertEqual(self.prompt_context(**fields), expected)
                 self.assertEqual(self.state_path.read_bytes(), before)
                 self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 
-    def test_E14_to_E18_real_pull_transitions(self):
+    def test_real_pull_selection_transitions(self):
         failing = set()
         calls = []
 
@@ -724,26 +733,26 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(result.returncode == 0, ns not in failing, result.stderr)
             return result
 
-        for example in ('E14', 'E15', 'E16', 'E17', 'E18'):
+        for example in ('success', 'initial_failure', 'same_failure', 'selected_last', 'selected_last_failure'):
             with self.subTest(example=example):
                 self.state_path.unlink(missing_ok=True)
                 failing.clear()
                 calls.clear()
                 fields = dict(cwd=str(root), prompt='続けて')
                 for _ in range(2):
-                    self.assertEqual(self.prompt_context(**fields), self.candidate('org/p'))
+                    self.assertRegex(self.prompt_context(**fields), r'- org/p(?:［server: [^］]+］)?: （説明なし）［ヒント: cwd の .kioku/config］')
                     self.assertFalse(self.state_path.exists())
                 self.assertEqual(calls, [])  # Discovery never contacts the server.
-                if example == 'E15':
+                if example == 'initial_failure':
                     failing.add('org/p')
                     pull('org/p')
                     self.assertFalse(self.state_path.exists())
-                    self.assertEqual(self.prompt_context(**fields), self.candidate('org/p'))
+                    self.assertRegex(self.prompt_context(**fields), r'- org/p(?:［server: [^］]+］)?: （説明なし）［ヒント: cwd の .kioku/config］')
                     continue
-                if example in ('E14', 'E16'):
+                if example in ('success', 'same_failure'):
                     pull('org/p')
                     first = json.loads(self.state_path.read_text())
-                    if example == 'E16':
+                    if example == 'same_failure':
                         failing.add('org/p')
                         pull('org/p')
                         state = json.loads(self.state_path.read_text())
@@ -753,18 +762,18 @@ class SessionHooksTest(unittest.TestCase):
                         state = first
                         self.assertEqual(state['last_pull_result'], 'success')
                     expected = self.turn_rule(state)
-                    if example == 'E16':
+                    if example == 'same_failure':
                         expected += '\n最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。'
                 else:
                     # Execute the skill's selected-last order, then check its state.
                     pull('org/b')
                     before = self.state_path.read_bytes()
-                    if example == 'E18':
+                    if example == 'selected_last_failure':
                         failing.add('org/a')
                     pull('org/a')
                     state = json.loads(self.state_path.read_text())
-                    self.assertEqual(state['namespace'], 'org/b' if example == 'E18' else 'org/a')
-                    if example == 'E18':
+                    self.assertEqual(state['namespace'], 'org/b' if example == 'selected_last_failure' else 'org/a')
+                    if example == 'selected_last_failure':
                         self.assertEqual(self.state_path.read_bytes(), before)
                     expected = self.turn_rule(state)
                     self.assertLess(next(i for i, path in enumerate(calls) if '/org/b/' in path),
@@ -789,14 +798,21 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(self.state_path.read_bytes(), before)
             self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 
-    def test_E21_startup_exact_text(self):
-        expected = ('Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。'
-                    '無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。'
-                    '対象が曖昧ならユーザーに聞く。\n')
+    def test_E15_E22_startup_and_declined_text(self):
+        expected = ('Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。'
+                    '1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。'
+                    'ユーザーに聞かずに 1 つ選び、kioku -n <namespace> session select を実行する。'
+                    '合うものが無ければ kioku session select --none を実行する。\n')
         self.assertEqual(self.hook('SessionStart', source='startup'), expected)
+        self.state = {'declined_at': '2026-11-17T01:00:00Z'}
+        self.save_state()
+        for source in ('compact', 'resume'):
+            expected = ('Kioku: このセッションは Kioku なし（2026-11-17T01:00:00Z に決めた）。'
+                        '話題が project に合ったら ' + shlex.quote(str(self.data / 'bin/kioku')) +
+                        ' -n <namespace> session select で選ぶ。')
+            self.assertEqual(self.context(self.hook('SessionStart', source=source), 'SessionStart'), expected)
 
-
-    def test_hook_never_writes_refreshes_or_prunes_state(self):
+    def test_hook_only_autoselection_writes_refreshes_or_prunes_state(self):
         before = self.state_path.read_bytes()
         old = time.time() - 29 * 86400
         os.utime(self.state_path, (old, old))
@@ -817,7 +833,7 @@ class SessionHooksTest(unittest.TestCase):
         finally:
             self.state_path.parent.chmod(0o700)
 
-    def test_E26_parent_config_above_git_root(self):
+    def test_E3_parent_config_above_git_root(self):
         self.state_path.unlink()
         outer = self.work / 'outer'
         repo = outer / 'repo'
@@ -835,7 +851,7 @@ class SessionHooksTest(unittest.TestCase):
         self.assertEqual(self.prompt_context(cwd=str(cwd), prompt='続けて'), self.candidate('org/nearest'))
 
     def test_removed_matching_inputs(self):
-        # v7 removes project-name and description matching.
+        # Without triggers, names and descriptions are displayed without auto-selection.
         self.state_path.unlink()
         repo = self.work / 'repo'
         repo.mkdir()
@@ -847,7 +863,10 @@ class SessionHooksTest(unittest.TestCase):
             {'namespace': 'org/ses', 'server': 'https://kioku.magicians.ee', 'path': str(repo)},
         ]}))
         for prompt in ('tesla', '「tesla」の変更', 'ses', 'uses', '電気自動車', '続けて'):
-            self.assertEqual(self.prompt_context(cwd=str(repo), prompt=prompt), '')
+            context = self.prompt_context(cwd=str(repo), prompt=prompt)
+            self.assertIn('- org/tesla: 電気自動車', context)
+            self.assertIn('- org/ses: （説明なし）', context)
+            self.assertNotIn('［ヒント:', '\n'.join(context.splitlines()[1:]))
             self.assertFalse(self.state_path.exists())
 
 

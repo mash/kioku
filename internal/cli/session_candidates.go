@@ -1,79 +1,103 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// Candidate discovery reads local hints only; the CLI still owns selection.
-func sessionCandidates(prompt, cwd string) []projectEntry {
-	var projects []projectEntry
-	if authDir, err := defaultAuthDir(); err == nil {
-		a := &App{AuthDir: authDir}
-		if catalog, err := readProjects(a.projectsPath()); err == nil {
-			projects = catalog.Projects
-		}
-	}
-	var candidates []projectEntry
-	seen := make(map[string]bool)
-	for _, p := range projects {
-		if strings.Contains(prompt, p.Namespace) && validNamespace(p.Namespace) && !seen[p.Namespace] {
-			candidates = append(candidates, projectEntry{Namespace: p.Namespace})
-			seen[p.Namespace] = true
-		}
-	}
-	if len(candidates) != 0 {
-		return candidates
-	}
-
+// walkAncestors reads the nearest .git and valid .kioku/config in one traversal.
+func walkAncestors(cwd string) (branch, configNamespace string) {
 	if !filepath.IsAbs(cwd) {
-		return nil
+		return "", ""
 	}
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
-	return sessionConfigCandidates(cwd)
-}
-
-func sessionConfigCandidates(cwd string) []projectEntry {
+	foundGit := false
 	for dir := cwd; ; dir = filepath.Dir(dir) {
-		a := &App{Dir: dir}
-		if c, err := a.readProjectConfig(); err == nil && c.Namespace != "" {
-			return []projectEntry{{Namespace: c.Namespace}}
+		if configNamespace == "" {
+			if c, err := (&App{Dir: dir}).readProjectConfig(); err == nil {
+				configNamespace = c.Namespace
+			}
 		}
-		if filepath.Dir(dir) == dir {
-			return nil
+		if !foundGit {
+			git := filepath.Join(dir, ".git")
+			if info, err := os.Stat(git); err == nil {
+				foundGit = true
+				if !info.IsDir() {
+					data, err := os.ReadFile(git)
+					if err == nil && strings.HasPrefix(string(data), "gitdir:") {
+						git = strings.TrimSpace(strings.TrimPrefix(string(data), "gitdir:"))
+						if !filepath.IsAbs(git) {
+							git = filepath.Join(dir, git)
+						}
+					} else {
+						git = ""
+					}
+				}
+				if git != "" {
+					if data, err := os.ReadFile(filepath.Join(git, "HEAD")); err == nil && strings.HasPrefix(string(data), "ref: refs/heads/") {
+						branch = strings.TrimSpace(strings.TrimPrefix(string(data), "ref: refs/heads/"))
+					}
+				}
+			}
+		}
+		if (foundGit && configNamespace != "") || filepath.Dir(dir) == dir {
+			return branch, configNamespace
 		}
 	}
 }
 
-func candidateContext(prompts string, candidates []projectEntry) string {
-	if len(candidates) == 0 {
-		return ""
+// matchWord receives text folded once by matchTriggers.
+func matchWord(word, text string) bool {
+	if word == "" {
+		return false
 	}
-	if len(candidates) == 1 {
-		prompt, _ := readHookPrompt(prompts, "hook-candidate.txt")
-		return strings.ReplaceAll(prompt, "{{namespace}}", candidates[0].Namespace)
+	ascii := true
+	for _, r := range word {
+		if r > 127 {
+			ascii = false
+			break
+		}
 	}
-	prompt, _ := readHookPrompt(prompts, "hook-candidates.txt")
-	if prompt == "" {
-		return ""
+	word = strings.ToLower(word)
+	if !ascii {
+		return strings.Contains(text, word)
 	}
-	lines := []string{prompt}
-	for _, p := range candidates {
-		lines = append(lines, p.Namespace)
+	alnum := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' }
+	for offset := 0; offset <= len(text)-len(word); {
+		i := strings.Index(text[offset:], word)
+		if i < 0 {
+			return false
+		}
+		i += offset
+		end := i + len(word)
+		if (i == 0 || !alnum(text[i-1])) && (end == len(text) || !alnum(text[end])) {
+			return true
+		}
+		offset = i + 1
 	}
-	return strings.Join(lines, "\n")
+	return false
 }
 
-func promptTurnContext(prompts string, s *sessionState) string {
-	prompt, _ := readHookPrompt(prompts, "hook-turn.txt")
-	line := strings.NewReplacer("{{namespace}}", s.Namespace, "{{wiki}}", filepath.Join(s.Path, "wiki")+string(filepath.Separator)).Replace(prompt)
-	if s.LastPullResult == sessionPullFailure {
-		if line == "" {
-			return sessionPullFailedContext
+func matchTriggers(ps []projectEntry, text string) ([]projectEntry, map[string][]string) {
+	text = strings.ToLower(text)
+	var hits []projectEntry
+	words := make(map[string][]string)
+	for _, p := range ps {
+		if !validNamespace(p.Namespace) {
+			continue
 		}
-		line += "\n" + sessionPullFailedContext
+		key := projectKey(p)
+		for _, word := range p.Triggers {
+			if matchWord(word, text) {
+				words[key] = append(words[key], word)
+			}
+		}
+		if len(words[key]) > 0 {
+			hits = append(hits, p)
+		}
 	}
-	return line
+	return hits, words
 }

@@ -1,1 +1,1 @@
-Kioku: このセッションではプロジェクトを未選択。候補は次のとおり。kioku skill で 1 つ選んで pull する。決められなければユーザーに聞く。
+Kioku: このセッションは project が未選択。このメッセージの内容と各 description から最も合う project を、ユーザーに聞かずに 1 つ選び、{{kioku}} -n <namespace> session select を 1 回実行する。同じくらい合う project が複数あっても 1 つに決める。［server: …］の付いた行は {{kioku}} --server <server> -n <namespace> session select を使う。どれも合わなければ {{kioku}} session select --none を実行し、Kioku なしで進める。select が失敗したら kioku skill の失敗時の手順に従う。［ヒント: trigger 語 …］は、このメッセージかブランチ名が、その project の trigger 語に当たったことを示す。

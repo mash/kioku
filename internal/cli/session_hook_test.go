@@ -45,8 +45,8 @@ func TestSessionHookE25URLSources(t *testing.T) {
 		name, event, want string
 		fields            map[string]any
 	}{
-		{"E25_cwd", "UserPromptSubmit", fmt.Sprintf(turnRuleText, "org/p", "/work/p"), map[string]any{"prompt": "続けて", "cwd": "/work/https://a.example/1"}},
-		{"other_stdin_fields", "UserPromptSubmit", fmt.Sprintf(turnRuleText, "org/p", "/work/p"), map[string]any{"prompt": "続けて", "transcript_path": "https://a.example/transcript", "extra": []any{map[string]any{"url": "https://a.example/nested"}}}},
+		{"E11_cwd", "UserPromptSubmit", testTurnRule("org/p", "/work/p", defaultServer), map[string]any{"prompt": "続けて", "cwd": "/work/https://a.example/1"}},
+		{"E11_other_stdin_fields", "UserPromptSubmit", testTurnRule("org/p", "/work/p", defaultServer), map[string]any{"prompt": "続けて", "transcript_path": "https://a.example/transcript", "extra": []any{map[string]any{"url": "https://a.example/nested"}}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sessionTestEnv(t)
@@ -145,7 +145,7 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(path, 0600) })
 	got := runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "org/p https://example.com/doc"})
-	if got != fmt.Sprintf(singleCandidateText, "org/p") {
+	if got != fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer))+"\n- org/p: （説明なし）［ヒント: プロンプトに namespace］" {
 		t.Fatal(got)
 	}
 }

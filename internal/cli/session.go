@@ -235,6 +235,10 @@ func sessionContext(s *sessionState) string {
 	if s == nil {
 		return ""
 	}
+	if s.declined() {
+		exe, _ := os.Executable()
+		return fmt.Sprintf("Kioku: このセッションは Kioku なし（%s に決めた）。話題が project に合ったら %s -n <namespace> session select で選ぶ。", s.DeclinedAt.Format(time.RFC3339), kiokuCommand(exe, defaultServer))
+	}
 	return renderSessionContext(s, nextSessionAction(s.LastPullResult))
 }
 

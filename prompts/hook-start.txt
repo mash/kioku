@@ -1,1 +1,1 @@
-Kioku: この会話で選んだプロジェクトがあれば保持する。hook が候補を出す。無ければ kioku skill で選ぶ。最初のメッセージの後、対象を pull して wiki/ を grep とファイルツールで読み、作業を始める。対象が曖昧ならユーザーに聞く。
+Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。ユーザーに聞かずに 1 つ選び、kioku -n <namespace> session select を実行する。合うものが無ければ kioku session select --none を実行する。

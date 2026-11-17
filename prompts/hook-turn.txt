@@ -1,1 +1,1 @@
-Kioku: {{namespace}}（wiki: {{wiki}}）。調べる時はここを grep する。参照・作成した HTTPS URL の原本は kioku-capture に渡す。
+Kioku: {{namespace}}（wiki: {{wiki}}、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は {{kioku}} -n {{namespace}} queue add <URL> "<何をしたか>" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。

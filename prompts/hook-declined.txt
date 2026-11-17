@@ -1,0 +1,1 @@
+Kioku: このセッションは Kioku なしで進めている。話題が project に合ったら {{kioku}} -n <namespace> session select で選ぶ。一覧は {{kioku}} session list が出す。

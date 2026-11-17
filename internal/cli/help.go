@@ -7,7 +7,8 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   It creates the directory; use pull first to bind an existing project.
   -C with -n binds the specified directory to that namespace on pull.
   Without -n, commands use cwd (or -C) .kioku/config; create requires -n.
-  Command flags must precede positional arguments, except fetch URL --out FILE and queue remove URL... --reason TEXT.
+  Command flags must precede positional arguments, except fetch and queue remove.
+  fetch takes the URL first, then flags.
   put accepts --capture-token TOKEN before files; queue remove flags may precede or follow URLs.
   -n cannot be combined with project join.
 

@@ -127,6 +127,7 @@ def package(binary_root, output, version, commit, npm_name):
             # Keep named platforms intact so Claude Code-only session and
             # capture instructions do not become instructions for Codex.
             text = re.sub(r'Claude(?! Code| Chat)', 'Codex', text)
+            text = text.replace('${CLAUDE_PLUGIN_ROOT}', '/absolute/claude-plugin')
             dest = plugin / 'skills/kioku' / path.relative_to(source)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(text)

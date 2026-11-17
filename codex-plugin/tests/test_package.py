@@ -84,6 +84,7 @@ class PackageTests(unittest.TestCase):
         self.assertIn('checksum', text)
         self.assertIn('Claude Code では、親が共有範囲・機密・保存禁止を確認し', text)
         self.assertIn('Codex では今どおり直接 put する。', text)
+        self.assertIn('--plugin-root "/absolute/claude-plugin"', text)
         selection = (plugin / 'skills/kioku/references/selection.md').read_text()
         self.assertIn('Claude Code では、選んだ対象以外を先に pull', selection)
         remote = (plugin / 'skills/kioku/references/remote.md').read_text()

@@ -105,7 +105,7 @@ func readQueue(path string) ([]queueRow, error) {
 	return parseQueue(data)
 }
 func (a *App) capture(args []string, now time.Time) error {
-	usage := errors.New("usage: kioku capture run [--min N] | unlock --token TOKEN")
+	usage := errors.New("usage: kioku capture run [--min N] [--plugin-root DIR] | unlock --token TOKEN")
 	if len(args) == 0 {
 		return usage
 	}
@@ -117,7 +117,7 @@ func (a *App) capture(args []string, now time.Time) error {
 		f := flag.NewFlagSet("capture run", flag.ContinueOnError)
 		f.SetOutput(a.Err)
 		min := f.Int("min", 5, "minimum queued sources")
-		pluginRoot := f.String("plugin-root", "", "plugin root directory")
+		pluginRoot := f.String("plugin-root", os.Getenv("CLAUDE_PLUGIN_ROOT"), "plugin root directory")
 		if err := f.Parse(args[1:]); err != nil {
 			return err
 		}

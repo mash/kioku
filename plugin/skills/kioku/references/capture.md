@@ -5,8 +5,8 @@
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
 以下は Claude Code の local mode にだけ適用する。Codex では今どおり直接 put する。Claude Chat と Cowork、remote mode も以下の共通手順で直接 put する。
 
-親は参照・作成した重要な文書と、結論を変えた文書の HTTPS URL を、`kioku -n NAMESPACE queue add URL "何をしたか"` で1行ずつ足す。NOTE は記録であり、put の本文に入れない。ローカルファイルはキューの対象外で、原本 URL がある資料を従来どおり直接 put する。
-Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -n NAMESPACE capture run --min 1` を実行する。
+親は参照・作成した重要な文書と、結論を変えた文書の HTTPS URL を、`kioku -C P -n NAMESPACE queue add URL "何をしたか"` で1行ずつ足す。NOTE は記録であり、put の本文に入れない。ローカルファイルはキューの対象外で、原本 URL がある資料を従来どおり直接 put する。
+Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -C P -n NAMESPACE capture run --min 1 --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を実行する。
 親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
 
 capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の各行に記載された fetch コマンドで原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ（GitHub の blob → raw 変換は下記の例外）。Read ツールで原文を読み、Write ツールで指定の Markdown ファイルに資料を書き、記載された put コマンドで送信する。
@@ -111,21 +111,20 @@ updated_at: "2026-11-07T18:00:00+09:00"
 
 例にない資料も共通の取得規則に従う。
 
-- **GitHub のファイル**: commit SHA（コミット識別子）を確定し、同じ版の原文を読む。
-  `source_url` は SHA を含むファイルの `blob` URL、`version` は SHA とする。
-  capture セッションではスナップショットにある公開ファイルの `https://github.com/O/R/blob/REF/PATH` URL をそのまま 文の行ごとに記載された fetch コマンドで取る。CLI が対応する `https://raw.githubusercontent.com/O/R/REF/PATH` に変換する。
-  その他の環境では `gh api 'repos/O/R/contents/PATH?ref=SHA' -H 'Accept: application/vnd.github.raw+json'` も使える。
+- **GitHub のファイル**: capture セッションではスナップショットの `https://github.com/O/R/blob/REF/PATH` を `source_url` とし、capture プロンプトに記載されたコマンド行をそのまま実行する。CLI が対応する raw URL に変換する。
+  REF が SHA なら `version` はその SHA とする。ブランチ参照なら `version` は REF とし、本文に「SHA は固定していない」と明記して保存する。SHA 未固定だけを理由に未保存にしない。
+  その他の環境では commit SHA（コミット識別子）を確定して同じ版の原文を読む。`source_url` は SHA を含む `blob` URL、`version` は SHA とし、`gh api 'repos/O/R/contents/PATH?ref=SHA' -H 'Accept: application/vnd.github.raw+json'` も使える。
 - **GitHub の Issue**: 題名、本文、全コメントを含める。
   例: `gh issue view N --repo O/R --json title,body,author,createdAt,updatedAt,url,comments`。
 - **GitHub の Pull Request（PR、変更の提案）**: 題名、本文、全コメント・レビューを含める。
   例: `gh pr view N --repo O/R --json title,body,author,createdAt,updatedAt,url,comments,reviews,changedFiles`。
   capture セッションでは `gh pr diff N --repo O/R` で差分を読み、変更ファイルの一覧は `gh pr view N --repo O/R --json files` で確認する。
   その他の環境では変更ファイルを `gh api --paginate repos/O/R/pulls/N/files` で全ページ読む。
-  ファイル一覧の件数を `changedFiles` と照合する。差が残れば欠落件数と未保存を伝える。
+  ファイル一覧の件数を `changedFiles` と照合する。capture セッションで `gh pr view --json files` が上限に達して差が残る場合は、本文に欠落件数を明記して put する。その他の環境で補っても差が残れば、欠落件数と未保存を伝える。
   capture セッションでは gh api を使わない。`gh pr view` で PR 本文と会話を取得して保存し、文書に「行コメントは未取得」と明記する。
   その他の環境では行コメントを `gh api --paginate repos/O/R/pulls/N/comments` で読み、ファイル名と行を付ける。
   古い行コメントには元の行と版を付ける。変更ファイルの一覧は含め、diff は送信しない。
-  Issue と PR はコメント・レビューの件数も照合し、省略分をページ送りで補う。
+  Issue と PR はコメント・レビューの件数も照合する。省略分をページ送りで補うのは capture セッション以外の環境だけとする。capture セッションでは取得できなかった範囲を本文に明記する。
 - **Google Docs**: コネクターで全タブと入れ子のタブを読み、タブ名と本文を保つ。
 - **Slack**: スレッドの親メッセージと全返信を読む。返信リンクからも親スレッドを確認する。
   スレッドの恒久リンクを `source_url` にする。
@@ -179,7 +178,8 @@ Claude Code の local mode では、CLI が状態ファイルに会話の選択�
 読み取り専用なら put／delete を実行しない。
 原文を読めない場合は、原本の HTTPS URL と全文をファイルなどで渡すようユーザーに頼む。
 権限不足・オフラインでは未保存と伝え、別アカウントや別プロジェクトに切り替えない。
-受付成否が不明なら再送せず、local mode では `kioku -n "$NAMESPACE" status` のサーバーの inbox を確認する。
+capture セッションでは status・version を実行しない。受付成否が不明なら「受付不明」とし、再送せず、capture プロンプトの queue remove・unlock コマンド行をそのまま実行する。
+capture セッション以外で受付成否が不明なら再送せず、local mode では `kioku -n "$NAMESPACE" status` のサーバーの inbox を確認する。
 項目がないだけでは、未受付と生成済みを区別できない。判別できなければ受付不明と伝える。
 
 サーバーは原本の変更を取り直さない。更新時は Claude が全文を読み直して送信する。

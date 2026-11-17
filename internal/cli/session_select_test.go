@@ -40,6 +40,9 @@ func TestSessionSelect(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := a.Out.(*bytes.Buffer).String()
+		if !strings.Contains(out, testKiokuCommand(defaultServer)+" -n <namespace> session select") || strings.Contains(out, testKiokuCommand(a.Config.Server)+" -n <namespace> session select") {
+			t.Fatal("correction carries selected server", out)
+		}
 		if utf8.RuneCountInString(out) > 10000 || !strings.Contains(out, "以降を省いた") || !strings.Contains(out, "返答の冒頭に 1 行だけ書く") {
 			t.Fatal(out)
 		}
@@ -120,7 +123,7 @@ func TestSessionSelect(t *testing.T) {
 			exe, _ := os.Executable()
 			want := "# " + a.Dir + "/wiki/index.md\n# Index\n# " + a.Dir + "/wiki/overview.md\n# Overview\n" +
 				"Kioku: org/project を選んだ（P=" + a.Dir + "）。上が wiki の入口。本文のページは " + a.Dir + "/wiki/ にあり、index.md から必要なものだけ読む。\n" +
-				"返答の冒頭に 1 行だけ書く: 「Kioku: org/project の wiki を読み込みました（理由: <選んだ理由>）」。違うと利用者が言ったら、利用者が示した project で " + kiokuCommand(exe, a.Config.Server) + " -n <namespace> session select を実行する。"
+				"返答の冒頭に 1 行だけ書く: 「Kioku: org/project の wiki を読み込みました（理由: <選んだ理由>）」。違うと利用者が言ったら、利用者が示した project で " + kiokuCommand(exe, defaultServer) + " -n <namespace> session select を実行する。"
 			result := sessionPullSuccess
 			if tc.failure || tc.broken {
 				want += "\n" + sessionPullFailedContext

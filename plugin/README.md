@@ -158,12 +158,12 @@ CLI は `CLAUDE_CODE_SESSION_ID` がある場合、選択を `${XDG_STATE_HOME:-
 状態ファイルは0600、ディレクトリは0700、期限は mtime から30日。CLI が書いた後に期限切れを削除する。
 hook が状態を書くのは自動選択時だけ。状態ファイルを送信先や認証・共有権限の正本にしない。
 
-Claude Code の local mode では、親は共有範囲・機密・保存禁止を確認し、重要な文書の URL を `kioku -n NAMESPACE queue add URL "何をしたか"` で記録する。
+Claude Code の local mode では、親は共有範囲・機密・保存禁止を確認し、重要な文書の URL を `kioku -C P -n NAMESPACE queue add URL "何をしたか"` で記録する。
 `P/.kioku/queue.tsv` は日付・HTTPS URL・NOTE の3列、0600。同じ URL の再追加は日付と NOTE を更新して末尾へ移す。`queue list` で読み、`queue remove URL...` で消す。
 キューはセッションをまたいで project ごとに共有する。NOTE は put 本文に入れない。Codex・Claude Chat・Cowork と remote mode の直接 put は変えない。
 
 Stop は5件以上、SessionEnd は1件以上で、ロックが無いか30分を超えて古い時だけ背景の `capture run --min N` を起動する。hook は出力せず、子を待たない。
-`capture run` の既定の閾値は5件。今すぐ送る依頼では `capture run --min 1` を使う。
+`capture run` の既定の閾値は5件。今すぐ送る依頼では `kioku -C P -n NAMESPACE capture run --min 1 --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を使う。
 子は `P/.kioku/capture.lock` を排他作成し、信頼済みの作業 cwd で絶対パスの `claude --bg` を起動する。文は位置引数で渡し、`-p` は使わない。
 この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料は P/.kioku/capture-tmp/<token> に書き、所有トークンの一致する unlock が削除する。次の run は稼働ロック以外の一時ディレクトリを削除する。
 URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に所有トークンを付けて capture unlock する。処理中に追加された URL は次の run が拾う。
@@ -172,7 +172,7 @@ Capture は開始時のキューの日時・URL・注記をスナップショッ
 起動失敗はロックを消してキューを残す。id が読めない場合は警告と capture.log に残してロックを保持し、前回の片付けは行わない。
 ロックは pid の生死ではなく30分の期限で判定する。unlock は所有トークンが一致した時だけ bg_id を `capture.last` に保存してロックを消す。
 capture セッションは idle で残り、次の run が capture.last の完了済み bg_id だけに `claude rm` を試す。期限切れロックの所有セッションは削除しない。結果は `claude agents` と `claude logs <id>` で確認する。
-背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、起動ごとに追記する。`capture.last` も0600。
+背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、hook が子を起動するたびに内容を切り詰めて上書きする。capture の処理中の記録は capture.log に追記する。`capture.last` も0600。
 
 sh は JSON の解析を `session hook --event EVENT --prompts DIR` に任せる。CLI の hook は直接通信せず、必要な子だけを起動する。jq と Python は不要。
 不正 JSON・不正 SID・8 MiB超の入力は無出力で終了する。sh は stderr を捨て、失敗してもセッションを止めない。

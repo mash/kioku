@@ -30,10 +30,18 @@ func loadFiles(t *testing.T, files map[string]string) (*Rendered, error) {
 }
 func TestDefaultsAndCopiedFiles(t *testing.T) {
 	t.Run("capture_run_template", func(t *testing.T) {
-		for _, variable := range []string{"kioku", "namespace", "server", "p", "tmp", "queue"} {
+		for _, variable := range []string{"kioku", "namespace", "server", "p", "tmp", "queue", "token", "project_kioku", "commands"} {
 			if !strings.Contains(CaptureRun, "{{"+variable+"}}") {
 				t.Fatal("missing variable", variable)
 			}
+		}
+		vars := map[string]string{"kioku": "/bin/kioku", "namespace": "org/a", "server": "https://kioku.test", "p": "/work/a", "tmp": "/work/a/.kioku/capture-tmp/token", "tmp_arg": "'/work/a/.kioku/capture-tmp/token'", "queue": "row", "token": "token", "project_kioku": "/bin/kioku -C /work/a -n org/a", "commands": "literal commands"}
+		rendered := CaptureRun
+		for key, value := range vars {
+			rendered = strings.ReplaceAll(rendered, "{{"+key+"}}", value)
+		}
+		if strings.Contains(rendered, "{{") {
+			t.Fatal("unexpanded capture variable", rendered)
 		}
 		if !strings.Contains(CaptureRun, "capture unlock") {
 			t.Fatal("missing unlock")

@@ -121,7 +121,7 @@ func (a *App) sessionSelect(args []string, now time.Time) error {
 		return err
 	}
 	vars := templateVars(exe, a.Config.Server, ns, a.Dir)
-	tail := fmt.Sprintf(selectInstruction, ns, a.Dir, vars["wiki"], ns, vars["kioku"])
+	tail := fmt.Sprintf(selectInstruction, ns, a.Dir, vars["wiki"], ns, vars["kioku_default"])
 	if result == sessionPullFailure {
 		tail += "\n" + sessionPullFailedContext
 	}

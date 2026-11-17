@@ -18,11 +18,11 @@ Kioku への送信には、local mode で CLI、remote mode で MCP（Model Cont
 
 Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
 以下のキュー手順は Claude Code の local mode に適用する。remote mode の送信手順は変えない。
-参照・作成した重要な文書や、結論を変えた文書の HTTPS URL は、`kioku -n NAMESPACE queue add URL "何をしたか"` で1行足す。字句修正や日常のコマンド出力は足さない。
+参照・作成した重要な文書や、結論を変えた文書の HTTPS URL は、`kioku -C P -n NAMESPACE queue add URL "何をしたか"` で1行足す。字句修正や日常のコマンド出力は足さない。
 URL と NOTE はキューに残り、セッションをまたいで同じ project が共有する。同じ URL の再追加は日付と NOTE を更新し、末尾へ移す。
 Stop は5件以上、SessionEnd は1件以上で、フックが背景の `capture run` を起動する。親は Agent で取り込みを起動しない。
-利用者が今すぐ送るよう頼んだら、`kioku -n NAMESPACE capture run --min 1` を実行する。起動結果の id を使い、`claude logs <id>` で URL ごとの受付結果を確認する。キュー追加や起動だけで受付済みとは伝えない。
-`kioku-capture` として capture セッションへの文を受け取った場合は、対象選択と pull を繰り返さず、文の一時ディレクトリを使い、[capture.md](references/capture.md) と agent の手順に従う。
+利用者が今すぐ送るよう頼んだら、`kioku -C P -n NAMESPACE capture run --min 1 --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を実行する。起動結果の id を使い、`claude logs <id>` で URL ごとの受付結果を確認する。キュー追加や起動だけで受付済みとは伝えない。
+`kioku-capture` として capture セッションへの文を受け取った場合は、対象選択と pull を繰り返さず、文の一時ディレクトリを使う。以下のモード判定を省略し、status・version を実行せず、受付成否が不明なら「受付不明」とする。[capture.md](references/capture.md) と agent の手順に従う。
 Codex では今どおり直接 put する。Claude Chat と Cowork も直接 put する。
 
 ## モード選択
@@ -35,7 +35,7 @@ Codex では今どおり直接 put する。Claude Chat と Cowork も直接 put
 ${CLAUDE_PLUGIN_DATA}/bin/kioku
 ```
 
-Claude Code はスキル読込時に `${CLAUDE_PLUGIN_DATA}` を絶対パスへ展開する。
+Claude Code はスキル読込時に `${CLAUDE_PLUGIN_DATA}` と `${CLAUDE_PLUGIN_ROOT}` を絶対パスへ展開する。
 プラグインでは、本文と参照ファイル内の `kioku` を、すべて展開後の CLI のパスに置き換えて実行する。
 CLI の呼び出しは、必ず CLI のパスで始める。
 `NAMESPACE` は organization/project 形式のプロジェクト名、`SERVER` は接続先、`P` は保存先の絶対パスを指す。
@@ -46,7 +46,7 @@ CLI のパスは、シェルで引用が必要な文字を含む場合だけ引�
 上のパスに `CLAUDE_PLUGIN_DATA` という文字が残っていれば、プラグインなしと判断する。
 [selection.md](references/selection.md) の「プラグインなし」に従い、PATH の `kioku` を使う。
 プラグインでは PATH の `kioku` へ切り替えない。
-`CLAUDE_ENV_FILE` は使わない。開始時のモード判定でだけ `kioku version` を1回実行する。
+`CLAUDE_ENV_FILE` は使わない。capture セッションでは status・version を実行しない。それ以外では開始時のモード判定でだけ `kioku version` を1回実行する。
 CLI が見つからない場合は、下の接続先判定へ進む。
 `/reload-plugins` の後なら、新しいセッションで local mode を復旧する方法も案内する。
 

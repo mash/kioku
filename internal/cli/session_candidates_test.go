@@ -201,6 +201,9 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			}
 			got := runPromptHook(t, input)
 			if tc.name == "I13_other_server" {
+				if !strings.Contains(got, testKiokuCommand(defaultServer)+" -n <namespace> session select") || strings.Contains(got, testKiokuCommand("https://other.example")+" -n <namespace> session select") {
+					t.Fatal("correction carries selected server", got)
+				}
 				if !strings.Contains(got, testKiokuCommand(defaultServer)+" session select --none") || strings.Contains(got, testKiokuCommand("https://other.example")+" session select --none") {
 					t.Fatal("decline carries global flags", got)
 				}

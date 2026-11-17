@@ -166,20 +166,45 @@ func TestCaptureRun(t *testing.T) {
 		commands = append(commands, project+" capture unlock --token "+lock.Token)
 		for _, line := range commands {
 			parts = append(parts, "```sh\n"+line+"\n```")
+		}
+		if strings.Contains(prompt, "{{") {
+			t.Fatal("unexpanded prompt", prompt)
+		}
+		var renderedCommands []string
+		for _, block := range strings.Split(prompt, "```sh\n")[1:] {
+			line, _, found := strings.Cut(block, "\n```")
+			if !found || strings.Contains(line, "\n") {
+				t.Fatal("expected one literal command", block)
+			}
+			renderedCommands = append(renderedCommands, line)
+		}
+		if !slices.Equal(renderedCommands, commands) {
+			t.Fatal("unexpected rendered commands", renderedCommands)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rules := captureAllowedTools(exe, a.Config.Server, a.Config.Namespace, a.Dir, tmp)
+		for i, line := range renderedCommands {
+			if i == len(renderedCommands)-1 {
+				if !slices.Contains(rules, "Bash("+line+")") {
+					t.Fatal("unlock lacks exact permission", line)
+				}
+				continue
+			}
 			allowed := false
-			for _, rule := range captureAllowedTools(os.Args[0], a.Config.Server, a.Config.Namespace, a.Dir, tmp) {
-				if !strings.HasPrefix(rule, "Bash(") {
+			for _, rule := range rules {
+				if !strings.HasPrefix(rule, "Bash(") || !strings.HasSuffix(rule, ":*)") {
 					continue
 				}
-				prefix := strings.TrimSuffix(strings.TrimPrefix(rule, "Bash("), ")")
-				wildcard := strings.HasSuffix(prefix, ":*")
-				prefix = strings.TrimSuffix(prefix, ":*")
-				if line == prefix || (wildcard && strings.HasPrefix(line, prefix+" ")) {
+				prefix := strings.TrimSuffix(strings.TrimPrefix(rule, "Bash("), ":*)")
+				if strings.HasPrefix(line, prefix+" ") {
 					allowed = true
 				}
 			}
 			if !allowed {
-				t.Fatal("rendered command has no matching permission", line)
+				t.Fatal("rendered command has no matching prefix permission", line)
 			}
 		}
 		for _, part := range parts {
@@ -957,6 +982,39 @@ func TestCaptureRun(t *testing.T) {
 			if !strings.Contains(got, "```sh\n"+line+"\n```") {
 				t.Fatal(got, line)
 			}
+		}
+	})
+
+	t.Run("R7_manual_plugin_root", func(t *testing.T) {
+		for _, explicit := range []bool{false, true} {
+			t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+				a := setup(t, 1)
+				log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
+				envRoot, flagRoot := filepath.Join(t.TempDir(), "environment plugin"), filepath.Join(t.TempDir(), "flag plugin")
+				t.Setenv("CLAUDE_PLUGIN_ROOT", envRoot)
+				args := []string{"run", "--min", "1"}
+				want := envRoot
+				if explicit {
+					args = append(args, "--plugin-root", flagRoot)
+					want = flagRoot
+				}
+				if err := a.capture(args, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(log + ".args")
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := strings.Split(string(data), "\x00")
+				for _, name := range []string{"skills", "agents"} {
+					if !slices.Contains(got, "Read(/"+filepath.Join(want, name)+"/**)") {
+						t.Fatal(got)
+					}
+					if explicit && slices.Contains(got, "Read(/"+filepath.Join(envRoot, name)+"/**)") {
+						t.Fatal("flag did not override environment", got)
+					}
+				}
+			})
 		}
 	})
 

@@ -100,7 +100,7 @@ func migrateV2(ctx context.Context, path string, objects blob.Store, cipher *aut
 		return errors.New("unfinished transaction; complete v2 recovery before migration")
 	}
 	var unexpected int
-	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT IN ('records','pending','usage_ledger') AND name NOT LIKE 'sqlite_%'").Scan(&unexpected); err != nil {
+	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT IN ('records','pending','usage_ledger') AND name NOT LIKE 'sqlite_%' AND substr(name,1,12)<>'_litestream_'").Scan(&unexpected); err != nil {
 		return err
 	}
 	if unexpected != 0 {

@@ -150,7 +150,8 @@ func (d *Database) validateCatalog() error {
 	}
 	// Compare sqlite_master definitions: this verifies column types, NOT NULL,
 	// primary/unique keys, checks, and partial-index predicates together.
-	rows, err := d.writer.Query("SELECT name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")
+	// litestream creates its own _litestream_seq and _litestream_lock tables.
+	rows, err := d.writer.Query("SELECT name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND substr(name,1,12)<>'_litestream_'")
 	if err != nil {
 		return err
 	}

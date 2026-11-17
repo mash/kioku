@@ -201,6 +201,15 @@ func TestMigrationKeepsUsedOAuthAndDropsConsumedAndJobRows(t *testing.T) {
 	request := json.RawMessage(`{"id":"r","requestedAt":"2026-01-01T00:00:00Z","client":{"id":"c","redirect_uris":[],"grant_types":[],"response_types":[],"scopes":[],"audience":[]},"scopes":[],"grantedScopes":[],"requestedAudience":[],"grantedAudience":[],"form":{},"session":{"expires_at":{},"username":"","subject":"u","project_ids":["p"]}}`)
 	migrationRecord(t, path, "oauth_codes", "code", legacyV2OAuthCode{UserID: "u", Active: false, Expires: expires, Request: request, ProjectIDs: []string{"p"}})
 	migrationRecord(t, path, "oauth_tokens", "refresh", legacyV2OAuthGrant{UserID: "u", Kind: "refresh", Active: false, Expires: expires, Request: request, ClientID: "c", RequestID: "r", ProjectIDs: []string{"p"}})
+	// Production catalogs also hold the tables that litestream replication creates.
+	litestream, e := catalogConnection(path, false, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = litestream.Exec("CREATE TABLE _litestream_seq (id INTEGER PRIMARY KEY, seq INTEGER); CREATE TABLE _litestream_lock (id INTEGER)"); e != nil {
+		t.Fatal(e)
+	}
+	litestream.Close()
 	if e := migrateV2(t.Context(), path, b, c, time.UnixMilli(5000)); e != nil {
 		t.Fatal(e)
 	}

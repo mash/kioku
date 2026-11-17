@@ -28,6 +28,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove sources at the next generation
+  queue add URL NOTE | queue list | queue remove URL...
   put FILE...                        Save sources from files or directories
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [--description TEXT]           Bind on first pull; fetch one project

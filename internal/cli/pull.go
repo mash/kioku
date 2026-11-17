@@ -22,12 +22,11 @@ func (a *App) pullCommand(args []string) (resultErr error) {
 		return errors.New("usage: kioku [-n ORG/PROJECT] pull [--description TEXT]")
 	}
 	defer func() { a.recordSessionPull(resultErr) }()
-	if a.Config.Namespace == "" && a.projectNamespace != "" {
-		if err := a.bindPullProject(a.projectNamespace); err != nil {
-			return err
-		}
+	binding := a.Config.Namespace == "" && a.projectNamespace != ""
+	result, err := a.syncProject()
+	if binding && result.Namespace == "" && err != nil {
+		return err
 	}
-	result, err := a.syncWiki()
 	var outputErr error
 	if !result.changed() && err == nil {
 		_, outputErr = fmt.Fprintln(a.Out, "最新です")
@@ -35,6 +34,15 @@ func (a *App) pullCommand(args []string) (resultErr error) {
 		outputErr = a.print(result)
 	}
 	return errors.Join(err, outputErr)
+}
+
+func (a *App) syncProject() (syncResult, error) {
+	if a.Config.Namespace == "" && a.projectNamespace != "" {
+		if err := a.bindPullProject(a.projectNamespace); err != nil {
+			return syncResult{}, err
+		}
+	}
+	return a.syncWiki()
 }
 
 // Bind only a server-verified namespace, and never overwrite another binding.

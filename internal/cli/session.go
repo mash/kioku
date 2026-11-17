@@ -243,6 +243,20 @@ func (a *App) session(args []string) error {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	switch args[0] {
+	case "select":
+		if len(args) != 2 || args[1] != "--none" {
+			return errors.New("usage: kioku session select --none")
+		}
+		sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
+		if sid == "" {
+			return errors.New("session select --none requires CLAUDE_CODE_SESSION_ID")
+		}
+		now := time.Now().UTC()
+		if err := updateSession(sid, now, func(*sessionState) (*sessionState, bool) { return &sessionState{DeclinedAt: now}, true }); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(a.Out, selectNoneText)
+		return err
 	case "list":
 		if len(args) != 1 {
 			return errors.New("usage: kioku session list")

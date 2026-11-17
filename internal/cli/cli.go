@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/mash/kioku/internal/buildinfo"
@@ -72,7 +73,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		_, err = fmt.Fprint(out, help)
 		return err
 	}
-	if commands[0] == "session" {
+	if commands[0] == "session" && (len(commands) < 2 || commands[1] != "select" || slices.Contains(commands[2:], "--none")) {
+		if len(commands) >= 2 && commands[1] == "select" && global.NFlag() != 0 {
+			return errors.New("usage: kioku session select --none (without global flags)")
+		}
 		return runSession(commands[1:], out, errOut)
 	}
 	if os.Getenv("KIOKU_AGENT_TOKEN") != "" {
@@ -152,8 +156,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 	}
 	switch {
-	case commands[0] == "login", len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login":
-		// Login commands select no credential, so a damaged file cannot block them.
+	case commands[0] == "session", commands[0] == "login", len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login":
+		// login selects no credential; sessionSelect handles credential failures itself.
 	default:
 		if commands[0] == "logout" && a.Config.Namespace != "" {
 			// logout must not call localLock again: a second flock in one process blocks.
@@ -210,6 +214,8 @@ func (a *App) dispatch(args []string) error {
 		return err
 	}
 	switch args[0] {
+	case "session":
+		return a.sessionSelect(args[2:], time.Now().UTC())
 	case "version":
 		return a.versionCommand()
 	case "agent":
@@ -250,6 +256,8 @@ func (a *App) dispatch(args []string) error {
 // Creation establishes a new project; other project operations require pull.
 func allowsUnboundProject(commands []string) bool {
 	switch commands[0] {
+	case "session":
+		return len(commands) >= 2 && commands[1] == "select"
 	case "pull", "whoami", "login", "logout":
 		return true
 	case "agent":

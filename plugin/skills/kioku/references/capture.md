@@ -9,8 +9,8 @@ Claude Code では、親が共有範囲・機密・保存禁止を確認し、�
 Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -n NAMESPACE capture run --min 1` を実行する。
 親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
 
-capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の CLI の `fetch URL --out FILE` で原文を取る（HTTPS・20 MiBまで）。資料は文の一時ディレクトリに書き、mktemp を実行しない。
-各 URL の結果（受付済み / 未保存 / 受付不明）と理由を出力に1行書き、文の project CLI で `kioku -n NAMESPACE queue remove URL --reason "結果と理由"` を実行する。受付不明・未保存も消し、失敗や不明を自動で再送しない。権限不足は未保存として理由を明記する。queue remove の --reason が capture.log に追記する。最後に文の project CLI とトークンで `kioku -n NAMESPACE capture unlock --token TOKEN` を実行する。
+capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の CLI の `fetch URL --out FILE` で原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ。資料は文の一時ディレクトリに書き、文の project CLI の `put --capture-token TOKEN FILE` で送信する。mktemp を実行しない。
+各 URL の結果（受付済み / 未保存 / 受付不明）と理由を出力に1行書き、文の project CLI で `kioku -n NAMESPACE queue remove --capture-token TOKEN '<URL>' --reason '<理由>'` を実行する。受付不明・未保存も消し、失敗や不明を自動で再送しない。権限不足は未保存として理由を明記する。queue remove の --reason が capture.log に追記する。最後に文の project CLI とトークンで `kioku -n NAMESPACE capture unlock --token TOKEN` を実行する。
 許可する connector は Notion の fetch/search、Slack の thread/channel 読み取り、Google Drive の read/download の完全名だけ。送信・作成・更新は許可しない。利用できない取得経路を権限拡大で回避しない。
 結果は `claude logs <id>` で確認する。キュー追加・起動・unlock だけで受付済みや Wiki 生成済みと伝えない。
 
@@ -112,7 +112,7 @@ updated_at: "2026-11-07T18:00:00+09:00"
 
 - **GitHub のファイル**: commit SHA（コミット識別子）を確定し、同じ版の原文を読む。
   `source_url` は SHA を含むファイルの `blob` URL、`version` は SHA とする。
-  capture セッションでは公開ファイルの固定 commit の raw HTTPS URL を `kioku fetch URL --out FILE` で取る。
+  capture セッションではスナップショットにある公開ファイルの固定 commit の raw HTTPS URL を `kioku fetch URL --out FILE` で取る。
   その他の環境では `gh api 'repos/O/R/contents/PATH?ref=SHA' -H 'Accept: application/vnd.github.raw+json'` も使える。
 - **GitHub の Issue**: 題名、本文、全コメントを含める。
   例: `gh issue view N --repo O/R --json title,body,author,createdAt,updatedAt,url,comments`。
@@ -121,7 +121,7 @@ updated_at: "2026-11-07T18:00:00+09:00"
   capture セッションでは `gh pr diff N --repo O/R` で差分を読み、変更ファイルの一覧は `gh pr view N --repo O/R --json files` で確認する。
   その他の環境では変更ファイルを `gh api --paginate repos/O/R/pulls/N/files` で全ページ読む。
   ファイル一覧の件数を `changedFiles` と照合する。差が残れば欠落件数と未保存を伝える。
-  capture セッションでは gh api を使わない。行コメントなどを許可された読み取りツールで取得できなければ、完全性を確認できない資料は未保存にする。
+  capture セッションでは gh api を使わない。`gh pr view` で PR 本文と会話を取得して保存し、文書に「行コメントは未取得」と明記する。
   その他の環境では行コメントを `gh api --paginate repos/O/R/pulls/N/comments` で読み、ファイル名と行を付ける。
   古い行コメントには元の行と版を付ける。変更ファイルの一覧は含め、diff は送信しない。
   Issue と PR はコメント・レビューの件数も照合し、省略分をページ送りで補う。

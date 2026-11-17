@@ -167,6 +167,8 @@ Stop は5件以上、SessionEnd は1件以上で、ロックが無いか30分を
 子は `P/.kioku/capture.lock` を排他作成し、信頼済みの作業 cwd で絶対パスの `claude --bg` を起動する。文は位置引数で渡し、`-p` は使わない。
 この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料は P/.kioku/capture-tmp/<token> に書き、所有トークンの一致する unlock が削除する。次の run は稼働ロック以外の一時ディレクトリを削除する。
 URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に所有トークンを付けて capture unlock する。処理中に追加された URL は次の run が拾う。
+
+Capture は開始時のキューの日時・URL・注記をスナップショットに保存します。`queue remove --capture-token TOKEN URL` は現在の行がそのスナップショットと同じ場合だけ削除し、後から日付や注記を変えて再追加した行は次回に残します。利用者の `queue remove URL` は従来どおり URL に一致する行を削除します。
 起動失敗はロックを消してキューを残す。id が読めない場合は警告と capture.log に残してロックを保持し、前回の片付けは行わない。
 ロックは pid の生死ではなく30分の期限で判定する。unlock は所有トークンが一致した時だけ bg_id を `capture.last` に保存してロックを消す。
 capture セッションは idle で残り、次の run が capture.last の完了済み bg_id だけに `claude rm` を試す。期限切れロックの所有セッションは削除しない。結果は `claude agents` と `claude logs <id>` で確認する。

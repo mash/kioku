@@ -272,10 +272,13 @@ var startProcess = func(c *exec.Cmd) error {
 }
 
 func backgroundLog(path string) (*os.File, error) {
+	return openBackgroundLog(path, os.O_TRUNC)
+}
+func openBackgroundLog(path string, mode int) (*os.File, error) {
 	if err := ensureDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|mode|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
 	}

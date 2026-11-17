@@ -286,7 +286,7 @@ func TestStopAndSessionEndHook(t *testing.T) {
 					}
 				}
 				logInfo, err := os.Stat(logPath)
-				if err != nil || logInfo.Size() != int64(len("previous")) || logInfo.Mode().Perm() != 0600 {
+				if err != nil || logInfo.Size() != 0 || logInfo.Mode().Perm() != 0600 {
 					t.Fatal(logInfo, err)
 				}
 			} else {

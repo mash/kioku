@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -79,7 +80,7 @@ func TestCaptureRun(t *testing.T) {
 		if err := a.capture([]string{"run"}, now); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(a.Out.(*bytes.Buffer).String(), "queue below minimum") {
+		if !strings.Contains(a.Out.(*bytes.Buffer).String(), "kioku: capture run: キューは 3 件で、--min 5 に足りない。") {
 			t.Fatal(a.Out)
 		}
 		if _, err := os.Stat(log + ".args"); !os.IsNotExist(err) {
@@ -117,14 +118,30 @@ func TestCaptureRun(t *testing.T) {
 		if args[0] != "--bg" || !slices.Contains(args, "--agent") || !slices.Contains(args, "kioku:kioku-capture") {
 			t.Fatal(args)
 		}
+		if args[len(args)-2] != "--" || args[len(args)-3] != "kioku:kioku-capture" {
+			t.Fatal(args)
+		}
+		var settings struct {
+			DisableAllHooks bool `json:"disableAllHooks"`
+			Permissions     struct {
+				Deny []string `json:"deny"`
+			} `json:"permissions"`
+		}
+		if err := json.Unmarshal([]byte(args[2]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		wantDeny := []string{"Glob", "Grep", "WebFetch", "WebSearch", "Edit", "NotebookEdit", "Bash(curl:*)", "Bash(wget:*)", "Read(./**)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "Read(~/.claude/**)", "Read(~/.netrc)"}
+		if !settings.DisableAllHooks || !slices.Equal(settings.Permissions.Deny, wantDeny) {
+			t.Fatal(settings)
+		}
 		command := testKiokuCommand(a.Config.Server)
 		project := command + " -C " + shellQuote(a.Dir) + " -n org/a"
-		for _, rule := range []string{"Bash(" + command + " fetch:*)", "Bash(" + project + " put:*)", "Bash(" + project + " queue remove:*)", "Bash(" + project + " capture unlock:*)", "Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)", "Read(" + tmp + "/**)", "Write(" + tmp + "/**)"} {
+		for _, rule := range []string{"Bash(" + command + " fetch:*)", "Bash(" + project + " put --capture-token " + lock.Token + ":*)", "Bash(" + project + " queue remove --capture-token " + lock.Token + ":*)", "Bash(" + project + " capture unlock --token " + lock.Token + ")", "Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)", "Read(/" + tmp + "/**)", "Write(/" + tmp + "/**)"} {
 			if !slices.Contains(args, rule) {
 				t.Fatal("missing permission", rule, args)
 			}
 		}
-		for _, rule := range args[6 : len(args)-3] {
+		for _, rule := range args[6 : len(args)-4] {
 			if strings.Contains(rule, "curl") || rule == "Bash(gh:*)" || strings.Contains(rule, "gh api") || rule == "WebFetch" {
 				t.Fatal("broad permission", rule)
 			}
@@ -132,7 +149,7 @@ func TestCaptureRun(t *testing.T) {
 
 		prompt := args[len(args)-1]
 		command = project + " "
-		for _, part := range []string{"一時ディレクトリ: " + tmp + "（資料はここに書く）", "server: https://other.example", "P: " + a.Dir, command + "queue remove <URL>", command + "capture unlock", string(before)} {
+		for _, part := range []string{"一時ディレクトリ: " + tmp + "（資料はここに書く）", "server: https://other.example", "P: " + a.Dir, command + "queue remove --capture-token " + lock.Token + " '<URL>' --reason '<理由>'", command + "put --capture-token " + lock.Token + " <FILE in tmp>", command + "capture unlock", string(before)} {
 			if !strings.Contains(prompt, part) {
 				t.Fatal("missing", part, prompt)
 			}
@@ -175,7 +192,7 @@ func TestCaptureRun(t *testing.T) {
 			if busy && !reflect.DeepEqual(lock, &old) || !busy && lock.BgID != "1a2b3c4d" {
 				t.Fatal(lock)
 			}
-			if busy && !strings.Contains(a.Out.(*bytes.Buffer).String(), "already running (id aaaaaaaa") {
+			if busy && !strings.Contains(a.Out.(*bytes.Buffer).String(), "kioku-capture は実行中（id aaaaaaaa）。claude logs aaaaaaaa で見る。") {
 				t.Fatal(a.Out)
 			}
 		})
@@ -331,6 +348,8 @@ func TestCaptureRun(t *testing.T) {
 				t.Error(r.Method)
 			}
 			switch r.URL.Path {
+			case "/foreign":
+				http.Redirect(w, r, "https://example.invalid/", http.StatusFound)
 			case "/downgrade":
 				http.Redirect(w, r, "http://example.invalid/", http.StatusFound)
 			case "/redirect":
@@ -345,11 +364,18 @@ func TestCaptureRun(t *testing.T) {
 			}
 		}))
 		defer server.Close()
+		var snapshot []queueRow
+		for _, path := range []string{"", "/ok", "/redirect", "/downgrade", "/foreign", "/large", "/chunked"} {
+			snapshot = append(snapshot, queueRow{"2026-11-18", server.URL + path, "source"})
+		}
+		if err := a.saveCaptureSnapshot(lock.Token, snapshot); err != nil {
+			t.Fatal(err)
+		}
 		for _, tc := range []struct {
 			name, path, out string
 			ok              bool
 		}{
-			{"https", "/ok", "ok", true}, {"https_redirect", "/redirect", "redirect", true}, {"downgrade", "/downgrade", "bad", false}, {"size_header", "/large", "large", false}, {"size_chunked", "/chunked", "chunked", false}, {"escape", "/ok", "../outside", false},
+			{"https", "/ok", "ok", true}, {"foreign_redirect", "/foreign", "foreign", false}, {"not_in_snapshot", "/secret", "secret", false}, {"https_redirect", "/redirect", "redirect", true}, {"downgrade", "/downgrade", "bad", false}, {"size_header", "/large", "large", false}, {"size_chunked", "/chunked", "chunked", false}, {"escape", "/ok", "../outside", false},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				err := fetchURL(context.Background(), server.Client().Transport, server.URL+tc.path, tmp, tc.out)
@@ -404,7 +430,7 @@ func TestCaptureRun(t *testing.T) {
 		for _, server := range []string{defaultServer, "https://other.example"} {
 			exe := "/tmp/space and 'quote/kioku"
 			rules := captureAllowedTools(exe, server, "org/a", a.Dir, tmp)
-			wantConnectors := []string{"mcp__claude_ai_Notion__notion-fetch", "mcp__claude_ai_Notion__notion-search", "mcp__claude_ai_Slack__slack_read_thread", "mcp__claude_ai_Slack__slack_read_channel", "mcp__claude_ai_Google_Drive__read_file_content", "mcp__claude_ai_Google_Drive__download_file_content"}
+			wantConnectors := []string{"mcp__notion__notion-fetch", "mcp__notion__notion-search", "mcp__claude_ai_Notion__notion-fetch", "mcp__claude_ai_Notion__notion-search", "mcp__claude_ai_Slack__slack_read_thread", "mcp__claude_ai_Slack__slack_read_channel", "mcp__claude_ai_Google_Drive__read_file_content", "mcp__claude_ai_Google_Drive__download_file_content"}
 			var connectors []string
 			for _, rule := range rules {
 				if strings.HasPrefix(rule, "mcp__") {
@@ -458,7 +484,7 @@ func TestCaptureRun(t *testing.T) {
 		if got, _ := readCaptureLock(path); !reflect.DeepEqual(got, current) {
 			t.Fatal("old owner removed current lock", got)
 		}
-		if !strings.Contains(a.Out.(*bytes.Buffer).String(), "token does not match") {
+		if !strings.Contains(a.Out.(*bytes.Buffer).String(), "token が合わないので、ロックを残した。") {
 			t.Fatal(a.Out)
 		}
 		if err := a.captureUnlock(current.Token); err != nil {
@@ -547,7 +573,26 @@ func TestCaptureRun(t *testing.T) {
 	t.Run("R7_lingering_supervisor", func(t *testing.T) {
 		a := setup(t, 1)
 		log := fakeCaptureClaude(t, "", 0)
-		script := "#!/bin/sh\n/bin/sleep 7 &\nprintf 'backgrounded · 1a2b3c4d\\n'\nexit 0\n"
+		oldDelay := captureWaitDelay
+		captureWaitDelay = 100 * time.Millisecond
+		t.Cleanup(func() {
+			captureWaitDelay = oldDelay
+			data, err := os.ReadFile(log + ".pid")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			process, err := os.FindProcess(pid)
+			if err == nil {
+				_ = process.Kill()
+			}
+		})
+		script := "#!/bin/sh\n/bin/sleep 7 &\nprintf '%s\\n' \"$!\" > \"$CAPTURE_TEST_LOG.pid\"\nprintf 'backgrounded · 1a2b3c4d\\n'\nexit 0\n"
 		if err := os.WriteFile(filepath.Join(filepath.Dir(log), "claude"), []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -555,7 +600,7 @@ func TestCaptureRun(t *testing.T) {
 		if err := a.captureRun(1, t.TempDir(), time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if elapsed := time.Since(start); elapsed > 6500*time.Millisecond {
+		if elapsed := time.Since(start); elapsed > time.Second {
 			t.Fatal("blocked on supervisor", elapsed)
 		}
 		lock, _ := readCaptureLock(filepath.Join(a.metadataDir(), "capture.lock"))
@@ -575,6 +620,136 @@ func TestCaptureRun(t *testing.T) {
 		data, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.log"))
 		if err != nil || !strings.Contains(string(data), "permission denied") {
 			t.Fatal(string(data), err)
+		}
+	})
+	t.Run("R3_snapshot_queue_and_put_token", func(t *testing.T) {
+		a := setup(t, 3)
+		fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
+		if err := a.captureRun(1, t.TempDir(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		lock, _ := readCaptureLock(filepath.Join(a.metadataDir(), "capture.lock"))
+		dir, err := a.captureTokenDir(lock.Token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := captureSnapshot(dir)
+		if err != nil || len(rows) != 3 {
+			t.Fatal(rows, err)
+		}
+		// A changed note and a changed date must each survive capture removal.
+		if err := a.queue([]string{"add", rows[0].URL, "new note"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		nextDate, _ := time.Parse("2006-01-02", "2026-11-19")
+		if err := a.queue([]string{"add", rows[1].URL, rows[1].Note}, nextDate); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.queue([]string{"remove", "--capture-token", lock.Token, rows[0].URL, rows[1].URL, rows[2].URL}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		remaining, err := readQueue(filepath.Join(a.metadataDir(), "queue.tsv"))
+		if err != nil || len(remaining) != 2 || remaining[0].Note != "new note" || remaining[1].Date != "2026-11-19" {
+			t.Fatal(remaining, err)
+		}
+		t.Setenv("KIOKU_CAPTURE_DIR", "")
+		outside := filepath.Join(t.TempDir(), "secret.md")
+		if err := os.WriteFile(outside, []byte("private"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.put([]string{"--capture-token", lock.Token, outside}); err == nil || !strings.Contains(err.Error(), "inside the run directory") {
+			t.Fatal(err)
+		}
+		if err := a.put([]string{"--capture-token", lock.Token, "--capture-token", "", outside}); err == nil {
+			t.Fatal("token override accepted")
+		}
+		writes := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writes++
+			if r.Method != "POST" || r.URL.Path != "/api/projects/org/a/put" {
+				t.Error(r.Method, r.URL.Path)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprint(w, "{}")
+		}))
+		defer server.Close()
+		a.Config.Server, a.Client, a.ctx = server.URL, server.Client(), context.Background()
+		source := filepath.Join(dir, "source.md")
+		if err := os.WriteFile(source, []byte(SourceContentForTest(rows[0].URL, "Evidence")), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.put([]string{"--capture-token", lock.Token, source}); err != nil || writes != 1 {
+			t.Fatal(err, writes)
+		}
+		link := filepath.Join(dir, "secret-link")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.put([]string{"--capture-token", lock.Token, link}); err == nil || writes != 1 {
+			t.Fatal(err, writes)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "snapshot.tsv"), formatQueue([]queueRow{{"2026-11-18", "https://evil.invalid", "tampered"}}), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := fetchCommand(context.Background(), []string{"https://evil.invalid", "--dir", dir, "--out", "evil"}); err == nil || !strings.HasPrefix(err.Error(), "fetch: ") || !strings.Contains(err.Error(), "snapshot changed") {
+			t.Fatal(err)
+		}
+		if err := a.queue([]string{"remove", "--capture-token", lock.Token, rows[0].URL}, time.Now()); err == nil {
+			t.Fatal("modified snapshot accepted")
+		}
+		if err := a.captureUnlock(lock.Token); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.put([]string{"--capture-token", lock.Token, outside}); err == nil || !strings.Contains(err.Error(), "ownership changed") {
+			t.Fatal(err)
+		}
+		if err := a.queue([]string{"remove", rows[0].URL, rows[1].URL}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		remaining, err = readQueue(filepath.Join(a.metadataDir(), "queue.tsv"))
+		if err != nil || len(remaining) != 0 {
+			t.Fatal(remaining, err)
+		}
+	})
+	t.Run("R3_unknown_id_receipts", func(t *testing.T) {
+		a := setup(t, 1)
+		fakeCaptureClaude(t, "no id", 0)
+		if err := a.captureRun(1, t.TempDir(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		lock, _ := readCaptureLock(filepath.Join(a.metadataDir(), "capture.lock"))
+		if err := a.captureUnlock(lock.Token); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(a.captureReceipt(lock.Token)); !os.IsNotExist(err) {
+			t.Fatal("orphan receipt", err)
+		}
+		lock, err := acquireCaptureLock(filepath.Join(a.metadataDir(), "capture.lock"), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.captureUnlock(lock.Token); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.recordCaptureID(filepath.Join(a.metadataDir(), "capture.lock"), lock.Token, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(a.captureReceipt(lock.Token)); !os.IsNotExist(err) {
+			t.Fatal("early unlock receipt retained", err)
+		}
+		stale := a.captureReceipt(lock.Token)
+		if err := os.WriteFile(stale, []byte("unlocked\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(stale, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.captureRun(5, t.TempDir(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(stale); !os.IsNotExist(err) {
+			t.Fatal("stale receipt retained", err)
 		}
 	})
 

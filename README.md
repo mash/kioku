@@ -381,7 +381,7 @@ CLI が認証を `~/.config/kioku/auth/<server-hash>.json` に接続先別で保
 
 ### ローカル配置と取得
 
-スキルは `mktemp -d` を単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使います。シェル変数や `$(...)` は使いません。一時ディレクトリに原資料の Markdown を書き、`kioku -n "$NAMESPACE" put FILE` に実際のファイルパスを指定して送信します。
+Claude Code 以外では、スキルは `mktemp -d` を単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使います。シェル変数や `$(...)` は使いません。一時ディレクトリに原資料の Markdown を書き、`kioku -n "$NAMESPACE" put FILE` に実際のファイルパスを指定して送信します。
 
 - `wiki/`: 保存先直下の読み取り専用ミラー。取得時にローカル編集を上書きし、サーバーの一覧から消えた生成ファイルを削除します。
 - `.kioku/`: config、ファイル更新ロック。config は server と namespace のみを保存し、Git で共有できます。
@@ -394,7 +394,7 @@ CLI が認証を `~/.config/kioku/auth/<server-hash>.json` に接続先別で保
 
 ### プラグインの運用
 
-Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。対象の選択と pull はスキルが行い、会話ごとに一度 pull の完了を待ちます。CLI は会話セッションを知りません。
+Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。v8 では hook が会話セッションごとに対象を自動選択し、手元の Wiki の入口を読み、背景で pull します。原資料の URL はキューに記録し、Stop・SessionEnd が capture セッションを起動します。詳細は [plugin/README](plugin/README.md) を参照してください。
 
 旧コマンドは削除し、互換エイリアス・旧設定へのフォールバックは提供しません。
 

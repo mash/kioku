@@ -15,6 +15,15 @@ import (
 func (a *App) put(args []string) error {
 	f := flag.NewFlagSet("put", flag.ContinueOnError)
 	f.SetOutput(a.Err)
+	token := ""
+	tokenSet := false
+	f.Func("capture-token", "capture ownership token", func(value string) error {
+		if tokenSet || !captureTokenPattern.MatchString(value) {
+			return errors.New("invalid or repeated capture token")
+		}
+		token, tokenSet = value, true
+		return nil
+	})
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -22,6 +31,19 @@ func (a *App) put(args []string) error {
 		return errors.New("usage: kioku put FILE...")
 	}
 	captureDir := os.Getenv("KIOKU_CAPTURE_DIR")
+	if token != "" {
+		if _, err := a.projectPath(); err != nil {
+			return err
+		}
+		dir, err := a.captureTokenDir(token)
+		if err != nil {
+			return err
+		}
+		if captureDir != "" && filepath.Clean(captureDir) != dir {
+			return errors.New("capture directory differs from token")
+		}
+		captureDir = dir
+	}
 	if captureDir != "" {
 		for _, path := range f.Args() {
 			if _, err := captureSourcePath(captureDir, path); err != nil {

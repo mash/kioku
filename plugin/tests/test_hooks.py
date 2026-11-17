@@ -976,7 +976,7 @@ for _ in range(200):
     time.sleep(.025)
 cli = os.environ['CAPTURE_FIXTURE_CLI']
 urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().splitlines()]
-subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'queue', 'remove', *urls], check=True)
+subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'queue', 'remove', '--capture-token', lock['token'], *urls], check=True)
 subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'unlock', '--token', lock['token']], check=True)
 """
 subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,

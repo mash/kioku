@@ -56,11 +56,22 @@ func removeRows(rows []queueRow, urls []string) []queueRow {
 }
 
 func (a *App) queue(args []string, now time.Time) error {
-	usage := errors.New("usage: kioku queue add URL NOTE | list | remove URL...")
+	usage := errors.New("usage: kioku queue add URL NOTE | list | remove [--capture-token TOKEN] URL... [--reason TEXT]")
 	if len(args) == 0 {
 		return usage
 	}
 	reason := ""
+	token := ""
+	if args[0] == "remove" && len(args) > 1 && args[1] == "--capture-token" {
+		if len(args) < 4 {
+			return usage
+		}
+		token = args[2]
+		if !captureTokenPattern.MatchString(token) {
+			return usage
+		}
+		args = append([]string{"remove"}, args[3:]...)
+	}
 	if args[0] == "remove" {
 		for i, arg := range args[1:] {
 			if arg == "--reason" {
@@ -128,7 +139,33 @@ func (a *App) queue(args []string, now time.Time) error {
 		if args[0] == "add" {
 			rows = addRow(rows, now.Local().Format("2006-01-02"), args[1], args[2])
 		} else {
-			rows = removeRows(rows, args[1:])
+			if token == "" {
+				rows = removeRows(rows, args[1:])
+			} else {
+				dir, err := a.captureTokenDir(token)
+				if err != nil {
+					return nil, false, err
+				}
+				snapshot, err := captureSnapshot(dir)
+				if err != nil {
+					return nil, false, err
+				}
+				eligible := map[queueRow]bool{}
+				for _, row := range snapshot {
+					for _, url := range args[1:] {
+						if row.URL == url {
+							eligible[row] = true
+						}
+					}
+				}
+				kept := rows[:0]
+				for _, row := range rows {
+					if !eligible[row] {
+						kept = append(kept, row)
+					}
+				}
+				rows = kept
+			}
 		}
 		next := formatQueue(rows)
 		return next, !bytes.Equal(data, next), nil

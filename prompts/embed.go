@@ -1,5 +1,5 @@
 // Package prompts loads and validates server prompt templates.
-// Hook files are read by the plugin through plugin/prompts and are not embedded.
+// Hook files are not embedded; only capture-run.txt is embedded for CLI capture sessions.
 package prompts
 
 import "embed"
@@ -17,3 +17,8 @@ func DefaultWikiPrompt() string {
 	body, _ := defaults.ReadFile(DefaultPromptFile)
 	return string(body)
 }
+
+// CaptureRun instructs the background capture session.
+//
+//go:embed capture-run.txt
+var CaptureRun string

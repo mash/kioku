@@ -234,6 +234,8 @@ func (a *App) dispatch(args []string) error {
 		return a.project(args[1:])
 	case "delete":
 		return a.deleteSources(args[1:])
+	case "capture":
+		return a.capture(args[1:], time.Now().UTC())
 	case "queue":
 		return a.queue(args[1:], time.Now())
 	case "put":

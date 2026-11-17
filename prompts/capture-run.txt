@@ -1,0 +1,4 @@
+一時ディレクトリ: {{tmp}}（資料はここに書く）
+Kioku のキューの URL を put する。namespace: {{namespace}}、server: {{server}}、mode: local、P: {{p}}、CLI: {{kioku}}、除外条件: なし（親が queue add の前に確かめた）。
+URL を 1 つ処理するたびに {{kioku}} -n {{namespace}} queue remove <URL> を実行する。最後に {{kioku}} -n {{namespace}} capture unlock を実行する。
+{{queue}}

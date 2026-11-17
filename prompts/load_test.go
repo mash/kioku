@@ -29,6 +29,17 @@ func loadFiles(t *testing.T, files map[string]string) (*Rendered, error) {
 	return LoadWith(files, testVars, nil)
 }
 func TestDefaultsAndCopiedFiles(t *testing.T) {
+	t.Run("capture_run_template", func(t *testing.T) {
+		for _, variable := range []string{"kioku", "namespace", "server", "p", "tmp", "queue"} {
+			if !strings.Contains(CaptureRun, "{{"+variable+"}}") {
+				t.Fatal("missing variable", variable)
+			}
+		}
+		if !strings.Contains(CaptureRun, "capture unlock") {
+			t.Fatal("missing unlock")
+		}
+	})
+
 	want := defaultPrompts(t)
 	files := map[string]string{}
 	for _, name := range []string{SystemFile, UserFile, MCPFile, DefaultPromptFile} {

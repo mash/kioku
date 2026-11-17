@@ -146,7 +146,10 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 		_ = unix.Unlinkat(int(parent.Fd()), name, 0)
 	}
 	if err == nil && len(outputs) > 0 {
-		_, err = fmt.Fprintln(outputs[0], filepath.Join(dir, filepath.Dir(output), name))
+		_, err = fmt.Fprintf(outputs[0], "%s\nfetched_at: %s\n", filepath.Join(dir, filepath.Dir(output), name), time.Now().UTC().Format(time.RFC3339))
+		if modified, parseErr := http.ParseTime(response.Header.Get("Last-Modified")); err == nil && parseErr == nil {
+			_, err = fmt.Fprintf(outputs[0], "last_modified: %s\n", modified.UTC().Format(time.RFC3339))
+		}
 	}
 	return err
 }

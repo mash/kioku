@@ -1014,7 +1014,7 @@ func TestCaptureRun(t *testing.T) {
 		}
 		want := filepath.Join(tmp, "download.pdf")
 		data, err := os.ReadFile(want)
-		if err != nil || string(data) != "%PDF-test" || output.String() != want+"\n" {
+		if err != nil || string(data) != "%PDF-test" || !strings.HasPrefix(output.String(), want+"\nfetched_at: ") {
 			t.Fatal(err, output.String(), string(data))
 		}
 		if _, err := os.Stat(filepath.Join(tmp, "download.raw")); !os.IsNotExist(err) {
@@ -1023,6 +1023,61 @@ func TestCaptureRun(t *testing.T) {
 		commands := captureCommands("'/bin/kioku'", "'/bin/kioku' -C '/p' -n org/a", tmp, lock.Token, []queueRow{{"2026-11-18", original, ""}})
 		if !strings.Contains(commands, "source-001.input.md") || !strings.Contains(commands, "source-001.md") {
 			t.Fatal(commands)
+		}
+	})
+	t.Run("R9_fetch_timestamps", func(t *testing.T) {
+		a := setup(t, 1)
+		lock, err := acquireCaptureLock(a.captureLockPath(), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmp, err := a.prepareCaptureTmp(lock.Token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/valid":
+				w.Header().Set("Last-Modified", "Wed, 18 Nov 2026 03:04:05 GMT")
+			case "/invalid":
+				w.Header().Set("Last-Modified", "not a timestamp")
+			}
+			fmt.Fprint(w, "source")
+		}))
+		defer server.Close()
+		var rows []queueRow
+		for _, name := range []string{"valid", "missing", "invalid"} {
+			rows = append(rows, queueRow{"2026-11-18", server.URL + "/" + name, ""})
+		}
+		if err := a.saveCaptureSnapshot(lock.Token, rows); err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			t.Run(filepath.Base(row.URL), func(t *testing.T) {
+				var output bytes.Buffer
+				name := filepath.Base(row.URL) + ".txt"
+				before := time.Now().UTC().Truncate(time.Second)
+				if err := fetchURL(context.Background(), server.Client().Transport, row.URL, tmp, name, &output); err != nil {
+					t.Fatal(err)
+				}
+				after := time.Now().UTC()
+				lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+				wantLines := 2
+				if name == "valid.txt" {
+					wantLines = 3
+				}
+				if len(lines) != wantLines || lines[0] != filepath.Join(tmp, name) || !strings.HasPrefix(lines[1], "fetched_at: ") {
+					t.Fatal(output.String())
+				}
+				stamp := strings.TrimPrefix(lines[1], "fetched_at: ")
+				fetched, err := time.Parse(time.RFC3339, stamp)
+				if err != nil || !strings.HasSuffix(stamp, "Z") || fetched.Before(before) || fetched.After(after) {
+					t.Fatal(stamp, err, before, after)
+				}
+				if wantLines == 3 && lines[2] != "last_modified: 2026-11-18T03:04:05Z" {
+					t.Fatal(output.String())
+				}
+			})
 		}
 	})
 	t.Run("R4_queue_flag_order", func(t *testing.T) {

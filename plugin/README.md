@@ -163,7 +163,7 @@ Claude Code の local mode では、親は共有範囲・機密・保存禁止�
 キューはセッションをまたいで project ごとに共有する。NOTE は put 本文に入れない。Codex・Claude Chat・Cowork と remote mode の直接 put は変えない。
 
 Stop は5件以上、SessionEnd は1件以上で、ロックが無いか30分を超えて古い時だけ背景の `capture run --min N` を起動する。hook は出力せず、子を待たない。
-`capture run` の既定の閾値は5件。今すぐ送る依頼では `kioku -C P -n NAMESPACE capture run --min 1 --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を使う。
+`capture run` の既定の閾値は5件。今すぐ送る依頼では [SKILL.md](skills/kioku/SKILL.md) の「今すぐ送る」手順に従う。
 子は `P/.kioku/capture.lock` を排他作成し、信頼済みの作業 cwd で絶対パスの `claude --bg` を起動する。文は位置引数で渡し、`-p` は使わない。
 この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料は P/.kioku/capture-tmp/<token> に書き、所有トークンの一致する unlock が削除する。次の run は稼働ロック以外の一時ディレクトリを削除する。
 URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に所有トークンを付けて capture unlock する。処理中に追加された URL は次の run が拾う。

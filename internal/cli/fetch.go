@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,7 +20,7 @@ import (
 
 const maxFetchBytes = 20 << 20
 
-func fetchCommand(ctx context.Context, args []string) (err error) {
+func fetchCommand(ctx context.Context, args []string, outputs ...io.Writer) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("fetch: %w", err)
@@ -43,10 +44,10 @@ func fetchCommand(ctx context.Context, args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	return fetchURL(ctx, nil, args[0], resolved, *out)
+	return fetchURL(ctx, nil, args[0], resolved, *out, outputs...)
 }
 
-func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, output string) error {
+func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, output string, outputs ...io.Writer) error {
 	if !filepath.IsAbs(dir) || filepath.Base(filepath.Dir(dir)) != "capture-tmp" || filepath.Base(filepath.Dir(filepath.Dir(dir))) != ".kioku" || !captureTokenPattern.MatchString(filepath.Base(dir)) {
 		return errors.New("capture-tmp の所有トークン付きディレクトリが必要")
 	}
@@ -98,14 +99,7 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 	if err := validate(u); err != nil {
 		return err
 	}
-	if u.Host == "github.com" {
-		parts := strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 5)
-		if len(parts) == 5 && parts[0] != "" && parts[1] != "" && parts[2] == "blob" && parts[3] != "" && parts[4] != "" {
-			u.Host = "raw.githubusercontent.com"
-			u.Path = "/" + strings.Join([]string{parts[0], parts[1], parts[3], parts[4]}, "/")
-			u.RawPath, u.RawQuery, u.Fragment = "", "", ""
-		}
-	}
+	u = captureFetchURL(u)
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("リダイレクト回数の上限を超えた")
@@ -138,6 +132,9 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 		return errors.New("20 MiB の上限を超えた")
 	}
 	name := parts[len(parts)-1]
+	if filepath.Ext(name) == ".raw" {
+		name = strings.TrimSuffix(name, ".raw") + captureFetchExtension(rawURL, response.Header.Get("Content-Type"))
+	}
 	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return err
@@ -148,7 +145,56 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 	if err != nil {
 		_ = unix.Unlinkat(int(parent.Fd()), name, 0)
 	}
+	if err == nil && len(outputs) > 0 {
+		_, err = fmt.Fprintln(outputs[0], filepath.Join(dir, filepath.Dir(output), name))
+	}
 	return err
+}
+
+func captureFetchURL(original *url.URL) *url.URL {
+	copyURL := *original
+	u := &copyURL
+	if u.Host == "github.com" {
+		parts := strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 5)
+		if len(parts) == 5 && parts[0] != "" && parts[1] != "" && parts[2] == "blob" && parts[3] != "" && parts[4] != "" {
+			u.Host = "raw.githubusercontent.com"
+			u.Path = "/" + strings.Join([]string{parts[0], parts[1], parts[3], parts[4]}, "/")
+			u.RawPath, u.RawQuery, u.Fragment = "", "", ""
+		}
+	}
+	return u
+}
+
+// captureFetchExtension prefers the source URL over response metadata.
+func captureFetchExtension(rawURL, contentType string) string {
+	u, _ := url.Parse(rawURL)
+	if u != nil {
+		ext := strings.ToLower(filepath.Ext(u.Path))
+		switch ext {
+		case ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".md", ".txt", ".html":
+			return ext
+		}
+	}
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	switch mediaType {
+	case "application/pdf":
+		return ".pdf"
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "text/markdown":
+		return ".md"
+	case "text/plain":
+		return ".txt"
+	case "text/html":
+		return ".html"
+	}
+	return ".raw"
 }
 
 func openFetchDirectory(dir string) (*os.File, error) {

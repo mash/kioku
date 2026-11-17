@@ -6,10 +6,10 @@ Claude Code では、親が共有範囲・機密・保存禁止を確認し、�
 以下は Claude Code の local mode にだけ適用する。Codex では今どおり直接 put する。Claude Chat と Cowork、remote mode も以下の共通手順で直接 put する。
 
 親は参照・作成した重要な文書と、結論を変えた文書の HTTPS URL を、`kioku -C P -n NAMESPACE queue add URL "何をしたか"` で1行ずつ足す。NOTE は記録であり、put の本文に入れない。ローカルファイルはキューの対象外で、原本 URL がある資料を従来どおり直接 put する。
-Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が `kioku -C P -n NAMESPACE capture run --min 1 --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を実行する。
+Stop は5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。今すぐ送る依頼では、親が SKILL.md の「今すぐ送る」手順に従って起動する。
 親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
 
-capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の各行に記載された fetch コマンドで原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ（GitHub の blob → raw 変換は下記の例外）。Read ツールで原文を読み、Write ツールで指定の Markdown ファイルに資料を書き、記載された put コマンドで送信する。
+capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の各行に記載された fetch コマンドで原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ（GitHub の blob → raw 変換は下記の例外）。fetch は URL の既知の拡張子を保ち、なければ Content-Type から決める（不明なら .raw）。Read ツールで fetch が出力した保存先の原文を読み、Write ツールで指定の Markdown ファイルに資料を書き、記載された put コマンドで送信する。
 すべてのコマンドを記載どおりに、Bash 呼び出し1回につき1コマンドだけ実行する。シェル変数、;、&&、|、リダイレクト、echo、ls、cat、cd は使わない。ファイルの読み書きには Read と Write ツールを使う。mktemp を実行しない。
 各 URL の結果（受付済み / 未保存 / 受付不明）と理由を通常の出力に1行書き、記載の queue remove コマンドの理由だけを置き換えて実行する。理由の単一引用符は ` '\'' ` としてエスケープする。--reason が capture.log に追記する。コマンドが拒否されたら変形して再試行せず、その行を「未保存」として記載の queue remove を試み、次の行へ進む。queue remove 自体が拒否されても変形して再試行しない。受付不明は自動で再送しない。失敗や途中終了の場合も、最後の操作として必ず記載の unlock コマンドを単独の Bash 呼び出しで実行する。
 許可する connector は Notion の fetch/search、Slack の thread/channel 読み取り、Google Drive の read/download の完全名だけ。送信・作成・更新は許可しない。利用できない取得経路を権限拡大で回避しない。

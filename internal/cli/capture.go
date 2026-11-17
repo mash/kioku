@@ -318,7 +318,7 @@ func (a *App) captureRun(min int, cwd string, now time.Time, pluginRoots ...stri
 	vars["tmp"], vars["queue"], vars["token"] = tmp, string(formatQueue(rows)), lock.Token
 	vars["project_kioku"] = vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
 	vars["commands"] = captureCommands(vars["kioku"], vars["project_kioku"], tmp, lock.Token, rows)
-	prompt := renderTemplate(prompts.CaptureRun, vars)
+
 	settings, err := a.captureSettings(cwd, tmp)
 	if err != nil {
 		return err
@@ -330,8 +330,15 @@ func (a *App) captureRun(min int, cwd string, now time.Time, pluginRoots ...stri
 		if err != nil {
 			return err
 		}
+		vars["capture_md"] = filepath.Join(root, "skills", "kioku", "references", "capture.md")
 		args = append(args, "Read(/"+filepath.Join(root, "skills")+"/**)", "Read(/"+filepath.Join(root, "agents")+"/**)")
 	}
+	template := prompts.CaptureRun
+	if vars["capture_md"] == "" {
+		fmt.Fprintln(a.Err, "kioku: capture run: 警告: plugin root が未指定のため capture.md の Read 許可がない。--plugin-root を指定してください。")
+		_, template, _ = strings.Cut(template, "\n")
+	}
+	prompt := renderTemplate(template, vars)
 	args = append(args, "--agent", "kioku:kioku-capture", "--", prompt)
 	cmd := exec.Command(claude, args...)
 	cmd.Dir = cwd
@@ -505,10 +512,10 @@ func (a *App) captureSettings(cwd, tmp string) (string, error) {
 func captureCommands(command, project, tmp, token string, rows []queueRow) string {
 	var b strings.Builder
 	for i, row := range rows {
-		raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.raw", i+1))
+		raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.input%s", i+1, captureFetchExtension(row.URL, "")))
 		source := filepath.Join(tmp, fmt.Sprintf("source-%03d.md", i+1))
 		fmt.Fprintf(&b, "行 %d: %s\nfetch（公開 Web の原文取得）:\n```sh\n%s fetch %s --capture-token %s --dir %s --out %s\n```\n", i+1, row.URL, command, shellQuote(row.URL), token, shellQuote(tmp), shellQuote(raw))
-		fmt.Fprintf(&b, "Read ツールで %s を読み、検証した資料を Write ツールで %s に書く。connector で取得した本文もこの Markdown ファイルに書く。\nput:\n```sh\n%s put --capture-token %s %s\n```\n", raw, source, project, token, shellQuote(source))
+		fmt.Fprintf(&b, "Read ツールで fetch が出力した保存先（通常 %s、Content-Type により拡張子が変わる）を読み、検証した資料を Write ツールで %s に書く。connector で取得した本文もこの Markdown ファイルに書く。\nput:\n```sh\n%s put --capture-token %s %s\n```\n", raw, source, project, token, shellQuote(source))
 		fmt.Fprintf(&b, "queue remove（理由だけ置き換える）:\n```sh\n%s queue remove --capture-token %s %s --reason '<理由>'\n```\n", project, token, shellQuote(row.URL))
 	}
 	return strings.TrimSpace(b.String())

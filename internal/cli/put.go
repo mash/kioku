@@ -5,11 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
+	"gopkg.in/yaml.v3"
 )
 
 func (a *App) put(args []string) error {
@@ -31,6 +34,7 @@ func (a *App) put(args []string) error {
 		return errors.New("usage: kioku put FILE...")
 	}
 	captureDir := ""
+	var snapshot []queueRow
 	if token != "" {
 		if _, err := a.projectPath(); err != nil {
 			return err
@@ -40,6 +44,10 @@ func (a *App) put(args []string) error {
 			return err
 		}
 		captureDir = dir
+		snapshot, err = captureSnapshot(dir)
+		if err != nil {
+			return fmt.Errorf("put: %w", err)
+		}
 	}
 	if captureDir != "" {
 		for _, path := range f.Args() {
@@ -106,9 +114,28 @@ func (a *App) put(args []string) error {
 			}
 			content := string(b)
 			// This is a pre-flight check; the server is authoritative.
-			_, err = source.FileWithProvenance(name, content)
+			doc, err := source.FileWithProvenance(name, content)
 			if err != nil {
 				return fmt.Errorf("%s: %w", p, err)
+			}
+			if captureDir != "" {
+				canonical := ""
+				for _, row := range snapshot {
+					u, parseErr := url.Parse(row.URL)
+					if row.URL == doc.URL || (parseErr == nil && captureFetchURL(u).String() == doc.URL) {
+						canonical = row.URL
+						break
+					}
+				}
+				if canonical == "" {
+					return errors.New("put: source_url が capture のスナップショット URL と一致しない")
+				}
+				if canonical != doc.URL {
+					content, err = captureCanonicalSource(content, canonical)
+					if err != nil {
+						return fmt.Errorf("put: %w", err)
+					}
+				}
 			}
 			inputs = append(inputs, model.FileInput{Name: filepath.ToSlash(name), Content: content})
 			return nil
@@ -130,4 +157,30 @@ func (a *App) put(args []string) error {
 		}
 	}
 	return nil
+}
+
+// captureCanonicalSource preserves the body and records the snapshot URL.
+func captureCanonicalSource(content, canonical string) (string, error) {
+	metadata, err := source.Frontmatter(content)
+	if err != nil {
+		return "", err
+	}
+	for i := 0; i < len(metadata.Content); i += 2 {
+		if metadata.Content[i].Value == "source_url" {
+			metadata.Content[i+1].Value = canonical
+		}
+	}
+	encoded, err := yaml.Marshal(metadata)
+	if err != nil {
+		return "", err
+	}
+	_, rest, _ := strings.Cut(content, "\n")
+	for rest != "" {
+		line, body, _ := strings.Cut(rest, "\n")
+		if strings.TrimSuffix(line, "\r") == "---" {
+			return "---\n" + string(encoded) + "---\n" + body, nil
+		}
+		rest = body
+	}
+	return "", errors.New("frontmatter closing delimiter missing")
 }

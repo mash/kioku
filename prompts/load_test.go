@@ -35,7 +35,7 @@ func TestDefaultsAndCopiedFiles(t *testing.T) {
 				t.Fatal("missing variable", variable)
 			}
 		}
-		vars := map[string]string{"kioku": "/bin/kioku", "namespace": "org/a", "server": "https://kioku.test", "p": "/work/a", "tmp": "/work/a/.kioku/capture-tmp/token", "tmp_arg": "'/work/a/.kioku/capture-tmp/token'", "queue": "row", "token": "token", "project_kioku": "/bin/kioku -C /work/a -n org/a", "commands": "literal commands"}
+		vars := map[string]string{"kioku": "/bin/kioku", "namespace": "org/a", "server": "https://kioku.test", "p": "/work/a", "tmp": "/work/a/.kioku/capture-tmp/token", "tmp_arg": "'/work/a/.kioku/capture-tmp/token'", "queue": "row", "token": "token", "project_kioku": "/bin/kioku -C /work/a -n org/a", "commands": "literal commands", "capture_md": "/plugin/skills/kioku/references/capture.md"}
 		rendered := CaptureRun
 		for key, value := range vars {
 			rendered = strings.ReplaceAll(rendered, "{{"+key+"}}", value)

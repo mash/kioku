@@ -18,6 +18,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mash/kioku/internal/model"
+	"github.com/mash/kioku/internal/source"
 )
 
 // fakeCaptureClaude installs a shell fixture; it never invokes Claude Code.
@@ -94,7 +97,7 @@ func TestCaptureRun(t *testing.T) {
 		if got := a.Out.(*bytes.Buffer).String(); got != "kioku-capture を背景で起動した（org/a、3 件、id 1a2b3c4d）。claude logs 1a2b3c4d で見る。\n" {
 			t.Fatal(got)
 		}
-		if a.Err.(*bytes.Buffer).Len() != 0 {
+		if !strings.Contains(a.Err.(*bytes.Buffer).String(), "plugin root が未指定") {
 			t.Fatal(a.Err)
 		}
 		lockPath := filepath.Join(a.metadataDir(), "capture.lock")
@@ -156,7 +159,7 @@ func TestCaptureRun(t *testing.T) {
 		}
 		var commands []string
 		for i, row := range rows {
-			raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.raw", i+1))
+			raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.input.raw", i+1))
 			source := filepath.Join(tmp, fmt.Sprintf("source-%03d.md", i+1))
 			commands = append(commands,
 				command+" fetch "+shellQuote(row.URL)+" --capture-token "+lock.Token+" --dir "+shellQuote(tmp)+" --out "+shellQuote(raw),
@@ -327,6 +330,7 @@ func TestCaptureRun(t *testing.T) {
 		}
 		lock, _ := readCaptureLock(path)
 		a.Out.(*bytes.Buffer).Reset()
+		a.Err.(*bytes.Buffer).Reset()
 		for range 2 {
 			if err := a.capture([]string{"unlock", "--token", lock.Token}, now); err != nil {
 				t.Fatal(err)
@@ -739,6 +743,12 @@ func TestCaptureRun(t *testing.T) {
 		if err := a.put([]string{"--capture-token", lock.Token, source}); err != nil || writes != 1 {
 			t.Fatal(err, writes)
 		}
+		if err := os.WriteFile(source, []byte(SourceContentForTest("https://unrelated.example/source", "Evidence")), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.put([]string{"--capture-token", lock.Token, source}); err == nil || !strings.HasPrefix(err.Error(), "put: source_url") || writes != 1 {
+			t.Fatal(err, writes)
+		}
 		link := filepath.Join(dir, "secret-link")
 		if err := os.Symlink(outside, link); err != nil {
 			t.Fatal(err)
@@ -871,7 +881,16 @@ func TestCaptureRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		args := strings.Split(string(data), "\x00")
+		args := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+		prompt := args[len(args)-1]
+		if !strings.HasPrefix(prompt, "Read ツールで "+filepath.Join(root, "skills", "kioku", "references", "capture.md")+" を読む。") {
+			t.Fatal(prompt)
+		}
+		for _, part := range []string{"source_url", "title", "fetched_at", "version", "updated_at", "RFC 3339", "UTF-8", "1 MiB"} {
+			if !strings.Contains(prompt, part) {
+				t.Fatal("missing", part)
+			}
+		}
 		for _, name := range []string{"skills", "agents"} {
 			if !slices.Contains(args, "Read(/"+filepath.Join(root, name)+"/**)") {
 				t.Fatal(args)
@@ -920,6 +939,90 @@ func TestCaptureRun(t *testing.T) {
 		}
 		if err := fetchURL(context.Background(), transport, "https://raw.githubusercontent.com/owner/repo/abc123/docs/source.md", tmp, "direct"); err == nil || requests != 1 {
 			t.Fatal("accepted URL outside snapshot", err)
+		}
+	})
+	t.Run("R8_capture_source_and_extensions", func(t *testing.T) {
+		a := setup(t, 1)
+		lock, err := acquireCaptureLock(a.captureLockPath(), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmp, err := a.prepareCaptureTmp(lock.Token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := "https://github.com/owner/repo/blob/main/docs/source.md"
+		raw := "https://raw.githubusercontent.com/owner/repo/main/docs/source.md"
+		if err := a.saveCaptureSnapshot(lock.Token, []queueRow{{"2026-11-18", original, "read"}}); err != nil {
+			t.Fatal(err)
+		}
+		writes := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writes++
+			var request model.PutRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			doc, err := source.FileWithProvenance(request.File.Name, request.File.Content)
+			if err != nil || doc.URL != original || !strings.HasSuffix(request.File.Content, "Evidence") {
+				t.Error(doc, err, request.File.Content)
+			}
+			fmt.Fprint(w, "{}")
+		}))
+		defer server.Close()
+		a.Config.Server, a.Client, a.ctx = server.URL, server.Client(), context.Background()
+		file := filepath.Join(tmp, "source.md")
+		for _, u := range []string{original, raw} {
+			if err := os.WriteFile(file, []byte(SourceContentForTest(u, "Evidence")), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.put([]string{"--capture-token", lock.Token, file}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if writes != 2 {
+			t.Fatal(writes)
+		}
+		for _, tc := range []struct{ path, mime, ext string }{
+			{"/a.PDF?download=1", "text/plain", ".pdf"},
+			{"/a.png", "", ".png"}, {"/a.jpg", "", ".jpg"}, {"/a.jpeg", "", ".jpeg"},
+			{"/a.gif", "", ".gif"}, {"/a.webp", "", ".webp"}, {"/a.md", "", ".md"},
+			{"/a.txt", "", ".txt"}, {"/a.html", "", ".html"},
+			{"/download", "application/pdf", ".pdf"}, {"/download", "image/png", ".png"},
+			{"/download", "image/jpeg", ".jpg"}, {"/download", "image/gif", ".gif"},
+			{"/download", "image/webp", ".webp"}, {"/download", "text/markdown", ".md"},
+			{"/download", "text/plain; charset=utf-8", ".txt"},
+			{"/download", "text/html", ".html"}, {"/download", "application/octet-stream", ".raw"},
+		} {
+			t.Run(tc.path+tc.mime, func(t *testing.T) {
+				if got := captureFetchExtension("https://example.com"+tc.path, tc.mime); got != tc.ext {
+					t.Fatal(got, tc.ext)
+				}
+			})
+		}
+		fetchServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/pdf")
+			fmt.Fprint(w, "%PDF-test")
+		}))
+		defer fetchServer.Close()
+		if err := a.saveCaptureSnapshot(lock.Token, []queueRow{{"2026-11-18", fetchServer.URL, "read"}}); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		if err := fetchURL(context.Background(), fetchServer.Client().Transport, fetchServer.URL, tmp, "download.raw", &output); err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(tmp, "download.pdf")
+		data, err := os.ReadFile(want)
+		if err != nil || string(data) != "%PDF-test" || output.String() != want+"\n" {
+			t.Fatal(err, output.String(), string(data))
+		}
+		if _, err := os.Stat(filepath.Join(tmp, "download.raw")); !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		commands := captureCommands("'/bin/kioku'", "'/bin/kioku' -C '/p' -n org/a", tmp, lock.Token, []queueRow{{"2026-11-18", original, ""}})
+		if !strings.Contains(commands, "source-001.input.md") || !strings.Contains(commands, "source-001.md") {
+			t.Fatal(commands)
 		}
 	})
 	t.Run("R4_queue_flag_order", func(t *testing.T) {
@@ -975,7 +1078,7 @@ func TestCaptureRun(t *testing.T) {
 		project := command + " -C " + shellQuote(projectDir) + " -n org/a"
 		got := captureCommands(command, project, tmp, token, []queueRow{{"2026-11-18", url, "read"}})
 		for _, line := range []string{
-			command + " fetch " + shellQuote(url) + " --capture-token " + token + " --dir " + shellQuote(tmp) + " --out " + shellQuote(tmp+"/source-001.raw"),
+			command + " fetch " + shellQuote(url) + " --capture-token " + token + " --dir " + shellQuote(tmp) + " --out " + shellQuote(tmp+"/source-001.input.raw"),
 			project + " put --capture-token " + token + " " + shellQuote(tmp+"/source-001.md"),
 			project + " queue remove --capture-token " + token + " " + shellQuote(url) + " --reason '<理由>'",
 		} {
@@ -1006,6 +1109,15 @@ func TestCaptureRun(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := strings.Split(string(data), "\x00")
+				prompt := got[len(got)-2]
+				if !strings.HasPrefix(prompt, "Read ツールで "+filepath.Join(want, "skills", "kioku", "references", "capture.md")+" を読む。") {
+					t.Fatal(prompt)
+				}
+				for _, part := range []string{"source_url", "title", "fetched_at", "version", "updated_at", "RFC 3339", "UTF-8", "1 MiB"} {
+					if !strings.Contains(prompt, part) {
+						t.Fatal("missing", part)
+					}
+				}
 				for _, name := range []string{"skills", "agents"} {
 					if !slices.Contains(got, "Read(/"+filepath.Join(want, name)+"/**)") {
 						t.Fatal(got)

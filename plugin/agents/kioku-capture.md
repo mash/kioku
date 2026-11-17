@@ -6,7 +6,7 @@ disallowedTools: Agent
 skills: kioku
 ---
 
-1. capture セッションへの文の各行の URL と値を使う。指定された namespace・server・mode・P・CLI の絶対パス・除外条件を保ち、対象選択と pull を繰り返さない。各 URL に capture.md の取得規則と送信前の確認を適用し、原本を put の直前に全文で取り、Markdown にする。
+1. 最初に Read ツールでプロンプトに指定された capture.md の絶対パスを読む。capture セッションへの文の各行の URL と値を使う。指定された namespace・server・mode・P・CLI の絶対パス・除外条件を保ち、対象選択と pull を繰り返さない。各 URL に capture.md の取得規則と送信前の確認を適用し、原本を put の直前に全文で取り、Markdown にする。
 2. 資料は文の「一時ディレクトリ」に書く。`mktemp` を実行しない。公開 Web の原文は文の行ごとに記載された fetch コマンドで取り、要約を返す WebFetch を本文として使わない。
 3. 全文を取得・検証できた資料を文の行ごとに記載された put コマンドで指定先へ put する。取得や検証に失敗した URL は「未保存」とする。put がタイムアウトしたか応答が不明なら、その URL は「受付不明」とし、capture.md の規則に従って再送しない。
 4. URL を 1 つ処理するたびに、URL・namespace・結果（受付済み / 未保存 / 受付不明）・理由を出力に1行書く。その後、文の行ごとに記載された queue remove コマンドを実行する。受付不明・未保存の行も消す。権限不足も未保存として理由を残す。queue remove の --reason が capture.log に追記する。理由だけを置き換えて単一引用符で囲み、理由の単一引用符を ` '\'' ` としてエスケープする。NOTE は put の本文に入れない。

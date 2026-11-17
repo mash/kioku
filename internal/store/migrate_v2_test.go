@@ -157,7 +157,7 @@ func TestMigrationValidatesEverythingBeforeDelete(t *testing.T) {
 	}
 }
 func TestMigrationRejectsPendingAndDeletingProjects(t *testing.T) {
-	for _, failure := range []string{"pending", "deleting", "running", "cleanup"} {
+	for _, failure := range []string{"pending", "deleting"} {
 		t.Run(failure, func(t *testing.T) {
 			path, b, c, content := migrationFixture(t)
 			switch failure {
@@ -173,10 +173,6 @@ func TestMigrationRejectsPendingAndDeletingProjects(t *testing.T) {
 				}
 			case "deleting":
 				migrationRecord(t, path, "projects", "p", legacyV2Project{ID: "p", OrgID: "o", Slug: "project", Deleting: true})
-			case "running":
-				content.Jobs["j"] = legacyV2Job{ID: "j", ProjectID: "p", Status: "running"}
-			case "cleanup":
-				content.Jobs["j"] = legacyV2Job{ID: "j", ProjectID: "p", Status: "completed", Run: &legacyV2AgentRun{Phase: "finalizing"}}
 			}
 			b.set(t, "projects/p/.kioku/state.json", content)
 			if e := migrateV2(t.Context(), path, b, c, time.UnixMilli(5000)); e == nil {
@@ -448,5 +444,43 @@ func TestMigrationDropsConsumedViewChildState(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrationFailsUnfinishedJobsAndKeepsScheduledGeneration(t *testing.T) {
+	path, b, c, content := migrationFixture(t)
+	content.NextGenerateAt = time.UnixMilli(9000)
+	content.Jobs["q"] = legacyV2Job{ID: "q", ProjectID: "p", Status: "queued"}
+	content.Jobs["r"] = legacyV2Job{ID: "r", ProjectID: "p", Status: "running", Run: &legacyV2AgentRun{Phase: "finalizing"}}
+	content.Jobs["c"] = legacyV2Job{ID: "c", ProjectID: "p", Status: "completed", Run: &legacyV2AgentRun{Phase: "finalizing"}}
+	b.set(t, "projects/p/.kioku/state.json", content)
+	if e := migrateV2(t.Context(), path, b, c, time.UnixMilli(5000)); e != nil {
+		t.Fatal(e)
+	}
+	d, e := OpenDatabase(path, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer d.Close()
+	if e = d.Read(t.Context(), func(q *Queries) error {
+		for id, status := range map[string]string{"q": "failed", "r": "failed", "c": "completed"} {
+			j, e := q.Job(id)
+			if e != nil {
+				return e
+			}
+			if j.Status != status || (status == "failed" && j.Data.Error == nil) || (j.Data.Run != nil && !j.CleanupComplete) {
+				t.Errorf("job %s: %+v", id, j)
+			}
+		}
+		p, e := q.Project("p")
+		if e != nil {
+			return e
+		}
+		if p.NextGenerateAt == nil || *p.NextGenerateAt != 9000 {
+			t.Errorf("next generation: %v", p.NextGenerateAt)
+		}
+		return nil
+	}); e != nil {
+		t.Fatal(e)
 	}
 }

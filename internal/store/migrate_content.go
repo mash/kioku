@@ -41,9 +41,6 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		return errors.New("complete Wiki publication before migration")
 	}
 	project := ProjectRow{ID: old.ID, OrgID: old.OrgID, Slug: old.Slug, Created: migrationCreated(old.Created), NextGenerateAt: migrationTime(content.NextGenerateAt), Data: ProjectData{Name: old.Name, WikiUpdatedAt: migrationTime(content.WikiUpdatedAt)}}
-	if content.NextGenerateAt.After(time.Time{}) && !content.NextGenerateAt.IsZero() {
-		return errors.New("complete scheduled generation before migration")
-	}
 	for user, role := range old.Members {
 		p.projectMembers = append(p.projectMembers, [3]string{old.ID, user, role})
 	}
@@ -106,10 +103,16 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 		if !validID(id) || job.ID != id || job.ProjectID != old.ID {
 			return errors.New("legacy job identity mismatch")
 		}
-		if job.Status == "queued" || job.Status == "running" {
-			return errors.New("finish queued and running jobs before migration")
-		}
 		row := JobRow{ID: id, ProjectID: old.ID, Status: job.Status, Created: migrationCreated(job.Created), Kind: job.Kind, Data: JobData{UserID: job.UserID, AgentID: NullableString(job.AgentID), AgentBudgetCents: job.AgentBudgetCents, Automatic: job.Automatic, Error: NullableString(job.Error), Revision: NullableString(job.Revision), WikiStatus: NullableString(job.WikiStatus), Unchanged: job.Unchanged, Views: []ViewResultData{}}}
+		// The v2 process stopped before migration, so its unfinished jobs
+		// cannot continue. Record them as failed; the user can generate again.
+		if job.Status == "queued" || job.Status == "running" {
+			row.Status = "failed"
+			row.Data.Error = NullableString("stopped by the storage migration")
+			if row.Data.WikiStatus != nil {
+				row.Data.WikiStatus = NullableString("failed")
+			}
+		}
 		for _, v := range job.Views {
 			row.Data.Views = append(row.Data.Views, ViewResultData{ViewID: v.ViewID, Slug: v.Slug, Status: v.Status, Error: NullableString(v.Error)})
 		}
@@ -123,9 +126,8 @@ func (p *migrationPlan) readProject(ctx context.Context, old legacyV2Project, ob
 			row.Kind = "view"
 		}
 		if run := job.Run; run != nil {
-			if !run.CleanupComplete {
-				return errors.New("complete all runner cleanup before migration")
-			}
+			// Provider sessions and files of an unfinished cleanup expire on
+			// the provider side; v3 does not resume v2 cleanup.
 			row.CleanupComplete = true
 			row.Phase = &run.Phase
 			row.SessionID = NullableString(run.Ref.ID)

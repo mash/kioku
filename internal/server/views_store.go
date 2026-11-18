@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
@@ -172,7 +172,7 @@ func (s *Server) createViewLocked(ctx context.Context, pid string, body requestB
 			}
 		}
 		title, prompt := req.Title, req.Prompt
-		if strings.TrimSpace(title) == "" || strings.TrimSpace(prompt) == "" {
+		if !validViewSetting(title) || !validViewSetting(prompt) {
 			return fail(400, "title and prompt must contain text")
 		}
 		p, err := q.Project(pid)
@@ -213,25 +213,20 @@ func (s *Server) createViewLocked(ctx context.Context, pid string, body requestB
 	})
 	return result, err
 }
-func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body requestBody) (viewDefinition, error) {
+
+// Compare the settings displayed in a browser form, independent of generation.
+func viewSettingsVersion(view viewDefinition) string {
+	return auth.Hash(fmt.Sprintf("%s:%d:%s%s", view.ID, len(view.Title), view.Title, view.Prompt))
+}
+
+func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, settings func() (viewSettings, error)) (viewDefinition, error) {
 	var result viewDefinition
 	err := s.write(ctx, func(q *store.Queries) error {
-		var req struct {
-			Title  json.RawMessage `json:"title"`
-			Prompt json.RawMessage `json:"prompt"`
-		}
-		if err := body.decode(&req); err != nil {
-			return err
-		}
-		title, err := viewSettingText(req.Title)
+		change, err := settings()
 		if err != nil {
 			return err
 		}
-		prompt, err := viewSettingText(req.Prompt)
-		if err != nil {
-			return err
-		}
-		if title == nil && prompt == nil {
+		if change.title == nil && change.prompt == nil {
 			return fail(400, "provide title or prompt with text")
 		}
 		row, err := q.ViewBySlug(pid, slug)
@@ -245,21 +240,39 @@ func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body re
 		if err != nil {
 			return err
 		}
-		if title != nil {
-			row.Data.Title = title
-		}
-		if prompt != nil {
-			row.Data.Prompt = prompt
-		}
-		if err = q.PutView(row); err != nil {
-			return err
-		}
 		p, err := q.Project(pid)
 		if err != nil {
 			return err
 		}
 		project, err := projectProjection(q, p)
 		if err != nil {
+			return err
+		}
+		if change.version != "" {
+			current := s.viewProjection(row, project)
+			if change.version != viewSettingsVersion(current) {
+				return fail(409, "編集中に View の設定が更新されました")
+			}
+			// A form can display normalized text from an API write. Only
+			// persist fields that differ from what the browser displayed.
+			if change.title != nil && *change.title == viewFormTitle.Replace(current.Title) {
+				change.title = nil
+			}
+			if change.prompt != nil && *change.prompt == viewFormPrompt.Replace(current.Prompt) {
+				change.prompt = nil
+			}
+			if change.title == nil && change.prompt == nil {
+				result = current
+				return nil
+			}
+		}
+		if change.title != nil {
+			row.Data.Title = change.title
+		}
+		if change.prompt != nil {
+			row.Data.Prompt = change.prompt
+		}
+		if err = q.PutView(row); err != nil {
 			return err
 		}
 		result = s.viewProjection(row, project)

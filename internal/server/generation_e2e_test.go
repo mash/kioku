@@ -142,7 +142,7 @@ func TestE2EExecGeneration(t *testing.T) {
 			if job.Status != want {
 				t.Fatalf("result: %+v", job)
 			}
-			if mode == "view-failure" && (len(job.Views) != 1 || job.Views[0].Status != "failed" || job.Views[0].Error != "View の生成処理に失敗しました") {
+			if mode == "view-failure" && (len(job.Views) != 1 || job.Views[0].Status != "failed" || job.Views[0].Error != "View の実行エラーで生成が停止しました") {
 				t.Fatalf("view failure: %+v", job)
 			}
 			wantCost := int64(137)

@@ -41,7 +41,7 @@ func TestInspectStates(t *testing.T) {
 		t.Run(tc.status+"/"+tc.stop, func(t *testing.T) {
 			f.SetStatus(ref.ID, tc.status, tc.stop, 37)
 			got, err := r.Inspect(t.Context(), runner.Attempt{Key: spec.Key, Run: ref})
-			if err != nil || got.Run.ID != ref.ID || got.State != tc.state || got.Reason != tc.reason || got.Usage.CostCents == nil || *got.Usage.CostCents != 37 {
+			if err != nil || got.Run.ID != ref.ID || got.State != tc.state || got.Reason != tc.reason || got.BudgetReached != (tc.stop == "budget_reached") || got.Usage.CostCents == nil || *got.Usage.CostCents != 37 {
 				t.Fatal(got, err)
 			}
 		})

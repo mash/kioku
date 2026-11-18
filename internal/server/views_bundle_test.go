@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mash/kioku/internal/viewoutput"
 	"golang.org/x/net/html"
 )
 
@@ -169,7 +170,7 @@ func TestViewBundleRejectsInvalidEntriesAndReferences(t *testing.T) {
 func TestViewBundleBounds(t *testing.T) {
 	t.Parallel()
 	t.Run("compressed size", func(t *testing.T) {
-		oversized := make([]byte, maxViewArchiveBytes+1)
+		oversized := make([]byte, viewoutput.MaxArchiveBytes+1)
 		if _, err := readViewBundle(oversized); !errors.Is(err, errViewLimit) {
 			t.Fatalf("ZIP: got %v, want %v", err, errViewLimit)
 		}
@@ -182,16 +183,16 @@ func TestViewBundleBounds(t *testing.T) {
 			files := map[string][]byte{"index.html": []byte("<p>View</p>")}
 			switch name {
 			case "file count":
-				for i := range maxViewArchiveFiles {
+				for i := range viewoutput.MaxArchiveFiles {
 					files[fmt.Sprintf("assets/%d.css", i)] = []byte("p { display: block }")
 				}
 			case "expanded size":
-				sheet := bytes.Repeat([]byte{' '}, maxViewCSSBytes)
-				for i := range maxViewExpandedBytes / len(sheet) {
+				sheet := bytes.Repeat([]byte{' '}, viewoutput.MaxCSSBytes)
+				for i := range viewoutput.MaxExpandedBytes / len(sheet) {
 					files[fmt.Sprintf("assets/%d.css", i)] = sheet
 				}
 			case "file size":
-				files["summary.md"] = bytes.Repeat([]byte{'a'}, maxViewTextBytes+1)
+				files["summary.md"] = bytes.Repeat([]byte{'a'}, viewoutput.MaxTextBytes+1)
 			}
 			if _, err := readViewBundle(viewZIPFixture(t, files)); !errors.Is(err, errViewLimit) {
 				t.Fatalf("ZIP: got %v, want %v", err, errViewLimit)
@@ -200,5 +201,25 @@ func TestViewBundleBounds(t *testing.T) {
 				t.Fatalf("tar.gz: got %v, want %v", err, errViewLimit)
 			}
 		})
+	}
+}
+
+func TestViewOutputDetailsIdentifySyntaxAndOmitValues(t *testing.T) {
+	t.Parallel()
+	const privateValue = "private-value"
+	for _, tc := range []struct {
+		file, body, detail string
+	}{
+		{"index.html", `<div onclick="private-value"></div>`, `属性 "onclick"`},
+		{"index.html", `<a href="https://example.com/private-value">link</a>`, "a の href"},
+		{"assets/style.css", `@import "private-value";`, `規則 "@import"`},
+		{"data.json", privateValue, "有効な JSON"},
+	} {
+		files := map[string][]byte{"index.html": []byte("<h1>View</h1>"), tc.file: []byte(tc.body)}
+		_, err := readViewRunnerOutput(viewTarFixture(t, files))
+		if err == nil || !strings.Contains(err.Error(), tc.file) ||
+			!strings.Contains(err.Error(), tc.detail) || strings.Contains(err.Error(), privateValue) {
+			t.Errorf("diagnostic for %s: %v", tc.detail, err)
+		}
 	}
 }

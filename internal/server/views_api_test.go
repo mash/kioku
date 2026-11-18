@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
@@ -48,6 +49,15 @@ func TestViewSettingsAuthorizationAndShape(t *testing.T) {
 		t.Errorf("duplicate view returned %d", code)
 	}
 	for _, token := range []string{readMember, readToken, writeToken} {
+		var list struct{ Views []viewListItem }
+		if code := f.request("GET", path, token, nil, &list); code != 200 || len(list.Views) != 3 {
+			t.Fatalf("list returned %d: %+v", code, list.Views)
+		}
+		for _, slug := range []string{"wiki", "project-map", "delivery"} {
+			if !slices.ContainsFunc(list.Views, func(v viewListItem) bool { return v.Slug == slug }) {
+				t.Errorf("list missing %s: %+v", slug, list.Views)
+			}
+		}
 		var detail map[string]any
 		if code := f.request("GET", delivery, token, nil, &detail); code != 200 {
 			t.Fatalf("detail returned %d", code)
@@ -68,8 +78,10 @@ func TestViewSettingsAuthorizationAndShape(t *testing.T) {
 	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "acme/other-platform"}, &otherProject); code != 201 {
 		t.Fatal(code)
 	}
-	if code := f.request("GET", "/api/projects/"+otherProject.ID+"/views/project-map", readToken, nil, nil); code != 404 {
-		t.Errorf("cross-project token read returned %d", code)
+	for _, suffix := range []string{"/views", "/views/project-map"} {
+		if code := f.request("GET", "/api/projects/"+otherProject.ID+suffix, readToken, nil, nil); code != 404 {
+			t.Errorf("cross-project token read of %s returned %d", suffix, code)
+		}
 	}
 
 	for _, invalid := range []map[string]any{{}, {"prompt": " "}, {"title": nil, "prompt": "Valid prompt"}, {"prompt": 42}} {

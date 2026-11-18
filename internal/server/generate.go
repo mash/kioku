@@ -76,6 +76,9 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, uid string) er
 }
 
 func (s *Server) queueGeneration(q *store.Queries, p store.ProjectRow, uid, agentID string, budget int64, automatic bool, now time.Time) (store.JobRow, error) {
+	if budget == 0 {
+		budget = s.Config.AgentMaxSessionCents
+	}
 	job := store.JobRow{ID: auth.Token()[:20], Kind: "generate", ProjectID: p.ID, Status: "queued", Created: now.UnixMilli(), Data: store.JobData{UserID: uid, AgentID: store.NullableString(agentID), AgentBudgetCents: budget, Automatic: automatic, WikiStatus: store.NullableString("pending"), Views: []store.ViewResultData{}}}
 	_, pending, err := q.ProjectCounts(p.ID)
 	if err != nil {

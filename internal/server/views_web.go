@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/model"
@@ -13,29 +14,6 @@ import (
 // The Kioku settings script runs in the parent page. Generated content is
 // rendered in a sandboxed frame with its own stricter policy.
 const viewSettingsScript = `
-for (const settings of document.querySelectorAll('details[data-view-settings]')) {
-  settings.addEventListener('toggle', async () => {
-    if (!settings.open || settings.dataset.loaded) return;
-    const form = settings.querySelector('form[data-view-action="PATCH"]');
-    const fields = form.querySelector('fieldset');
-    const status = form.querySelector('[role="alert"]');
-    try {
-      const response = await fetch(form.action);
-      const value = await response.json();
-      if (!response.ok) {
-        status.textContent = value.error || 'View の設定を取得できませんでした';
-        return;
-      }
-      form.elements.namedItem('title').value = value.title;
-      form.elements.namedItem('prompt').value = value.prompt;
-      fields.disabled = false;
-      status.textContent = '';
-      settings.dataset.loaded = 'true';
-    } catch {
-      status.textContent = 'View の設定を取得できませんでした';
-    }
-  });
-}
 for (const form of document.querySelectorAll('form[data-view-action]')) {
   for (const button of form.querySelectorAll('[data-preset-title]')) {
     button.addEventListener('click', () => {
@@ -93,7 +71,38 @@ func makeViewPageItem(v viewDefinition) viewPageItem {
 	return viewPageItem{v.Slug, v.Title, viewStatusLabels[v.Status], v.Error, v.GeneratedAt}
 }
 
-const viewTemplate = `{{define "body"}}
+// Match the values browsers expose for a text input and a textarea.
+var (
+	viewFormTitle  = strings.NewReplacer("\r", "", "\n", "", "\x00", "\ufffd")
+	viewFormPrompt = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\x00", "\ufffd")
+)
+
+type viewEditForm struct {
+	API, ViewURL, Title, Prompt, Version, Error string
+	Conflict                                    bool
+}
+
+const viewEditTemplate = `{{define "view-edit"}}
+  {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+  {{if .Conflict}}<p><a href="{{.ViewURL}}" target="_blank" rel="noopener">現在の設定を開く</a></p>{{end}}
+  <form method="post" action="{{.API}}">
+    <input type="hidden" name="version" value="{{.Version}}">
+    <label>タイトル <input name="title" value="{{.Title}}" required{{if .Conflict}} readonly{{end}}></label>
+    <label>プロンプト <textarea name="prompt" required{{if .Conflict}} readonly{{end}}>
+{{.Prompt}}</textarea></label>
+    {{if not .Conflict}}<button>保存</button>{{end}}
+  </form>
+{{end}}`
+
+func renderViewEditError(w http.ResponseWriter, r *http.Request, uid string, edit viewEditForm, status int) error {
+	w.Header().Set("Referrer-Policy", "same-origin")
+	return renderStatus(w, status, "View の設定", edit, viewEditTemplate+`{{define "body"}}
+<h1>View の設定</h1>{{template "view-edit" .}}
+<p><a href="{{.ViewURL}}">View に戻る</a></p>
+{{end}}`, headerFor(r, uid))
+}
+
+const viewTemplate = viewEditTemplate + `{{define "body"}}
 <style>
 iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8px}
 .view-settings textarea{display:block;width:100%;min-height:8rem}
@@ -110,24 +119,17 @@ iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8
   {{if .Citations}}<h2>Wiki の出典</h2><ul>{{range .Citations}}<li><a href="/{{$.Namespace}}?file={{.Path}}">{{.Label}}</a></li>{{end}}</ul>{{end}}
 {{else if not .Pending}}<p>未生成</p>{{end}}
 {{if .CanEdit}}
-<details class="view-settings" data-view-settings>
+<details class="view-settings">
   <summary>View の設定</summary>
-  <form method="post" action="{{.API}}" data-view-action="PATCH">
-    <fieldset disabled>
-      <label>タイトル <input name="title" required></label>
-      <label>プロンプト <textarea name="prompt" required></textarea></label>
-      <button>保存</button>
-    </fieldset>
-    <p role="alert"></p>
-  </form>
+  {{template "view-edit" .Edit}}
   {{if not .IsWiki}}
   <form method="post" action="{{.API}}" data-view-action="DELETE" data-success="/{{.Namespace}}">
     <button>View を削除</button>
     <p role="alert"></p>
   </form>
+  ` + viewSettingsScriptTag + `
   {{end}}
 </details>
-` + viewSettingsScriptTag + `
 {{end}}
 {{end}}`
 
@@ -173,12 +175,19 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	data := struct {
 		Namespace, API, Document              string
 		View                                  viewPageItem
+		Edit                                  viewEditForm
 		CanEdit, WikiUpdated, Pending, IsWiki bool
 		Citations                             []viewCitation
 	}{
 		Namespace: p.Namespace, API: "/api/projects/" + p.Namespace + "/views/" + v.Slug,
 		View: makeViewPageItem(v), CanEdit: current.Members[uid] == "owner",
 		Pending: v.Status == "pending", IsWiki: isWiki,
+	}
+	if data.CanEdit {
+		data.Edit = viewEditForm{
+			API: data.API, Title: viewFormTitle.Replace(v.Title),
+			Prompt: viewFormPrompt.Replace(v.Prompt), Version: viewSettingsVersion(v),
+		}
 	}
 	if !isWiki {
 		body, err := s.readViewBundleLocked(ctx, p.ID, v)
@@ -203,8 +212,10 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	policy := pageCSP + "; img-src data:"
 	if data.CanEdit {
-		policy += viewSettingsCSP
 		w.Header().Set("Referrer-Policy", "same-origin")
+		if !isWiki {
+			policy += viewSettingsCSP
+		}
 	}
 	w.Header().Set("Content-Security-Policy", policy)
 	return render(w, v.Title, data, viewTemplate, headerFor(r, uid))

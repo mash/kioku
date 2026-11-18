@@ -148,7 +148,9 @@ func TestViewEditDeleteAndSourceRemovalFenceResults(t *testing.T) {
 	fixtureViewBundle(t, f, p.ID, v.ID, "old-job", "wiki-1", []byte("published"))
 	child := fixtureViewJob(t, f, p.ID, v.ID, "late-job", "wiki-1")
 	prompt := "New prompt"
-	updated, err := f.s.updateViewLocked(ctx, p.ID, v.Slug, requestBody{raw: []byte(`{"prompt":"New prompt"}`)})
+	updated, err := f.s.updateViewLocked(ctx, p.ID, v.Slug, func() (viewSettings, error) {
+		return parseViewSettingsJSON(requestBody{raw: []byte(`{"prompt":"New prompt"}`)})
+	})
 	fixtureCheck(t, err)
 	if updated.Prompt != prompt || updated.JobID != "old-job" {
 		t.Fatal(updated)

@@ -21,6 +21,13 @@ func TestServerGenerationBudget(t *testing.T) {
 			if code := f.request("POST", "/api/projects/"+p.Namespace+"/generate", token, map[string]any{"budget_cents": budget}, &j); code != 202 {
 				t.Fatal(code)
 			}
+			want := budget
+			if want == 0 {
+				want = f.s.Config.AgentMaxSessionCents
+			}
+			if j.AgentBudgetCents != want {
+				t.Fatalf("accepted job budget = %d, want %d", j.AgentBudgetCents, want)
+			}
 			if err := f.stateStore.Write(context.Background(), func(st *store.Queries) error {
 				j = fixtureJobsGet(t, st, j.ID)
 				j.Status = "queued"
@@ -33,10 +40,6 @@ func TestServerGenerationBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 			actual := storedJob(t, f, j.ID)
-			want := budget
-			if want == 0 {
-				want = f.s.Config.AgentMaxSessionCents
-			}
 			if actual.Run == nil || actual.Run.BudgetCents != want {
 				t.Fatalf("want budget %d, got %+v", want, actual.Run)
 			}

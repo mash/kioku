@@ -29,7 +29,7 @@ func (s *Server) authorizeAgent(r *http.Request, principal authenticatedSession)
 		return fail(404, "project not found")
 	}
 	switch r.Pattern {
-	case "GET /api/me", "GET /api/projects", "POST /api/logout", "GET /api/projects/{org}/{slug}/snapshot", "GET /api/projects/{org}/{slug}/views/{view}", "GET /api/projects/{org}/{slug}/jobs/{job}", "GET /api/projects/{org}/{slug}/usage":
+	case "GET /api/me", "GET /api/projects", "POST /api/logout", "GET /api/projects/{org}/{slug}/snapshot", "GET /api/projects/{org}/{slug}/views", "GET /api/projects/{org}/{slug}/views/{view}", "GET /api/projects/{org}/{slug}/jobs/{job}", "GET /api/projects/{org}/{slug}/usage":
 		return nil
 	case "POST /api/projects/{org}/{slug}/put", "POST /api/projects/{org}/{slug}/generate":
 		if principal.Role == "write" {

@@ -120,6 +120,7 @@ func inspectSessions(ctx context.Context, client Client, a runner.Attempt, ids [
 				state = runner.StateRunning
 			default:
 				reason = "Claude session did not finish successfully"
+				out.BudgetReached = out.BudgetReached || s.LastStopReason == "budget_reached"
 			}
 		}
 		if state == runner.StateUnknown {

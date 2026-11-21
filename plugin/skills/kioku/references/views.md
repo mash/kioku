@@ -1,6 +1,6 @@
 # View の設定と生成
 
-1. HTML の View は、プロンプトを書く前に `kioku view rules` を実行して出力規則を読む。許可された HTML 要素・属性、参照先、CSS、`index.html`、任意の `summary.md`・`data.json`、アセットとサイズの上限が出る。プロンプトには表示したい項目、Wiki の根拠、表示順、必要な任意ファイルを書く。まず数段落か短い箇条書きにまとめる。
+1. HTML の View は、プロンプトを書く前に [出力規則](view-output.md) を読む。プロンプトには表示したい項目、Wiki の根拠、表示順、必要な任意ファイルを書く。まず数段落か短い箇条書きにまとめる。
 2. 対象プロジェクトは通常の選択手順で確定し、`kioku -n NAMESPACE view list` で slug を確認する。`kioku -n NAMESPACE view show SLUG` で現在の設定と直近の生成状態を読む。
 3. プロジェクト所有者のログインで、UTF-8 のプロンプトをファイルに保存し、`kioku -n NAMESPACE view set --prompt-file FILE SLUG` を実行する。既存 View のタイトルはそのまま使う。新規 View の作成は Web のプロジェクト画面から行う。予約 slug `wiki` は Wiki の Markdown の整理方法を設定する。HTML の出力規則はほかの View に適用する。
 4. `kioku -n NAMESPACE generate --wait` でプロジェクトの生成を待つ。Wiki の処理後、残りの予算で View が作成順に生成される。既に Wiki があり、inbox が空でも通常の View は生成できる。Wiki のプロンプトは次に Wiki が生成されるときに使われる。失敗した View の後にある View はスキップされる。

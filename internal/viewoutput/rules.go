@@ -1,5 +1,5 @@
 // Package viewoutput describes the contract shared by the View generator,
-// validator, and CLI.
+// validator, and Kioku skill.
 package viewoutput
 
 import (

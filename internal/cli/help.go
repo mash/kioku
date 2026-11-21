@@ -35,7 +35,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   capture run [--min N] [--plugin-root DIR] | capture unlock --token TOKEN
   queue add URL NOTE | queue list | queue remove [--capture-token TOKEN] URL... [--reason TEXT]
   put [--capture-token TOKEN] FILE...                        Save sources from files or directories
-  view rules|list|show|set   Inspect View rules, settings, and generation results
+  view list|show|set         Inspect and update View settings
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [--description TEXT]           Bind on first pull; fetch one project
   status | open

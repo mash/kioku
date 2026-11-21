@@ -13,14 +13,14 @@ import (
 	"github.com/mash/kioku/internal/model"
 )
 
-func TestViewGuideIsAvailableWithoutProjectOrCredentials(t *testing.T) {
+func TestViewHelpIsAvailableWithoutProjectOrCredentials(t *testing.T) {
 	var out, stderr bytes.Buffer
-	if err := Run(t.Context(), []string{"-C", "/nonexistent-kioku-project", "view", "rules"}, &out, &stderr); err != nil {
+	if err := Run(t.Context(), []string{"-C", "/nonexistent-kioku-project", "view", "--help"}, &out, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"index.html", "summary.md", "data.json", "Allowed HTML elements", "Global attributes", "Wiki page", "180 bytes per archive path"} {
+	for _, want := range []string{"list", "show SLUG", "set --prompt-file FILE SLUG"} {
 		if !strings.Contains(out.String(), want) {
-			t.Errorf("rules missing %q", want)
+			t.Errorf("view help missing %q", want)
 		}
 	}
 }

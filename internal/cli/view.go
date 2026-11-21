@@ -12,12 +12,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/model"
-	"github.com/mash/kioku/internal/viewoutput"
 )
 
 const viewHelp = `Usage: kioku [-n ORG/PROJECT] view COMMAND
 
-  rules                         Show the output contract (offline)
   list                          List project Views and generation status
   show SLUG                     Show the saved settings and last result
   set --prompt-file FILE SLUG    Save a UTF-8 prompt as the project owner
@@ -95,19 +93,4 @@ func readViewPrompt(name string) (string, error) {
 		return "", errors.New("View prompt must contain UTF-8 text")
 	}
 	return prompt, nil
-}
-
-func viewGuide(out io.Writer, args []string) (bool, error) {
-	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprint(out, viewHelp)
-		return true, err
-	}
-	if args[0] != "rules" {
-		return false, nil
-	}
-	if len(args) != 1 {
-		return true, errors.New("usage: kioku view rules")
-	}
-	_, err := fmt.Fprint(out, viewoutput.Rules())
-	return true, err
 }

@@ -73,10 +73,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		_, err = fmt.Fprint(out, help)
 		return err
 	}
-	if commands[0] == "view" {
-		if handled, err := viewGuide(out, commands[1:]); handled {
-			return err
-		}
+	if commands[0] == "view" && (len(commands) == 1 ||
+		len(commands) == 2 && slices.Contains([]string{"help", "--help", "-h"}, commands[1])) {
+		_, err = fmt.Fprint(out, viewHelp)
+		return err
 	}
 	if commands[0] == "fetch" {
 		return fetchCommand(ctx, commands[1:], out)

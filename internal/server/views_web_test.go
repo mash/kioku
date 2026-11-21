@@ -1,10 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -73,7 +74,8 @@ func TestWikiViewPage(t *testing.T) {
 				}
 				policy := pageCSP + "; img-src data:"
 				if token == owner {
-					for _, want := range []string{"View の設定", `method="post" action="` + api + `"`, `name="title" value="Notes"`, `name="prompt"`, "Organize decisions by date."} {
+					policy += viewSettingsCSP
+					for _, want := range []string{"View の設定", `method="dialog" action="` + api + `" data-view-action="PATCH"`, `name="title" value="Notes"`, `name="prompt"`, "Organize decisions by date."} {
 						if !strings.Contains(html, want) {
 							t.Fatalf("owner page missing %q", want)
 						}
@@ -103,18 +105,23 @@ func TestWikiViewPage(t *testing.T) {
 		})
 	}
 	page := browserPage(t, f, path, owner).Body.String()
-	version := regexp.MustCompile(`name="version" value="([^"]+)"`).FindStringSubmatch(page)
+	version := regexp.MustCompile(`data-settings-version="([^"]+)"`).FindStringSubmatch(page)
 	if len(version) != 2 {
 		t.Fatal("form is missing the current settings version")
 	}
 	const savedPrompt = "First line\n</textarea><p>Escaped prompt</p>"
-	form := url.Values{"title": {"Updated title"}, "prompt": {strings.ReplaceAll(savedPrompt, "\n", "\r\n")}, "version": {version[1]}}
-	post := func(token, origin string) *httptest.ResponseRecorder {
+	settings := map[string]string{"title": "Updated title", "prompt": savedPrompt}
+	patch := func(token, origin string) *httptest.ResponseRecorder {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodPost, api, strings.NewReader(form.Encode()))
+		body, err := json.Marshal(settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPatch, api, bytes.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: "kioku_session", Value: token})
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Origin", origin)
+		r.Header.Set(viewSettingsVersionHeader, version[1])
 		w := httptest.NewRecorder()
 		f.s.Handler().ServeHTTP(w, r)
 		return w
@@ -126,72 +133,54 @@ func TestWikiViewPage(t *testing.T) {
 		{owner, "", http.StatusForbidden},
 		{owner, "https://elsewhere.example", http.StatusForbidden},
 		{reader, f.s.Config.BaseURL, http.StatusForbidden},
-		{owner, f.s.Config.BaseURL, http.StatusSeeOther},
+		{owner, f.s.Config.BaseURL, http.StatusOK},
 	} {
-		w := post(tc.token, tc.origin)
-		if w.Code != tc.status || w.Code == http.StatusSeeOther && w.Header().Get("Location") != path {
-			t.Fatalf("form status %d, want %d: %s", w.Code, tc.status, w.Body.String())
+		w := patch(tc.token, tc.origin)
+		if w.Code != tc.status {
+			t.Fatalf("PATCH status %d, want %d: %s", w.Code, tc.status, w.Body.String())
 		}
 	}
 	page = browserPage(t, f, path, owner).Body.String()
 	if !strings.Contains(page, "Updated title") || !strings.Contains(page, "&lt;/textarea&gt;") || strings.Contains(page, savedPrompt) {
 		t.Fatal("saved settings were not rendered as escaped text", page)
 	}
-	form.Set("prompt", "stale edit")
-	if w := post(owner, f.s.Config.BaseURL); w.Code != http.StatusConflict ||
-		!strings.Contains(w.Body.String(), "stale edit") || strings.Contains(w.Body.String(), "<button>保存</button>") {
-		t.Fatalf("stale edit was not retained and blocked: %d %s", w.Code, w.Body.String())
+	settings["prompt"] = "stale edit"
+	if w := patch(owner, f.s.Config.BaseURL); w.Code != http.StatusConflict {
+		t.Fatalf("stale settings were not blocked: %d %s", w.Code, w.Body.String())
 	}
-	form.Set("prompt", " ")
-	form.Set("title", "draft title")
-	if w := post(owner, f.s.Config.BaseURL); w.Code != http.StatusBadRequest ||
-		!strings.Contains(w.Body.String(), `role="alert"`) || !strings.Contains(w.Body.String(), `value="draft title"`) {
-		t.Fatalf("invalid edit was not retained: %d %s", w.Code, w.Body.String())
+	settings["prompt"] = " "
+	if w := patch(owner, f.s.Config.BaseURL); w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid settings were not blocked: %d %s", w.Code, w.Body.String())
 	}
 	if code := f.request("GET", api, owner, nil, &detail); code != 200 || detail.Title != "Updated title" || detail.Prompt != savedPrompt {
 		t.Fatalf("failed submission changed settings: %d %+v", code, detail)
 	}
-	if code := f.request("PATCH", api, owner, map[string]string{"title": "API\nTitle"}, &detail); code != http.StatusOK {
-		t.Fatal("JSON title edit:", code)
-	}
-	form.Set("title", "APITitle")
-	form.Set("prompt", "Changed in Web")
-	form.Set("version", viewSettingsVersion(detail.viewDefinition))
-	if w := post(owner, f.s.Config.BaseURL); w.Code != http.StatusSeeOther {
-		t.Fatalf("form prompt edit returned %d: %s", w.Code, w.Body.String())
-	}
-	if code := f.request("GET", api, owner, nil, &detail); code != http.StatusOK || detail.Title != "API\nTitle" || detail.Prompt != "Changed in Web" {
-		t.Fatalf("editing the prompt changed an unedited title: %d %+v", code, detail)
-	}
 	for _, token := range []string{"", f.login("wiki-outsider@example.com")} {
-		if w := browserPage(t, f, path, token); w.Code != 404 || strings.Contains(w.Body.String(), "Changed in Web") {
+		if w := browserPage(t, f, path, token); w.Code != 404 || strings.Contains(w.Body.String(), "Updated title") {
 			t.Fatalf("unauthorized page: %d", w.Code)
 		}
 	}
 }
 
-func TestViewFormAcceptsJSONSettingsWithMultibyteText(t *testing.T) {
+func TestViewPatchCanEditTitleWithoutResendingPrompt(t *testing.T) {
 	f, owner, p := orgProject(t)
 	api := "/api/projects/" + p.Namespace + "/views/project-map"
 	prompt := strings.Repeat("議", model.MaxJSONRequestBytes/9+1) + "\r\nLast line"
 	var view viewDefinition
 	if code := f.request("PATCH", api, owner, map[string]string{"prompt": prompt}, &view); code != http.StatusOK {
-		t.Fatal("JSON settings:", code)
+		t.Fatal("saving prompt:", code)
 	}
-	fields := url.Values{"title": {"New title"}, "prompt": {prompt}, "version": {viewSettingsVersion(view)}}.Encode()
-	if len(fields) <= model.MaxJSONRequestBytes {
-		t.Fatal("form fixture does not exercise percent encoding expansion")
-	}
-	r := httptest.NewRequest(http.MethodPost, api, strings.NewReader(fields))
+	r := httptest.NewRequest(http.MethodPatch, api, strings.NewReader(`{"title":"New title"}`))
 	r.AddCookie(&http.Cookie{Name: "kioku_session", Value: owner})
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Origin", f.s.Config.BaseURL)
+	r.Header.Set(viewSettingsVersionHeader, viewSettingsVersion(view))
 	w := httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("form save returned %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("saving title returned %d", w.Code)
 	}
 	if code := f.request("GET", api, owner, nil, &view); code != http.StatusOK || view.Title != "New title" || view.Prompt != prompt {
-		t.Fatalf("large settings were not saved: code %d, title %q, prompt bytes %d", code, view.Title, len(view.Prompt))
+		t.Fatalf("title update changed the prompt: code %d, title %q, prompt bytes %d", code, view.Title, len(view.Prompt))
 	}
 }

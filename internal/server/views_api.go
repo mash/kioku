@@ -2,10 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
-	"mime"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -111,60 +108,19 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	return nil
 }
 
+const viewSettingsVersionHeader = "Kioku-View-Settings-Version"
+
 func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
-	form := r.Method == http.MethodPost
-	var limit int64 = model.MaxJSONRequestBytes
-	if form {
-		// Check ownership before reading the larger browser request. The
-		// mutation rechecks permissions before it parses or stores settings.
-		if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
-			_, err := owner(q, pid, uid)
-			return err
-		}); err != nil {
-			return err
-		}
-		// Bound percent encoding separately from the decoded form, which
-		// counts both bytes of CRLF line breaks. Reserve space for metadata.
-		limit = 3*model.MaxJSONRequestBytes + 256
-	}
-	body := readBoundedBody(w, r, limit)
+	body := readBody(w, r)
 	unlock, err := s.storage.lock(r.Context(), pid)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	// Decode inside the mutation so permission errors still precede validation.
-	namespace := r.PathValue("org") + "/" + r.PathValue("slug")
-	slug := r.PathValue("view")
-	var edit viewEditForm
-	view, err := s.updateViewLocked(r.Context(), pid, slug, func() (viewSettings, error) {
-		if !form {
-			return parseViewSettingsJSON(body)
-		}
-		var err error
-		edit, err = parseViewSettingsForm(r.Header.Get("Content-Type"), body)
-		if err != nil {
-			return viewSettings{}, err
-		}
-		return viewSettings{title: &edit.Title, prompt: &edit.Prompt, version: edit.Version}, nil
-	})
+	view, err := s.updateViewLocked(r.Context(), pid, r.PathValue("view"), body, r.Header.Get(viewSettingsVersionHeader))
 	if err != nil {
-		var problem apiError
-		if form && edit.Version != "" && errors.As(err, &problem) &&
-			(problem.status == http.StatusBadRequest || problem.status == http.StatusConflict) {
-			edit.API = r.URL.Path
-			edit.ViewURL = "/" + namespace + "/views/" + slug
-			edit.Error = problem.message
-			edit.Conflict = problem.status == http.StatusConflict
-			return renderViewEditError(w, r, uid, edit, problem.status)
-		}
 		return err
-	}
-	if form {
-		target := "/" + namespace + "/views/" + view.Slug
-		http.Redirect(w, r, target, http.StatusSeeOther)
-		return nil
 	}
 	if view.Slug == wikiViewSlug {
 		jsonOut(w, 200, viewDetail{viewDefinition: view})
@@ -172,50 +128,6 @@ func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) 
 	}
 	jsonOut(w, 200, view)
 	return nil
-}
-
-type viewSettings struct {
-	title, prompt *string
-	version       string
-}
-
-func parseViewSettingsJSON(body requestBody) (viewSettings, error) {
-	var req struct {
-		Title  json.RawMessage `json:"title"`
-		Prompt json.RawMessage `json:"prompt"`
-	}
-	if err := body.decode(&req); err != nil {
-		return viewSettings{}, err
-	}
-	title, err := viewSettingText(req.Title)
-	if err != nil {
-		return viewSettings{}, err
-	}
-	prompt, err := viewSettingText(req.Prompt)
-	return viewSettings{title: title, prompt: prompt}, err
-}
-
-func parseViewSettingsForm(contentType string, body requestBody) (viewEditForm, error) {
-	if mediaType, _, _ := mime.ParseMediaType(contentType); mediaType != "application/x-www-form-urlencoded" {
-		return viewEditForm{}, fail(415, "View settings form requires application/x-www-form-urlencoded")
-	}
-	if body.err != nil {
-		return viewEditForm{}, fail(400, "View の設定フォームが大きすぎます")
-	}
-	values, err := url.ParseQuery(string(body.raw))
-	if err != nil || len(values) != 3 || len(values["title"]) != 1 || len(values["prompt"]) != 1 ||
-		len(values["version"]) != 1 || len(values.Get("version")) != 64 {
-		return viewEditForm{}, fail(400, "invalid View settings form")
-	}
-	title, prompt := values.Get("title"), values.Get("prompt")
-	if len(title)+len(prompt) > model.MaxJSONRequestBytes {
-		return viewEditForm{}, fail(400, "View の設定は 16 MiB 以下にしてください")
-	}
-	edit := viewEditForm{Title: viewFormTitle.Replace(title), Prompt: viewFormPrompt.Replace(prompt), Version: values.Get("version")}
-	if !validViewSetting(edit.Title) || !validViewSetting(edit.Prompt) {
-		return edit, fail(400, "タイトルとプロンプトを入力してください")
-	}
-	return edit, nil
 }
 
 func viewSettingText(raw json.RawMessage) (*string, error) {

@@ -219,14 +219,25 @@ func viewSettingsVersion(view viewDefinition) string {
 	return auth.Hash(fmt.Sprintf("%s:%d:%s%s", view.ID, len(view.Title), view.Title, view.Prompt))
 }
 
-func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, settings func() (viewSettings, error)) (viewDefinition, error) {
+func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body requestBody, version string) (viewDefinition, error) {
 	var result viewDefinition
 	err := s.write(ctx, func(q *store.Queries) error {
-		change, err := settings()
+		var req struct {
+			Title  json.RawMessage `json:"title"`
+			Prompt json.RawMessage `json:"prompt"`
+		}
+		if err := body.decode(&req); err != nil {
+			return err
+		}
+		title, err := viewSettingText(req.Title)
 		if err != nil {
 			return err
 		}
-		if change.title == nil && change.prompt == nil {
+		prompt, err := viewSettingText(req.Prompt)
+		if err != nil {
+			return err
+		}
+		if title == nil && prompt == nil {
 			return fail(400, "provide title or prompt with text")
 		}
 		row, err := q.ViewBySlug(pid, slug)
@@ -248,29 +259,14 @@ func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, setting
 		if err != nil {
 			return err
 		}
-		if change.version != "" {
-			current := s.viewProjection(row, project)
-			if change.version != viewSettingsVersion(current) {
-				return fail(409, "編集中に View の設定が更新されました")
-			}
-			// A form can display normalized text from an API write. Only
-			// persist fields that differ from what the browser displayed.
-			if change.title != nil && *change.title == viewFormTitle.Replace(current.Title) {
-				change.title = nil
-			}
-			if change.prompt != nil && *change.prompt == viewFormPrompt.Replace(current.Prompt) {
-				change.prompt = nil
-			}
-			if change.title == nil && change.prompt == nil {
-				result = current
-				return nil
-			}
+		if version != "" && version != viewSettingsVersion(s.viewProjection(row, project)) {
+			return fail(409, "編集中に View の設定が更新されました")
 		}
-		if change.title != nil {
-			row.Data.Title = change.title
+		if title != nil {
+			row.Data.Title = title
 		}
-		if change.prompt != nil {
-			row.Data.Prompt = change.prompt
+		if prompt != nil {
+			row.Data.Prompt = prompt
 		}
 		if err = q.PutView(row); err != nil {
 			return err

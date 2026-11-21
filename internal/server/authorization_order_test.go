@@ -30,7 +30,6 @@ func TestAuthorizationRunsBeforeInputValidation(t *testing.T) {
 	}{
 		{"POST", "/api/projects/" + p.ID + "/views", 403, 400},
 		{"PATCH", "/api/projects/" + p.ID + "/views/project-map", 403, 400},
-		{"POST", "/api/projects/" + p.ID + "/views/project-map", 403, 415},
 		{"POST", "/api/projects/" + p.ID + "/owner", 403, 400},
 		{"POST", "/api/orgs/" + org + "/owner", 404, 400},
 	} {

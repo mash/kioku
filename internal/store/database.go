@@ -57,7 +57,9 @@ func catalogConnection(path string, create, readOnly bool) (*sql.DB, error) {
 		}
 	}
 	u := url.URL{Scheme: "file", Path: abs}
-	q := url.Values{"mode": {"rw"}, "_pragma": {"busy_timeout(5000)", "synchronous(FULL)", "secure_delete(ON)"}}
+	// mmap_size lets reads share the OS page cache instead of copying pages through read(2).
+	// cache_size is per connection (negative = KiB), so the five connections cap at about 160 MiB.
+	q := url.Values{"mode": {"rw"}, "_pragma": {"busy_timeout(5000)", "synchronous(FULL)", "secure_delete(ON)", "mmap_size(134217728)", "cache_size(-32000)"}}
 	if readOnly {
 		q.Add("_pragma", "query_only(ON)")
 	} else {

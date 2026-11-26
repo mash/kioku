@@ -192,8 +192,10 @@ func (f *fixture) driveViewGeneration(parent fixtureJob) {
 	t := f.t
 	f.t.Helper()
 	ctx := f.t.Context()
-	if err := f.s.storage.advanceViews(ctx, parent.ID); err != nil {
-		f.t.Fatal(err)
+	if !f.worker {
+		if err := f.s.storage.advanceViews(ctx, parent.ID); err != nil {
+			f.t.Fatal(err)
+		}
 	}
 	parent = storedJob(f.t, f, parent.ID)
 	if parent.ViewGeneration == nil || parent.ViewGeneration.ChildID == "" {
@@ -228,16 +230,19 @@ func (f *fixture) driveViewGeneration(parent fixtureJob) {
 
 func (f *fixture) completeFixtureViews(parent fixtureJob) fixtureJob {
 	f.t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for parent.ViewGeneration != nil && time.Now().Before(deadline) {
-		f.driveViewGeneration(parent)
-		parent = storedJob(f.t, f, parent.ID)
-		if parent.ViewGeneration != nil {
-			time.Sleep(10 * time.Millisecond)
-		}
+	if parent.ViewGeneration != nil && (f.worker || f.auto == nil) {
+		f.t.Fatal("completeFixtureViews requires a fake runner without a background worker")
 	}
-	if parent.ViewGeneration != nil {
-		f.t.Fatal("View generation did not finish")
+	for parent.ViewGeneration != nil {
+		f.driveViewGeneration(parent)
+		if err := f.s.storage.advanceViews(f.t.Context(), parent.ID); err != nil {
+			f.t.Fatal(err)
+		}
+		next := storedJob(f.t, f, parent.ID)
+		if next.ViewGeneration != nil && next.ViewGeneration.Next <= parent.ViewGeneration.Next {
+			f.t.Fatalf("View generation did not advance: parent=%s next=%d child=%q", parent.ID, next.ViewGeneration.Next, next.ViewGeneration.ChildID)
+		}
+		parent = next
 	}
 	return parent
 }

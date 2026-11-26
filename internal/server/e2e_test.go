@@ -33,9 +33,15 @@ type e2e struct {
 	url    string
 	client *http.Client
 	db     *store.Database
+	dir    string
 }
 
 func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
+	t.Helper()
+	return newConfiguredE2E(t, nil, configure...)
+}
+
+func newConfiguredE2E(t *testing.T, configureServer func(*Server), configure ...func(*Server, *runners.Config)) *e2e {
 	t.Helper()
 	dir := t.TempDir()
 	objects := local.Store{Dir: filepath.Join(dir, "objects")}
@@ -47,11 +53,16 @@ func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
 	}
 	t.Cleanup(func() { db.Close() })
 	s := New(Config{Prompts: defaultPrompts(t), GenerateDebounce: time.Hour}, db, objects, cipher)
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewUnstartedServer(s.Handler())
 	t.Cleanup(ts.Close)
-	s.Config.BaseURL = ts.URL
-	s.Config.Providers = map[string]auth.Provider{"google": testOIDCProvider(t, ts.URL)}
-	config := runners.Config{Prompts: s.Config.Prompts, BaseURL: ts.URL, DataDir: dir}
+	s.Config.BaseURL = "http://" + ts.Listener.Addr().String()
+	if configureServer != nil {
+		configureServer(s)
+	}
+	if s.Config.Providers == nil {
+		s.Config.Providers = map[string]auth.Provider{"google": testOIDCProvider(t, s.Config.BaseURL)}
+	}
+	config := runners.Config{Prompts: s.Config.Prompts, BaseURL: s.Config.BaseURL, DataDir: dir}
 	for _, setup := range configure {
 		setup(s, &config)
 	}
@@ -77,38 +88,89 @@ func newE2E(t *testing.T, configure ...func(*Server, *runners.Config)) *e2e {
 			t.Error(err)
 		}
 	})
+	ts.Start()
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &e2e{t: t, url: ts.URL, client: client, db: db}
+	return &e2e{t: t, url: ts.URL, client: client, db: db, dir: dir}
 }
 
 func testOIDCProvider(t *testing.T, baseURL string) auth.Provider {
+	return testOAuthProviders(t, baseURL, nil)["google"]
+}
+
+type oauthTestLogin struct {
+	subject, email string
+	hd, userInfoHD any
+	tokenClaims    map[string]any
+}
+
+func testOAuthProviders(t *testing.T, baseURL string, logins map[string]oauthTestLogin) map[string]auth.Provider {
 	google := authtest.NewGoogle(t)
-	return auth.Provider{Name: "google", ClientID: "id", ClientSecret: "secret", RedirectURL: baseURL + "/auth/google/callback", Client: &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
+	lookup := func(code string) oauthTestLogin {
+		login, ok := logins[code]
+		if !ok {
+			login.subject = code
+		}
+		if login.email == "" {
+			login.email = login.subject + "@example.com"
+		}
+		return login
+	}
+	client := &http.Client{Transport: oauthTransport(func(r *http.Request) (*http.Response, error) {
 		var payload any
 		switch r.URL.Host {
-		case "oauth2.googleapis.com":
+		case "oauth2.googleapis.com", "github.com":
 			if err := r.ParseForm(); err != nil {
 				return nil, err
 			}
-			if r.Form.Get("code") == "exchange-error" {
+			code := r.Form.Get("code")
+			if code == "exchange-error" {
 				return nil, errors.New("exchange failed")
 			}
-			payload = map[string]any{"access_token": r.Form.Get("code"), "expires_in": 3600, "id_token": google.Token(t, r.Form.Get("code"), r.Form.Get("code_verifier"))}
+			reply := map[string]any{"access_token": code, "expires_in": 3600}
+			if r.URL.Host == "oauth2.googleapis.com" {
+				login := lookup(code)
+				claims := google.Claims(login.subject, r.Form.Get("code_verifier"))
+				if login.hd != nil {
+					claims["hd"] = login.hd
+				}
+				for key, value := range login.tokenClaims {
+					claims[key] = value
+				}
+				reply["id_token"] = google.Sign(t, claims)
+			}
+			payload = reply
 		case "www.googleapis.com":
 			payload = google.JWKS()
-		case "openidconnect.googleapis.com":
-			id := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if id == "identity-error" {
+		case "openidconnect.googleapis.com", "api.github.com":
+			code := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if code == "identity-error" {
 				return nil, errors.New("identity failed")
 			}
-			payload = map[string]any{"sub": id, "name": id, "email": id + "@example.com", "email_verified": true}
+			login := lookup(code)
+			switch {
+			case r.URL.Host == "openidconnect.googleapis.com":
+				payload = map[string]any{"sub": login.subject, "name": login.subject, "email": login.email, "email_verified": true, "hd": login.userInfoHD}
+			case r.URL.Path == "/user":
+				payload = map[string]any{"id": json.Number(login.subject), "login": "github-user"}
+			case r.URL.Path == "/user/emails":
+				payload = []map[string]any{{"email": login.email, "primary": true, "verified": true}}
+			default:
+				return nil, fmt.Errorf("unexpected provider path %s", r.URL.Path)
+			}
 		default:
 			return nil, fmt.Errorf("unexpected host %s", r.URL.Host)
 		}
-		b, _ := json.Marshal(payload)
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(b))}, nil
-	})}}
+	})}
+	return map[string]auth.Provider{
+		"google": {Name: "google", ClientID: "id", ClientSecret: "secret", RedirectURL: baseURL + "/auth/google/callback", Client: client},
+		"github": {Name: "github", ClientID: "id", ClientSecret: "secret", RedirectURL: baseURL + "/auth/github/callback", Client: client},
+	}
 }
 
 func (e *e2e) call(method, path, token string, input any) *httptest.ResponseRecorder {
@@ -166,34 +228,53 @@ func (e *e2e) expect(res *httptest.ResponseRecorder, status int, out any) {
 		}
 	}
 }
-func (e *e2e) loginCode(subject string) map[string]string {
+func (e *e2e) oauthCallbackRequest(startURL, code, session string) *http.Request {
 	e.t.Helper()
-	verifier, state := auth.Token(), auth.Token()
-	var start map[string]string
-	e.expect(e.call("POST", "/api/auth/loopback", "", map[string]string{
-		"provider": "google", "code_challenge_method": "S256", "code_challenge": auth.Challenge(verifier),
-		"redirect_uri": "http://127.0.0.1:5000/callback", "state": state,
-	}), 201, &start)
-	began := e.call("GET", start["url"], "", nil)
-	e.expect(began, 302, nil)
-	target, err := url.Parse(began.Header().Get("Location"))
+	start := e.call("GET", startURL, "", nil)
+	e.expect(start, http.StatusFound, nil)
+	target, err := start.Result().Location()
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	req, err := http.NewRequest("GET", e.url+"/auth/google/callback?"+url.Values{"state": {target.Query().Get("state")}, "code": {subject}}.Encode(), nil)
+	callback := target.Query().Get("redirect_uri")
+	if !strings.HasPrefix(callback, e.url+"/auth/") {
+		e.t.Fatalf("unexpected OAuth callback %q", callback)
+	}
+	params := url.Values{"state": {target.Query().Get("state")}, "code": {code}}
+	req, err := http.NewRequestWithContext(e.t.Context(), "GET", callback+"?"+params.Encode(), nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	for _, cookie := range began.Result().Cookies() {
+	for _, cookie := range start.Result().Cookies() {
 		req.AddCookie(cookie)
 	}
-	callback := e.do(req)
+	if session != "" {
+		req.AddCookie(&http.Cookie{Name: "kioku_session", Value: session})
+	}
+	return req
+}
+
+func (e *e2e) startLoopback() loopbackAttempt {
+	e.t.Helper()
+	a := loopbackAttempt{verifier: auth.Token(), state: auth.Token(), redirect: "http://127.0.0.1:5000/callback"}
+	var start map[string]string
+	e.expect(e.call("POST", "/api/auth/loopback", "", map[string]string{
+		"provider": "google", "code_challenge_method": "S256", "code_challenge": auth.Challenge(a.verifier),
+		"redirect_uri": a.redirect, "state": a.state,
+	}), 201, &start)
+	a.device, a.startURL = start["device"], start["url"]
+	return a
+}
+func (e *e2e) loginCode(subject string) map[string]string {
+	e.t.Helper()
+	a := e.startLoopback()
+	callback := e.do(e.oauthCallbackRequest(a.startURL, subject, ""))
 	e.expect(callback, 302, nil)
-	target, err = url.Parse(callback.Header().Get("Location"))
-	if err != nil || target.Query().Get("state") != state || target.Query().Get("code") == "" {
+	target, err := callback.Result().Location()
+	if err != nil || target.Query().Get("state") != a.state || target.Query().Get("code") == "" {
 		e.t.Fatal("invalid callback", err)
 	}
-	return map[string]string{"device": start["device"], "code": target.Query().Get("code"), "code_verifier": verifier}
+	return map[string]string{"device": a.device, "code": target.Query().Get("code"), "code_verifier": a.verifier}
 }
 func (e *e2e) login(subject string) string {
 	e.t.Helper()

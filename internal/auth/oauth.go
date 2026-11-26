@@ -58,20 +58,20 @@ func credential(token *oauth2.Token) Credential {
 
 // Exchange verifies the login identity before returning credentials to the caller.
 // ID tokens are transient and are never persisted in a session.
-func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, Identity, error) {
+func (p Provider) Exchange(ctx context.Context, code, verifier string) (Credential, LoginIdentity, error) {
 	ctx = p.oauthContext(ctx)
 	config, _, err := p.config(verifier)
 	if err != nil {
-		return Credential{}, Identity{}, err
+		return Credential{}, LoginIdentity{}, err
 	}
 	token, err := config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return Credential{}, Identity{}, err
+		return Credential{}, LoginIdentity{}, err
 	}
 	v, _ := p.idp()
 	identity, err := v.login(ctx, p, token, verifier)
 	if err != nil {
-		return Credential{}, Identity{}, err
+		return Credential{}, LoginIdentity{}, err
 	}
 
 	return credential(token), identity, nil

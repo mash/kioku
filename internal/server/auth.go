@@ -23,9 +23,7 @@ func loopbackRedirect(value string) bool {
 }
 
 func loopbackExpired(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusGone)
-	return render(w, "CLI login expired", struct{ Message string }{"CLI login expired; run kioku login again"}, messageTemplate)
+	return renderStatus(w, http.StatusGone, "CLI login expired", struct{ Message string }{"CLI login expired; run kioku login again"}, messageTemplate)
 }
 
 func (s *Server) loopbackStart(w http.ResponseWriter, r *http.Request, _ string) error {
@@ -171,7 +169,7 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request, _ string) er
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: cookie, Path: "/auth/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	s.setOAuthCookie(w, cookie, 600)
 	http.Redirect(w, r, p.URL(auth.Hash(cookie), payload.Verifier), http.StatusFound)
 	return nil
 }
@@ -179,6 +177,10 @@ func identityData(cipher *auth.Cipher, credential auth.Credential, uid, provider
 	tokens := cipher.SealIdentityTokens(credential, uid, provider, id)
 	return store.IdentitySessionData{IdentityProvider: &provider, IdentityID: &id, IdentityAccessToken: tokens.AccessToken, IdentityRefreshToken: tokens.RefreshToken, IdentityExpiresAt: tokens.ExpiresAt}
 }
+func (s *Server) setOAuthCookie(w http.ResponseWriter, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: value, Path: "/auth/", MaxAge: maxAge, HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode})
+}
+
 func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string) error {
 	cookie, err := r.Cookie("kioku_oauth")
 	if err != nil {
@@ -200,8 +202,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		return fail(502, "OAuth exchange failed; restart login")
 	}
-	token, code := auth.Token(), "kioku_loopback."+auth.Token()
-	loopbackURL := ""
+	var token, loopbackURL string
 	expired := false
 	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
 		var login store.SessionRow
@@ -220,6 +221,9 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		user, e := q.UserByIdentity(pending.Provider, identity.ID)
 		if errors.Is(e, sql.ErrNoRows) {
+			if !s.Config.SignupAllowlist.allows(pending.Provider, identity.HostedDomain) {
+				return errSignupDenied
+			}
 			user = store.UserRow{ID: auth.Token()[:20]}
 			if e = q.PutIdentity(user.ID, pending.Provider, identity.ID); e != nil {
 				return e
@@ -234,6 +238,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		data := identityData(s.Cipher, credential, user.ID, pending.Provider, identity.ID)
 		if device != "" {
+			code := "kioku_loopback." + auth.Token()
 			login.UserID = user.ID
 			login.Expires = time.Now().Add(time.Minute).UnixMilli()
 			loginData.IdentitySessionData = data
@@ -251,16 +256,24 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		if e != nil {
 			return e
 		}
+		token = auth.Token()
 		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw})
 	})
+	if errors.Is(err, errSignupDenied) {
+		s.setOAuthCookie(w, "", -1)
+		if device != "" {
+			return s.loopbackFailure(w, r, device, "access_denied")
+		}
+		return renderStatus(w, http.StatusForbidden, "アカウントを作成できません", struct{ Message string }{signupDeniedMessage}, messageTemplate)
+	}
 	if err != nil {
 		return err
 	}
+	s.setOAuthCookie(w, "", -1)
 	if expired {
 		return loopbackExpired(w)
 	}
 	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: token, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
-	http.SetCookie(w, &http.Cookie{Name: "kioku_oauth", Value: "", Path: "/auth/", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode})
 	if device != "" {
 		http.Redirect(w, r, loopbackURL, http.StatusFound)
 		return nil

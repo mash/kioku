@@ -255,6 +255,9 @@ func TestLoginCallbackFailures(t *testing.T) {
 				start := <-f.started
 				response := fetchLoginPage(loginCallbackURL(start, values))
 				checkLoginPage(t, response, 400, "ログインに失敗しました")
+				if failure == "access_denied" && !strings.Contains(response.body, "<p>"+want+"\nkioku login をもう一度実行してください。</p>") {
+					t.Fatal("unexpected cancellation message", response.body)
+				}
 				if !strings.Contains(response.body, "kioku login") || strings.Contains(response.body, "<script>") {
 					t.Fatal("unsafe or incomplete failure page", response.body)
 				}
@@ -265,6 +268,12 @@ func TestLoginCallbackFailures(t *testing.T) {
 			}
 			if f.app.Config.Token != "" || strings.Contains(f.out.String(), "ログインしました:") {
 				t.Fatal("failed login reported success")
+			}
+			if failure == "access_denied" {
+				wantOut := fmt.Sprintf("ログイン先: %s\n同じ端末のブラウザで認証してください:\n%s/auth/google/start?device=test-device\n中断は Ctrl-C\n", f.server.URL, f.server.URL)
+				if f.out.String() != wantOut || f.errOut.Len() != 0 {
+					t.Fatalf("unexpected cancellation output: stdout=%q stderr=%q", &f.out, &f.errOut)
+				}
 			}
 			if failure != "save" {
 				if _, err := os.Stat(f.app.credentialPath()); !os.IsNotExist(err) {

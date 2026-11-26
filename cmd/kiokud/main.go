@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -25,7 +26,12 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("server stopped", "error", err)
+		var domain server.InvalidSignupDomain
+		if errors.As(err, &domain) {
+			fmt.Fprintln(os.Stderr, "kiokud:", domain)
+		} else {
+			slog.Error("server stopped", "error", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -35,6 +41,10 @@ func run() error {
 	dir := flag.String("data", env("KIOKU_DATA", "./data"), "persistent metadata directory")
 	trustedProxy := flag.String("trusted-proxy", "", "CIDR of the proxy allowed to supply X-Forwarded-For")
 	flag.Parse()
+	signupAllowlist, err := server.ParseSignupAllowlist(os.Getenv("KIOKU_SIGNUP_GOOGLE_HD"))
+	if err != nil {
+		return err
+	}
 	var trustedNetwork *net.IPNet
 	if *trustedProxy != "" {
 		_, network, parseErr := net.ParseCIDR(*trustedProxy)
@@ -99,8 +109,28 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(server.Config{Prompts: rendered, TrustedProxy: trustedNetwork, AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"), GenerateDebounce: 10 * time.Second, BaseURL: base, Providers: providers, MetricsToken: os.Getenv("KIOKU_METRICS_TOKEN")}, stateStore, objects, cipher)
-	set, err := runners.Load(runners.Config{Prompts: rendered, Type: selection, Command: command, DataDir: *dir, AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"), MAAgentID: os.Getenv("KIOKU_MA_AGENT_ID"), MAAgentVersion: agentVersion, MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"), MABaseURL: env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"), BaseURL: base}, func(jobID string) { app.ReconcileJob(ctx, jobID) })
+	app := server.New(server.Config{
+		Prompts:                    rendered,
+		TrustedProxy:               trustedNetwork,
+		AnthropicWebhookSigningKey: os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY"),
+		GenerateDebounce:           10 * time.Second,
+		BaseURL:                    base,
+		Providers:                  providers,
+		SignupAllowlist:            signupAllowlist,
+		MetricsToken:               os.Getenv("KIOKU_METRICS_TOKEN"),
+	}, stateStore, objects, cipher)
+	set, err := runners.Load(runners.Config{
+		Prompts:         rendered,
+		Type:            selection,
+		Command:         command,
+		DataDir:         *dir,
+		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+		MAAgentID:       os.Getenv("KIOKU_MA_AGENT_ID"),
+		MAAgentVersion:  agentVersion,
+		MAEnvironmentID: os.Getenv("KIOKU_MA_ENVIRONMENT_ID"),
+		MABaseURL:       env("KIOKU_MA_BASE_URL", "https://api.anthropic.com"),
+		BaseURL:         base,
+	}, func(jobID string) { app.ReconcileJob(ctx, jobID) })
 	if err != nil {
 		return err
 	}

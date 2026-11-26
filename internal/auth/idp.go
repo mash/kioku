@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -18,13 +19,19 @@ import (
 
 type Identity struct{ ID, Name, Email string }
 
+// LoginIdentity carries a verified identity and transient claims used at login.
+type LoginIdentity struct {
+	Identity
+	HostedDomain string
+}
+
 // idp holds the settings and identity verification of one identity provider.
 type idp struct {
 	endpoint oauth2.Endpoint
 	scopes   []string
 	options  func(verifier string) []oauth2.AuthCodeOption
 	// login verifies the identity of a fresh login token.
-	login    func(ctx context.Context, p Provider, token *oauth2.Token, verifier string) (Identity, error)
+	login    func(ctx context.Context, p Provider, token *oauth2.Token, verifier string) (LoginIdentity, error)
 	identity func(ctx context.Context, p Provider, accessToken string) (Identity, error)
 }
 
@@ -33,8 +40,9 @@ var idps = map[string]idp{
 		endpoint: inParams(github.Endpoint),
 		scopes:   []string{"read:user", "user:email"},
 		options:  func(string) []oauth2.AuthCodeOption { return nil },
-		login: func(ctx context.Context, p Provider, token *oauth2.Token, _ string) (Identity, error) {
-			return githubIdentity(ctx, p, token.AccessToken)
+		login: func(ctx context.Context, p Provider, token *oauth2.Token, _ string) (LoginIdentity, error) {
+			identity, err := githubIdentity(ctx, p, token.AccessToken)
+			return LoginIdentity{Identity: identity}, err
 		},
 		identity: githubIdentity,
 	},
@@ -103,29 +111,37 @@ func loginNonce(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-func googleLoginIdentity(ctx context.Context, p Provider, token *oauth2.Token, verifier string) (Identity, error) {
+func googleLoginIdentity(ctx context.Context, p Provider, token *oauth2.Token, verifier string) (LoginIdentity, error) {
 	raw, ok := token.Extra("id_token").(string)
 	if !ok || raw == "" {
-		return Identity{}, errors.New("missing Google ID token")
+		return LoginIdentity{}, errors.New("missing Google ID token")
 	}
 	// Google publishes a fixed issuer and JWKS endpoint. go-oidc handles JWT
 	// signature, issuer, audience and expiry validation; nonce remains ours.
 	keys := oidc.NewRemoteKeySet(ctx, "https://www.googleapis.com/oauth2/v3/certs")
 	verified, err := oidc.NewVerifier("https://accounts.google.com", keys, &oidc.Config{ClientID: p.ClientID}).Verify(ctx, raw)
 	if err != nil {
-		return Identity{}, err
+		return LoginIdentity{}, err
 	}
 	if verified.Subject == "" || verified.Nonce != loginNonce(verifier) {
-		return Identity{}, errors.New("invalid Google subject or nonce")
+		return LoginIdentity{}, errors.New("invalid Google subject or nonce")
 	}
 	identity, err := googleIdentity(ctx, p, token.AccessToken)
 	if err != nil {
-		return Identity{}, err
+		return LoginIdentity{}, err
 	}
 	if identity.ID != verified.Subject {
-		return Identity{}, errors.New("Google UserInfo subject does not match ID token")
+		return LoginIdentity{}, errors.New("Google UserInfo subject does not match ID token")
 	}
-	return identity, nil
+	var claims map[string]json.RawMessage
+	login := LoginIdentity{Identity: identity}
+	if err := verified.Claims(&claims); err == nil {
+		if hd, ok := claims["hd"]; ok {
+			// An absent or non-string claim does not affect identity verification.
+			_ = json.Unmarshal(hd, &login.HostedDomain)
+		}
+	}
+	return login, nil
 }
 
 func googleIdentity(ctx context.Context, p Provider, token string) (Identity, error) {

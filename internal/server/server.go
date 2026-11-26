@@ -32,6 +32,7 @@ type Config struct {
 	GenerateDebounce           time.Duration
 	BaseURL                    string
 	Providers                  map[string]auth.Provider
+	SignupAllowlist            SignupAllowlist
 	MaxWikiBytes               int64
 	MaxQueued                  int
 	RatePerMinute              int

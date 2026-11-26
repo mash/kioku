@@ -26,13 +26,17 @@ func jsonResponse(t *testing.T, body any) *http.Response {
 }
 
 func TestGoogleExchangeValidatesOIDC(t *testing.T) {
+	t.Parallel()
 	google := authtest.NewGoogle(t)
 	other := authtest.NewGoogle(t)
 	verifier := Token()
 	for _, name := range []string{"valid", "missing", "signature", "issuer", "audience", "expired", "nonce", "missing-nonce", "empty-subject", "userinfo-subject", "unverified-email"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			claims := google.Claims("user", verifier)
 			switch name {
+			case "valid":
+				claims["hd"] = "Nature.Global"
 			case "issuer":
 				claims["iss"] = "https://attacker.example"
 			case "audience":
@@ -71,7 +75,7 @@ func TestGoogleExchangeValidatesOIDC(t *testing.T) {
 					if name == "userinfo-subject" {
 						sub = "other"
 					}
-					return jsonResponse(t, map[string]any{"sub": sub, "email": "USER@example.com", "email_verified": name != "unverified-email"}), nil
+					return jsonResponse(t, map[string]any{"sub": sub, "email": "USER@example.com", "email_verified": name != "unverified-email", "hd": "userinfo.example"}), nil
 				default:
 					t.Fatalf("unexpected request %s", r.URL)
 				}
@@ -79,14 +83,14 @@ func TestGoogleExchangeValidatesOIDC(t *testing.T) {
 			})}
 			c, identity, err := p.Exchange(context.Background(), "code", verifier)
 			if name == "valid" {
-				if err != nil || identity.ID != "user" || identity.Email != "user@example.com" || c.RefreshToken != "refresh" {
+				if err != nil || identity.ID != "user" || identity.Email != "user@example.com" || identity.HostedDomain != "Nature.Global" || c.RefreshToken != "refresh" {
 					t.Fatalf("valid exchange: %v %+v %+v", err, c, identity)
 				}
 				b, _ := json.Marshal(c)
 				if strings.Contains(string(b), raw) {
 					t.Fatal("persisted ID token")
 				}
-			} else if err == nil || c.AccessToken != "" || identity.ID != "" {
+			} else if err == nil || c.AccessToken != "" || identity != (LoginIdentity{}) {
 				t.Fatalf("accepted %s", name)
 			}
 		})
@@ -163,7 +167,7 @@ func TestGitHubExchangeWithoutIDToken(t *testing.T) {
 		return nil, nil
 	})}}
 	c, identity, err := p.Exchange(context.Background(), "code", Token())
-	if err != nil || identity.ID != "123" || c.AccessToken != "github-token" {
+	if err != nil || identity.ID != "123" || identity.HostedDomain != "" || c.AccessToken != "github-token" {
 		t.Fatalf("GitHub exchange: %+v %v", identity, err)
 	}
 }

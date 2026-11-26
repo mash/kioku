@@ -1,11 +1,21 @@
 package store
 
+import (
+	"database/sql"
+	"errors"
+)
+
+// UserByIdentity returns sql.ErrNoRows only when the identity is unregistered.
 func (q *Queries) UserByIdentity(provider, id string) (UserRow, error) {
 	var uid string
 	if err := q.row("SELECT user_id FROM user_identities WHERE provider=? AND identity_id=?", provider, id).Scan(&uid); err != nil {
 		return UserRow{}, err
 	}
-	return q.User(uid)
+	user, err := q.User(uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UserRow{}, errors.New("registered identity has no user")
+	}
+	return user, err
 }
 func (q *Queries) UsersByEmail(email string) ([]UserRow, error) {
 	return q.listUser("WHERE kioku_equal_fold(email,?) ORDER BY id", email)

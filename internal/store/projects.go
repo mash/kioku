@@ -1,7 +1,26 @@
 package store
 
+const (
+	generalOrganizationPrefix = "general-"
+	GeneralProjectSlug        = "general"
+)
+
+func GeneralOrganizationID(user string) string { return generalOrganizationPrefix + user }
+
+func IsGeneralProject(user, orgID, slug string) bool {
+	return orgID == GeneralOrganizationID(user) && slug == GeneralProjectSlug
+}
+
 func (q *Queries) ProjectBySlug(org, slug string) (ProjectRow, error) {
 	return scanProject(q.row("SELECT "+projectsColumns+" FROM projects WHERE org_id=? AND slug=?", org, slug))
+}
+func (q *Queries) GeneralProject(user string) (ProjectRow, error) {
+	return q.ProjectBySlug(GeneralOrganizationID(user), GeneralProjectSlug)
+}
+func (q *Queries) UsersWithoutGeneral() ([]UserRow, error) {
+	return q.listUser(`WHERE NOT EXISTS (
+		SELECT 1 FROM projects WHERE org_id=? || users.id AND slug=?
+	) ORDER BY id`, generalOrganizationPrefix, GeneralProjectSlug)
 }
 func (q *Queries) ProjectsForUser(user string) ([]ProjectRow, error) {
 	return q.listProject("WHERE id IN (SELECT project_id FROM project_members WHERE user_id=?) ORDER BY created,id", user)

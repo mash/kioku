@@ -149,7 +149,7 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(path, 0600) })
 	got := runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "org/p https://example.com/doc"})
-	if got != fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer))+"\n- org/p: （説明なし）［ヒント: プロンプトに namespace］" {
+	if got != testCandidateHeader(defaultServer)+"\n- org/p: （説明なし）［ヒント: プロンプトに namespace］" {
 		t.Fatal(got)
 	}
 }
@@ -188,7 +188,6 @@ func TestStopAndSessionEndHook(t *testing.T) {
 	}{
 		{name: "E13_stop", event: "Stop", rows: 5, launch: true},
 		{name: "E37_end", event: "SessionEnd", rows: 1, launch: true},
-		{name: "E38_declined", event: "Stop", rows: 7, state: "declined"},
 		{name: "E13_below_threshold", event: "Stop", rows: 4},
 		{name: "E13_busy", event: "Stop", rows: 5, age: 10 * time.Minute},
 		{name: "E13_stale", event: "Stop", rows: 5, age: 40 * time.Minute, launch: true},
@@ -214,9 +213,6 @@ func TestStopAndSessionEndHook(t *testing.T) {
 			s.Namespace = "org/a"
 			if tc.server != "" {
 				s.Server = tc.server
-			}
-			if tc.state == "declined" {
-				s = &sessionState{DeclinedAt: time.Now().UTC()}
 			}
 			statePath, _ := sessionPath("session-1")
 			if tc.state != "missing" {

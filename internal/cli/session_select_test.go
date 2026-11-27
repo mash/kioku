@@ -155,9 +155,9 @@ func TestSessionSelect(t *testing.T) {
 			}
 		})
 	}
-	t.Run("E16_E19_switch_and_reselect", func(t *testing.T) {
+	t.Run("E16_switch", func(t *testing.T) {
 		home := sessionTestEnv(t)
-		a, _, _, status := syncFixture(t)
+		a, _, _, _ := syncFixture(t)
 		a.AuthDir = filepath.Join(home, ".config/kioku/auth")
 		if err := ensureDirectory(a.metadataDir()); err != nil {
 			t.Fatal(err)
@@ -191,44 +191,6 @@ func TestSessionSelect(t *testing.T) {
 		after, _ := os.ReadFile(path)
 		if !bytes.Equal(before, after) {
 			t.Fatal("failed switch changed state")
-		}
-		for _, command := range [][]string{{"session", "select"}, {"pull"}} {
-			if _, _, err := runProjectCLI("session", "select", "--none"); err != nil {
-				t.Fatal(err)
-			}
-			*status = 200
-			if _, _, err := runProjectCLI(append([]string{"-C", a.Dir}, command...)...); err != nil {
-				t.Fatal(err)
-			}
-			if got := mustSession(t); got.declined() || got.Namespace != "org/project" || got.LastPullResult != sessionPullSuccess {
-				t.Fatal(got)
-			}
-		}
-	})
-	t.Run("E9_E18_decline_and_usage", func(t *testing.T) {
-		sessionTestEnv(t)
-		for range 2 {
-			out, stderr, err := runProjectCLI("session", "select", "--none")
-			if err != nil || stderr != "" || out != selectNoneText+"\n" || !mustSession(t).declined() {
-				t.Fatal(out, stderr, err)
-			}
-		}
-		path, _ := sessionPath("session-1")
-		before, _ := os.ReadFile(path)
-		for _, flags := range [][]string{{"-n", "org/a"}, {"-C", t.TempDir()}, {"--server", defaultServer}} {
-			_, _, err := runProjectCLI(append(flags, "session", "select", "--none")...)
-			if err == nil || !strings.Contains(err.Error(), "usage:") {
-				t.Fatal(err)
-			}
-		}
-		after, _ := os.ReadFile(path)
-		if !bytes.Equal(before, after) {
-			t.Fatal("usage error changed selection")
-		}
-		t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-		_, _, err := runProjectCLI("session", "select", "--none")
-		if err == nil || err.Error() != "session select --none requires CLAUDE_CODE_SESSION_ID" {
-			t.Fatal(err)
 		}
 	})
 	t.Run("E8_I8_entry_limits", func(t *testing.T) {

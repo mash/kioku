@@ -7,18 +7,18 @@ import (
 )
 
 // walkAncestors reads the nearest .git and valid .kioku/config in one traversal.
-func walkAncestors(cwd string) (branch, configNamespace string) {
+func walkAncestors(cwd string) (branch string, config Config) {
 	if !filepath.IsAbs(cwd) {
-		return "", ""
+		return "", Config{}
 	}
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
 	foundGit := false
 	for dir := cwd; ; dir = filepath.Dir(dir) {
-		if configNamespace == "" {
+		if config.Namespace == "" {
 			if c, err := (&App{Dir: dir}).readProjectConfig(); err == nil {
-				configNamespace = c.Namespace
+				config = c
 			}
 		}
 		if !foundGit {
@@ -43,8 +43,8 @@ func walkAncestors(cwd string) (branch, configNamespace string) {
 				}
 			}
 		}
-		if (foundGit && configNamespace != "") || filepath.Dir(dir) == dir {
-			return branch, configNamespace
+		if (foundGit && config.Namespace != "") || filepath.Dir(dir) == dir {
+			return branch, config
 		}
 	}
 }

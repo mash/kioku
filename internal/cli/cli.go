@@ -81,10 +81,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if commands[0] == "fetch" {
 		return fetchCommand(ctx, commands[1:], out)
 	}
-	if commands[0] == "session" && (len(commands) < 2 || commands[1] != "select" || slices.Contains(commands[2:], "--none")) {
-		if len(commands) >= 2 && commands[1] == "select" && global.NFlag() != 0 {
-			return errors.New("usage: kioku session select --none (without global flags)")
-		}
+	if commands[0] == "session" && (len(commands) < 2 || commands[1] != "select") {
 		return runSession(commands[1:], out, errOut)
 	}
 	if os.Getenv("KIOKU_AGENT_TOKEN") != "" {

@@ -5,7 +5,7 @@ tools:
       project:
         description: "organization/project"
   projects_list:
-    description: "List the Kioku projects (organization/project) that the user shared with this connector. To use another project, the user must reconnect the connector and select it. Call it once before the first read or write, and choose the project from this list. Ask the user when more than one could match."
+    description: "List the Kioku projects (organization/project) that the user shared with this connector. Call once before the first read or write. Use the project that clearly matches the first request. If the match is unclear, choose the account's General wiki by its reserved namespace (u-<hash>-general/general). If that namespace or the requested project is missing from the list, the user must reconnect the connector and select it."
   wiki_read:
     description: "Read one file of a project's current Kioku wiki. Start at wiki/index.md. Long files return next_offset; call again with that offset to read more."
   wiki_search:

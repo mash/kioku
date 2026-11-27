@@ -130,26 +130,8 @@ func promptTurnContext(prompts string, s *sessionState) string {
 	return line
 }
 
-func renderDeclined(line string, nsHits, triggerHits []projectEntry, words map[string][]string) string {
-	if len(nsHits) > 0 {
-		var names []string
-		for _, p := range nsHits {
-			names = append(names, p.Namespace)
-		}
-		line += "［ヒント: プロンプトに namespace］" + strings.Join(names, "、")
-	}
-	if len(triggerHits) > 1 {
-		var hints []string
-		for _, p := range triggerHits {
-			hints = append(hints, "［ヒント: trigger 語 "+strings.Join(words[projectKey(p)], "、")+"］"+p.Namespace)
-		}
-		line += strings.Join(hints, "、")
-	}
-	return line
-}
-
 func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.Time) string {
-	if s != nil && !s.declined() {
+	if s != nil {
 		return promptTurnContext(prompts, s)
 	}
 	var ps []projectEntry
@@ -158,62 +140,50 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 			ps = foldProjects(catalog.Projects)
 		}
 	}
-	var nsHits []projectEntry
-	for _, p := range ps {
-		if validNamespace(p.Namespace) && strings.Contains(in.Prompt, p.Namespace) {
-			nsHits = append(nsHits, p)
-		}
-	}
 	hits, words := matchTriggers(ps, in.Prompt)
-	// I15: declined sessions without prompt hints do not walk ancestors.
-	if s != nil && s.declined() && len(hits) == 0 && len(nsHits) == 0 {
-		return declinedPrompt(prompts)
-	}
-	exe, _ := os.Executable()
-	vars := templateVars(exe, defaultServer, "", "")
-	configNS := ""
-	if s == nil {
-		branch, ns := walkAncestors(in.Cwd)
-		configNS = ns
-		if branch != "" {
-			_, branchWords := matchTriggers(ps, branch)
-			hits = nil
-			for _, p := range ps {
-				key := projectKey(p)
-				matched := append(words[key], branchWords[key]...)
-				words[key] = nil
-				for _, word := range p.Triggers {
-					if slices.Contains(matched, word) {
-						words[key] = append(words[key], word)
-					}
+	branch, config := walkAncestors(in.Cwd)
+	if branch != "" {
+		_, branchWords := matchTriggers(ps, branch)
+		hits = nil
+		for _, p := range ps {
+			key := projectKey(p)
+			matched := append(words[key], branchWords[key]...)
+			words[key] = nil
+			for _, word := range p.Triggers {
+				if slices.Contains(matched, word) {
+					words[key] = append(words[key], word)
 				}
-				if len(words[key]) > 0 {
-					hits = append(hits, p)
-				}
+			}
+			if len(words[key]) > 0 {
+				hits = append(hits, p)
 			}
 		}
 	}
-	if len(hits) == 1 {
+	if len(hits) == 1 && !slices.ContainsFunc(ps, func(p projectEntry) bool {
+		return projectKey(p) != projectKey(hits[0]) && validNamespace(p.Namespace) && strings.Contains(in.Prompt, p.Namespace)
+	}) {
 		if line := autoSelect(in, hits[0], words[projectKey(hits[0])], prompts, now); line != "" {
 			return line
 		}
 	}
-	if s != nil && s.declined() {
-		return renderDeclined(declinedPrompt(prompts), nsHits, hits, words)
+	if len(ps) == 0 && config.Namespace != "" {
+		ps = []projectEntry{{Namespace: config.Namespace, Server: config.Server}}
 	}
-	if len(ps) == 0 && configNS != "" {
-		ps = []projectEntry{{Namespace: configNS}}
+	exe, _ := os.Executable()
+	vars := templateVars(exe, defaultServer, "", "")
+	server := os.Getenv("KIOKU_SERVER")
+	if server == "" {
+		server = config.Server
 	}
-	if len(ps) == 0 {
-		return ""
-	}
+	origin, _ := resolveServer(server)
+	vars["general_kioku"] = kiokuCommand(exe, origin)
 	hints := make(map[string][]string)
 	for _, p := range ps {
 		key := projectKey(p)
 		if strings.Contains(in.Prompt, p.Namespace) {
 			hints[key] = append(hints[key], "プロンプトに namespace")
 		}
-		if p.Namespace == configNS {
+		if p.Namespace == config.Namespace && p.Server == config.Server {
 			hints[key] = append(hints[key], "cwd の .kioku/config")
 		}
 		if len(words[key]) > 0 {
@@ -226,6 +196,9 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 	}
 	header = renderTemplate(header, vars)
 	list := renderProjectList(vars["kioku"], ps, hints, contextLimit-utf8.RuneCountInString(header)-1)
+	if list == "" {
+		return header
+	}
 	return header + "\n" + list
 }
 
@@ -247,7 +220,7 @@ func autoSelect(in sessionHookInput, p projectEntry, words []string, prompts str
 	s := &sessionState{Server: p.Server, Namespace: p.Namespace, Mode: "local", Path: p.Path}
 	written := false
 	err = updateSession(in.SessionID, now, func(old *sessionState) (*sessionState, bool) {
-		if old != nil && !old.declined() {
+		if old != nil {
 			return nil, false
 		}
 		written = true
@@ -327,7 +300,7 @@ func startBackgroundPull(in sessionHookInput, p projectEntry, exe string) error 
 }
 
 func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time, pluginRoot string) {
-	if s == nil || s.declined() || !filepath.IsAbs(in.Cwd) {
+	if s == nil || !filepath.IsAbs(in.Cwd) {
 		return
 	}
 	count, err := countQueueRows(filepath.Join(s.Path, ".kioku/queue.tsv"), min)
@@ -363,11 +336,6 @@ func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time, plug
 	_ = startProcess(c)
 }
 
-func declinedPrompt(prompts string) string {
-	exe, _ := os.Executable()
-	line, _ := readHookPrompt(prompts, "hook-declined.txt")
-	return renderTemplate(line, templateVars(exe, defaultServer, "", ""))
-}
 func countQueueRows(path string, min int) (int, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {

@@ -221,8 +221,12 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request, uid string) erro
 	token := auth.Token()
 	inv := store.InviteRow{ID: auth.Token()[:20], ProjectID: r.PathValue("project"), CreatedBy: uid, Expires: time.Now().Add(7 * 24 * time.Hour).UnixMilli(), TokenHash: auth.Hash(token), Data: store.InviteData{Email: store.NullableString(req.Email)}}
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
-		if _, e := owner(q, inv.ProjectID, uid); e != nil {
+		p, e := owner(q, inv.ProjectID, uid)
+		if e != nil {
 			return e
+		}
+		if store.IsGeneralProject(uid, p.OrgID, p.Slug) {
+			return fail(409, "your General wiki is private")
 		}
 		return q.PutInvite(inv)
 	}); err != nil {

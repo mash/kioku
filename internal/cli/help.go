@@ -13,7 +13,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   -n cannot be combined with project join.
 
   version                             Show client build information
-  session select [--none]             Select and read the wiki entry, or decline
+  session select                      Select and read the wiki entry
   session list                        List local projects and trigger words
   session hook [--event EVENT] --prompts DIR     Handle Claude Code hook JSON on stdin
   agent login CODE | list|revoke      Manage project-scoped agent credentials
@@ -58,7 +58,6 @@ Connector agent credentials are stored per project in ~/.config/kioku/agents.
 With CLAUDE_CODE_SESSION_ID, successful pull/create/join remember selection in
 ${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/SID.json; no source acceptance ledger.
 State keeps server, namespace, mode, path, and optional last_pull_at/last_pull_result.
-session select --none stores only declined_at and requires CLAUDE_CODE_SESSION_ID.
 Hooks write selection only on trigger auto-selection; background pull only updates
 the same selection. Failed create/join do not write state. Failed pull
 updates the last pull only for the same server, namespace, and path.

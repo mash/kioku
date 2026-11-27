@@ -28,7 +28,6 @@ const (
 
 // Only CLI project operations write selection and pull results.
 type sessionState struct {
-	DeclinedAt     time.Time         `json:"declined_at,omitzero"`
 	Server         string            `json:"server,omitempty"`
 	Namespace      string            `json:"namespace,omitempty"`
 	Mode           string            `json:"mode,omitempty"`
@@ -36,8 +35,6 @@ type sessionState struct {
 	LastPullAt     time.Time         `json:"last_pull_at,omitzero"`
 	LastPullResult sessionPullResult `json:"last_pull_result,omitempty"`
 }
-
-func (s *sessionState) declined() bool { return !s.DeclinedAt.IsZero() }
 
 func sessionPath(sid string) (string, error) {
 	if !safeID(sid) {
@@ -72,12 +69,6 @@ func readSession(path string, now time.Time) (*sessionState, error) {
 	var s sessionState
 	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, err
-	}
-	if s.declined() {
-		if s.Server != "" || s.Namespace != "" || s.Mode != "" || s.Path != "" || !s.LastPullAt.IsZero() || s.LastPullResult != sessionPullNone {
-			return nil, errors.New("invalid session state")
-		}
-		return &s, nil
 	}
 	if s.Mode != "local" || !filepath.IsAbs(s.Path) || !validNamespace(s.Namespace) {
 		return nil, errors.New("invalid session state")
@@ -235,10 +226,6 @@ func sessionContext(s *sessionState) string {
 	if s == nil {
 		return ""
 	}
-	if s.declined() {
-		exe, _ := os.Executable()
-		return fmt.Sprintf("Kioku: このセッションは Kioku なし（%s に決めた）。話題が project に合ったら %s -n <namespace> session select で選ぶ。", s.DeclinedAt.Format(time.RFC3339), kiokuCommand(exe, defaultServer))
-	}
 	return renderSessionContext(s, nextSessionAction(s.LastPullResult))
 }
 
@@ -247,20 +234,6 @@ func (a *App) session(args []string) error {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	switch args[0] {
-	case "select":
-		if len(args) != 2 || args[1] != "--none" {
-			return errors.New("usage: kioku session select --none")
-		}
-		sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
-		if sid == "" {
-			return errors.New("session select --none requires CLAUDE_CODE_SESSION_ID")
-		}
-		now := time.Now().UTC()
-		if err := updateSession(sid, now, func(*sessionState) (*sessionState, bool) { return &sessionState{DeclinedAt: now}, true }); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(a.Out, selectNoneText)
-		return err
 	case "list":
 		if len(args) != 1 {
 			return errors.New("usage: kioku session list")

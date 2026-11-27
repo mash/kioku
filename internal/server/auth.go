@@ -236,6 +236,9 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		if e = q.PutUser(user); e != nil {
 			return e
 		}
+		if e = ensureGeneralProject(q, user.ID); e != nil {
+			return e
+		}
 		data := identityData(s.Cipher, credential, user.ID, pending.Provider, identity.ID)
 		if device != "" {
 			code := "kioku_loopback." + auth.Token()

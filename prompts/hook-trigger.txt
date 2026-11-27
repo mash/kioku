@@ -1,2 +1,2 @@
 Kioku: hook が trigger 語 {{words}} で {{namespace}} を選んだ（P={{p}}）。上は手元コピーの wiki の入口で、1 回前の pull のままかもしれない。背景で pull を実行中。本文のページは {{wiki}} にあり、index.md から必要なものだけ読む。
-返答の冒頭に 1 行だけ書く: 「Kioku: {{namespace}} の wiki を読み込みました（理由: trigger 語 {{words}}）」。違うと利用者が言ったら、利用者が示した project で {{kioku_default}} -n <namespace> session select を実行する。合う project が無いと言ったら {{kioku_default}} session select --none を実行する。
+返答の冒頭に 1 行だけ書く: 「Kioku: {{namespace}} の wiki を読み込みました（理由: trigger 語 {{words}}）」。違うと利用者が言ったら、利用者が示した project で {{kioku_default}} -n <namespace> session select を実行する。対象が決まらなければ {{kioku}} -C {{p_arg}} project list でアカウントの General（u-<hash>-general/general）を確認し、その namespace で {{kioku}} -n <namespace> session select を実行する。

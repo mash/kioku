@@ -112,19 +112,23 @@ func (o *storageOperations) pruneExpired(ctx context.Context) error {
 	return o.db.Write(ctx, func(q *store.Queries) error { return q.PruneExpired(now) })
 }
 func (o *storageOperations) deleteProject(ctx context.Context, project string, reconcile func(context.Context, store.JobRow) error, authorize ...func(*store.Queries) error) error {
+	return o.deleteProjectAndFinish(ctx, project, reconcile, nil, authorize...)
+}
+
+func (o *storageOperations) deleteProjectAndFinish(ctx context.Context, project string, reconcile func(context.Context, store.JobRow) error, finish func(*store.Queries) error, authorize ...func(*store.Queries) error) error {
 	unlock, err := o.lock(ctx, project)
 	if err != nil {
 		return err
 	}
 	err = o.db.Write(ctx, func(q *store.Queries) error {
-		p, e := q.Project(project)
-		if e != nil {
-			return e
-		}
 		for _, fn := range authorize {
 			if err := fn(q); err != nil {
 				return err
 			}
+		}
+		p, e := q.Project(project)
+		if e != nil {
+			return e
 		}
 		p.Deleting = true
 		if e = q.PutProject(p); e != nil {
@@ -216,6 +220,12 @@ func (o *storageOperations) deleteProject(ctx context.Context, project string, r
 				return err
 			}
 		}
-		return q.DeleteProjectRows(project)
+		if err := q.DeleteProjectRows(project); err != nil {
+			return err
+		}
+		if finish != nil {
+			return finish(q)
+		}
+		return nil
 	})
 }

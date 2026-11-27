@@ -147,6 +147,9 @@ func run() error {
 	if err = app.Prepare(); err != nil {
 		return err
 	}
+	if err = app.EnsureGeneralWikis(ctx); err != nil {
+		return fmt.Errorf("provision General wikis: %w", err)
+	}
 	workerDone := make(chan error, 1)
 	go func() {
 		err := app.RunWorker(ctx)

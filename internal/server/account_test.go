@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -61,6 +62,22 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	other := f.login("member@example.com")
 	uid, target := accountID(t, f, human), accountID(t, f, other)
 	p := securityProject(t, f, human)
+	if err := f.s.EnsureGeneralWikis(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var generalID string
+	if err := f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		project, err := q.GeneralProject(uid)
+		generalID = project.ID
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	putFile(t, f, human, generalID, "private.md", "Private evidence")
+	prefix := "projects/" + generalID + "/"
+	if keys, err := f.s.Blobs.List(t.Context(), prefix); err != nil || len(keys) == 0 {
+		t.Fatal("could not seed General content", keys, err)
+	}
 	if c := f.request("DELETE", "/api/account", human, map[string]string{"confirm": "yes"}, nil); c != 400 {
 		t.Fatal("missing confirmation accepted", c)
 	}
@@ -97,8 +114,12 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("GET", "/api/me", human, nil, nil); c != 401 {
 		t.Fatal("deleted account session active", c)
 	}
-	var projects []fixtureProjectEntry
-	if c := f.request("GET", "/api/projects", other, nil, &projects); c != 200 || len(projects) != 1 || projects[0].Namespace != p.Namespace || projects[0].InboxCount != 1 {
+	if keys, err := f.s.Blobs.List(t.Context(), prefix); err != nil || len(keys) != 0 {
+		t.Fatal("General content retained", keys, err)
+	}
+	var projects []model.ProjectEntry
+	if c := f.request("GET", "/api/projects", other, nil, &projects); c != 200 || len(projects) != 2 ||
+		!slices.ContainsFunc(projects, func(entry model.ProjectEntry) bool { return entry.Namespace == p.Namespace && entry.InboxCount == 1 }) {
 		t.Fatal("team evidence lost", c, projects)
 	}
 	_ = f.stateStore.Read(context.Background(), func(st *store.Queries) error {

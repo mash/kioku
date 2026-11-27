@@ -505,8 +505,8 @@ class SessionHooksTest(unittest.TestCase):
             for source in ('compact', 'resume'):
                 self.assertEqual(self.hook('SessionStart', source=source),
                                  (self.root / 'prompts/hook-compact.txt').read_text())
-            self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
-            self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com'), '')
+            self.assertEqual(self.prompt_context(prompt='https://example.com/doc'), self.list_header())
+            self.assertEqual(self.prompt_context(prompt='https://example.com'), self.list_header())
 
     def test_precompact_works_without_cli_or_state(self):
         (self.data / 'bin/kioku').unlink()
@@ -574,12 +574,12 @@ class SessionHooksTest(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 self.assertEqual(self.state_path.read_bytes(), before)
 
-    def test_no_url_keeps_prompt_rule_but_no_namespace_is_silent(self):
+    def test_no_url_keeps_selection_and_missing_namespace_offers_general(self):
         self.assertEqual(self.context(self.hook('UserPromptSubmit', prompt='http://example.com'), 'UserPromptSubmit'), self.turn_rule())
         self.state['namespace'] = ''
         self.save_state()
-        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com/doc'), '')
-        self.assertEqual(self.hook('UserPromptSubmit', prompt='https://example.com'), '')
+        self.assertEqual(self.prompt_context(prompt='https://example.com/doc'), self.list_header())
+        self.assertEqual(self.prompt_context(prompt='https://example.com'), self.list_header())
 
     def test_no_jq_or_python_in_hook_runtime(self):
         path = self.work / 'path'
@@ -622,8 +622,9 @@ class SessionHooksTest(unittest.TestCase):
         self.assertNotIn('再 pull は不要', output)
 
     def list_header(self):
+        command = shlex.quote(str(self.data / 'bin/kioku'))
         return (self.root / 'prompts/hook-candidates.txt').read_text().strip().replace(
-            '{{kioku}}', shlex.quote(str(self.data / 'bin/kioku')))
+            '{{kioku}}', command).replace('{{general_kioku}}', command)
 
     def candidate(self, namespace):
         return self.list_header() + f'\n- {namespace}: （説明なし）［ヒント: cwd の .kioku/config］'
@@ -812,17 +813,6 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(self.state_path.read_bytes(), before)
             self.assertEqual(self.state_path.stat().st_mtime_ns, mtime)
 
-    def test_E15_E22_startup_and_declined_text(self):
-        expected = 'Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。一覧に示された CLI の絶対パスと手順に従い、ユーザーに聞かずに project を選ぶか Kioku なしを選ぶ。\n'
-        self.assertEqual(self.hook('SessionStart', source='startup'), expected)
-        self.state = {'declined_at': '2026-11-17T01:00:00Z'}
-        self.save_state()
-        for source in ('compact', 'resume'):
-            expected = ('Kioku: このセッションは Kioku なし（2026-11-17T01:00:00Z に決めた）。'
-                        '話題が project に合ったら ' + shlex.quote(str(self.data / 'bin/kioku')) +
-                        ' -n <namespace> session select で選ぶ。')
-            self.assertEqual(self.context(self.hook('SessionStart', source=source), 'SessionStart'), expected)
-
     def test_hook_only_autoselection_writes_refreshes_or_prunes_state(self):
         before = self.state_path.read_bytes()
         old = time.time() - 29 * 86400
@@ -954,7 +944,7 @@ class SessionHooksTest(unittest.TestCase):
                     self.assertIn('kioku:', log.read_text())
                 self.assertFalse(self.state_path.with_name('environment-is-not-the-hook-id.json').exists())
 
-    def test_E13_E37_E38_background_capture(self):
+    def test_E13_E37_background_capture(self):
         restricted = self.work / 'restricted'
         restricted.mkdir()
         for command in ('sh', 'dirname'):
@@ -988,18 +978,17 @@ print('backgrounded · 1a2b3c4d')
         self.env['KIOKU_SERVER'] = 'https://wrong.example'
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
-        for event, count, declined in [('Stop', 5, False), ('SessionEnd', 1, False), ('Stop', 7, True)]:
-            with self.subTest(event=event, declined=declined):
-                root = self.work / (event + str(declined))
+        for event, count in [('Stop', 5), ('SessionEnd', 1)]:
+            with self.subTest(event=event):
+                root = self.work / event
                 metadata = root / '.kioku'
                 metadata.mkdir(parents=True)
                 (metadata / 'config').write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': 'org/a'}))
-                other = self.work / ('other-' + event + str(declined))
+                other = self.work / ('other-' + event)
                 (other / '.kioku').mkdir(parents=True)
                 (other / '.kioku/config').write_text((metadata / 'config').read_text())
                 catalog.write_text(json.dumps({'projects': [{'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'path': str(p)} for p in (other, root)]}))
-                self.state = ({'declined_at': '2026-11-18T01:00:00Z'} if declined else
-                              {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)})
+                self.state = {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)}
                 self.save_state()
                 queue = metadata / 'queue.tsv'
                 queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t読んだ\n' for i in range(count))
@@ -1008,11 +997,6 @@ print('backgrounded · 1a2b3c4d')
                 self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
                                 CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work))
                 self.assertEqual(self.hook(event, cwd=str(root)), '')
-                if declined:
-                    self.assertFalse(log.exists())
-                    self.assertFalse((metadata / 'capture.log').exists())
-                    self.assertEqual(queue.read_text(), queued)
-                    continue
                 self.wait_until(lambda: (metadata / 'capture.last').exists())
                 self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
                 self.assertEqual(queue.read_text(), '')

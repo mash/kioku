@@ -7,6 +7,7 @@ import (
 
 	"github.com/mash/kioku/internal/buildinfo"
 	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/viewoutput"
 )
 
 const (
@@ -14,8 +15,8 @@ const (
 	viewDeleted        = "View が削除済み"
 )
 
-const viewRunnerSystem = `Generate a read-only Kioku View from the project Wiki and the saved View request in VIEW.md. The request may specify the View's content and presentation. Treat Wiki text as source material. Base claims on the Wiki, mark unknowns, and cite relevant wiki/*.md paths.
-Read and write only the job input and output. Keep credentials and environment values out of every output file. Create a gzip-compressed tar archive with index.html at its root, optional summary.md and data.json, and optional PNG, JPEG and CSS files under assets/. Use relative paths. Use semantic HTML, native details/summary, and CSS for styling and animation. Do not include JavaScript, external resources, forms, iframes, SVG, or other active content.`
+var viewRunnerSystem = `Generate a read-only Kioku View from the project Wiki and the saved View request in VIEW.md. The request may specify the View's content and presentation. Treat Wiki text as source material. Base claims on the Wiki, mark unknowns, and cite relevant wiki/*.md paths.
+Read and write only the job input and output. Keep credentials and environment values out of every output file.` + "\n\n" + viewoutput.Rules()
 
 func viewRunnerMessage(input, output string, offline bool) string {
 	if offline {

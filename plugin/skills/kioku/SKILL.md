@@ -25,6 +25,8 @@ Stop は5件以上、SessionEnd は1件以上で、フックが背景の `captur
 `kioku-capture` として capture セッションへの文を受け取った場合は、対象選択と pull を繰り返さず、文の一時ディレクトリを使う。以下のモード判定を省略し、status・version を実行せず、受付成否が不明なら「受付不明」とする。[capture.md](references/capture.md) と agent の手順に従う。
 Codex では今どおり直接 put する。Claude Chat と Cowork も直接 put する。
 
+View を設定・生成する場合は、プロンプトを書く前に [views.md](references/views.md) を読む。
+
 ## モード選択
 
 画面の名前ではなく、使える機能からモードを決める。local mode を優先する。

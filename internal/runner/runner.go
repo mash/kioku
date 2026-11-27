@@ -64,12 +64,13 @@ type RunSpec struct {
 }
 
 type Status struct {
-	Usage  UsageSample
-	Run    RunRef
-	State  State
-	Reason string
-	Failed bool
-	TurnID string
+	Usage         UsageSample
+	Run           RunRef
+	State         State
+	Reason        string
+	Failed        bool
+	BudgetReached bool // The provider explicitly stopped at its budget.
+	TurnID        string
 }
 
 var ErrTemporary = errors.New("managed agents: temporary failure")

@@ -338,7 +338,7 @@ func TestViewRegenerationKeepsThePreviousResultUntilSourceRemoval(t *testing.T) 
 		t.Fatal(err)
 	}
 	advance(parent)
-	if v := detail(); v.Status != "failed" || v.JobID != initial.JobID || v.Error != "invalid output: "+errViewHTML.Error() {
+	if v := detail(); v.Status != "failed" || v.JobID != initial.JobID || !strings.Contains(v.Error, `invalid output: index.html: `+errViewHTML.Error()+` (要素 "form")`) {
 		t.Fatalf("failed generation should keep the previous result: %+v", v)
 	}
 
@@ -629,5 +629,34 @@ func TestViewGenerationCapturedEmptyListDoesNotRecapture(t *testing.T) {
 	parent = storedJob(t, f, parent.ID)
 	if parent.Status != "completed" || len(parent.Views) != 0 {
 		t.Fatal(parent)
+	}
+}
+
+func TestViewBudgetStopIsReported(t *testing.T) {
+	t.Parallel()
+	f, token, project, provider := managedFixture(t)
+	putFile(t, f, token, project.ID, "budget-stop.md", "Evidence")
+	parent := queueTestViewGeneration(t, f, token, project)
+	sendOutput(t, f, provider, parent, "Published Wiki")
+	provider.SetStatus(parent.Run.Ref.ID, "idle", "end_turn", 50)
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(parent)); err != nil {
+		t.Fatal(err)
+	}
+	child := nextTestViewTask(t, f, parent)
+	provider.SetStatus(child.Run.Ref.ID, "idle", "budget_reached", 100)
+	if err := f.s.reconcileAgentJob(t.Context(), fixtureRow(child)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.storage.advanceViews(t.Context(), parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	const want = "View の生成が予算上限に達しました"
+	result := storedJob(t, f, parent.ID)
+	if len(result.Views) != 1 || result.Views[0].Status != "failed" || result.Views[0].Error != want {
+		t.Fatalf("wrong job result: %+v", result.Views)
+	}
+	var view viewDetail
+	if code := f.request("GET", "/api/projects/"+project.Namespace+"/views/project-map", token, nil, &view); code != 200 || view.Error != want {
+		t.Fatalf("wrong View status: %d %+v", code, view)
 	}
 }

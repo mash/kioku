@@ -17,6 +17,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob"
+	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/runner"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
@@ -199,6 +200,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}/members/{member}", s.wrap(s.removeMember, true))
 	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/put", s.wrap(s.put, true))
 	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/generate", s.wrap(s.generate, true))
+	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/views", s.wrap(s.listViews, true))
 	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/views", s.wrap(s.createView, true))
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/views/{view}", s.wrap(s.getView, true))
 	s.mux.HandleFunc("PATCH /api/projects/{org}/{slug}/views/{view}", s.wrap(s.updateView, true))
@@ -312,7 +314,7 @@ type requestBody struct {
 }
 
 func readBody(w http.ResponseWriter, r *http.Request) requestBody {
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, model.MaxJSONRequestBytes))
 	return requestBody{raw, err}
 }
 func (b requestBody) decode(v any) error {

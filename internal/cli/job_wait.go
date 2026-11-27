@@ -28,6 +28,13 @@ func (a *App) wait(j model.Job) error {
 			if j.Unchanged && j.Revision == "" {
 				return a.print(j)
 			}
+			for _, view := range j.Views {
+				fmt.Fprintf(a.Out, "View %s: %s", view.Slug, view.Status)
+				if view.Error != "" {
+					fmt.Fprintf(a.Out, " (%s)", view.Error)
+				}
+				fmt.Fprintln(a.Out)
+			}
 			return a.pull()
 		}
 		if j.Status == "failed" {
@@ -37,9 +44,11 @@ func (a *App) wait(j model.Job) error {
 		case <-a.ctx.Done():
 			return a.ctx.Err()
 		case <-ticker.C:
-			if _, err = a.request("GET", p+"/jobs/"+j.ID, nil, &j); err != nil {
+			var next model.Job
+			if _, err := a.request("GET", p+"/jobs/"+j.ID, nil, &next); err != nil {
 				return err
 			}
+			j = next
 		}
 	}
 }

@@ -224,6 +224,8 @@ kiokud は待機中の inbox を実行に固定し、`JOB.md`、`WIKI.md`、`inb
 
 Wiki は slug `wiki` の削除できない View です。プロジェクト画面の右サイドバーには Wiki を先頭に View が作成順で並びます。オーナーは「＋」でほかの View を作り、Wiki を含む各 View の設定でタイトルとプロンプトを変更できます。Wiki の設定を保存するだけでは再生成せず、次に Wiki の runner が動く生成から使います。
 
+HTML の View の出力規則は [Kioku スキルの参照文書](plugin/skills/kioku/references/view-output.md) にあります。`kioku -n ORG/PROJECT view list` と `view show SLUG` で設定や生成結果を確認でき、オーナーは `view set --prompt-file FILE SLUG` でプロンプトを保存できます。`generate --wait` は View ごとの生成状態とエラーも表示します。
+
 Wiki を先に生成し、完全な Wiki があれば、同じジョブでほかの View を作成順に生成します。各 View は独立した runner セッションで Wiki と保存済みプロンプトを読み、検査に通った結果で前回の表示を上書きします。生成中のタイトル・プロンプトの編集ではスキップせず、各 View の入力アーカイブを作った時点の設定で公開します。View が失敗すると後の View はスキップします。[生成と予算](docs/WORKERS.md#generation-runner-type)
 
 Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。`WIKI.md` に従ってページを整理し、事実の記述から source ページを引用します。既定の prompt は概念・エンティティ・分析・概要ページと種類ごとの目録を作ります。`wiki/index.md` には source ページを載せません。整理の指示が system の規則と矛盾するときは system を優先します。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。

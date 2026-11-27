@@ -73,6 +73,11 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		_, err = fmt.Fprint(out, help)
 		return err
 	}
+	if commands[0] == "view" && (len(commands) == 1 ||
+		len(commands) == 2 && slices.Contains([]string{"help", "--help", "-h"}, commands[1])) {
+		_, err = fmt.Fprint(out, viewHelp)
+		return err
+	}
 	if commands[0] == "fetch" {
 		return fetchCommand(ctx, commands[1:], out)
 	}
@@ -243,6 +248,8 @@ func (a *App) dispatch(args []string) error {
 		return a.queue(args[1:], time.Now())
 	case "put":
 		return a.put(args[1:])
+	case "view":
+		return a.view(args[1:])
 	case "generate":
 		return a.generate(args[1:])
 	case "pull":

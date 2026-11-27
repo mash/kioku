@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/model"
@@ -284,19 +283,7 @@ func (s *Server) mcpViewList(ctx context.Context, key, namespace string) (any, e
 	if err != nil {
 		return nil, err
 	}
-	type listItem struct {
-		ID          string     `json:"view_id"`
-		Slug        string     `json:"slug"`
-		Title       string     `json:"title"`
-		GeneratedAt *time.Time `json:"generated_at"`
-		Status      string     `json:"status"`
-		Error       string     `json:"error,omitempty"`
-	}
-	items := make([]listItem, 0, len(views))
-	for _, view := range views {
-		items = append(items, listItem{view.ID, view.Slug, view.Title, view.GeneratedAt, view.Status, view.Error})
-	}
-	return map[string]any{"views": items}, nil
+	return map[string]any{"views": viewListItems(views)}, nil
 }
 
 func (s *Server) mcpViewRead(ctx context.Context, key, namespace, slug, name string, offset int) (any, error) {

@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/mash/kioku/internal/auth"
@@ -172,7 +172,7 @@ func (s *Server) createViewLocked(ctx context.Context, pid string, body requestB
 			}
 		}
 		title, prompt := req.Title, req.Prompt
-		if strings.TrimSpace(title) == "" || strings.TrimSpace(prompt) == "" {
+		if !validViewSetting(title) || !validViewSetting(prompt) {
 			return fail(400, "title and prompt must contain text")
 		}
 		p, err := q.Project(pid)
@@ -213,7 +213,13 @@ func (s *Server) createViewLocked(ctx context.Context, pid string, body requestB
 	})
 	return result, err
 }
-func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body requestBody) (viewDefinition, error) {
+
+// Compare the settings displayed in a browser form, independent of generation.
+func viewSettingsVersion(view viewDefinition) string {
+	return auth.Hash(fmt.Sprintf("%s:%d:%s%s", view.ID, len(view.Title), view.Title, view.Prompt))
+}
+
+func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body requestBody, version string) (viewDefinition, error) {
 	var result viewDefinition
 	err := s.write(ctx, func(q *store.Queries) error {
 		var req struct {
@@ -245,6 +251,17 @@ func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body re
 		if err != nil {
 			return err
 		}
+		p, err := q.Project(pid)
+		if err != nil {
+			return err
+		}
+		project, err := projectProjection(q, p)
+		if err != nil {
+			return err
+		}
+		if version != "" && version != viewSettingsVersion(s.viewProjection(row, project)) {
+			return fail(409, "編集中に View の設定が更新されました")
+		}
 		if title != nil {
 			row.Data.Title = title
 		}
@@ -252,14 +269,6 @@ func (s *Server) updateViewLocked(ctx context.Context, pid, slug string, body re
 			row.Data.Prompt = prompt
 		}
 		if err = q.PutView(row); err != nil {
-			return err
-		}
-		p, err := q.Project(pid)
-		if err != nil {
-			return err
-		}
-		project, err := projectProjection(q, p)
-		if err != nil {
 			return err
 		}
 		result = s.viewProjection(row, project)

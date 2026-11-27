@@ -13,30 +13,10 @@ import (
 // The Kioku settings script runs in the parent page. Generated content is
 // rendered in a sandboxed frame with its own stricter policy.
 const viewSettingsScript = `
-for (const settings of document.querySelectorAll('details[data-view-settings]')) {
-  settings.addEventListener('toggle', async () => {
-    if (!settings.open || settings.dataset.loaded) return;
-    const form = settings.querySelector('form[data-view-action="PATCH"]');
-    const fields = form.querySelector('fieldset');
-    const status = form.querySelector('[role="alert"]');
-    try {
-      const response = await fetch(form.action);
-      const value = await response.json();
-      if (!response.ok) {
-        status.textContent = value.error || 'View の設定を取得できませんでした';
-        return;
-      }
-      form.elements.namedItem('title').value = value.title;
-      form.elements.namedItem('prompt').value = value.prompt;
-      fields.disabled = false;
-      status.textContent = '';
-      settings.dataset.loaded = 'true';
-    } catch {
-      status.textContent = 'View の設定を取得できませんでした';
-    }
-  });
-}
 for (const form of document.querySelectorAll('form[data-view-action]')) {
+  const method = form.dataset.viewAction;
+  const version = form.dataset.settingsVersion;
+  const initial = version ? new FormData(form) : null;
   for (const button of form.querySelectorAll('[data-preset-title]')) {
     button.addEventListener('click', () => {
       form.elements.namedItem('title').value = button.dataset.presetTitle;
@@ -46,7 +26,6 @@ for (const form of document.querySelectorAll('form[data-view-action]')) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const status = form.querySelector('[role="alert"]');
-    const method = form.dataset.viewAction;
     const button = event.submitter;
     if (button) button.disabled = true;
     status.textContent = '';
@@ -54,12 +33,24 @@ for (const form of document.querySelectorAll('form[data-view-action]')) {
       const options = {method};
       if (method !== 'DELETE') {
         options.headers = {'Content-Type': 'application/json'};
-        options.body = JSON.stringify(Object.fromEntries(new FormData(form)));
+        const fields = new FormData(form);
+        if (initial) {
+          for (const [name, value] of initial) {
+            if (fields.get(name) === value) fields.delete(name);
+          }
+          if (fields.keys().next().done) {
+            status.textContent = '変更はありません';
+            return;
+          }
+          options.headers['` + viewSettingsVersionHeader + `'] = version;
+        }
+        options.body = JSON.stringify(Object.fromEntries(fields));
       }
       const response = await fetch(form.action, options);
       if (!response.ok) {
         const error = await response.json();
         status.textContent = error.error || 'View を保存できませんでした';
+        if (version && response.status === 409) form.querySelector('[data-view-conflict]').hidden = false;
         return;
       }
       window.location.assign(form.dataset.success || window.location.pathname);
@@ -110,24 +101,26 @@ iframe.view-content{width:100%;height:70vh;border:1px solid #ddd;border-radius:8
   {{if .Citations}}<h2>Wiki の出典</h2><ul>{{range .Citations}}<li><a href="/{{$.Namespace}}?file={{.Path}}">{{.Label}}</a></li>{{end}}</ul>{{end}}
 {{else if not .Pending}}<p>未生成</p>{{end}}
 {{if .CanEdit}}
-<details class="view-settings" data-view-settings>
+<details class="view-settings">
   <summary>View の設定</summary>
-  <form method="post" action="{{.API}}" data-view-action="PATCH">
-    <fieldset disabled>
-      <label>タイトル <input name="title" required></label>
-      <label>プロンプト <textarea name="prompt" required></textarea></label>
-      <button>保存</button>
-    </fieldset>
+  {{/* If the script is unavailable, dialog mode prevents an incompatible navigation. */}}
+  <form method="dialog" action="{{.API}}" data-view-action="PATCH" data-settings-version="{{.SettingsVersion}}">
+    <label>タイトル <input name="title" value="{{.View.Title}}" required></label>
+    <label>プロンプト <textarea name="prompt" required>
+{{.Prompt}}</textarea></label>
+    <button>保存</button>
     <p role="alert"></p>
+    <p data-view-conflict hidden><a href="/{{.Namespace}}/views/{{.View.Slug}}" target="_blank" rel="noopener">現在の設定を開く</a></p>
   </form>
+  <noscript><p>View の設定を保存するには JavaScript を有効にしてください。</p></noscript>
   {{if not .IsWiki}}
   <form method="post" action="{{.API}}" data-view-action="DELETE" data-success="/{{.Namespace}}">
     <button>View を削除</button>
     <p role="alert"></p>
   </form>
   {{end}}
+  ` + viewSettingsScriptTag + `
 </details>
-` + viewSettingsScriptTag + `
 {{end}}
 {{end}}`
 
@@ -171,7 +164,8 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	isWiki := v.Slug == wikiViewSlug
 	data := struct {
-		Namespace, API, Document              string
+		Namespace, API, Document, Prompt      string
+		SettingsVersion                       string
 		View                                  viewPageItem
 		CanEdit, WikiUpdated, Pending, IsWiki bool
 		Citations                             []viewCitation
@@ -179,6 +173,10 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 		Namespace: p.Namespace, API: "/api/projects/" + p.Namespace + "/views/" + v.Slug,
 		View: makeViewPageItem(v), CanEdit: current.Members[uid] == "owner",
 		Pending: v.Status == "pending", IsWiki: isWiki,
+	}
+	if data.CanEdit {
+		data.Prompt = v.Prompt
+		data.SettingsVersion = viewSettingsVersion(v)
 	}
 	if !isWiki {
 		body, err := s.readViewBundleLocked(ctx, p.ID, v)
@@ -203,8 +201,8 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	policy := pageCSP + "; img-src data:"
 	if data.CanEdit {
-		policy += viewSettingsCSP
 		w.Header().Set("Referrer-Policy", "same-origin")
+		policy += viewSettingsCSP
 	}
 	w.Header().Set("Content-Security-Policy", policy)
 	return render(w, v.Title, data, viewTemplate, headerFor(r, uid))

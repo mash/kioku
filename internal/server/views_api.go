@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
@@ -27,6 +29,44 @@ type viewCreateRequest struct {
 	Slug   json.RawMessage `json:"slug"`
 	Title  string          `json:"title"`
 	Prompt string          `json:"prompt"`
+}
+
+type viewListItem struct {
+	ID          string     `json:"view_id"`
+	Slug        string     `json:"slug"`
+	Title       string     `json:"title"`
+	GeneratedAt *time.Time `json:"generated_at"`
+	Status      string     `json:"status"`
+	Error       string     `json:"error,omitempty"`
+}
+
+func viewListItems(views []viewDefinition) []viewListItem {
+	items := make([]viewListItem, 0, len(views))
+	for _, view := range views {
+		items = append(items, viewListItem{view.ID, view.Slug, view.Title, view.GeneratedAt, view.Status, view.Error})
+	}
+	return items
+}
+
+func (s *Server) listViews(w http.ResponseWriter, r *http.Request, uid string) error {
+	pid := r.PathValue("project")
+	unlock, err := s.storage.lock(r.Context(), pid)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := s.Store.Read(r.Context(), func(q *store.Queries) error {
+		_, err := member(q, pid, uid)
+		return err
+	}); err != nil {
+		return err
+	}
+	views, err := s.listViewsLocked(r.Context(), pid)
+	if err != nil {
+		return err
+	}
+	jsonOut(w, 200, map[string]any{"views": viewListItems(views)})
+	return nil
 }
 
 func (s *Server) createView(w http.ResponseWriter, r *http.Request, uid string) error {
@@ -68,14 +108,17 @@ func (s *Server) getView(w http.ResponseWriter, r *http.Request, uid string) err
 	return nil
 }
 
+const viewSettingsVersionHeader = "Kioku-View-Settings-Version"
+
 func (s *Server) updateView(w http.ResponseWriter, r *http.Request, uid string) error {
 	pid := r.PathValue("project")
+	body := readBody(w, r)
 	unlock, err := s.storage.lock(r.Context(), pid)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	view, err := s.updateViewLocked(r.Context(), pid, r.PathValue("view"), readBody(w, r))
+	view, err := s.updateViewLocked(r.Context(), pid, r.PathValue("view"), body, r.Header.Get(viewSettingsVersionHeader))
 	if err != nil {
 		return err
 	}
@@ -92,10 +135,14 @@ func viewSettingText(raw json.RawMessage) (*string, error) {
 		return nil, nil
 	}
 	var text string
-	if err := json.Unmarshal(raw, &text); err != nil || strings.TrimSpace(text) == "" {
+	if err := json.Unmarshal(raw, &text); err != nil || !validViewSetting(text) {
 		return nil, fail(400, "view settings must contain text")
 	}
 	return &text, nil
+}
+
+func validViewSetting(text string) bool {
+	return utf8.ValidString(text) && strings.TrimSpace(text) != ""
 }
 
 func (s *Server) deleteView(w http.ResponseWriter, r *http.Request, uid string) error {

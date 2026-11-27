@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -21,23 +22,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/css/scanner"
+	"github.com/mash/kioku/internal/viewoutput"
 	"github.com/mash/kioku/internal/wiki"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
-)
-
-// S3 reads ordinary project objects up to 16 MiB. Keep the repacked ZIP
-// below that ceiling even for assets that cannot be compressed further.
-const (
-	maxViewArchiveBytes  = 16 << 20
-	maxViewExpandedBytes = 8 << 20
-	maxViewDocumentBytes = 12 << 20
-	maxViewTextBytes     = 1 << 20
-	maxViewCSSBytes      = 256 << 10
-	maxViewArchiveFiles  = 128
-	maxViewHTMLDepth     = 96
-	maxViewImagePixels   = 16 << 20
-	maxViewBundlePixels  = 24 << 20
 )
 
 var (
@@ -94,7 +82,7 @@ func newViewEntries() *viewEntries {
 }
 
 func readViewBundle(body []byte) (*viewBundle, error) {
-	if len(body) > maxViewArchiveBytes {
+	if len(body) > viewoutput.MaxArchiveBytes {
 		return nil, errViewLimit
 	}
 	zipFile, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
@@ -107,7 +95,7 @@ func readViewBundle(body []byte) (*viewBundle, error) {
 		if !mode.IsDir() && !mode.IsRegular() {
 			return nil, errViewEntry
 		}
-		if file.UncompressedSize64 > maxViewExpandedBytes {
+		if file.UncompressedSize64 > viewoutput.MaxExpandedBytes {
 			return nil, errViewLimit
 		}
 		if err := entries.add(file.Name, int64(file.UncompressedSize64), mode.IsDir(), file.Open); err != nil {
@@ -136,8 +124,8 @@ func readPublishedViewText(body []byte, name string) (string, error) {
 			return "", errViewArchive
 		}
 		defer r.Close()
-		text, err := io.ReadAll(io.LimitReader(r, maxViewTextBytes+1))
-		if err != nil || len(text) > maxViewTextBytes || !utf8.Valid(text) {
+		text, err := io.ReadAll(io.LimitReader(r, viewoutput.MaxTextBytes+1))
+		if err != nil || len(text) > viewoutput.MaxTextBytes || !utf8.Valid(text) {
 			return "", errViewEntry
 		}
 		return string(text), nil
@@ -146,7 +134,7 @@ func readPublishedViewText(body []byte, name string) (string, error) {
 }
 
 func readViewRunnerOutput(body []byte) (*viewBundle, error) {
-	if len(body) > maxViewArchiveBytes {
+	if len(body) > viewoutput.MaxArchiveBytes {
 		return nil, errViewLimit
 	}
 	compressed := bytes.NewReader(body)
@@ -157,7 +145,7 @@ func readViewRunnerOutput(body []byte) (*viewBundle, error) {
 	defer gz.Close()
 	gz.Multistream(false)
 	// Leave room for tar headers and padding, even for bundles with many files.
-	expanded := &io.LimitedReader{R: gz, N: maxViewExpandedBytes + (2 << 20) + 1}
+	expanded := &io.LimitedReader{R: gz, N: viewoutput.MaxExpandedBytes + (2 << 20) + 1}
 	tr := tar.NewReader(expanded)
 	entries := newViewEntries()
 	rootDirectory := true
@@ -219,13 +207,13 @@ func readViewRunnerOutput(body []byte) (*viewBundle, error) {
 var viewAssetPath = regexp.MustCompile(`^assets(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$`)
 
 func (e *viewEntries) add(name string, size int64, dir bool, open func() (io.ReadCloser, error)) error {
-	if len(e.seen) >= maxViewArchiveFiles {
+	if len(e.seen) >= viewoutput.MaxArchiveFiles {
 		return errViewLimit
 	}
 	if dir {
 		name = strings.TrimSuffix(name, "/")
 	}
-	if name == "" || len(name) > 180 || e.seen[name] || name != path.Clean(name) {
+	if name == "" || len(name) > viewoutput.MaxArchivePathBytes || e.seen[name] || name != path.Clean(name) {
 		return errViewEntry
 	}
 	e.seen[name] = true
@@ -236,14 +224,14 @@ func (e *viewEntries) add(name string, size int64, dir bool, open func() (io.Rea
 		return nil
 	}
 
-	var fileLimit int64 = maxViewExpandedBytes
+	var fileLimit int64 = viewoutput.MaxExpandedBytes
 	switch {
 	case slices.Contains(viewTextPaths, name):
-		fileLimit = maxViewTextBytes
+		fileLimit = viewoutput.MaxTextBytes
 	case strings.HasPrefix(name, "assets/") && viewAssetPath.MatchString(name):
 		switch strings.ToLower(path.Ext(name)) {
 		case ".css":
-			fileLimit = maxViewCSSBytes
+			fileLimit = viewoutput.MaxCSSBytes
 		case ".png", ".jpg", ".jpeg":
 		default:
 			return errViewEntry
@@ -251,7 +239,7 @@ func (e *viewEntries) add(name string, size int64, dir bool, open func() (io.Rea
 	default:
 		return errViewEntry
 	}
-	if size < 0 || size > fileLimit || size > maxViewExpandedBytes-e.bytes {
+	if size < 0 || size > fileLimit || size > viewoutput.MaxExpandedBytes-e.bytes {
 		return errViewLimit
 	}
 	r, err := open()
@@ -279,11 +267,18 @@ type viewDocument struct {
 func validateViewEntries(files map[string][]byte) (*viewBundle, error) {
 	entry, ok := files["index.html"]
 	if !ok || len(bytes.TrimSpace(entry)) == 0 {
-		return nil, errViewEntry
+		return nil, fmt.Errorf("index.html: %w (必須のファイルが空か存在しません)", errViewEntry)
 	}
 	for _, name := range viewTextPaths {
-		if b, ok := files[name]; ok && (!utf8.Valid(b) || name == "data.json" && !json.Valid(b)) {
-			return nil, errViewEntry
+		body, exists := files[name]
+		if !exists {
+			continue
+		}
+		if !utf8.Valid(body) {
+			return nil, fmt.Errorf("%s: %w (UTF-8 が必要です)", name, errViewEntry)
+		}
+		if name == "data.json" && !json.Valid(body) {
+			return nil, fmt.Errorf("%s: %w (有効な JSON が必要です)", name, errViewEntry)
 		}
 	}
 	doc := &viewDocument{
@@ -292,33 +287,35 @@ func validateViewEntries(files map[string][]byte) (*viewBundle, error) {
 		seenLinks: make(map[string]bool),
 		bytes:     len(entry),
 	}
-	pixelsRemaining := maxViewBundlePixels
-	for name, body := range files {
+	pixelsRemaining := viewoutput.MaxBundlePixels
+	names := slices.Sorted(maps.Keys(files))
+	for _, name := range names {
+		body := files[name]
 		switch strings.ToLower(path.Ext(name)) {
 		case ".png", ".jpg", ".jpeg":
 			format, pixels, err := validateViewImage(name, body, pixelsRemaining)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 			pixelsRemaining -= pixels
 			doc.images[name] = "data:image/" + format + ";base64," + base64.StdEncoding.EncodeToString(body)
 		}
 	}
-	for name, body := range files {
+	for _, name := range names {
 		if strings.EqualFold(path.Ext(name), ".css") {
-			css, err := doc.rewriteCSS(string(body), path.Dir(name), true)
+			css, err := doc.rewriteCSS(string(files[name]), path.Dir(name), true)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 			if err := doc.addDocumentBytes(len(css)); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 			doc.sheets[name] = css
 		}
 	}
 	document, err := doc.render(entry)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("index.html: %w", err)
 	}
 	return &viewBundle{files: files, document: document, citations: doc.citations}, nil
 }
@@ -332,7 +329,7 @@ func validateViewImage(name string, body []byte, pixelsRemaining int) (string, i
 	if err != nil || format != ext || config.Width <= 0 || config.Height <= 0 {
 		return "", 0, errViewEntry
 	}
-	if config.Width > min(maxViewImagePixels, pixelsRemaining)/config.Height {
+	if config.Width > min(viewoutput.MaxImagePixels, pixelsRemaining)/config.Height {
 		return "", 0, errViewLimit
 	}
 	if _, _, err := image.Decode(bytes.NewReader(body)); err != nil {
@@ -367,58 +364,31 @@ func (d *viewDocument) render(entry []byte) (string, error) {
 	if err := html.Render(&out, root); err != nil {
 		return "", err
 	}
-	if out.Len() > maxViewDocumentBytes {
+	if out.Len() > viewoutput.MaxDocumentBytes {
 		return "", errViewLimit
 	}
 	return out.String(), nil
 }
 
-var viewElements = viewStringSet(`
-	a abbr address article aside b bdi bdo blockquote br caption cite code col colgroup
-	data dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6
-	header hgroup hr i img ins kbd li main mark meter nav ol p pre progress q
-	rp rt ruby s samp section small span strong sub summary sup table tbody td th thead
-	tfoot time tr u ul var wbr html head body title link meta style`)
-
-var viewGlobalAttrs = viewStringSet(`class id lang dir title role style hidden tabindex`)
-
-func viewStringSet(list string) map[string]bool {
-	out := make(map[string]bool)
-	for _, value := range strings.Fields(list) {
-		out[value] = true
+// Report only short syntax names, without attribute values or source snippets.
+func viewSyntaxName(name string) string {
+	if len(name) > 48 {
+		return "(名前が長すぎます)"
 	}
-	return out
-}
-
-var viewElementAttrs = map[string]map[string]bool{
-	"a":        {"href": true},
-	"col":      {"span": true},
-	"colgroup": {"span": true},
-	"data":     {"value": true},
-	"details":  {"open": true, "name": true},
-	"img":      {"src": true, "alt": true, "width": true, "height": true, "loading": true},
-	"li":       {"value": true},
-	"link":     {"rel": true, "href": true, "media": true},
-	"meta":     {"charset": true, "name": true, "content": true},
-	"meter":    {"value": true, "min": true, "max": true, "low": true, "high": true, "optimum": true},
-	"ol":       {"start": true, "type": true, "reversed": true},
-	"progress": {"value": true, "max": true},
-	"style":    {"media": true},
-	"td":       {"colspan": true, "rowspan": true, "headers": true},
-	"th":       {"colspan": true, "rowspan": true, "headers": true, "scope": true, "abbr": true},
-	"time":     {"datetime": true},
+	return fmt.Sprintf("%q", name)
 }
 
 func checkViewHTML(element string, attrs []html.Attribute) error {
-	if !viewElements[element] {
-		return errViewHTML
+	if !viewoutput.AllowsElement(element) {
+		return fmt.Errorf("%w (要素 %s)", errViewHTML, viewSyntaxName(element))
 	}
 	names := make(map[string]bool, len(attrs))
 	for _, a := range attrs {
-		if a.Namespace != "" || names[a.Key] || !viewGlobalAttrs[a.Key] &&
-			!viewElementAttrs[element][a.Key] && !strings.HasPrefix(a.Key, "aria-") &&
-			!strings.HasPrefix(a.Key, "data-") {
-			return errViewHTML
+		if names[a.Key] {
+			return fmt.Errorf("%w (要素 %s の重複した属性 %s)", errViewHTML, element, viewSyntaxName(a.Key))
+		}
+		if a.Namespace != "" || !viewoutput.AllowsAttribute(element, a.Key) {
+			return fmt.Errorf("%w (要素 %s の属性 %s)", errViewHTML, element, viewSyntaxName(a.Key))
 		}
 		names[a.Key] = true
 	}
@@ -428,12 +398,12 @@ func checkViewHTML(element string, attrs []html.Attribute) error {
 const viewFrameCSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
 
 func (d *viewDocument) rewriteHTML(n *html.Node, depth int) error {
-	if depth > maxViewHTMLDepth {
+	if depth > viewoutput.MaxHTMLDepth {
 		return errViewLimit
 	}
 	if n.Type == html.ElementNode {
 		if n.Namespace != "" {
-			return errViewHTML
+			return fmt.Errorf("%w (要素 %s の名前空間)", errViewHTML, viewSyntaxName(n.Data))
 		}
 		if err := checkViewHTML(n.Data, n.Attr); err != nil {
 			return err
@@ -442,12 +412,12 @@ func (d *viewDocument) rewriteHTML(n *html.Node, depth int) error {
 		case atom.Meta:
 			if !strings.EqualFold(viewAttr(n, "charset"), "utf-8") &&
 				!slices.Contains([]string{"viewport", "description"}, strings.ToLower(viewAttr(n, "name"))) {
-				return errViewHTML
+				return fmt.Errorf("%w (meta の charset または name)", errViewHTML)
 			}
 		case atom.Img:
 			imageURL := d.images[viewAssetName(".", viewAttr(n, "src"))]
 			if imageURL == "" {
-				return errViewAsset
+				return fmt.Errorf("%w (img の src)", errViewAsset)
 			}
 			if err := d.addDocumentBytes(len(imageURL)); err != nil {
 				return err
@@ -457,7 +427,7 @@ func (d *viewDocument) rewriteHTML(n *html.Node, depth int) error {
 			sheet := viewAssetName(".", viewAttr(n, "href"))
 			css, exists := d.sheets[sheet]
 			if !strings.EqualFold(viewAttr(n, "rel"), "stylesheet") || !exists {
-				return errViewAsset
+				return fmt.Errorf("%w (link の rel または href)", errViewAsset)
 			}
 			if err := d.addDocumentBytes(len(css)); err != nil {
 				return err
@@ -473,7 +443,7 @@ func (d *viewDocument) rewriteHTML(n *html.Node, depth int) error {
 			if child := n.FirstChild; child != nil {
 				css, err := d.rewriteCSS(child.Data, ".", true)
 				if err != nil {
-					return err
+					return fmt.Errorf("style 要素: %w", err)
 				}
 				if err := d.addDocumentBytes(len(css)); err != nil {
 					return err
@@ -482,13 +452,13 @@ func (d *viewDocument) rewriteHTML(n *html.Node, depth int) error {
 			}
 		case atom.A:
 			if err := d.rewriteLink(n); err != nil {
-				return err
+				return fmt.Errorf("%w (a の href)", err)
 			}
 		}
 		if style := viewAttr(n, "style"); style != "" {
 			css, err := d.rewriteCSS(style, ".", false)
 			if err != nil {
-				return err
+				return fmt.Errorf("%s の style 属性: %w", n.Data, err)
 			}
 			if err := d.addDocumentBytes(len(css)); err != nil {
 				return err
@@ -519,7 +489,7 @@ func (d *viewDocument) rewriteHTML(n *html.Node, depth int) error {
 
 func (d *viewDocument) addDocumentBytes(n int) error {
 	d.bytes += n
-	if d.bytes > maxViewDocumentBytes {
+	if d.bytes > viewoutput.MaxDocumentBytes {
 		return errViewLimit
 	}
 	return nil
@@ -606,22 +576,8 @@ func viewNodeText(root *html.Node) string {
 	return out.String()
 }
 
-// The only at-rules enabled are local layout and animation rules. Known
-// functions either compute a CSS value or select nodes within the document.
-var viewCSSAtRules = viewStringSet(`@media @supports @keyframes @-webkit-keyframes @container @layer @starting-style`)
-var viewCSSFunctions = viewStringSet(`
-	abs attr blur brightness calc clamp color color-mix conic-gradient contrast counter counters
-	cubic-bezier drop-shadow env fit-content grayscale hsl hsla hue-rotate hwb invert lab lch
-	light-dark linear linear-gradient matrix matrix3d max min minmax mod oklab oklch opacity
-	perspective polygon radial-gradient rem repeat repeating-conic-gradient repeating-linear-gradient
-	repeating-radial-gradient rgb rgba rotate rotate3d rotatex rotatey rotatez round saturate
-	scale scale3d scalex scaley scalez sepia sign skew skewx skewy steps translate translate3d
-	translatex translatey translatez var circle ellipse inset path
-	dir has is lang not nth-child nth-last-child nth-last-of-type nth-of-type where selector
-`)
-
 func (d *viewDocument) rewriteCSS(source, base string, stylesheet bool) (string, error) {
-	if len(source) > maxViewCSSBytes {
+	if len(source) > viewoutput.MaxCSSBytes {
 		return "", errViewLimit
 	}
 	// CSS escapes can hide a function name from the tokenizer. Reject them
@@ -644,20 +600,20 @@ func (d *viewDocument) rewriteCSS(source, base string, stylesheet bool) (string,
 		case scanner.TokenError, scanner.TokenCDO, scanner.TokenCDC:
 			return "", errViewCSS
 		case scanner.TokenAtKeyword:
-			if !stylesheet || !viewCSSAtRules[strings.ToLower(value)] {
-				return "", errViewCSS
+			if !stylesheet || !viewoutput.AllowsCSSRule(strings.ToLower(value)) {
+				return "", fmt.Errorf("%w (規則 %s)", errViewCSS, viewSyntaxName(value))
 			}
 		case scanner.TokenURI:
 			ref := strings.Trim(strings.TrimSpace(value[len("url("):len(value)-1]), "'\"")
 			imageURL := d.images[viewAssetName(base, ref)]
 			if imageURL == "" {
-				return "", errViewAsset
+				return "", fmt.Errorf("%w (CSS の url())", errViewAsset)
 			}
 			value = "url(\"" + imageURL + "\")"
 		case scanner.TokenFunction:
 			name := strings.ToLower(strings.TrimSuffix(value, "("))
-			if !viewCSSFunctions[name] {
-				return "", errViewCSS
+			if !viewoutput.AllowsCSSFunction(name) {
+				return "", fmt.Errorf("%w (関数 %s)", errViewCSS, viewSyntaxName(name))
 			}
 			closures = append(closures, ')')
 		case scanner.TokenChar:
@@ -678,7 +634,7 @@ func (d *viewDocument) rewriteCSS(source, base string, stylesheet bool) (string,
 				closures = closures[:len(closures)-1]
 			}
 		}
-		if len(value) > maxViewDocumentBytes-out.Len() || len(closures) > maxViewHTMLDepth {
+		if len(value) > viewoutput.MaxDocumentBytes-out.Len() || len(closures) > viewoutput.MaxHTMLDepth {
 			return "", errViewLimit
 		}
 		out.WriteString(value)

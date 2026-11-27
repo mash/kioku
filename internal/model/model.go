@@ -45,6 +45,9 @@ type InboxEntry struct {
 	Remove    bool   `json:"remove,omitempty"`
 }
 
+// MaxJSONRequestBytes bounds API request bodies such as View settings.
+const MaxJSONRequestBytes = 16 << 20
+
 type Job struct {
 	AgentBudgetCents int64           `json:"agent_budget_cents"`
 	Run              *AgentRun       `json:"run,omitempty"`

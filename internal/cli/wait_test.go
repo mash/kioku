@@ -33,6 +33,8 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 			if polls == 1 {
 				job.Status = "running"
 				job.Views = []model.ViewJobResult{{Slug: "project-map", Status: "running"}}
+			} else {
+				job.Views = []model.ViewJobResult{{Slug: "project-map", Status: "failed", Error: "index.html: invalid element"}}
 			}
 			json.NewEncoder(w).Encode(job)
 		default:
@@ -92,6 +94,9 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	}
 	if polls != 2 || snapshots != 1 {
 		t.Fatal("generate --wait did not pull", polls, snapshots)
+	}
+	if !strings.Contains(out.String(), "View project-map: failed (index.html: invalid element)") {
+		t.Fatal("missing final View error", out.String())
 	}
 	body, err := os.ReadFile(filepath.Join(a.localDir(), "wiki", "index.md"))
 	if err != nil || string(body) != "# Completed" {

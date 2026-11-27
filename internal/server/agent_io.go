@@ -11,6 +11,7 @@ import (
 	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/store"
+	"github.com/mash/kioku/internal/viewoutput"
 	"github.com/mash/kioku/internal/wiki"
 )
 
@@ -92,7 +93,7 @@ func (s *Server) outputLimits() agentgen.OutputLimits {
 
 func (s *Server) agentOutputLimit(job store.JobRow) int64 {
 	if job.ParentID != nil {
-		return maxViewArchiveBytes
+		return viewoutput.MaxArchiveBytes
 	}
 	return s.outputLimits().MaxCompressed
 }

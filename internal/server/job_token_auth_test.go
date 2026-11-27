@@ -78,6 +78,7 @@ func jobRestrictedRoutes() []string {
 		"DELETE /api/projects/{org}/{slug}/members/{member}",
 		"POST /api/projects/{org}/{slug}/put",
 		"POST /api/projects/{org}/{slug}/generate",
+		"GET /api/projects/{org}/{slug}/views",
 		"POST /api/projects/{org}/{slug}/views",
 		"GET /api/projects/{org}/{slug}/views/{view}",
 		"PATCH /api/projects/{org}/{slug}/views/{view}",

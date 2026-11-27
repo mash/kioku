@@ -100,7 +100,11 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 				reason = "managed agent failed"
 			}
 			if job.ParentID != nil {
-				reason = "View の生成処理に失敗しました"
+				reason = "View の実行エラーで生成が停止しました"
+				if status.BudgetReached {
+					reason = "View の生成が予算上限に達しました"
+				}
+				reason = withViewOutputRejection(reason, job.Data.Run)
 			}
 			return s.failAgentJobLocked(ctx, job, reason, &status)
 		}
@@ -111,14 +115,13 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 			return s.collectAgentOutput(ctx, r, job, status)
 		}
 		reason := status.Reason
-		if job.ParentID != nil && reason != "" {
-			reason = "View の生成処理に失敗しました"
-		}
-		if reason == "" {
+		if job.ParentID != nil {
+			reason = "View の出力が提出されませんでした"
+			if rejected := job.Data.Run.OutputRejection; rejected != nil {
+				reason = "invalid output: " + *rejected
+			}
+		} else if reason == "" {
 			reason = "agent stopped without uploading output"
-		}
-		if job.ParentID != nil && job.Data.Run.OutputRejection != nil {
-			reason = *job.Data.Run.OutputRejection
 		}
 		return s.finishFailedAgentJobLocked(ctx, job, reason, &status, true)
 	case runner.StateNone:
@@ -127,7 +130,12 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 		}
 	default:
 		if time.Now().UnixMilli() > job.Data.Run.Deadline {
-			return s.failAgentJobLocked(ctx, job, "agent job timed out", &status)
+			reason := "agent job timed out"
+			if job.ParentID != nil {
+				reason = "View の生成が時間切れになりました"
+				reason = withViewOutputRejection(reason, job.Data.Run)
+			}
+			return s.failAgentJobLocked(ctx, job, reason, &status)
 		}
 	}
 	if inspectErr != nil {
@@ -135,6 +143,13 @@ func (s *Server) reconcileAgentJobLocked(ctx context.Context, job store.JobRow) 
 	}
 	return nil
 }
+func withViewOutputRejection(reason string, run *store.RunData) string {
+	if run.OutputRejection != nil {
+		return reason + " · invalid output: " + *run.OutputRejection
+	}
+	return reason
+}
+
 func (s *Server) saveDiscoveredRef(ctx context.Context, id string, ref runner.RunRef) error {
 	return s.Store.Write(ctx, func(q *store.Queries) error {
 		j, err := q.Job(id)

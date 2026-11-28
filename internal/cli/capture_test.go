@@ -126,7 +126,7 @@ func TestCaptureRun(t *testing.T) {
 		if mode != "1" || !filepath.IsAbs(dir) {
 			t.Fatal(string(environment))
 		}
-		if _, err := captureSnapshot(dir); err != nil {
+		if _, _, err := captureSnapshot(filepath.Base(dir), dir); err != nil {
 			t.Fatal(err)
 		}
 		raw, err := os.ReadFile(log + ".args")
@@ -451,7 +451,7 @@ func TestCaptureRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tmp, err := resolveCaptureDir(lock.Token, a.captureTmp(lock.Token))
+		tmp, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -31,7 +31,10 @@ func (a *App) deleteSourcesFrom(args []string, input io.Reader) error {
 		return errors.New("usage: kioku delete SOURCE... | kioku delete -")
 	}
 	for _, url := range args {
-		if _, err := parseCaptureSource(url); !source.IsLocalKey(url) && err != nil {
+		if source.IsLocalKey(url) {
+			continue
+		}
+		if _, err := parseCaptureSource(url); err != nil {
 			if strings.HasPrefix(url, source.LocalSource) {
 				return errors.New("delete: ローカルキーは kioku:local/<64 桁> の全体を書く")
 			}

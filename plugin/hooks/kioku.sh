@@ -1,9 +1,23 @@
 #!/bin/sh
 exec 2>/dev/null
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-export CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$ROOT}"
 DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
 TARGET="$DATA/bin/kioku"
+if [ "${KIOKU_CAPTURE:-}" = 1 ]; then
+    if [ "${1:-}" = tool-guard ]; then
+        if [ -x "$TARGET" ] && "$TARGET" hook tool-guard; then
+            exit 0
+        fi
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kioku capture guard unavailable"}}'
+    fi
+    exit 0
+fi
+case ${1:-} in
+    tool-guard) exit 0 ;;
+    tool) "$TARGET" hook tool >/dev/null; exit 0 ;;
+esac
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$ROOT}"
 T=
 trap '[ -n "$T" ] && rm -rf "$T"' 0
 
@@ -91,26 +105,9 @@ download() {
     mv -f "$T/x/kioku" "$TARGET"
 }
 
-if [ "${KIOKU_CAPTURE:-}" = 1 ]; then
-    if [ "${1:-}" = tool-guard ]; then
-        if [ -x "$TARGET" ] && "$TARGET" hook tool-guard; then
-            exit 0
-        fi
-        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kioku capture guard unavailable"}}'
-    fi
-    exit 0
-fi
-if [ "${1:-}" = tool-guard ]; then
-    exit 0
-fi
-if [ "${1:-}" = tool ]; then
-    "$TARGET" hook tool >/dev/null
-    exit 0
-fi
 if [ "${1:-}" = compact ]; then
-    INPUT=$(cat)
     # Compact and resume never install or replace the CLI.
-    CONTEXT=$(printf '%s' "$INPUT" | "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
+    CONTEXT=$("$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
     if [ -n "$CONTEXT" ]; then
         printf '%s\n' "$CONTEXT"
         exit 0

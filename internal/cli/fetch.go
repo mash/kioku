@@ -41,32 +41,29 @@ func fetchCommand(ctx context.Context, args []string, outputs ...io.Writer) (err
 	if f.NArg() != 0 || *out == "" || *dir == "" {
 		return errors.New("--out と capture の一時ディレクトリを指定する必要がある")
 	}
-	resolved, err := resolveCaptureDir(*token, *dir)
-	if err != nil {
-		return err
+	if *token != filepath.Base(*dir) {
+		return errors.New("invalid capture token")
 	}
-	target, err := url.Parse(args[0])
-	if err != nil {
-		return err
-	}
-	// Being eligible as a source identity does not make a URL a public
-	// fetch destination. Keep the public URL restrictions on this path.
-	if err := source.ValidateURL(target); err != nil {
-		return err
-	}
-	return fetchURL(ctx, nil, args[0], resolved, *out, outputs...)
+	return fetchURL(ctx, nil, args[0], *dir, *out, outputs...)
 }
 
 func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, output string, outputs ...io.Writer) error {
-	if !filepath.IsAbs(dir) || filepath.Base(filepath.Dir(dir)) != "capture-tmp" || filepath.Base(filepath.Dir(filepath.Dir(dir))) != ".kioku" || !captureTokenPattern.MatchString(filepath.Base(dir)) {
-		return errors.New("capture-tmp の所有トークン付きディレクトリが必要")
-	}
-	rows, err := captureSnapshot(dir)
+	dir, rows, err := captureSnapshot(filepath.Base(dir), dir)
 	if err != nil {
 		return err
 	}
 	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.Source == rawURL }) {
 		return errors.New("URL は capture のスナップショットにない")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	// Only the default HTTP transport is used for live fetches.
+	if transport == nil {
+		if err := source.ValidateURL(u); err != nil {
+			return err
+		}
 	}
 	if filepath.IsAbs(output) {
 		output, err = filepath.Rel(dir, output)
@@ -101,10 +98,6 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 			return errors.New("認証情報を含まない HTTPS URL のみ取得できる")
 		}
 		return nil
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return err
 	}
 	if err := validate(u); err != nil {
 		return err

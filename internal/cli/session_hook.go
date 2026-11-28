@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -52,14 +51,8 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	if f.NArg() != 0 || *prompts == "" || (*event != "" && !allowedHookEvent(*event)) {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
-	const maxHookInput = 8 << 20
-	var b bytes.Buffer
-	n, err := io.Copy(&b, io.LimitReader(input, maxHookInput+1))
-	if err != nil || n > maxHookInput {
-		return nil
-	}
 	var in sessionHookInput
-	if json.Unmarshal(b.Bytes(), &in) != nil || (*event != "" && in.Event != *event) || len(in.AgentID) != 0 {
+	if readHookJSON(input, &in) != nil || (*event != "" && in.Event != *event) || len(in.AgentID) != 0 {
 		return nil
 	}
 	if !allowedHookEvent(in.Event) {
@@ -343,7 +336,6 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 	var messages []string
 	if queued != 0 {
 		lock, err := readCaptureLock(a.captureLockPath())
-		_, markerErr := os.Stat(a.captureLaunchErrorPath())
 		if err == nil && !lockBusy(lock, now) {
 			cwd := in.Cwd
 			if !filepath.IsAbs(cwd) {
@@ -357,6 +349,11 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 			} else if in.Event == "SessionEnd" {
 				wait = 0
 			}
+			if in.Event == "SessionEnd" {
+				_ = startHookCapture(cwd, p, wait)
+				return ""
+			}
+			_, markerErr := os.Stat(a.captureLaunchErrorPath())
 			if err := startHookCapture(cwd, p, wait); err != nil || markerErr == nil {
 				messages = append(messages, fmt.Sprintf("Kioku: %s の capture の起動に失敗した。kioku -C %s status と capture.log を確認する", p.Namespace, shellQuote(p.Path)))
 			}
@@ -384,16 +381,11 @@ func startHookCapture(cwd string, p projectEntry, wait time.Duration) error {
 		args = append(args, "--server", p.Server)
 	}
 	args = append(args, "-C", p.Path, "-n", p.Namespace, "capture", "run")
-	log, err := openBackgroundLog(filepath.Join(p.Path, ".kioku/capture.log"), os.O_APPEND|syscall.O_NONBLOCK)
+	log, err := (&App{Dir: p.Path}).openCaptureLog()
 	if err != nil {
 		return err
 	}
 	defer log.Close()
-	if stat, err := log.Stat(); err != nil {
-		return err
-	} else if !stat.Mode().IsRegular() {
-		return errors.New("capture.log must be a regular file")
-	}
 	c := exec.Command(exe, args...)
 	c.Dir = cwd
 	c.Env = processEnv("KIOKU_SERVER", "CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL")

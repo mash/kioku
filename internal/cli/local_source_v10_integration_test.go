@@ -177,11 +177,7 @@ func TestLocalSourceV10Integration(t *testing.T) {
 		if err != nil || lock == nil || lock.BgID != "1a2b3c4d" {
 			t.Fatal(lock, err)
 		}
-		dir, err := resolveCaptureDir(lock.Token, a.captureTmp(lock.Token))
-		if err != nil {
-			t.Fatal(err)
-		}
-		rows, err := captureSnapshot(dir)
+		dir, rows, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
 		if err != nil {
 			t.Fatal(err)
 		}

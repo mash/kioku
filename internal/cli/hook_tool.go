@@ -21,8 +21,8 @@ func hookTool(ctx context.Context, input io.Reader) {
 	if os.Getenv(captureModeEnv) == "1" {
 		return
 	}
-	in, err := readToolHookEvent(input)
-	if err != nil || in.Event != "PostToolUse" {
+	var in hookToolEvent
+	if readHookJSON(input, &in) != nil || in.Event != "PostToolUse" {
 		return
 	}
 	now := time.Now()

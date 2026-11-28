@@ -28,7 +28,7 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	if err != nil || lock == nil {
 		t.Fatal(lock, err)
 	}
-	dir, err := resolveCaptureDir(lock.Token, a.captureTmp(lock.Token))
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +84,14 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	for _, cmd := range []string{
 		base + " capture fetch " + web + " --capture-token " + lock.Token + " --dir " + shellQuote(dir) + " --out " + shellQuote(inside),
 		project + " capture put --capture-token " + lock.Token + " --source " + shellQuote(tool) + " " + shellQuote(inside),
+		project + " capture result --capture-token " + lock.Token + " --result accepted " + web,
 		project + " capture result --capture-token " + lock.Token + " --result skipped --reason " + shellQuote("not a document; it isn't text") + " " + web,
 	} {
 		check("Bash", map[string]any{"command": cmd}, false)
 		check("Bash", map[string]any{"command": cmd + "; echo no"}, true)
 		check("Bash", map[string]any{"command": cmd + " $(echo no)"}, true)
 	}
+	check("Bash", map[string]any{"command": project + " capture result --capture-token " + lock.Token + " --result accepted --reason unexpected " + web}, true)
 	check("Bash", map[string]any{"command": project + " capture run"}, true)
 	check("Bash", map[string]any{"command": "gh issue view 42"}, true)
 	if err := os.WriteFile(filepath.Join(dir, "snapshot.tsv"), []byte("tampered"), 0600); err != nil {

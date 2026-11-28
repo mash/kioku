@@ -2,11 +2,8 @@ package cli
 
 import (
 	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,97 +43,6 @@ func (a *App) put(args []string) error {
 	}
 }
 
-func (a *App) capturePut(args []string) error {
-	f := flag.NewFlagSet("capture put", flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	captureToken := captureTokenFlag(f)
-	src := f.String("source", "", "capture snapshot source")
-	if err := f.Parse(args); err != nil {
-		return err
-	}
-	if f.NArg() != 1 || *captureToken == "" || *src == "" {
-		return errors.New("usage: kioku capture put --capture-token TOKEN --source SOURCE FILE")
-	}
-	endpoint, err := a.projectPath()
-	if err != nil {
-		return err
-	}
-	unlock, err := a.captureSubmissionLock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	dir, err := resolveCaptureDir(*captureToken, a.captureTmp(*captureToken))
-	if err != nil {
-		return err
-	}
-	snapshot, err := captureSnapshot(dir)
-	if err != nil {
-		return fmt.Errorf("put: %w", err)
-	}
-	i := resolveSnapshotSource(snapshot, *src)
-	if i < 0 {
-		return errors.New("put: 取得元は capture の snapshot にない")
-	}
-	attempt := snapshot[i]
-	sourceID := attempt.Source
-	queue, err := readQueue(a.queuePath())
-	if err != nil {
-		return err
-	}
-	j := snapshotRow(queue, sourceID)
-	if j < 0 {
-		return errors.New("put: queue に行が無い（delete 済み）")
-	}
-	if queue[j].State != queueQueued || !sameQueueAttempt(queue[j], attempt) {
-		return errors.New("put: queue の行が再登録されたため、この capture では送らない")
-	}
-	results, err := readCaptureResults(dir)
-	if err != nil {
-		return err
-	}
-	if results[sourceID].Outcome != "" {
-		return errors.New("put: この capture は取得元の結果を記録済み")
-	}
-	path := f.Arg(0)
-	if !strings.EqualFold(filepath.Ext(path), ".md") {
-		return errors.New("put: capture の資料は Markdown (.md) にする")
-	}
-	b, err := readCaptureSource(dir, path)
-	if err != nil {
-		return err
-	}
-	name := filepath.Base(path)
-	content := string(b)
-	doc, err := source.FileWithProvenance(name, content)
-	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	if !strings.HasPrefix(sourceID, toolSourcePrefix) && doc.URL != sourceID {
-		return errors.New("put: source_url が capture の HTTPS 取得元と一致しない")
-	}
-	if ack := results[sourceID].PutURL; ack != "" {
-		_, err := fmt.Fprintf(a.Out, "accepted %s\n", ack)
-		return err
-	}
-	if err := a.selectCredential(false); err != nil {
-		return err
-	}
-	input := model.FileInput{Name: name, Content: content}
-	code, err := a.request(http.MethodPost, endpoint+"/put", model.PutRequest{File: &input}, nil)
-	if err != nil {
-		return err
-	}
-	if code != http.StatusAccepted {
-		return fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
-	}
-	results[sourceID] = captureProgress{PutURL: doc.URL}
-	receiptErr := writeCaptureResults(dir, results)
-	logErr := a.captureNote("accepted " + doc.URL)
-	_, err = fmt.Fprintf(a.Out, "accepted %s\n", doc.URL)
-	return errors.Join(receiptErr, logErr, err)
-}
-
 func (a *App) putPaths(paths []string) error {
 	p, err := a.projectPath()
 	if err != nil {
@@ -145,11 +51,6 @@ func (a *App) putPaths(paths []string) error {
 	if err = a.ensureProject(); err != nil {
 		return err
 	}
-	unlock, err := a.captureSubmissionLock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	inputs := []model.FileInput{}
 	for _, root := range paths {
 		info, err := os.Lstat(root)
@@ -189,16 +90,12 @@ func (a *App) putPaths(paths []string) error {
 				return err
 			}
 			content := string(b)
-			// This is a pre-flight check; the server is authoritative.
 			if _, err := source.FileWithProvenance(name, content); err != nil {
-				if metadata, parseErr := source.Frontmatter(content); parseErr == nil {
-					u, _ := source.FrontmatterSourceURL(metadata)
-					if source.IsLocalKey(u) {
-						return fmt.Errorf("put: %s のローカルキーは delete にだけ指定する", name)
-					}
-					if u == source.LocalSource {
-						return fmt.Errorf("put: %s の source_url は %s です。ローカル資料は file:///abs/notes.md の形で put する", name, u)
-					}
+				switch {
+				case errors.Is(err, source.ErrLocalKeyForPut):
+					return fmt.Errorf("put: %s のローカルキーは delete にだけ指定する", name)
+				case errors.Is(err, source.ErrLocalMarker):
+					return fmt.Errorf("put: %s の source_url は %s です。ローカル資料は file:///abs/notes.md の形で put する", name, source.LocalSource)
 				}
 				return fmt.Errorf("%s: %w", p, err)
 			}

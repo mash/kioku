@@ -259,8 +259,23 @@ func captureAllowedTools(command, project, tmp string, rows []queueRow) []string
 	}
 	return tools
 }
-func (a *App) captureNote(note string) error {
+func (a *App) openCaptureLog() (*os.File, error) {
 	log, err := openBackgroundLog(filepath.Join(a.metadataDir(), "capture.log"), os.O_APPEND|syscall.O_NONBLOCK)
+	if err != nil {
+		return nil, err
+	}
+	if stat, err := log.Stat(); err != nil {
+		log.Close()
+		return nil, err
+	} else if !stat.Mode().IsRegular() {
+		log.Close()
+		return nil, errors.New("capture.log must be a regular file")
+	}
+	return log, nil
+}
+
+func (a *App) captureNote(note string) error {
+	log, err := a.openCaptureLog()
 	if err != nil {
 		return err
 	}
@@ -457,11 +472,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 	launched = true
 	_ = os.Remove(a.captureLaunchErrorPath())
 	if errors.Is(runErr, exec.ErrWaitDelay) {
-		warning := "warning: capture launcher exited but output pipes remained open; session may be running"
-		fmt.Fprintln(a.Err, warning)
-		if err := a.captureNote(warning); err != nil {
-			return err
-		}
+		fmt.Fprintln(a.Err, "warning: capture launcher exited but output pipes remained open; session may be running")
 	}
 	id := ""
 	if match := captureBackgroundID.FindStringSubmatch(stdout.String()); len(match) > 1 {
@@ -471,13 +482,9 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		if err := a.recordCaptureID(path, lock.Token, ""); err != nil {
 			return err
 		}
-		warning := "warning: capture background id could not be parsed; lock retained until all results arrive or it expires"
-		fmt.Fprintln(a.Err, warning)
-		if err := a.captureNote(warning); err != nil {
-			return err
-		}
-
-		return a.captureStarted(fmt.Sprintf("kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。", a.Config.Namespace, len(rows)))
+		fmt.Fprintln(a.Err, "warning: capture background id could not be parsed; lock retained until all results arrive or it expires")
+		_, err := fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。\n", a.Config.Namespace, len(rows))
+		return err
 	}
 	last := filepath.Join(a.metadataDir(), "capture.last")
 	previous := ""
@@ -502,21 +509,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		}
 		guard.Close()
 	}
-	return a.captureStarted(fmt.Sprintf("kioku-capture を背景で起動した（%s、%d 件、id %s）。claude logs %s で見る。", a.Config.Namespace, len(rows), id, id))
-}
-
-func (a *App) captureStarted(message string) error {
-	// SessionStart may stop waiting for stdout, while Stop already sends it to capture.log.
-	logged := false
-	if out, ok := a.Out.(*os.File); ok {
-		outInfo, outErr := out.Stat()
-		logInfo, logErr := os.Stat(filepath.Join(a.metadataDir(), "capture.log"))
-		logged = outErr == nil && logErr == nil && os.SameFile(outInfo, logInfo)
-	}
-	if !logged {
-		_ = a.captureNote(message)
-	}
-	_, err := fmt.Fprintln(a.Out, message)
+	_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id %s）。claude logs %s で見る。\n", a.Config.Namespace, len(rows), id, id)
 	return err
 }
 func (a *App) captureReceipt(token string) string {
@@ -635,7 +628,7 @@ func captureCommands(command, project, tmp, token string, rows []queueRow) strin
 		}
 		path := filepath.Join(tmp, fmt.Sprintf("source-%03d.md", i+1))
 		fmt.Fprintf(&b, "Markdown を %s に Write する。\nput:\n```sh\n%s capture put --capture-token %s --source %s %s\n```\n", path, project, token, src, shellQuote(path))
-		fmt.Fprintf(&b, "capture result（結果と理由だけ置き換える）:\n```sh\n%s capture result --capture-token %s --result '<結果>' --reason '<理由>' %s\n```\n", project, token, src)
+		fmt.Fprintf(&b, "capture result（受付を確認した場合）:\n```sh\n%s capture result --capture-token %s --result accepted %s\n```\nunsaved または skipped の場合は accepted を置き換え、その直後に --reason '<理由>' を入れる。\n", project, token, src)
 	}
 	return strings.TrimSpace(b.String())
 }

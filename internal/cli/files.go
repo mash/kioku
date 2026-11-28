@@ -10,23 +10,20 @@ import (
 
 // A process lock protects project configuration and snapshot publication.
 func (a *App) localLock() (func(), error) {
-	if err := ensureDirectory(a.metadataDir()); err != nil {
-		return nil, err
-	}
-	f, err := lockRegularFile(filepath.Join(a.metadataDir(), "lock"), os.O_CREATE)
-	if err != nil {
-		return nil, err
-	}
-	return func() { _ = f.Close() }, nil
+	return a.projectLock("lock")
 }
 
 // captureSubmissionLock orders puts, deletes and changes to active capture
 // ownership without making asynchronous queue registration wait on HTTP.
 func (a *App) captureSubmissionLock() (func(), error) {
+	return a.projectLock("capture-submit.lock")
+}
+
+func (a *App) projectLock(name string) (func(), error) {
 	if err := ensureDirectory(a.metadataDir()); err != nil {
 		return nil, err
 	}
-	f, err := lockRegularFile(filepath.Join(a.metadataDir(), "capture-submit.lock"), os.O_CREATE)
+	f, err := lockRegularFile(filepath.Join(a.metadataDir(), name), os.O_CREATE)
 	if err != nil {
 		return nil, err
 	}

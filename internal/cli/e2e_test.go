@@ -337,7 +337,11 @@ func TestCLIFullWorkflow(t *testing.T) {
 		}
 		result := func(token, state, reason, u string) {
 			t.Helper()
-			must("capture", "result", "--capture-token", token, "--result", state, "--reason", reason, u)
+			args := []string{"capture", "result", "--capture-token", token, "--result", state}
+			if reason != "" {
+				args = append(args, "--reason", reason)
+			}
+			must(append(args, u)...)
 		}
 		enqueue := func(urls ...string) {
 			t.Helper()
@@ -380,7 +384,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		if out := must("capture", "put", "--capture-token", token, "--source", okURL, path); out != "accepted "+okURL+"\n" {
 			t.Fatal(out)
 		}
-		result(token, "accepted", "受付済み", okURL)
+		result(token, "accepted", "", okURL)
 		must("delete", goneURL)
 		write(goneURL)
 		if out, err := run("capture", "put", "--capture-token", token, "--source", goneURL, path); err == nil || !strings.Contains(err.Error(), "delete 済み") || out != "" {
@@ -462,7 +466,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		if out, err := run("capture", "put", "--capture-token", token, "--source", raw, path); err != nil || out != "accepted "+raw+"\n" {
 			t.Fatal("deleting the blob URL must not prevent capture of the separately queued raw URL", out, err)
 		}
-		result(token, "accepted", "受付済み", raw)
+		result(token, "accepted", "", raw)
 		result(token, "skipped", "delete 済み", blob)
 	})
 	must("logout")

@@ -2,11 +2,8 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -107,10 +104,8 @@ func removeQueueSource(rows []queueRow, source string) []queueRow {
 	return slices.DeleteFunc(rows, func(row queueRow) bool { return row.Source == source })
 }
 
+// registerQueueSource takes the validated identity returned by toolHookSource.
 func (a *App) registerQueueSource(source string, now time.Time) error {
-	if _, err := parseCaptureSource(source); err != nil {
-		return err
-	}
 	if _, err := a.projectPath(); err != nil {
 		return err
 	}
@@ -167,129 +162,4 @@ func resolveSnapshotSource(snapshot []queueRow, arg string) int {
 		return -1
 	}
 	return snapshotRow(snapshot, arg)
-}
-
-func (a *App) captureResult(args []string) error {
-	usage := errors.New("usage: kioku capture result --capture-token TOKEN --result accepted|unsaved|skipped [--reason TEXT] SOURCE")
-	f := flag.NewFlagSet("capture result", flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	token := captureTokenFlag(f)
-	result := f.String("result", "", "capture result")
-	reason := f.String("reason", "", "reason for the result")
-	if err := f.Parse(args); err != nil || f.NArg() != 1 || *token == "" {
-		return usage
-	}
-	switch *result {
-	case "accepted":
-	case "unsaved", "skipped":
-		if strings.TrimSpace(*reason) == "" {
-			return usage
-		}
-	default:
-		return usage
-	}
-	submit, err := a.captureSubmissionLock()
-	if err != nil {
-		return err
-	}
-	defer submit()
-	unlock, err := a.localLock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	dir, err := resolveCaptureDir(*token, a.captureTmp(*token))
-	if err != nil {
-		return err
-	}
-	snapshot, err := captureSnapshot(dir)
-	if err != nil {
-		return err
-	}
-	index := resolveSnapshotSource(snapshot, f.Arg(0))
-	if index < 0 {
-		return errors.New("capture result: 取得元は capture の snapshot にない")
-	}
-	src := snapshot[index].Source
-	results, err := readCaptureResults(dir)
-	if err != nil {
-		return err
-	}
-	progress := results[src]
-	if *result == "accepted" && progress.PutURL == "" {
-		return errors.New("capture result: HTTP 202 has not been recorded for this source")
-	}
-	var logErr error
-	if progress.Outcome == "" {
-		reasonText := queueText(strings.TrimSpace(*reason))
-		err := a.updateQueue(func(rows []queueRow) []queueRow {
-			for i, row := range rows {
-				if row.State != queueQueued || !sameQueueAttempt(row, snapshot[index]) {
-					continue
-				}
-				if *result != "unsaved" {
-					return slices.Delete(rows, i, i+1)
-				}
-				rows[i].Reason = reasonText
-				if row.Attempts >= maxCaptureAttempts {
-					rows[i].State = queueFailed
-				}
-				break
-			}
-			return rows
-		})
-		if err != nil {
-			return err
-		}
-		progress.Outcome = *result
-		results[src] = progress
-		if err := writeCaptureResults(dir, results); err != nil {
-			return err
-		}
-		if *result != "accepted" {
-			logErr = a.captureNote(*result + " " + src + ": " + reasonText)
-		}
-	}
-	for _, row := range snapshot {
-		if results[row.Source].Outcome == "" {
-			return logErr
-		}
-	}
-	return errors.Join(logErr, a.releaseCapture(*token))
-}
-
-type captureProgress struct {
-	PutURL  string `json:"put_url,omitempty"`
-	Outcome string `json:"outcome,omitempty"`
-}
-
-// Keep verified HTTP receipts outside the agent-writable capture directory.
-func captureProgressPath(dir string) string {
-	return filepath.Join(filepath.Dir(captureLockPathFromTmp(dir)), "capture-progress-"+filepath.Base(dir)+".json")
-}
-
-func readCaptureResults(dir string) (map[string]captureProgress, error) {
-	results := map[string]captureProgress{}
-	data, err := readRegular(captureProgressPath(dir))
-	if os.IsNotExist(err) {
-		return results, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := decodeJSON(data, &results); err != nil {
-		return nil, err
-	}
-	if results == nil {
-		return nil, errors.New("invalid capture results")
-	}
-	return results, nil
-}
-
-func writeCaptureResults(dir string, results map[string]captureProgress) error {
-	data, err := json.Marshal(results)
-	if err != nil {
-		return err
-	}
-	return atomicfile.Write(captureProgressPath(dir), data, 0600)
 }

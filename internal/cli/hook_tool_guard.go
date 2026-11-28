@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/source"
 )
@@ -31,31 +32,27 @@ type hookToolEvent struct {
 
 const maxHookToolInputBytes = 8 << 20
 
-func readToolHookEvent(input io.Reader) (hookToolEvent, error) {
-	var event hookToolEvent
+func readHookJSON(input io.Reader, event any) error {
 	b, err := io.ReadAll(io.LimitReader(input, maxHookToolInputBytes+1))
 	if err != nil {
-		return event, err
+		return err
 	}
-	if len(b) > maxHookToolInputBytes || json.Unmarshal(b, &event) != nil {
-		return event, errors.New("invalid hook event")
+	if len(b) > maxHookToolInputBytes {
+		return errors.New("hook event exceeds the input limit")
 	}
-	return event, nil
+	return json.Unmarshal(b, event)
 }
 
 func hookToolGuard(input io.Reader, output io.Writer) error {
 	if os.Getenv(captureModeEnv) != "1" {
 		return nil
 	}
-	event, err := readToolHookEvent(input)
+	var event hookToolEvent
 	dir := os.Getenv(captureDirEnv)
-	if err == nil && event.Event == "PreToolUse" {
-		resolved, err := resolveCaptureDir(filepath.Base(dir), dir)
-		if err == nil {
-			rows, err := captureSnapshot(resolved)
-			if err == nil && allowCaptureTool(event, resolved, rows) {
-				return nil
-			}
+	if readHookJSON(input, &event) == nil && event.Event == "PreToolUse" {
+		resolved, rows, err := captureSnapshot(filepath.Base(dir), dir)
+		if err == nil && allowCaptureTool(event, resolved, rows) {
+			return nil
 		}
 	}
 	return json.NewEncoder(output).Encode(map[string]any{"hookSpecificOutput": map[string]string{
@@ -96,17 +93,11 @@ func allowCaptureTool(in hookToolEvent, dir string, rows []queueRow) bool {
 		}
 		return json.Unmarshal(in.Input, &arg) == nil && captureBashAllowed(arg.Command, dir, rows)
 	default:
-		if !isMCPReadTool(in.Name) {
+		if !isMCPReadTool(in.Name) || len(in.Input) == 0 || !utf8.Valid(in.Input) {
 			return false
 		}
-		wanted, err := captureToolSource(in.Name, in.Input)
-		if err != nil {
-			return false
-		}
+		// The same-server read rule also covers an exact replay.
 		for _, row := range rows {
-			if row.Source == wanted {
-				return true
-			}
 			call, err := parseCaptureSource(row.Source)
 			if err == nil && call != nil && sameMCPServer(call.Tool, in.Name) {
 				return true
@@ -173,7 +164,7 @@ func captureBashAllowed(command, dir string, rows []queueRow) bool {
 			return result == "accepted"
 		}
 		return after[1] == "--reason" && strings.TrimSpace(after[2]) != "" &&
-			(result == "accepted" || result == "unsaved" || result == "skipped")
+			(result == "unsaved" || result == "skipped")
 	}
 	return false
 }

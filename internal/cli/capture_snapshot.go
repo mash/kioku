@@ -11,28 +11,40 @@ import (
 	"github.com/mash/kioku/internal/atomicfile"
 )
 
-func resolveCaptureDir(token, dir string) (string, error) {
+func captureSnapshot(token, dir string) (string, []queueRow, error) {
 	if !captureTokenPattern.MatchString(token) {
-		return "", errors.New("invalid capture token")
+		return "", nil, errors.New("invalid capture token")
 	}
 	if !filepath.IsAbs(dir) || filepath.Base(dir) != token || filepath.Base(filepath.Dir(dir)) != "capture-tmp" || filepath.Base(filepath.Dir(filepath.Dir(dir))) != ".kioku" {
-		return "", errors.New("invalid capture directory")
+		return "", nil, errors.New("invalid capture directory")
 	}
 	lock, err := readCaptureLock(captureLockPathFromTmp(dir))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if !lockBusy(lock, time.Now()) || lock.Token != token {
-		return "", errors.New("capture lock ownership changed")
+		return "", nil, errors.New("capture lock ownership changed")
 	}
 	info, err := os.Lstat(dir)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if !info.IsDir() {
-		return "", errors.New("capture directory must be a real directory")
+		return "", nil, errors.New("capture directory must be a real directory")
 	}
-	return filepath.EvalSymlinks(dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	data, err := readCaptureFile(resolved, filepath.Join(resolved, "snapshot.tsv"), maxCaptureSnapshotBytes)
+	if err != nil {
+		return "", nil, err
+	}
+	if lock.SnapshotHash == "" || fmt.Sprintf("%x", sha256.Sum256(data)) != lock.SnapshotHash {
+		return "", nil, errors.New("capture snapshot changed")
+	}
+	rows, err := parseQueue(data)
+	return resolved, rows, err
 }
 
 func (a *App) saveCaptureSnapshot(token string, rows []queueRow) error {
@@ -47,22 +59,4 @@ func (a *App) saveCaptureSnapshot(token string, rows []queueRow) error {
 		lock.SnapshotHash = fmt.Sprintf("%x", sha256.Sum256(snapshot))
 		return nil
 	})
-}
-
-func captureSnapshot(dir string) ([]queueRow, error) {
-	lock, err := readCaptureLock(captureLockPathFromTmp(dir))
-	if err != nil {
-		return nil, err
-	}
-	if !lockBusy(lock, time.Now()) || lock.Token != filepath.Base(dir) {
-		return nil, errors.New("capture lock ownership changed")
-	}
-	data, err := readCaptureFile(dir, filepath.Join(dir, "snapshot.tsv"), maxCaptureSnapshotBytes)
-	if err != nil {
-		return nil, err
-	}
-	if lock.SnapshotHash == "" || fmt.Sprintf("%x", sha256.Sum256(data)) != lock.SnapshotHash {
-		return nil, errors.New("capture snapshot changed")
-	}
-	return parseQueue(data)
 }

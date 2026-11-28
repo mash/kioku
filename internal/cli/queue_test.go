@@ -219,6 +219,9 @@ func TestCaptureResultsReleaseAfterEveryRowEvenIfDeleted(t *testing.T) {
 	if err := apply("accepted", url); err == nil || !strings.Contains(err.Error(), "HTTP 202") {
 		t.Fatal("accepted without any submission", err)
 	}
+	if err := apply("accepted", "--reason", "unexpected", url); err == nil || !strings.Contains(err.Error(), "usage:") {
+		t.Fatal("accepted with a reason", err)
+	}
 	if err := apply("skipped", "--reason", "not a document", url); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +321,7 @@ func TestCaptureSubmissionDoesNotBlockNewRegistration(t *testing.T) {
 	if err != nil || lock == nil {
 		t.Fatal(lock, err)
 	}
-	dir, err := resolveCaptureDir(lock.Token, a.captureTmp(lock.Token))
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,11 +415,7 @@ func TestCaptureLargeBacklogIsNotStranded(t *testing.T) {
 	if err != nil || lock == nil || len(snapshot) != 2 || len(formatQueue(snapshot)) > maxCaptureSnapshotBytes {
 		t.Fatal(lock, len(snapshot), err)
 	}
-	dir, err := resolveCaptureDir(lock.Token, a.captureTmp(lock.Token))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows, err := captureSnapshot(dir); err != nil || len(rows) != 2 {
+	if _, rows, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token)); err != nil || len(rows) != 2 {
 		t.Fatal(len(rows), err)
 	}
 	rows, err := readQueue(a.queuePath())

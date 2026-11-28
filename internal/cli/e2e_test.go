@@ -29,6 +29,13 @@ import (
 )
 
 func TestCLIFullWorkflow(t *testing.T) {
+	// Build before HOME moves to a temp dir, so go keeps the real module cache.
+	binary := filepath.Join(t.TempDir(), "kioku")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/kioku")
+	build.Dir = filepath.Join("..", "..")
+	if data, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fixture: %s: %v", data, err)
+	}
 	data := t.TempDir()
 	stateStore, err := store.OpenDatabase(filepath.Join(data, "catalog.sqlite"), true)
 	if err != nil {
@@ -277,12 +284,6 @@ func TestCLIFullWorkflow(t *testing.T) {
 		unchanged(body)
 
 		t.Run("command exits one on rejected local puts and incomplete delete keys", func(t *testing.T) {
-			binary := filepath.Join(t.TempDir(), "kioku")
-			build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/kioku")
-			build.Dir = filepath.Join("..", "..")
-			if data, err := build.CombinedOutput(); err != nil {
-				t.Fatalf("build fixture: %s: %v", data, err)
-			}
 			runRejected := func(want string, args ...string) {
 				t.Helper()
 				var out, stderr bytes.Buffer

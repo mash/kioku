@@ -99,6 +99,13 @@ func TestGeneralListingAndCoOwnerPermissions(t *testing.T) {
 		if entry["namespace"] != tc.namespace || len(entry) != wantFields || flagged != tc.general || flagged && entry["general"] != true {
 			t.Fatal("connector returned the wrong granted project", entry)
 		}
+		code := connectorCode(t, f, access, tc.namespace)
+		var issued struct {
+			General *bool `json:"general"`
+		}
+		if status := f.request("POST", "/api/agent/login", "", map[string]string{"code": code, "name": "test-host"}, &issued); status != http.StatusOK || issued.General == nil || *issued.General != tc.general {
+			t.Fatalf("agent login for %s returned status %d and general=%v, want %t", tc.namespace, status, issued.General, tc.general)
+		}
 	}
 	if status := f.request("DELETE", "/api/projects/"+regular.Namespace, human, nil, nil); status != 200 {
 		t.Fatal("ordinary project with slug general could not be deleted", status)
@@ -140,6 +147,14 @@ func TestConcurrentCoOwnerDeletionsKeepAnOwnerForNonemptyOrganization(t *testing
 	if status := f.request("POST", "/api/projects/team/docs/owner", alice, map[string]string{"target": carolID}, nil); status != 200 {
 		t.Fatal("transfer project ownership", status)
 	}
+	shared := consentProject(t, f, bob, "bob/shared")
+	joinConsentProject(t, f, shared.ID, bob, alice)
+	if status := f.request("POST", "/api/orgs/bob/owners", bob, map[string]string{"target": aliceID}, nil); status != http.StatusOK {
+		t.Fatal("add co-owner to Bob's personal organization", status)
+	}
+	if status := f.request("DELETE", "/api/projects/bob/shared", bob, nil, nil); status != http.StatusOK {
+		t.Fatal("delete the project used to add a co-owner", status)
+	}
 	gate := pausedGeneralDeletion{
 		Store: f.s.Blobs, prefix: "projects/" + testGeneralID(t, f, aliceID) + "/",
 		reached: make(chan struct{}), resume: make(chan struct{}),
@@ -164,6 +179,9 @@ func TestConcurrentCoOwnerDeletionsKeepAnOwnerForNonemptyOrganization(t *testing
 	}
 	if status := f.request("DELETE", "/api/account", bob, confirm, nil); status != http.StatusConflict {
 		t.Fatal("last remaining owner could delete account", status)
+	}
+	if status := f.request("POST", "/api/projects", bob, map[string]string{"name": "bob/new-project"}, nil); status != http.StatusCreated {
+		t.Error("Bob could not create a project while his co-owner was deleting her account", status)
 	}
 }
 

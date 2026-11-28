@@ -27,6 +27,7 @@ type App struct {
 	AgentToken       string
 	storedAgentPath  string
 	projectNamespace string
+	projectGeneral   *bool
 	description      *string
 	kind             credentialKind
 }

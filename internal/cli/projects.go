@@ -137,11 +137,17 @@ func (a *App) addProjectEntry(server, namespace, dir string, description *string
 		} else if existing := p.Projects[i].Path; existing != dir && a.Err != nil {
 			fmt.Fprintf(a.Err, "warning: %s already lists %s at %s; keeping that path\n", path, namespace, existing)
 		}
-		if description != nil && p.Projects[i].Description != *description {
-			p.Projects[i].Description = *description
-			return true
+		entry := &p.Projects[i]
+		changed := added
+		if description != nil && entry.Description != *description {
+			entry.Description = *description
+			changed = true
 		}
-		return added
+		if a.projectGeneral != nil && entry.General != *a.projectGeneral {
+			entry.General = *a.projectGeneral
+			changed = true
+		}
+		return changed
 	})
 }
 

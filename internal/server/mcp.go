@@ -181,9 +181,15 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	raw := "kioku_agent." + id + "." + secret
 	var row store.SessionRow
 	var namespace string
+	var general bool
 	if err := writeConsuming(r.Context(), s.Store, func(q *store.Queries) error {
 		var err error
 		row, namespace, err = exchangeAgentLogin(q, req.Code, req.Name, req.Namespace, id, secret, time.Now())
+		if err != nil {
+			return err
+		}
+		user, err := q.User(row.UserID)
+		general = store.ValueString(row.ProjectID) == store.ValueString(user.GeneralProjectID)
 		return err
 	}); err != nil {
 		return err
@@ -192,7 +198,7 @@ func (s *Server) agentLogin(w http.ResponseWriter, r *http.Request, _ string) er
 	if err != nil {
 		return err
 	}
-	jsonOut(w, 200, map[string]any{"id": id, "token": raw, "role": store.ValueString(data.Role), "expires": storageDate(row.Expires), "namespace": namespace})
+	jsonOut(w, 200, map[string]any{"id": id, "token": raw, "role": store.ValueString(data.Role), "expires": storageDate(row.Expires), "namespace": namespace, "general": general})
 	return nil
 }
 

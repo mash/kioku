@@ -111,11 +111,14 @@ func TestPromptNamespaces(t *testing.T) {
 		{"team/docs", []string{"team/docs"}},
 		{"\x60team/docs\x60", []string{"team/docs"}},
 		{"team/docs。", []string{"team/docs"}},
+		{"Tesla の件は \x60team/docs\x60を使って", []string{"team/docs"}},
+		{"team/docsを見て", []string{"team/docs"}},
+		{"team/docs. other/wiki:", []string{"team/docs", "other/wiki"}},
 		{"\texample: (team/docs),\n「other/wiki」", []string{"team/docs", "other/wiki"}},
 		{"https://example.com/doc", nil},
 		{"internal/cli/session.go", nil},
 		{"(./team/docs) internal/session.go", nil},
-		{"prefix:team/docs docs/team/wiki team/docs?query=x", nil},
+		{"prefix:team/docs docs/team/wiki team/docs?query=x", []string{"team/docs"}},
 	} {
 		t.Run(tc.prompt, func(t *testing.T) {
 			if got := promptNamespaces(tc.prompt); !slices.Equal(got, tc.want) {

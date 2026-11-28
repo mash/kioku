@@ -32,11 +32,11 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Code != code || in.Name == "" {
 				t.Error("bad code exchange", err)
 			}
-			if loginCalls > 0 && in.Namespace != "acme/platform" {
+			if loginCalls > 0 && in.Namespace != "acme/general" {
 				t.Error("bound cwd namespace not sent")
 			}
 			loginCalls++
-			json.NewEncoder(w).Encode(map[string]any{"id": "connector-id", "token": token, "role": "read", "expires": time.Now().Add(24 * time.Hour), "namespace": "acme/platform"})
+			json.NewEncoder(w).Encode(map[string]any{"id": "connector-id", "token": token, "role": "read", "expires": time.Now().Add(24 * time.Hour), "namespace": "acme/general", "general": true})
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"agent_id": "connector-id"})
@@ -57,7 +57,7 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 	run := func(args ...string) error {
 		return Run(context.Background(), append([]string{"-C", dir}, args...), &out, &stderr)
 	}
-	path := filepath.Join(home, ".config", "kioku", "agents", auth.Hash(server.URL), "acme", "platform.json")
+	path := filepath.Join(home, ".config", "kioku", "agents", auth.Hash(server.URL), "acme", "general.json")
 	if err := run("agent", "login", code); err == nil || err.Error() != "a human login exists; run kioku logout first to use connector login" {
 		t.Fatal("agent login accepted beside a human credential", err)
 	}
@@ -75,7 +75,7 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 		t.Fatal("secret printed")
 	}
 	var printed map[string]any
-	if err := json.Unmarshal(out.Bytes(), &printed); err != nil || len(printed) != 4 || printed["id"] != "connector-id" || printed["namespace"] != "acme/platform" {
+	if err := json.Unmarshal(out.Bytes(), &printed); err != nil || len(printed) != 4 || printed["id"] != "connector-id" || printed["namespace"] != "acme/general" {
 		t.Fatal("wrong login output", err, out.String())
 	}
 	data, err := os.ReadFile(path)
@@ -83,7 +83,7 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 		t.Fatal(err)
 	}
 	var saved agentCredentials
-	if err = json.Unmarshal(data, &saved); err != nil || saved.Token != token || saved.Server != server.URL || saved.Namespace != "acme/platform" {
+	if err = json.Unmarshal(data, &saved); err != nil || saved.Token != token || saved.Server != server.URL || saved.Namespace != "acme/general" {
 		t.Fatal("credential not saved", err)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
@@ -91,12 +91,15 @@ func TestConnectorAgentLoginStoresSeparateCredentialAndPinsServer(t *testing.T) 
 	}
 	config, err := os.ReadFile(filepath.Join(dir, ".kioku", "config"))
 	var binding map[string]any
-	if err != nil || json.Unmarshal(config, &binding) != nil || len(binding) != 2 || binding["server"] != server.URL || binding["namespace"] != "acme/platform" || bytes.Contains(config, []byte(token)) {
+	if err != nil || json.Unmarshal(config, &binding) != nil || len(binding) != 2 || binding["server"] != server.URL || binding["namespace"] != "acme/general" || bytes.Contains(config, []byte(token)) {
 		t.Fatal("project binding contains wrong fields", err)
 	}
 	projects, err := readProjects(filepath.Join(home, ".config", "kioku", "projects.json"))
-	if err != nil || projects.find(server.URL, "acme/platform") < 0 {
+	if err != nil {
 		t.Fatal("agent login did not register project", projects, err)
+	}
+	if i := projects.find(server.URL, "acme/general"); i < 0 || !projects.Projects[i].General {
+		t.Fatal("agent login did not register General", projects)
 	}
 	out.Reset()
 	if err := run("agent", "login", code); err != nil || stderr.Len() != 0 {

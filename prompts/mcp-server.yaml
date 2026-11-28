@@ -5,7 +5,7 @@ tools:
       project:
         description: "organization/project"
   projects_list:
-    description: "List the Kioku projects (organization/project) that the user shared with this connector. Call once before the first read or write. Use the project that clearly matches the first request. If the match is unclear, choose the account's General wiki by the entry with general set to true. If the General entry or the requested project is missing from the list, the user must reconnect the connector and select it."
+    description: "List the Kioku projects (organization/project) shared with this connector. Call once before the first read or write. Use the project that clearly matches the first request, or the account's General wiki (general is true) if the match is unclear. Ask the user to reconnect and select that project only if it is missing from the list."
   wiki_read:
     description: "Read one file of a project's current Kioku wiki. Start at wiki/index.md. Long files return next_offset; call again with that offset to read more."
   wiki_search:

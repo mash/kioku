@@ -79,7 +79,8 @@ func TestConnectorLoginEndToEnd(t *testing.T) {
 	}
 	var list struct {
 		Tools []struct {
-			Name string `json:"name"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
 		} `json:"tools"`
 	}
 	wantTools := []string{"cli_login_code", "projects_list", "wiki_read", "wiki_search", "source_put", "view_list", "view_read"}
@@ -90,6 +91,10 @@ func TestConnectorLoginEndToEnd(t *testing.T) {
 		if list.Tools[i].Name != name {
 			t.Fatal("tool order", list)
 		}
+	}
+	const wantProjectsListDescription = "List the Kioku projects (organization/project) shared with this connector. Call once before the first read or write. Use the project that clearly matches the first request, or the account's General wiki (general is true) if the match is unclear. Ask the user to reconnect and select that project only if it is missing from the list."
+	if list.Tools[1].Description != wantProjectsListDescription {
+		t.Errorf("unexpected projects_list description: %q", list.Tools[1].Description)
 	}
 	code := connectorCode(t, f, access, project.Namespace)
 	var issued struct {

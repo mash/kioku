@@ -155,11 +155,13 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 		if e != nil {
 			return e
 		}
-		for owner := range org.Owners {
-			if owner != uid {
-				if e = checkAccountActive(q, owner); e != nil {
-					return e
-				}
+		personalUser, e := q.PersonalOrgUserID(org.ID)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		if e == nil && personalUser != uid {
+			if e = checkAccountActive(q, personalUser); e != nil {
+				return e
 			}
 		}
 		row.OrgID = org.ID

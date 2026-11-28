@@ -5,6 +5,11 @@ const usersColumns = "id,email,data,personal_org_id,general_project_id"
 func (q *Queries) User(id string) (UserRow, error) {
 	return scanUser(q.row("SELECT "+usersColumns+" FROM users WHERE id=?", id))
 }
+func (q *Queries) PersonalOrgUserID(orgID string) (string, error) {
+	var id string
+	err := q.row("SELECT id FROM users WHERE personal_org_id=?", orgID).Scan(&id)
+	return id, err
+}
 func (q *Queries) DeleteUser(id string) error {
 	_, err := q.exec("DELETE FROM users WHERE id=?", id)
 	return err

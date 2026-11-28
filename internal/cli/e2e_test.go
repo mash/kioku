@@ -286,6 +286,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		t.Setenv("CLAUDE_CODE_SESSION_ID", "session-1")
 		p := t.TempDir()
 		t.Setenv("PATH", p)
+		t.Setenv("CLAUDE_PLUGIN_ROOT", p)
 		if err := os.WriteFile(filepath.Join(p, "claude"), []byte("#!/bin/sh\nprintf 'backgrounded · 1a2b3c4d\n'\n"), 0700); err != nil {
 			t.Fatal(err)
 		}

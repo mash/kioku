@@ -75,6 +75,36 @@ func TestQueueRegistration(t *testing.T) {
 	}
 }
 
+func TestLateCaptureIDDoesNotReplaceNewerID(t *testing.T) {
+	a := projectEntryApp(t)
+	finish := func(src string) string {
+		t.Helper()
+		if err := a.registerQueueSource(src, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		lock, _, err := a.beginCapture(time.Now())
+		if err != nil || lock == nil {
+			t.Fatal(lock, err)
+		}
+		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "skipped", "--reason", "fixture", src}); err != nil {
+			t.Fatal(err)
+		}
+		return lock.Token
+	}
+	old := finish("https://example.com/older")
+	next := finish("https://example.com/newer")
+	if err := a.recordCaptureID(a.captureLockPath(), next, "bbbbbbbb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recordCaptureID(a.captureLockPath(), old, "aaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.last"))
+	if err != nil || string(got) != "bbbbbbbb\n" {
+		t.Fatalf("newer capture ID replaced: %q, %v", got, err)
+	}
+}
+
 func TestPutRejectsOldEntryPoints(t *testing.T) {
 	projectRunHome(t)
 	a := projectEntryApp(t)

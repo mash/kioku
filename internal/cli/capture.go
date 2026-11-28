@@ -228,6 +228,20 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 	if err := removeCaptureTmpExcept(root, token); err != nil {
 		return "", err
 	}
+	// A delayed launcher for an earlier snapshot must not publish its ID
+	// after a newer snapshot has taken ownership.
+	entries, err := os.ReadDir(a.metadataDir())
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		prior, ok := strings.CutPrefix(entry.Name(), "capture-unlocked-")
+		if ok && captureTokenPattern.MatchString(prior) && prior != token {
+			if err := os.Remove(a.captureReceipt(prior)); err != nil {
+				return "", err
+			}
+		}
+	}
 	tmp := a.captureTmp(token)
 	if err := os.Mkdir(tmp, 0700); err != nil {
 		return "", err
@@ -411,6 +425,19 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 			err = errors.Join(err, a.undoCaptureLaunch(lock.Token, rows))
 		}
 	}()
+	pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	if pluginRoot == "" {
+		return errors.New("capture run: CLAUDE_PLUGIN_ROOT is required to load the capture guard")
+	}
+	root, err := filepath.Abs(pluginRoot)
+	if err != nil {
+		return err
+	}
+	last := filepath.Join(a.metadataDir(), "capture.last")
+	previous := ""
+	if data, err := readRegular(last); err == nil {
+		previous = strings.TrimSpace(string(data))
+	}
 	tmp, err := filepath.EvalSymlinks(a.captureTmp(lock.Token))
 	if err != nil {
 		return err
@@ -438,14 +465,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		return err
 	}
 
-	args := []string{"--bg", "--permission-mode", "dontAsk"}
-	if pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT"); pluginRoot != "" {
-		root, err := filepath.Abs(pluginRoot)
-		if err != nil {
-			return err
-		}
-		args = append(args, "--plugin-dir", root)
-	}
+	args := []string{"--bg", "--permission-mode", "dontAsk", "--plugin-dir", root}
 	args = append(args, "--allowedTools")
 	args = append(args, captureAllowedTools(vars["kioku"], projectCommand, tmp, rows)...)
 	prompt := renderTemplate(prompts.CaptureRun, vars)
@@ -485,11 +505,6 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		fmt.Fprintln(a.Err, "warning: capture background id could not be parsed; lock retained until all results arrive or it expires")
 		_, err := fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。\n", a.Config.Namespace, len(rows))
 		return err
-	}
-	last := filepath.Join(a.metadataDir(), "capture.last")
-	previous := ""
-	if data, err := readRegular(last); err == nil {
-		previous = strings.TrimSpace(string(data))
 	}
 	if err := a.recordCaptureID(path, lock.Token, id); err != nil {
 		return err

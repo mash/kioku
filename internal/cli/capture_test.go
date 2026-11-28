@@ -49,6 +49,7 @@ exit "$CAPTURE_TEST_STATUS"
 	t.Setenv("CAPTURE_TEST_LOG", log)
 	t.Setenv("CAPTURE_TEST_OUTPUT", output)
 	t.Setenv("CAPTURE_TEST_STATUS", strconv.Itoa(status))
+	t.Setenv("CLAUDE_PLUGIN_ROOT", dir)
 	return log
 }
 
@@ -102,6 +103,25 @@ func TestCaptureRun(t *testing.T) {
 		}
 		return a
 	}
+	t.Run("missing plugin root does not launch without the guard", func(t *testing.T) {
+		a := setup(t, 1)
+		log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
+		t.Setenv("CLAUDE_PLUGIN_ROOT", "")
+		before, err := os.ReadFile(a.queuePath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.captureRun(t.TempDir(), time.Now()); err == nil || !strings.Contains(err.Error(), "CLAUDE_PLUGIN_ROOT") {
+			t.Fatalf("want missing plugin root error, got %v", err)
+		}
+		if _, err := os.Stat(log + ".args"); !os.IsNotExist(err) {
+			t.Fatalf("launcher should not run: %v", err)
+		}
+		after, err := os.ReadFile(a.queuePath())
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("queue changed: %q, %v", after, err)
+		}
+	})
 	t.Run("launch passes mode, snapshot and scoped server rule", func(t *testing.T) {
 		a := setup(t, 1)
 		log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)

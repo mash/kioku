@@ -22,7 +22,11 @@ func hookTool(ctx context.Context, input io.Reader) {
 		return
 	}
 	var in hookToolEvent
-	if readHookJSON(input, &in) != nil || in.Event != "PostToolUse" {
+	if decodeHookEvent(input, &in) != nil || in.Event != "PostToolUse" {
+		return
+	}
+	src := toolHookSource(ctx, in)
+	if src == "" {
 		return
 	}
 	now := time.Now()
@@ -49,9 +53,7 @@ func hookTool(ctx context.Context, input io.Reader) {
 		(a.kind != credentialHuman && (a.kind != credentialAgent || a.agentRole != "write")) {
 		return
 	}
-	if src := toolHookSource(ctx, in); src != "" {
-		_ = a.registerQueueSource(src, now)
-	}
+	_ = a.registerQueueSource(src, now)
 }
 
 func toolHookSource(ctx context.Context, in hookToolEvent) string {
@@ -72,11 +74,10 @@ func toolHookSource(ctx context.Context, in hookToolEvent) string {
 		switch {
 		case arg.Action == "read":
 			raw = arg.URL
-		// The native tool also uses implicit publish with a file_path.
-		case arg.Action == "publish" || arg.Action == "" && arg.FilePath != "":
-			raw = publishedArtifactURL(in.Response)
-			if raw != "" && arg.URL != "" {
-				raw = arg.URL
+		case arg.isPublish():
+			raw = arg.URL
+			if raw == "" {
+				raw = publishedArtifactURL(in.Response)
 			}
 		}
 		if !isArtifactURL(raw) {
@@ -104,22 +105,9 @@ var publishResultLine = regexp.MustCompile(`^Published [^\r\n]+ at (https://[^ \
 func publishedArtifactURL(response json.RawMessage) string {
 	var line string
 	if json.Unmarshal(response, &line) == nil {
-		if match := publishResultLine.FindStringSubmatch(line); len(match) == 2 && isArtifactURL(match[1]) {
+		if match := publishResultLine.FindStringSubmatch(line); len(match) == 2 {
 			return match[1]
 		}
-		return ""
-	}
-	var obj struct {
-		URL     string          `json:"url"`
-		Success *bool           `json:"success"`
-		IsError bool            `json:"is_error"`
-		Error   json.RawMessage `json:"error"`
-		Status  string          `json:"status"`
-	}
-	if json.Unmarshal(response, &obj) == nil && !obj.IsError && (obj.Success == nil || *obj.Success) &&
-		(len(obj.Error) == 0 || string(obj.Error) == "null") &&
-		(obj.Status == "" || obj.Status == "published" || obj.Status == "success") && isArtifactURL(obj.URL) {
-		return obj.URL
 	}
 	return ""
 }

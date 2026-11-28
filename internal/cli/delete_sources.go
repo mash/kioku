@@ -3,8 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io"
-	"os"
+	"slices"
 	"strings"
 
 	"github.com/mash/kioku/internal/model"
@@ -12,36 +11,23 @@ import (
 )
 
 func (a *App) deleteSources(args []string) error {
-	return a.deleteSourcesFrom(args, os.Stdin)
-}
-
-func (a *App) deleteSourcesFrom(args []string, input io.Reader) error {
-	if len(args) == 1 && args[0] == "-" {
-		data, err := io.ReadAll(io.LimitReader(input, maxCaptureSourceBytes+2))
-		if err != nil {
-			return err
-		}
-		src := strings.TrimSuffix(string(data), "\n")
-		if len(src) > maxCaptureSourceBytes || !strings.HasPrefix(src, toolSourcePrefix) {
-			return errors.New("delete - requires exactly one tool: source on stdin")
-		}
-		args = []string{src}
-	}
 	if len(args) == 0 {
-		return errors.New("usage: kioku delete SOURCE... | kioku delete -")
+		return errors.New("usage: kioku delete SOURCE...")
 	}
-	for _, url := range args {
-		if source.IsLocalKey(url) {
+	queuedSources := make(map[string]bool)
+	for _, src := range args {
+		if source.IsLocalKey(src) {
 			continue
 		}
-		if _, err := parseCaptureSource(url); err != nil {
-			if strings.HasPrefix(url, source.LocalSource) {
-				return errors.New("delete: ローカルキーは kioku:local/<64 桁> の全体を書く")
-			}
+		if strings.HasPrefix(src, source.LocalSource) {
+			return errors.New("delete: ローカルキーは kioku:local/<64 桁> の全体を書く")
+		}
+		if _, err := parseCaptureSource(src); err != nil {
 			return err
 		}
+		queuedSources[src] = true
 	}
-	p, err := a.projectPath()
+	endpoint, err := a.projectPath()
 	if err != nil {
 		return err
 	}
@@ -50,41 +36,58 @@ func (a *App) deleteSourcesFrom(args []string, input io.Reader) error {
 		return err
 	}
 	defer unlock()
-	authorized := false
-	for _, url := range args {
-		removed := false
-		if !strings.HasPrefix(url, source.LocalSource) {
-			unlockQueue, err := a.localLock()
-			if err != nil {
-				return err
-			}
-			err = a.updateQueue(func(rows []queueRow) []queueRow {
-				next := removeQueueSource(rows, url)
-				removed = len(next) != len(rows)
-				return next
-			})
-			unlockQueue()
-			if err != nil {
-				return err
-			}
-		}
-		if strings.HasPrefix(url, toolSourcePrefix) {
-			if !removed {
-				continue
-			}
-		} else {
-			if !authorized {
-				if err := a.selectCredential(false); err != nil {
-					return err
-				}
-				authorized = true
-			}
-			if _, err := a.request("POST", p+"/put", model.PutRequest{Remove: true, SourceURL: url}, nil); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintf(a.Out, "removed %s\n", url); err != nil {
+	removed := make(map[string]bool)
+	if len(queuedSources) != 0 {
+		unlockQueue, err := a.localLock()
+		if err != nil {
 			return err
+		}
+		err = a.updateQueue(func(rows []queueRow) []queueRow {
+			return slices.DeleteFunc(rows, func(row queueRow) bool {
+				if queuedSources[row.Source] {
+					removed[row.Source] = true
+					return true
+				}
+				return false
+			})
+		})
+		unlockQueue()
+		if err != nil {
+			return err
+		}
+	}
+	report := func(src string) error {
+		_, err := fmt.Fprintf(a.Out, "removed %s\n", src)
+		return err
+	}
+	reported := make(map[string]bool)
+	for _, src := range args {
+		if removed[src] && !reported[src] {
+			if err := report(src); err != nil {
+				return err
+			}
+			reported[src] = true
+		}
+	}
+	authorized := false
+	for _, src := range args {
+		if strings.HasPrefix(src, toolSourcePrefix) {
+			continue
+		}
+		if !authorized {
+			if err := a.selectCredential(false); err != nil {
+				return err
+			}
+			authorized = true
+		}
+		if _, err := a.postPut(endpoint, model.PutRequest{Remove: true, SourceURL: src}, nil); err != nil {
+			return err
+		}
+		if !reported[src] {
+			if err := report(src); err != nil {
+				return err
+			}
+			reported[src] = true
 		}
 	}
 	return nil

@@ -107,13 +107,11 @@ download() {
 
 if [ "${1:-}" = compact ]; then
     # Compact and resume never install or replace the CLI.
-    CONTEXT=$("$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
-    if [ -n "$CONTEXT" ]; then
-        printf '%s\n' "$CONTEXT"
-        exit 0
+    if current_version >/dev/null; then
+        "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts"
+    else
+        cat "$ROOT/prompts/hook-compact.txt" "$ROOT/prompts/hook-no-cli.txt"
     fi
-    cat "$ROOT/prompts/hook-compact.txt"
-    current_version >/dev/null || cat "$ROOT/prompts/hook-no-cli.txt"
     exit 0
 fi
 if [ "${1:-}" = precompact ]; then
@@ -136,12 +134,7 @@ else
     download
 fi
 if current_version >/dev/null; then
-    CONTEXT=$("$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
-    if [ -n "$CONTEXT" ]; then
-        printf '%s\n' "$CONTEXT"
-    else
-        cat "$ROOT/prompts/hook-start.txt"
-    fi
+    "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts"
 else
     cat "$ROOT/prompts/hook-no-cli.txt"
 fi

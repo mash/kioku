@@ -167,7 +167,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			writeHookFixture(t, catalog, projectsFile{Projects: ps})
 			catalogBefore, _ := os.ReadFile(catalog)
 			catalogInfo, _ := os.Stat(catalog)
-			statePath, _ := sessionPath("session-1")
+			statePath := mustSessionPath(t, "session-1")
 			if tc.selected != "" || tc.blocked {
 				s := sessionTestState(time.Now().UTC())
 				s.Namespace = "org/a"
@@ -185,7 +185,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			oldStart := startProcess
 			t.Cleanup(func() { startProcess = oldStart })
 			var started []*exec.Cmd
-			startProcess = func(c *exec.Cmd) error { started = append(started, c); return nil }
+			startProcess = func(c *exec.Cmd, _ time.Duration) error { started = append(started, c); return nil }
 			t.Setenv("CLAUDE_CODE_SESSION_ID", "wrong-environment-id")
 			t.Setenv("KIOKU_SESSION_PULL", "old")
 			input := map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "cwd": cwd, "prompt": tc.prompt}
@@ -307,7 +307,7 @@ func TestPromptHookSelectionTransitions(t *testing.T) {
 			oldStart := startProcess
 			t.Cleanup(func() { startProcess = oldStart })
 			calls := 0
-			startProcess = func(*exec.Cmd) error {
+			startProcess = func(*exec.Cmd, time.Duration) error {
 				calls++
 				if scenario == "I12_start_failure" {
 					return errors.New("launch failed")
@@ -346,7 +346,7 @@ func TestPromptHookE19MalformedPreservesState(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
 	a.recordSessionPull(nil)
-	path, _ := sessionPath("session-1")
+	path := mustSessionPath(t, "session-1")
 	before, _ := os.ReadFile(path)
 	for _, input := range []string{"{", `{"session_id":"../escape","hook_event_name":"UserPromptSubmit"}`, `{"session_id":"session-1","hook_event_name":"UserPromptSubmit","agent_id":null}`} {
 		if got := runRawPromptHook(t, input, "../../prompts"); got != "" {

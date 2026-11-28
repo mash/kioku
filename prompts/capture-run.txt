@@ -4,7 +4,7 @@ Bash 呼び出し1回につき、記載どおりの1コマンドだけを実行�
 各行に capture result を一度返す。HTTP 202 を確認したら accepted とし、capture put が出した source_url を結果に示す。資料でない、または原本 HTTPS URL 不明なら理由を付けて skipped。取得・受付の失敗や 202 未確認は理由を付けて unsaved。同じセッション内で再試行しない。
 送信用 Markdown は UTF-8、1 MiB 以下。先頭の YAML frontmatter に source_url、title、fetched_at、updated_at を書く。updated_at と fetched_at はオフセット付きの RFC 3339。原本の更新時刻がなければ取得時刻を使い、本文冒頭に明記する。
 取得元の種類に従う。
-- Artifact の HTTPS URL は Artifact に action: read と取得元の url を渡して最新の本文を読む。ファイルが必要なら path に一時ディレクトリ内の絶対パスを指定する。version id の先頭の Unix 秒を RFC 3339 に変換し updated_at に使う。list や publish は使わない。時刻形式が分からなければ理由を付けて unsaved とする。
+- Artifact の HTTPS URL は Artifact に action: read と取得元の url を渡して最新の本文を読む。特定の公開ファイルを読むときは path に index.html などの Artifact 内のパスを指定する。ファイルを保存する必要があれば out_dir に {{tmp}} を指定する。version id の先頭の Unix 秒を RFC 3339 に変換し updated_at に使う。list や publish は使わない。時刻形式が分からなければ理由を付けて unsaved とする。
 - その他の HTTPS は公開資料なら capture fetch で全文を読み、fetched_at と、あれば last_modified を使う。要サインインの原本は許可されたコネクターで読み、使えるものがなければ unsaved。source_url は取得元の URL を保持し、GitHub raw に変えない。
 - tool: は記録した MCP ツールを同じ入力で呼び直す。必要なら同じサーバーの許可された読み取りで本文やメタデータを取り、応答の原本 HTTPS URL と更新時刻を使う。Notion や Linear は応答の url を使う。
 - Google Drive の read_file_content と download_file_content はどちらも入力の fileId を渡して read_file_content で読み、get_file_metadata の viewUrl からクエリを外した値と modifiedTime を使う。download_file_content を呼び直さない。

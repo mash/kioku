@@ -17,17 +17,9 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const artifact = "https://claude.ai/artifact/fixture"
+	const artifact = "https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79"
 	const web = "https://example.com/notes"
-	for _, src := range []string{tool, artifact, web} {
-		if err := a.registerQueueSource(src, time.Now()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	lock, _, err := a.beginCapture(time.Now())
-	if err != nil || lock == nil {
-		t.Fatal(lock, err)
-	}
+	lock := startTestCapture(t, a, time.Now(), tool, artifact, web)
 	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +59,11 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	check("mcp__claude_ai_Linear__get_issue_metadata", map[string]any{"id": "42"}, false)
 	check("mcp__claude_ai_Notion__get_issue", map[string]any{"id": "42"}, true)
 	check("mcp__claude_ai_Linear__update_issue", map[string]any{"id": "42"}, true)
-	check("Artifact", map[string]any{"action": "read", "url": artifact, "path": inside}, false)
-	check("Artifact", map[string]any{"action": "read", "url": artifact, "path": outside}, true)
+	check("Artifact", map[string]any{"action": "read", "url": artifact, "path": "index.html"}, false)
+	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": dir}, false)
+	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": filepath.Join(dir, "new")}, false)
+	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": outside}, true)
+	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": link}, true)
 	check("Artifact", map[string]any{"action": "read", "url": artifact + "x"}, true)
 	check("Artifact", map[string]any{"action": "publish", "url": artifact}, true)
 	check("Artifact", map[string]any{"url": artifact}, true)
@@ -76,7 +71,7 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	check("Write", map[string]any{"file_path": filepath.Join(dir, "new.md")}, false)
 	check("Read", map[string]any{"file_path": outside}, true)
 	check("Write", map[string]any{"file_path": link}, true)
-	check("Write", map[string]any{"file_path": filepath.Join(dir, "snapshot.tsv")}, true)
+	check("Write", map[string]any{"file_path": filepath.Join(dir, captureSnapshotFile)}, true)
 	check("Write", map[string]any{"file_path": filepath.Join(dir, "Snapshot.TSV")}, true)
 	check("Write", map[string]any{"file_path": filepath.Join(dir, "Instructions.MD")}, true)
 	check("Write", map[string]any{"file_path": captureProgressPath(dir)}, true)
@@ -94,7 +89,7 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	check("Bash", map[string]any{"command": project + " capture result --capture-token " + lock.Token + " --result accepted --reason unexpected " + web}, true)
 	check("Bash", map[string]any{"command": project + " capture run"}, true)
 	check("Bash", map[string]any{"command": "gh issue view 42"}, true)
-	if err := os.WriteFile(filepath.Join(dir, "snapshot.tsv"), []byte("tampered"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, captureSnapshotFile), []byte("tampered"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	check("mcp__claude_ai_Linear__get_issue", map[string]any{"id": "42"}, true)

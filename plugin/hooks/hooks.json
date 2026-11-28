@@ -20,12 +20,6 @@
         "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" capture", "timeout": 10}]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": ".*",
-        "hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh\" tool-guard", "timeout": 10}]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "^(WebFetch|Bash|Artifact|mcp__.*)$",

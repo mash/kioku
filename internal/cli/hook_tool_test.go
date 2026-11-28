@@ -25,6 +25,7 @@ func TestHookToolSources(t *testing.T) {
 	git("init", "-q")
 	git("remote", "add", "origin", "git@github.com:example/project.git")
 	const artifactURL = "https://claude.ai/artifact/test-fixture"
+	const codeArtifact = "https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79"
 	const page = "https://public.example/document"
 	pub := fmt.Sprintf(`"Published «Test» at %s (Version 1, version id 1790000000-a1b2)"`, artifactURL)
 	for _, tc := range []struct {
@@ -37,8 +38,11 @@ func TestHookToolSources(t *testing.T) {
 		{"Artifact", `{"file_path":"index.html"}`, pub, artifactURL},
 		{"Artifact", `{"action":"publish","file_path":"index.html"}`, pub, artifactURL},
 		{"Artifact", `{"action":"publish","url":"https://claude.ai/artifact/same"}`, pub, "https://claude.ai/artifact/same"},
-		{"Artifact", `{"action":"publish","url":"https://claude.ai/artifact/same"}`, `{"success":false,"url":"https://claude.ai/artifact/same"}`, ""},
-		{"Artifact", `{"action":"publish","url":"https://claude.ai/artifact/same"}`, `"Error: publish failed"`, ""},
+		{"Artifact", `{"action":"read","url":"` + codeArtifact + `","path":"index.html"}`, "", codeArtifact},
+		{"Artifact", `{"action":"publish","url":"` + codeArtifact + `"}`, "", codeArtifact},
+		{"Artifact", `{"action":"publish"}`, fmt.Sprintf(`"Published Test at %s (Version 2, version id 1790000000-c3d4)"`, codeArtifact), codeArtifact},
+		{"Artifact", `{"action":"publish"}`, `{"success":true,"url":"` + codeArtifact + `"}`, ""},
+		{"Artifact", `{"action":"publish"}`, `"Error: publish failed"`, ""},
 		{"Bash", `{"command":"gh issue view 4"}`, "", "https://github.com/example/project/issues/4"},
 		{"Bash", `{"command":"gh pr view -R example/project 4 --json title"}`, "", "https://github.com/example/project/pull/4"},
 		{"Bash", `{"command":"gh issue view 4 --repo wrong/project"}`, "", ""},
@@ -124,7 +128,7 @@ func TestHookToolUsesOnlySelectedWritableProject(t *testing.T) {
 	}
 	invoke()
 	invoke()
-	rows, err := readQueue(a.queuePath())
+	rows, err := readQueue(a.queuePath(), true)
 	if err != nil || len(rows) != 1 || rows[0].Source != "https://example.com/page" || rows[0].Attempts != 0 || rows[0].Reason != "" {
 		t.Fatal(rows, err)
 	}
@@ -145,4 +149,29 @@ func mustSessionPath(t *testing.T, sid string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestHookToolInputLimitDoesNotApplyToResponse(t *testing.T) {
+	large := strings.Repeat("x", maxHookToolInputBytes)
+	for _, tc := range []struct {
+		name, input, response string
+		want                  string
+		bad                   bool
+	}{
+		{"WebFetch", `{"url":"https://example.com"}`, `"` + large + `"`, "https://example.com", false},
+		{"WebFetch", `{"url":"https://example.com","prompt":"` + large + `"}`, `""`, "", true},
+		{"Artifact", `{"action":"publish"}`, `"Published fixture at https://claude.ai/code/artifact/fixture (Version 2, version id 1790000000-c3d4) ` + large + `"`, "https://claude.ai/code/artifact/fixture", false},
+	} {
+		data := `{"tool_response":` + tc.response + `,"hook_event_name":"PostToolUse","tool_input":` + tc.input + `,"tool_name":"` + tc.name + `"}`
+		var event hookToolEvent
+		err := decodeHookEvent(strings.NewReader(data), &event)
+		if tc.bad {
+			if err == nil {
+				t.Fatal("oversized tool_input was accepted")
+			}
+		} else if err != nil || toolHookSource(t.Context(), event) != tc.want ||
+			tc.name != "Artifact" && len(event.Response) != 0 {
+			t.Fatal(tc.name, len(event.Response), err)
+		}
+	}
 }

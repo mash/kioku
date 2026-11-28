@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,10 +19,6 @@ const putUsage = "usage: kioku put PATH... | kioku put file:///PATH"
 var putScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
 func (a *App) put(args []string) error {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		_, err := fmt.Fprintln(a.Err, "Usage of put:\n"+putUsage)
-		return err
-	}
 	if len(args) == 0 {
 		return errors.New(putUsage)
 	}
@@ -31,16 +28,36 @@ func (a *App) put(args []string) error {
 			return errors.New(putUsage)
 		}
 	}
-	switch {
-	case scheme == "file:" && len(args) == 1:
+	switch scheme {
+	case "file:":
+		if len(args) != 1 {
+			return errors.New(putUsage)
+		}
 		return a.putLocalFile(args[0])
-	case scheme == "":
+	case "":
 		return a.putPaths(args)
-	case scheme != "file:":
-		return fmt.Errorf("put: 対応しないスキーム %s。コロンを含む相対パスは ./ を付ける\n%s", scheme, putUsage)
 	default:
-		return errors.New(putUsage)
+		return fmt.Errorf("put: 対応しないスキーム %s。コロンを含む相対パスは ./ を付ける\n%s", scheme, putUsage)
 	}
+}
+
+func (a *App) postPut(endpoint string, input model.PutRequest, output *model.PutResponse) (int, error) {
+	var result any
+	if output != nil {
+		result = output
+	}
+	code, err := a.request(http.MethodPost, endpoint+"/put", input, result)
+	if code == http.StatusAccepted {
+		// For operations without a response body contract, the status is the receipt.
+		if output == nil {
+			return code, nil
+		}
+		return code, err
+	}
+	if err != nil {
+		return code, err
+	}
+	return code, fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
 }
 
 func (a *App) putPaths(paths []string) error {
@@ -114,7 +131,7 @@ func (a *App) putPaths(paths []string) error {
 		return err
 	}
 	for _, input := range inputs {
-		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input}, nil); err != nil {
+		if _, err = a.postPut(p, model.PutRequest{File: &input}, nil); err != nil {
 			return err
 		}
 		if _, err = fmt.Fprintf(a.Out, "accepted %s\n", input.Name); err != nil {

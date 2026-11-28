@@ -27,20 +27,40 @@ type hookToolEvent struct {
 	Cwd       string          `json:"cwd"`
 	Name      string          `json:"tool_name"`
 	Input     json.RawMessage `json:"tool_input"`
-	Response  json.RawMessage `json:"tool_response"`
+	Response  json.RawMessage `json:"-"`
 }
 
 const maxHookToolInputBytes = 8 << 20
+const captureGuardMatcher = "^(Artifact|mcp__.*|Bash|Read|Write)$"
 
-func readHookJSON(input io.Reader, event any) error {
-	b, err := io.ReadAll(io.LimitReader(input, maxHookToolInputBytes+1))
-	if err != nil {
+func decodeHookEvent(input io.Reader, event any) error {
+	d := json.NewDecoder(input)
+	if err := d.Decode(event); err != nil {
 		return err
 	}
-	if len(b) > maxHookToolInputBytes {
-		return errors.New("hook event exceeds the input limit")
+	if err := d.Decode(new(any)); err != io.EOF {
+		return errors.New("expected one hook event")
 	}
-	return json.Unmarshal(b, event)
+	return nil
+}
+
+func (e *hookToolEvent) UnmarshalJSON(data []byte) error {
+	type fields hookToolEvent
+	if err := json.Unmarshal(data, (*fields)(e)); err != nil {
+		return err
+	}
+	if len(e.Input) > maxHookToolInputBytes {
+		return errors.New("tool_input exceeds 8 MiB")
+	}
+	if e.Event == "PostToolUse" && e.Name == "Artifact" {
+		var arg artifactInput
+		if json.Unmarshal(e.Input, &arg) == nil && arg.isPublish() && arg.URL == "" {
+			return json.Unmarshal(data, &struct {
+				Response *json.RawMessage `json:"tool_response"`
+			}{Response: &e.Response})
+		}
+	}
+	return nil
 }
 
 func hookToolGuard(input io.Reader, output io.Writer) error {
@@ -49,7 +69,7 @@ func hookToolGuard(input io.Reader, output io.Writer) error {
 	}
 	var event hookToolEvent
 	dir := os.Getenv(captureDirEnv)
-	if readHookJSON(input, &event) == nil && event.Event == "PreToolUse" {
+	if decodeHookEvent(input, &event) == nil && event.Event == "PreToolUse" {
 		resolved, rows, err := captureSnapshot(filepath.Base(dir), dir)
 		if err == nil && allowCaptureTool(event, resolved, rows) {
 			return nil
@@ -63,8 +83,13 @@ func hookToolGuard(input io.Reader, output io.Writer) error {
 type artifactInput struct {
 	Action   string `json:"action"`
 	URL      string `json:"url"`
-	Path     string `json:"path"`
+	OutDir   string `json:"out_dir"`
 	FilePath string `json:"file_path"`
+}
+
+// The native tool also uses implicit publish with a file_path.
+func (a artifactInput) isPublish() bool {
+	return a.Action == "publish" || a.Action == "" && a.FilePath != ""
 }
 
 func isArtifactURL(raw string) bool {
@@ -72,7 +97,7 @@ func isArtifactURL(raw string) bool {
 		return false
 	}
 	u, _ := url.Parse(raw)
-	return u.Host == "claude.ai" && (strings.HasPrefix(u.Path, "/artifact/") || strings.HasPrefix(u.Path, "/public/artifacts/"))
+	return u.Host == "claude.ai" && (strings.HasPrefix(u.Path, "/artifact/") || strings.HasPrefix(u.Path, "/code/artifact/") || strings.HasPrefix(u.Path, "/public/artifacts/"))
 }
 
 func allowCaptureTool(in hookToolEvent, dir string, rows []queueRow) bool {
@@ -81,7 +106,7 @@ func allowCaptureTool(in hookToolEvent, dir string, rows []queueRow) bool {
 		var arg artifactInput
 		return json.Unmarshal(in.Input, &arg) == nil && arg.Action == "read" &&
 			arg.FilePath == "" && isArtifactURL(arg.URL) && snapshotRow(rows, arg.URL) >= 0 &&
-			(arg.Path == "" || captureToolPath(dir, arg.Path, true))
+			(arg.OutDir == "" || arg.OutDir == dir || captureToolPath(dir, arg.OutDir, true))
 	case "Read", "Write":
 		var arg struct {
 			Path string `json:"file_path"`
@@ -98,8 +123,7 @@ func allowCaptureTool(in hookToolEvent, dir string, rows []queueRow) bool {
 		}
 		// The same-server read rule also covers an exact replay.
 		for _, row := range rows {
-			call, err := parseCaptureSource(row.Source)
-			if err == nil && call != nil && sameMCPServer(call.Tool, in.Name) {
+			if sameMCPServer(captureSourceTool(row.Source), in.Name) {
 				return true
 			}
 		}
@@ -115,7 +139,7 @@ func captureToolPath(dir, path string, writing bool) bool {
 	if err != nil || !filepath.IsLocal(rel) || rel == "." {
 		return false
 	}
-	if writing && (strings.EqualFold(rel, "snapshot.tsv") || strings.EqualFold(rel, captureInstructionsFile)) {
+	if writing && (strings.EqualFold(rel, captureSnapshotFile) || strings.EqualFold(rel, captureInstructionsFile)) {
 		return false
 	}
 	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
@@ -144,7 +168,7 @@ func captureBashAllowed(command, dir string, rows []queueRow) bool {
 	if after := trimCommandPrefix(args, base, "capture", "fetch"); len(after) == 7 {
 		return after[1] == "--capture-token" && after[2] == token &&
 			after[3] == "--dir" && after[4] == dir && after[5] == "--out" &&
-			!strings.HasPrefix(after[0], toolSourcePrefix) && !isArtifactURL(after[0]) &&
+			captureNeedsFetch(after[0]) &&
 			snapshotRow(rows, after[0]) >= 0 && captureToolPath(dir, after[6], true)
 	}
 	project, ok := literalShellWords(os.Getenv(captureProjectCommandEnv))
@@ -152,12 +176,12 @@ func captureBashAllowed(command, dir string, rows []queueRow) bool {
 		return false
 	}
 	if after := trimCommandPrefix(args, project, "capture", "put", "--capture-token", token, "--source"); len(after) == 2 {
-		return resolveSnapshotSource(rows, after[0]) >= 0 && captureToolPath(dir, after[1], false)
+		return snapshotRow(rows, after[0]) >= 0 && captureToolPath(dir, after[1], false)
 	}
 	if after := trimCommandPrefix(args, project, "capture", "result", "--capture-token", token, "--result"); len(after) == 2 || len(after) == 4 {
 		result := after[0]
 		src := after[len(after)-1]
-		if resolveSnapshotSource(rows, src) < 0 {
+		if snapshotRow(rows, src) < 0 {
 			return false
 		}
 		if len(after) == 2 {

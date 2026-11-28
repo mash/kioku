@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -52,7 +51,7 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		return errors.New("usage: kioku session hook [--event EVENT] --prompts DIR")
 	}
 	var in sessionHookInput
-	if readHookJSON(input, &in) != nil || (*event != "" && in.Event != *event) || len(in.AgentID) != 0 {
+	if decodeHookEvent(input, &in) != nil || (*event != "" && in.Event != *event) || len(in.AgentID) != 0 {
 		return nil
 	}
 	if !allowedHookEvent(in.Event) {
@@ -73,7 +72,15 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 			contextPrompt = "hook-compact.txt"
 		}
 		message := sessionStartCapture(in, now)
-		if message != "" && additionalContext == "" {
+		if additionalContext == "" {
+			if message == "" {
+				data, err := os.ReadFile(filepath.Join(*prompts, contextPrompt))
+				if err != nil {
+					return err
+				}
+				_, err = a.Out.Write(data)
+				return err
+			}
 			additionalContext, _ = readHookPrompt(*prompts, contextPrompt)
 		}
 		return writeHookOutput(a.Out, in.Event, additionalContext, message)
@@ -251,12 +258,24 @@ func autoSelect(in sessionHookInput, p projectEntry, words []string, prompts str
 	return fitEntry(files, tail, contextLimit)
 }
 
-var startProcess = func(c *exec.Cmd) error {
+var startProcess = func(c *exec.Cmd, wait time.Duration) error {
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := c.Start(); err != nil {
 		return err
 	}
-	return c.Process.Release()
+	if wait == 0 {
+		return c.Process.Release()
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return nil
+	}
 }
 
 func backgroundLog(path string) (*os.File, error) {
@@ -298,7 +317,7 @@ func startBackgroundPull(in sessionHookInput, p projectEntry, exe string) error 
 	c.Dir = p.Path
 	c.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL"), "CLAUDE_CODE_SESSION_ID="+in.SessionID, "KIOKU_SESSION_PULL=background")
 	c.Stdout, c.Stderr = log, log
-	return startProcess(c)
+	return startProcess(c, 0)
 }
 
 func stopHook(in sessionHookInput, s *sessionState, now time.Time) string {
@@ -333,42 +352,46 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 	if err != nil {
 		return ""
 	}
+	if in.Event == "SessionEnd" {
+		if queued != 0 && a.captureIdle(now) {
+			_ = startHookCapture(captureCwd(in, p), p, 0)
+		}
+		return ""
+	}
 	var messages []string
-	if queued != 0 {
-		lock, err := readCaptureLock(a.captureLockPath())
-		if err == nil && !lockBusy(lock, now) {
-			cwd := in.Cwd
-			if !filepath.IsAbs(cwd) {
-				cwd = p.Path
-			}
-			// Let a detached process outlive the hook. Briefly observe the
-			// launcher exit, not the capture session, to report fast failures.
-			wait := 750 * time.Millisecond
-			if in.Event == "SessionStart" {
-				wait = 8 * time.Second
-			} else if in.Event == "SessionEnd" {
-				wait = 0
-			}
-			if in.Event == "SessionEnd" {
-				_ = startHookCapture(cwd, p, wait)
-				return ""
-			}
-			_, markerErr := os.Stat(a.captureLaunchErrorPath())
-			if err := startHookCapture(cwd, p, wait); err != nil || markerErr == nil {
-				messages = append(messages, fmt.Sprintf("Kioku: %s の capture の起動に失敗した。kioku -C %s status と capture.log を確認する", p.Namespace, shellQuote(p.Path)))
-			}
-			if _, currentFailed, err := readHookQueueCounts(a.queuePath()); err == nil {
-				failed = currentFailed
+	if queued != 0 && a.captureIdle(now) {
+		// Observe the detached launcher briefly, without cancelling it.
+		wait := 750 * time.Millisecond
+		if in.Event == "SessionStart" {
+			wait = 8 * time.Second
+			if d, err := time.ParseDuration(os.Getenv("KIOKU_SESSION_START_CAPTURE_WAIT")); err == nil && d > 0 && d < wait {
+				wait = d
 			}
 		}
-	}
-	if in.Event == "SessionEnd" {
-		return ""
+		_, markerErr := os.Stat(a.captureLaunchErrorPath())
+		if err := startHookCapture(captureCwd(in, p), p, wait); err != nil || markerErr == nil {
+			messages = append(messages, fmt.Sprintf("Kioku: %s の capture の起動に失敗した。kioku -C %s status と capture.log を確認する", p.Namespace, shellQuote(p.Path)))
+		}
+		if _, currentFailed, err := readHookQueueCounts(a.queuePath()); err == nil {
+			failed = currentFailed
+		}
 	}
 	if failed != 0 {
 		messages = append(messages, fmt.Sprintf("Kioku: %s で受付済みにならなかった資料 %d 件。kioku -C %s status で理由を見る", p.Namespace, failed, shellQuote(p.Path)))
 	}
 	return strings.Join(messages, "\n")
+}
+
+func (a *App) captureIdle(now time.Time) bool {
+	lock, err := readCaptureLock(a.captureLockPath())
+	return err == nil && !lockBusy(lock, now)
+}
+
+func captureCwd(in sessionHookInput, p projectEntry) string {
+	if filepath.IsAbs(in.Cwd) {
+		return in.Cwd
+	}
+	return p.Path
 }
 
 func startHookCapture(cwd string, p projectEntry, wait time.Duration) error {
@@ -389,56 +412,15 @@ func startHookCapture(cwd string, p projectEntry, wait time.Duration) error {
 	c := exec.Command(exe, args...)
 	c.Dir = cwd
 	c.Env = processEnv("KIOKU_SERVER", "CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL")
-	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	c.Stdout, c.Stderr = log, log
-	if wait == 0 {
-		return startProcess(c)
-	}
-	if err := c.Start(); err != nil {
-		return err
-	}
-	done := make(chan error, 1)
-	go func() { done <- c.Wait() }()
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case err := <-done:
-		return err
-	case <-timer.C:
-		return nil
-	}
+	return startProcess(c, wait)
 }
 
-// Bound each row, not the whole backlog. Other rows can be picked up after
-// the current snapshot completes without loading the full queue in each hook.
 func readHookQueueCounts(path string) (queued, failed int, err error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if os.IsNotExist(err) {
-		return 0, 0, nil
-	}
+	rows, err := readQueue(path, false)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return 0, 0, err
-	}
-	if !info.Mode().IsRegular() {
-		return 0, 0, errors.New("queue must be a regular file")
-	}
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 4096), maxCaptureSnapshotBytes+1)
-	for scanner.Scan() {
-		row, err := parseQueueRow(scanner.Text())
-		if err != nil {
-			return 0, 0, err
-		}
-		if row.State == queueQueued {
-			queued++
-		} else {
-			failed++
-		}
-	}
-	return queued, failed, scanner.Err()
+	queued, failed = queueCounts(rows)
+	return queued, failed, nil
 }

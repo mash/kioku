@@ -28,10 +28,6 @@ func fakeCaptureClaude(t *testing.T, output string, status int) string {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	script := `#!/bin/sh
-if [ "$1" = rm ]; then
- printf '%s\n' "$2" >> "$CAPTURE_TEST_LOG.rm"
- exit 1
-fi
 printf '%s\000' "$@" > "$CAPTURE_TEST_LOG.args"
 pwd > "$CAPTURE_TEST_LOG.cwd"
 printf '%s' "${CLAUDE_CODE_SESSION_ID-unset}" > "$CAPTURE_TEST_LOG.sid"
@@ -76,7 +72,7 @@ func BenchmarkBeginCapture(b *testing.B) {
 			b.Fatal(err)
 		}
 		b.StopTimer()
-		if err := a.discardCapture(lock.Token); err != nil {
+		if err := a.releaseCapture(lock.Token); err != nil {
 			b.Fatal(err)
 		}
 		b.StartTimer()
@@ -154,6 +150,28 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+		at := slices.Index(args, "--settings")
+		if at < 0 || at+1 >= len(args) {
+			t.Fatal("missing capture hook settings", args)
+		}
+		var settings struct {
+			Hooks map[string][]struct {
+				Matcher string
+				Hooks   []struct {
+					Type, Command string
+					Async         bool
+				}
+			}
+		}
+		if err := json.Unmarshal([]byte(args[at+1]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		pre := settings.Hooks["PreToolUse"]
+		if len(pre) != 1 || pre[0].Matcher != "^(Artifact|mcp__.*|Bash|Read|Write)$" || len(pre[0].Hooks) != 1 ||
+			pre[0].Hooks[0].Type != "command" || pre[0].Hooks[0].Async ||
+			pre[0].Hooks[0].Command != "sh "+shellQuote(filepath.Join(root, "hooks", "kioku.sh"))+" tool-guard" {
+			t.Fatal(settings)
+		}
 		if !slices.Contains(args, "--plugin-dir") || !slices.Contains(args, root) ||
 			!slices.Contains(args, "mcp__linear__*") || slices.Contains(args, "mcp__linear__get_issue") ||
 			!strings.Contains(args[len(args)-1], "modifiedTime") ||
@@ -161,10 +179,10 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(args)
 		}
 	})
-	t.Run("large capture input stays out of launch args", func(t *testing.T) {
+	t.Run("tool source stays literal and out of launch arguments", func(t *testing.T) {
 		a := setup(t, 1)
 		log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
-		input := json.RawMessage(`{"query":"` + strings.Repeat("x", 350<<10) + `"}`)
+		input := json.RawMessage(`{"query":"` + strings.Repeat("x", 3500) + `"}`)
 		src, err := captureToolSource("mcp__fixture__get_document", input)
 		if err != nil {
 			t.Fatal(err)
@@ -185,27 +203,23 @@ func TestCaptureRun(t *testing.T) {
 		}
 		path := filepath.Join(a.captureTmp(lock.Token), captureInstructionsFile)
 		body, err := os.ReadFile(path)
-		if err != nil || strings.Contains(string(body), src) || !strings.Contains(string(body), "--source @2") {
+		if err != nil || !strings.Contains(string(body), src) || !strings.Contains(string(body), "--source "+shellQuote(src)) {
 			t.Fatal(len(body), err)
 		}
 		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
 			t.Fatal(info, err)
 		}
-		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "unsaved", "--reason", "fixture", "@2"}); err != nil {
+		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "unsaved", "--reason", "fixture", src}); err != nil {
 			t.Fatal(err)
 		}
-		rows, err := readQueue(a.queuePath())
+		rows, err := readQueue(a.queuePath(), true)
 		if err != nil || len(rows) != 2 || rows[1].Source != src || rows[1].Attempts != 1 || rows[1].Reason != "fixture" {
 			t.Fatal(len(rows), err)
 		}
 	})
 	t.Run("I14_missing_id", func(t *testing.T) {
 		a := setup(t, 5)
-		log := fakeCaptureClaude(t, "started without id\n", 0)
-		last := filepath.Join(a.metadataDir(), "capture.last")
-		if err := os.WriteFile(last, []byte("aaaaaaaa\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		fakeCaptureClaude(t, "started without id\n", 0)
 		if err := a.captureRun(t.TempDir(), time.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -216,12 +230,7 @@ func TestCaptureRun(t *testing.T) {
 		if got := a.Out.(*bytes.Buffer).String(); got != "kioku-capture を背景で起動した（org/a、5 件、id 不明）。capture.log を確認する。\n" {
 			t.Fatal(got)
 		}
-		if _, err := os.Stat(log + ".rm"); !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		if _, err := os.Stat(last); err != nil {
-			t.Fatal(err)
-		}
+
 	})
 	for _, missing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("E35_launch_failure/missing=%v", missing), func(t *testing.T) {

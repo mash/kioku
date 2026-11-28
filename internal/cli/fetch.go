@@ -249,25 +249,6 @@ func readCaptureFile(dir, path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer parent.Close()
-	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(absolute), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	file := os.NewFile(uintptr(fd), absolute)
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("capture put requires a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("capture file exceeds %d MiB", limit>>20)
-	}
-	return data, nil
+	data, _, err := readRegularAt(int(parent.Fd()), filepath.Base(absolute), limit)
+	return data, err
 }

@@ -12,7 +12,7 @@ func (a *App) status() error {
 		return err
 	}
 	result := map[string]any{"namespace": a.Config.Namespace, "server": a.Config.Server}
-	rows, err := readQueue(a.queuePath())
+	rows, err := readQueue(a.queuePath(), true)
 	if err != nil {
 		return err
 	}

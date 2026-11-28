@@ -25,7 +25,7 @@ func TestSessionSelect(t *testing.T) {
 			if a.Out.(*bytes.Buffer).Len() != 0 {
 				t.Fatal(a.Out)
 			}
-			path, _ := sessionPath("session-1")
+			path := mustSessionPath(t, "session-1")
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatal("wrote session", err)
 			}
@@ -107,7 +107,7 @@ func TestSessionSelect(t *testing.T) {
 				t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 			}
 			out, stderr, err := runProjectCLI("-C", a.Dir, "session", "select")
-			statePath, _ := sessionPath("session-1")
+			statePath := mustSessionPath(t, "session-1")
 			if tc.failure && !tc.copy {
 				if err == nil || out != "" || stderr != "" {
 					t.Fatal(out, stderr, err)
@@ -174,7 +174,7 @@ func TestSessionSelect(t *testing.T) {
 		if got := mustSession(t); got.Path != a.Dir || got.Namespace != "org/project" {
 			t.Fatal(got)
 		}
-		path, _ := sessionPath("session-1")
+		path := mustSessionPath(t, "session-1")
 		before, _ := os.ReadFile(path)
 		other, _, _, otherStatus := syncFixture(t)
 		other.AuthDir = a.AuthDir

@@ -143,7 +143,10 @@ func TestLocalSourceV10Integration(t *testing.T) {
 		if it.response != "" {
 			ev.Response = json.RawMessage(it.response)
 		}
-		payload, err := json.Marshal(ev)
+		payload, err := json.Marshal(struct {
+			hookToolEvent
+			Response json.RawMessage `json:"tool_response,omitempty"`
+		}{ev, ev.Response})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -3,16 +3,14 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
+	"golang.org/x/sys/unix"
 )
 
 const maxSourceFileBytes = 1 << 20
@@ -43,26 +41,7 @@ func readLocalFile(path string) ([]byte, os.FileInfo, error) {
 	if !info.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("put: file: は通常ファイル 1 つだけを指す: %s", path)
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer f.Close()
-	info, err = f.Stat()
-	if err != nil {
-		return nil, nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, nil, fmt.Errorf("put: file: は通常ファイル 1 つだけを指す: %s", path)
-	}
-	b, err := io.ReadAll(io.LimitReader(f, int64(maxSourceFileBytes)+1))
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(b) > maxSourceFileBytes {
-		return nil, nil, fmt.Errorf("%s exceeds 1 MiB", path)
-	}
-	return b, info, nil
+	return readRegularAt(unix.AT_FDCWD, path, maxSourceFileBytes)
 }
 
 func (a *App) putLocalFile(raw string) error {
@@ -94,11 +73,11 @@ func (a *App) putLocalFile(raw string) error {
 		return err
 	}
 	var result model.PutResponse
-	code, err := a.request(http.MethodPost, endpoint+"/put", model.PutRequest{File: &model.FileInput{Name: name, Content: submitted}}, &result)
+	code, err := a.postPut(endpoint, model.PutRequest{File: &model.FileInput{Name: name, Content: submitted}}, &result)
 	if code >= 400 && err != nil {
-		return err
+		return fmt.Errorf("server error: %w", err)
 	}
-	if err != nil || code != http.StatusAccepted || !source.IsLocalKey(result.SourceURL) {
+	if err != nil || !source.IsLocalKey(result.SourceURL) {
 		return errors.New("put: 受付を確認できない。本文を変えずに同じコマンドで再試行する")
 	}
 	_, err = fmt.Fprintf(a.Out, "accepted %s\n", result.SourceURL)

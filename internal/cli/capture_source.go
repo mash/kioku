@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -20,7 +21,7 @@ type captureToolCall struct {
 }
 
 const toolSourcePrefix = "tool:"
-const maxCaptureSourceBytes = 2 * maxHookToolInputBytes
+const maxCaptureSourceBytes = 4096
 
 func captureToolSource(name string, input json.RawMessage) (string, error) {
 	if !isMCPReadTool(name) {
@@ -35,7 +36,7 @@ func captureToolSource(name string, input json.RawMessage) (string, error) {
 		return "", err
 	}
 	if len(out)+len(toolSourcePrefix) > maxCaptureSourceBytes {
-		return "", errors.New("tool source exceeds the capture input limit")
+		return "", errors.New("tool source exceeds 4,096 bytes")
 	}
 	return toolSourcePrefix + string(out), nil
 }
@@ -121,4 +122,25 @@ func isMCPReadTool(name string) bool {
 		}
 	}
 	return read
+}
+
+func captureNeedsFetch(src string) bool {
+	return !strings.HasPrefix(src, toolSourcePrefix) && !isArtifactURL(src)
+}
+
+// Queue validation guarantees a canonical tool: value before it enters a snapshot.
+func captureSourceTool(src string) string {
+	if !strings.HasPrefix(src, toolSourcePrefix) {
+		return ""
+	}
+	const key = `,"tool":`
+	at := strings.LastIndex(src, key)
+	if at < 0 {
+		return ""
+	}
+	name, err := strconv.Unquote(strings.TrimSuffix(src[at+len(key):], "}"))
+	if err != nil {
+		return ""
+	}
+	return name
 }

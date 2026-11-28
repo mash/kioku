@@ -164,7 +164,7 @@ Claude Code の local mode では、CLI が状態ファイルに会話の選択�
 複数ファイルは CLI が1件ずつ送信する。途中で失敗した場合は、受付済みと未保存を分ける。
 
 資料を取り除く依頼には `kioku -n "$NAMESPACE" delete SOURCE` を使う。
-`SOURCE` には取得元、原本 HTTPS URL、または完全なローカルキーを指定する。受付前の tool: は queue の行だけを消す。取得元が OS の引数長を超える場合は、復号した tool: の値1件を `kioku delete -` の標準入力に渡す。HTTPS URL は queue の行を消して、あわせてサーバーへ削除を依頼する。
+`SOURCE` には取得元、原本 HTTPS URL、または完全なローカルキーを指定する。受付前の tool: は queue の行だけを消す。HTTPS URL は queue の行を消して、あわせてサーバーへ削除を依頼する。
 サーバーは次の生成で source ページと参照を除く。
 
 ## 失敗と鮮度

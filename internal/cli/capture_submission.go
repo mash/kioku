@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,13 +40,13 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return fmt.Errorf("put: %w", err)
 	}
-	i := resolveSnapshotSource(snapshot, *src)
+	i := snapshotRow(snapshot, *src)
 	if i < 0 {
 		return errors.New("put: 取得元は capture の snapshot にない")
 	}
 	attempt := snapshot[i]
 	sourceID := attempt.Source
-	queue, err := readQueue(a.queuePath())
+	queue, err := readQueue(a.queuePath(), false)
 	if err != nil {
 		return err
 	}
@@ -90,12 +89,8 @@ func (a *App) capturePut(args []string) error {
 		return err
 	}
 	input := model.FileInput{Name: name, Content: content}
-	code, err := a.request(http.MethodPost, endpoint+"/put", model.PutRequest{File: &input}, nil)
-	if code != http.StatusAccepted {
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
+	if _, err := a.postPut(endpoint, model.PutRequest{File: &input}, nil); err != nil {
+		return err
 	}
 	// The 202 status confirms receipt; capture does not use the response body.
 	results[sourceID] = captureProgress{PutURL: doc.URL}
@@ -127,21 +122,17 @@ func (a *App) captureResult(args []string) error {
 	default:
 		return usage
 	}
-	submit, err := a.captureSubmissionLock()
+	submit, unlock, err := a.lockCaptureQueue()
 	if err != nil {
 		return err
 	}
 	defer submit()
-	unlock, err := a.localLock()
-	if err != nil {
-		return err
-	}
 	defer unlock()
 	dir, snapshot, err := captureSnapshot(*token, a.captureTmp(*token))
 	if err != nil {
 		return err
 	}
-	index := resolveSnapshotSource(snapshot, f.Arg(0))
+	index := snapshotRow(snapshot, f.Arg(0))
 	if index < 0 {
 		return errors.New("capture result: 取得元は capture の snapshot にない")
 	}
@@ -200,7 +191,7 @@ type captureProgress struct {
 
 // Keep verified HTTP receipts outside the agent-writable capture directory.
 func captureProgressPath(dir string) string {
-	return filepath.Join(filepath.Dir(captureLockPathFromTmp(dir)), "capture-progress-"+filepath.Base(dir)+".json")
+	return filepath.Join(captureMetadataDir(dir), "capture-progress-"+filepath.Base(dir)+".json")
 }
 
 func readCaptureResults(dir string) (map[string]captureProgress, error) {

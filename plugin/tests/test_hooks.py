@@ -15,7 +15,7 @@ import threading
 import time
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
+from hook_test_helpers import ROOT, make_project, test_binary, wait_until, write_auth
 
 
 def cli(version, status=0):
@@ -24,7 +24,11 @@ def cli(version, status=0):
             'if [ "$1" = version ]; then\n'
             '    printf \'{"arch":"arm64","go_version":"go1.24.0","os":"darwin","version":"%s"}\\n\' ' + version + '\n'
             '    exit ' + str(status) + '\n'
-            'fi\n').encode()
+            'fi\n'
+            'case "$(cat)" in\n'
+            '    *compact*) cat "$6/hook-compact.txt" ;;\n'
+            '    *) cat "$6/hook-start.txt" ;;\n'
+            'esac\n').encode()
 
 
 class ManifestTest(unittest.TestCase):
@@ -59,9 +63,6 @@ class ManifestTest(unittest.TestCase):
             }]}],
             'UserPromptSubmit': [{'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" capture', 'timeout': 10,
-            }]}],
-            'PreToolUse': [{'matcher': '.*', 'hooks': [{
-                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" tool-guard', 'timeout': 10,
             }]}],
             'PostToolUse': [{'matcher': '^(WebFetch|Bash|Artifact|mcp__.*)$', 'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" tool', 'async': True, 'timeout': 10,
@@ -170,7 +171,8 @@ class HooksTest(unittest.TestCase):
 
     def hook(self, operation='start'):
         return subprocess.run(['sh', str(self.root / 'hooks/kioku.sh'), operation],
-                              input='{}', text=True, capture_output=True, env=self.env, timeout=15)
+                              input=json.dumps({'source': operation}), text=True, capture_output=True,
+                              env=self.env, timeout=15)
 
     def assert_text(self, result, *names):
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -410,15 +412,7 @@ class SessionHooksTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        binary = os.environ.get('KIOKU_BIN') or os.environ.get('KIOKU_TEST_BINARY')
-        if binary:
-            cls.cli = Path(binary).resolve()
-        else:
-            tmp = tempfile.TemporaryDirectory(prefix='kioku-session-cli-')
-            cls.addClassCleanup(tmp.cleanup)
-            cls.cli = Path(tmp.name) / 'kioku'
-            subprocess.run(['go', 'build', '-o', str(cls.cli), './cmd/kioku'],
-                           cwd=ROOT.parent, check=True, capture_output=True)
+        cls.cli = test_binary(cls)
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix='kioku session hook ')
@@ -435,7 +429,7 @@ class SessionHooksTest(unittest.TestCase):
                         CLAUDE_PLUGIN_DATA=str(self.data),
                         CLAUDE_CODE_SESSION_ID='environment-is-not-the-hook-id',
                         KIOKU_CLI=str(self.cli))
-        for key in ('KIOKU_SERVER', 'KIOKU_AGENT_TOKEN'):
+        for key in ('KIOKU_SERVER', 'KIOKU_AGENT_TOKEN', 'XDG_CONFIG_HOME'):
             self.env.pop(key, None)
         self.state_path = self.work / 'state/kioku/sessions/session-1.json'
         self.state = {
@@ -886,14 +880,6 @@ class SessionHooksTest(unittest.TestCase):
             self.assertNotIn('［ヒント:', '\n'.join(context.splitlines()[1:]))
             self.assertFalse(self.state_path.exists())
 
-    def wait_until(self, predicate):
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if predicate():
-                return
-            time.sleep(0.05)
-        self.fail('background operation did not complete within 10 seconds')
-
     def test_E24_E25_background_pull(self):
         status = [200]
         entered, release = threading.Event(), threading.Event()
@@ -946,7 +932,7 @@ class SessionHooksTest(unittest.TestCase):
                     self.assertIn('背景の pull は終わっていない。', self.prompt_context(prompt='続けて'))
                 finally:
                     release.set()
-                self.wait_until(lambda: json.loads(self.state_path.read_text()).get('last_pull_result') == result)
+                wait_until(lambda: json.loads(self.state_path.read_text()).get('last_pull_result') == result)
                 state = json.loads(self.state_path.read_text())
                 self.assertEqual(state['server'], origin)
                 expected = self.turn_rule(state)
@@ -960,27 +946,36 @@ class SessionHooksTest(unittest.TestCase):
                     self.assertIn('kioku:', log.read_text())
                 self.assertFalse(self.state_path.with_name('environment-is-not-the-hook-id.json').exists())
 
+    def fake_claude(self, script, *, restricted=False):
+        bin_dir = self.work / 'fake-bin'
+        bin_dir.mkdir()
+        executable = bin_dir / 'claude'
+        executable.write_text(script)
+        executable.chmod(0o755)
+        if restricted:
+            for command in ('sh', 'dirname'):
+                (bin_dir / command).symlink_to(shutil.which(command))
+            self.env['PATH'] = str(bin_dir)
+        else:
+            self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+        return executable
+
     def test_E13_E37_background_capture(self):
-        restricted = self.work / 'restricted'
-        restricted.mkdir()
-        for command in ('sh', 'dirname'):
-            (restricted / command).symlink_to(shutil.which(command))
-        fake = restricted / 'claude'
-        fake.write_text('#!' + sys.executable + '\n' + r'''import json, os, pathlib, subprocess, sys
+        self.fake_claude('#!' + sys.executable + '\n' + r'''import json, os, pathlib, subprocess, sys
 log = pathlib.Path(os.environ['CAPTURE_FIXTURE_LOG'])
-if sys.argv[1] == 'rm':
-    sys.exit(0)
+assert sys.argv[1] == '--bg'
 instructions = (pathlib.Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
 log.write_text(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(), 'instructions':instructions,
                           'sid': os.environ.get('CLAUDE_CODE_SESSION_ID')}))
 assert sys.stdin.read() == ''
 # A detached fixture session reports acceptance only after its launcher returns.
-code = """import json, os, pathlib, subprocess, time
+code = """import json, os, pathlib, subprocess
+from hook_test_helpers import wait_until
 p = pathlib.Path(os.environ['CAPTURE_FIXTURE_PROJECT'])
-for _ in range(200):
+def live_lock():
     lock = json.loads((p / '.kioku/capture.lock').read_text())
-    if lock.get('bg_id'): break
-    time.sleep(.025)
+    return lock if lock.get('bg_id') else None
+lock = wait_until(live_lock)
 cli = os.environ['CAPTURE_FIXTURE_CLI']
 urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().splitlines()]
 for url in urls:
@@ -990,30 +985,20 @@ for url in urls:
 subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 print('backgrounded · 1a2b3c4d')
-''')
-        fake.chmod(0o755)
-        self.env['PATH'] = str(restricted)
+''', restricted=True)
         self.env['KIOKU_SERVER'] = 'https://wrong.example'
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
         for event, count in [('Stop', 1), ('SessionEnd', 1)]:
             with self.subTest(event=event):
                 root = self.work / event
-                metadata = root / '.kioku'
-                metadata.mkdir(parents=True)
-                (metadata / 'config').write_text(json.dumps({'server': 'https://kioku.magicians.ee', 'namespace': 'org/a'}))
-                other = self.work / ('other-' + event)
-                (other / '.kioku').mkdir(parents=True)
-                (other / '.kioku/config').write_text((metadata / 'config').read_text())
-                catalog.write_text(json.dumps({'projects': [{'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'path': str(p)} for p in (other, root)]}))
-                self.state = {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)}
+                metadata, project = make_project(root, 'org/a')
+                _, other = make_project(self.work / ('other-' + event), 'org/a')
+                catalog.write_text(json.dumps({'projects': [other, project]}))
+                self.state = dict(project, mode='local')
                 self.save_state()
                 queue = metadata / 'queue.tsv'
-                auth = catalog.parent / 'auth'
-                auth.mkdir(exist_ok=True)
-                server = self.state['server']
-                credential = auth / (hashlib.sha256(server.encode()).hexdigest() + '.json')
-                credential.write_text(json.dumps({'server': server, 'token': 'fixture'}))
+                write_auth(self.env['HOME'], self.state['server'])
                 for i in range(count):
                     self.assertEqual(self.hook('PostToolUse', cwd=str(root), tool_name='WebFetch',
                                                tool_input={'url': f'https://x.example/{i}'},
@@ -1021,32 +1006,33 @@ print('backgrounded · 1a2b3c4d')
                 self.assertIn('https://x.example/0', queue.read_text())
                 log = root / 'fixture.json'
                 self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
-                                CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work))
+                                CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work),
+                                PYTHONPATH=str(Path(__file__).parent))
                 output = self.hook(event, cwd=str(root))
                 self.assertEqual(output, '')
-                self.wait_until(lambda: (metadata / 'capture.last').exists())
-                self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
-                self.wait_until(lambda: not (metadata / 'capture.lock').exists())
+                wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
+                wait_until(lambda: not (metadata / 'capture.lock').exists())
                 self.assertEqual(queue.read_text(), '')
-                self.assertEqual((metadata / 'capture.last').read_text(), '1a2b3c4d\n')
                 self.assertEqual((metadata / 'capture.log').stat().st_mode & 0o777, 0o600)
                 recorded = json.loads(log.read_text())
                 self.assertEqual(recorded['cwd'], str(root))
                 self.assertIsNone(recorded['sid'])
                 self.assertEqual(recorded['args'][0], '--bg')
                 self.assertNotIn('-p', recorded['args'])
-                self.assertIn('instructions.md', recorded['args'][-1])
+                args = recorded['args']
+                pre = json.loads(args[args.index('--settings') + 1])['hooks']['PreToolUse']
+                self.assertEqual(len(pre), 1)
+                self.assertEqual(pre[0]['matcher'], '^(Artifact|mcp__.*|Bash|Read|Write)$')
+                self.assertFalse(pre[0]['hooks'][0].get('async', False))
+                self.assertEqual(shlex.split(pre[0]['hooks'][0]['command']),
+                                 ['sh', str(self.root / 'hooks/kioku.sh'), 'tool-guard'])
+                self.assertIn('instructions.md', args[-1])
                 self.assertIn('https://x.example/0', recorded['instructions'])
                 self.assertNotIn('https://x.example/0', recorded['args'][-1])
                 self.assertNotIn('capture unlock', recorded['args'][-1])
 
     def test_session_start_recovers_all_projects_and_reports_failed_rows(self):
-        bin_dir = self.work / 'fake-bin'
-        bin_dir.mkdir()
-        claude = bin_dir / 'claude'
-        claude.write_text("#!/bin/sh\nprintf 'backgrounded · 5e6f7a8b\n'\n")
-        claude.chmod(0o755)
-        self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+        self.fake_claude("#!/bin/sh\nprintf 'backgrounded · 5e6f7a8b\n'\n")
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
 
@@ -1055,12 +1041,9 @@ print('backgrounded · 1a2b3c4d')
                 projects = []
                 for name in ('one', 'two', 'busy', 'failed', 'exhausted', 'empty'):
                     root = self.work / source / name
-                    metadata = root / '.kioku'
-                    metadata.mkdir(parents=True)
                     server = 'https://other.example' if name == 'two' else 'https://kioku.magicians.ee'
-                    config = {'namespace': f'org/{name}', 'server': server}
-                    (metadata / 'config').write_text(json.dumps(config))
-                    projects.append(dict(config, path=str(root)))
+                    metadata, project = make_project(root, f'org/{name}', server)
+                    projects.append(project)
                     if name == 'empty':
                         continue
                     state, attempts, reason = {
@@ -1104,23 +1087,15 @@ print('backgrounded · 1a2b3c4d')
 
     def test_late_stop_launcher_failure_is_visible_at_next_hook(self):
         root = self.work / 'project'
-        metadata = root / '.kioku'
-        metadata.mkdir(parents=True)
-        config = {'namespace': 'org/project', 'server': 'https://kioku.magicians.ee'}
-        (metadata / 'config').write_text(json.dumps(config))
+        metadata, _ = make_project(root, 'org/project')
         queue = metadata / 'queue.tsv'
         pending = '2026-11-28\thttps://example.com/fixture\t0\tqueued\t\n'
         queue.write_text(pending)
-        bin_dir = self.work / 'fake-bin'
-        bin_dir.mkdir()
-        launcher = bin_dir / 'claude'
-        launcher.write_text('#!/bin/sh\nsleep 1\necho fixture failure >&2\nexit 1\n')
-        launcher.chmod(0o755)
-        self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+        launcher = self.fake_claude('#!/bin/sh\nsleep 1\necho fixture failure >&2\nexit 1\n')
 
         self.assertEqual(self.hook('Stop', cwd=str(root)), '')
         marker = metadata / 'capture-launch.failed'
-        self.wait_until(marker.exists)
+        wait_until(marker.exists)
         self.assertEqual(queue.read_text(), pending)
         self.assertIn('fixture failure', marker.read_text())
 
@@ -1131,10 +1106,7 @@ print('backgrounded · 1a2b3c4d')
         self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
 
     def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
-        bin_dir = self.work / 'fake-bin'
-        bin_dir.mkdir()
-        claude = bin_dir / 'claude'
-        claude.write_text("""#!/bin/sh
+        self.fake_claude("""#!/bin/sh
 case "$(cat "$KIOKU_CAPTURE_DIR/instructions.md")" in
     *https://example.com/one*)
         for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
@@ -1147,19 +1119,14 @@ case "$(cat "$KIOKU_CAPTURE_DIR/instructions.md")" in
 esac
 printf 'backgrounded · 5e6f7a8b\n'
 """)
-        claude.chmod(0o755)
-        self.env.update(PATH=str(bin_dir) + os.pathsep + self.env['PATH'],
-                        CAPTURE_TEST_MARKER=str(self.work / 'second-started'))
+        self.env['CAPTURE_TEST_MARKER'] = str(self.work / 'second-started')
         projects = []
         for name in ('one', 'two'):
             root = self.work / name
-            metadata = root / '.kioku'
-            metadata.mkdir(parents=True)
-            config = {'namespace': f'org/{name}', 'server': 'https://kioku.magicians.ee'}
-            (metadata / 'config').write_text(json.dumps(config))
+            metadata, project = make_project(root, f'org/{name}')
             (metadata / 'queue.tsv').write_text(
                 f'2026-11-18\thttps://example.com/{name}\t0\tqueued\t\n')
-            projects.append(dict(config, path=str(root)))
+            projects.append(project)
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
         catalog.write_text(json.dumps({'projects': projects}))
@@ -1171,40 +1138,26 @@ printf 'backgrounded · 5e6f7a8b\n'
             self.assertEqual(json.loads(lock.read_text())['bg_id'], '5e6f7a8b')
 
     def test_session_start_does_not_cancel_a_slow_capture_launcher(self):
-        bin_dir = self.work / 'fake-bin'
-        bin_dir.mkdir()
-        claude = bin_dir / 'claude'
-        claude.write_text("""#!/bin/sh
-sleep 11
-printf 'backgrounded · 5e6f7a8b\\n'
-""")
-        claude.chmod(0o755)
-        self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+        self.fake_claude("#!/bin/sh\nsleep 1\nprintf 'backgrounded · 5e6f7a8b\n'\n")
+        self.env['KIOKU_SESSION_START_CAPTURE_WAIT'] = '100ms'
         project = self.work / 'project'
-        metadata = project / '.kioku'
-        metadata.mkdir(parents=True)
-        config = {'namespace': 'org/project', 'server': 'https://kioku.magicians.ee'}
-        (metadata / 'config').write_text(json.dumps(config))
-        (metadata / 'queue.tsv').write_text('2026-11-18\thttps://example.com/slow\t0\tqueued\t\n')
+        metadata, config = make_project(project, 'org/project')
+        queue = metadata / 'queue.tsv'
+        queue.write_text('2026-11-18\thttps://example.com/slow\t0\tqueued\t\n')
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
-        catalog.write_text(json.dumps({'projects': [dict(config, path=str(project))]}))
+        catalog.write_text(json.dumps({'projects': [config]}))
 
         self.hook('SessionStart', source='startup', cwd=str(self.work))
         lock = metadata / 'capture.lock'
         log = metadata / 'capture.log'
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if (lock.exists() and json.loads(lock.read_text()).get('bg_id') == '5e6f7a8b'
-                    and 'claude logs 5e6f7a8b' in log.read_text()):
-                break
-            if '\t0\tqueued\t' in (metadata / 'queue.tsv').read_text():
+        def launched():
+            if '\t0\tqueued\t' in queue.read_text() and (metadata / 'capture-launch.failed').exists():
                 self.fail('SessionStart cancelled the launcher while waiting for its ID')
-            time.sleep(0.05)
-        else:
-            self.fail('detached launcher did not record its ID in capture.lock and capture.log')
+            return (lock.exists() and json.loads(lock.read_text()).get('bg_id') == '5e6f7a8b'
+                    and 'claude logs 5e6f7a8b' in log.read_text())
 
-
+        wait_until(launched, timeout=3)
 
 
 if __name__ == '__main__':

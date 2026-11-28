@@ -19,6 +19,20 @@ func (a *App) captureSubmissionLock() (func(), error) {
 	return a.projectLock("capture-submit.lock")
 }
 
+// lockCaptureQueue always takes the submission lock before the queue lock.
+func (a *App) lockCaptureQueue() (unlockSubmission, unlockQueue func(), err error) {
+	unlockSubmission, err = a.captureSubmissionLock()
+	if err != nil {
+		return nil, nil, err
+	}
+	unlockQueue, err = a.localLock()
+	if err != nil {
+		unlockSubmission()
+		return nil, nil, err
+	}
+	return unlockSubmission, unlockQueue, nil
+}
+
 func (a *App) projectLock(name string) (func(), error) {
 	if err := ensureDirectory(a.metadataDir()); err != nil {
 		return nil, err

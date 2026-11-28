@@ -67,7 +67,7 @@ func TestSessionHookOversizedInputIsSilent(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
 	a.recordSessionPull(nil)
-	path, _ := sessionPath("session-1")
+	path := mustSessionPath(t, "session-1")
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestSessionHookE25URLSources(t *testing.T) {
 			sessionTestEnv(t)
 			a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
 			a.recordSessionPull(nil)
-			path, _ := sessionPath("session-1")
+			path := mustSessionPath(t, "session-1")
 			before, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -192,7 +192,7 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 	writeHookFixture(t, filepath.Join(home, ".config/kioku/projects.json"), projectsFile{Projects: []projectEntry{
 		{Server: defaultServer, Namespace: "org/p", Path: "/work/p"},
 	}})
-	path, _ := sessionPath("session-1")
+	path := mustSessionPath(t, "session-1")
 	if err := os.Chmod(path, 0000); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestReadHookQueue(t *testing.T) {
 func TestStopAndSessionEndHook(t *testing.T) {
 	t.Run("R6_detached_child", func(t *testing.T) {
 		cmd := exec.Command("/usr/bin/true")
-		if err := startProcess(cmd); err != nil {
+		if err := startProcess(cmd, 0); err != nil {
 			t.Fatal(err)
 		}
 		if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {

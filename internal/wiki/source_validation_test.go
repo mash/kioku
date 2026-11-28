@@ -1,11 +1,31 @@
 package wiki
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
 )
+
+func BenchmarkValidateSources(b *testing.B) {
+	pages := make(map[string]string, 512)
+	for i := range 512 {
+		name := fmt.Sprintf("wiki/source-%d.md", i)
+		key := fmt.Sprintf("https://example.com/%d", i)
+		if i%2 == 0 {
+			name = fmt.Sprintf("wiki/source-%d.md", i)
+			key = fmt.Sprintf("kioku:local/%064x", i)
+		}
+		pages[name] = "---\nsource_url: " + key + "\ntitle: Example\n---\nBody"
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if problems := ValidateSources(pages, pages, nil); len(problems) != 0 {
+			b.Fatal(problems)
+		}
+	}
+}
 
 func TestSourceValidationRules(t *testing.T) {
 	page := func(u string) string { return "---\nsource_url: " + u + "\n---\nBody" }
@@ -20,7 +40,7 @@ func TestSourceValidationRules(t *testing.T) {
 		{"c", map[string]string{"wiki/source-a.md": page("https://example.com/a")}, nil, []model.InboxItem{{Remove: true, SourceURL: "https://example.com/a"}}, "(c)"},
 		{"d", nil, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, nil, "(d)"},
 		{"e", nil, nil, []model.InboxItem{{SourceURL: "https://example.com/a"}}, "(e)"},
-		{"updated-name", map[string]string{"wiki/source-new.md": page("https://example.com/a")}, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, []model.InboxItem{{SourceURL: "https://example.com/a"}}, ""},
+		{"updated-name", map[string]string{"wiki/source-new.md": page("https://example.com/a")}, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, []model.InboxItem{{SourceURL: "https://example.com/a"}}, "(a)"},
 		{"slug-collision", map[string]string{"wiki/source-title.md": page("https://example.com/a"), "wiki/source-title-2.md": page("https://example.com/b")}, nil, nil, ""},
 		{"removed", nil, map[string]string{"wiki/source-a.md": page("https://example.com/a")}, []model.InboxItem{{Remove: true, SourceURL: "https://example.com/a"}}, ""},
 	} {
@@ -59,5 +79,25 @@ func TestSourceURLFrontmatterBoundaries(t *testing.T) {
 				t.Fatalf("SourceURL = %q, %v; valid = %v", url, err, tc.valid)
 			}
 		})
+	}
+}
+
+func TestLocalSourceNames(t *testing.T) {
+	key := "kioku:local/" + strings.Repeat("1", 64)
+	content := "---\nsource_url: " + key + "\n---\nBody"
+	previous := map[string]string{"wiki/source-note.md": content}
+	for _, tc := range []struct {
+		name     string
+		previous map[string]string
+		valid    bool
+	}{
+		{"wiki/source-note-2.md", nil, true},
+		{"wiki/source-note-2.md", previous, false},
+		{"wiki/source-note.md", previous, true},
+	} {
+		problems := ValidateSources(map[string]string{tc.name: content}, tc.previous, nil)
+		if (len(problems) == 0) != tc.valid {
+			t.Error(tc, problems)
+		}
 	}
 }

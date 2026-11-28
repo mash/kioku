@@ -29,7 +29,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		{model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, true},
 	} {
 		var result map[string]any
-		if code := f.request("POST", base+"/put", token, tc.req, &result); code != 202 || result == nil || len(result) != 0 {
+		if code := f.request("POST", base+"/put", token, tc.req, &result); code != 202 || len(result) != 0 {
 			t.Fatal(code, result)
 		}
 		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Remove != tc.remove {
@@ -91,10 +91,11 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 	p := securityProject(t, f, token)
 	for _, req := range []any{
 		map[string]any{"url": "https://example.com/a"},
+		model.PutRequest{Remove: true, SourceURL: "kioku:local"},
 		model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", "body")}, Remove: true},
 		map[string]any{"url": "https://example.com/a", "remove": true, "source_url": "https://example.com/a"},
 		map[string]any{"files": []model.FileInput{{Name: "a.md"}, {Name: "b.md"}}},
-		model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("http://example.com/a", "Source body")}}, model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("https://127.0.0.1/a", "Source body")}},
+		model.PutRequest{File: &model.FileInput{Name: "source.md", Content: testSourceContent("http://example.com/a", "Source body")}},
 		model.PutRequest{File: &model.FileInput{Name: "a.md", Content: "body"}},
 	} {
 		if c := f.request("POST", "/api/projects/"+p.Namespace+"/put", token, req, nil); c != 400 {
@@ -166,7 +167,7 @@ func TestConnectorAndAgentInboxPuts(t *testing.T) {
 		{"project": p.Namespace, "remove": true, "source_url": "https://example.com/mcp"},
 	} {
 		var result map[string]any
-		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
+		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || len(result) != 0 {
 			t.Fatal(msg, result)
 		}
 	}

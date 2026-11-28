@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mash/kioku/internal/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,36 +28,39 @@ func fetchCommand(ctx context.Context, args []string, outputs ...io.Writer) (err
 		}
 	}()
 	if len(args) == 0 {
-		return errors.New("usage: kioku fetch URL --capture-token TOKEN --dir DIR --out FILE")
+		return errors.New("usage: kioku capture fetch URL --capture-token TOKEN --dir DIR --out FILE")
 	}
 	f := flag.NewFlagSet("fetch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	out := f.String("out", "", "output file inside capture directory")
 	dir := f.String("dir", "", "capture directory")
-	token := f.String("capture-token", "", "capture ownership token")
+	token := captureTokenFlag(f)
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *out == "" || *dir == "" {
 		return errors.New("--out と capture の一時ディレクトリを指定する必要がある")
 	}
-	resolved, err := resolveCaptureDir(*token, *dir)
-	if err != nil {
-		return err
+	if *token != filepath.Base(*dir) {
+		return errors.New("invalid capture token")
 	}
-	return fetchURL(ctx, nil, args[0], resolved, *out, outputs...)
+	return fetchURL(ctx, nil, args[0], *dir, *out, outputs...)
 }
 
 func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, output string, outputs ...io.Writer) error {
-	if !filepath.IsAbs(dir) || filepath.Base(filepath.Dir(dir)) != "capture-tmp" || filepath.Base(filepath.Dir(filepath.Dir(dir))) != ".kioku" || !captureTokenPattern.MatchString(filepath.Base(dir)) {
-		return errors.New("capture-tmp の所有トークン付きディレクトリが必要")
-	}
-	rows, err := captureSnapshot(dir)
+	dir, rows, err := captureSnapshot(filepath.Base(dir), dir)
 	if err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.URL == rawURL }) {
+	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.Source == rawURL }) {
 		return errors.New("URL は capture のスナップショットにない")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if err := source.ValidateURL(u); err != nil {
+		return err
 	}
 	if filepath.IsAbs(output) {
 		output, err = filepath.Rel(dir, output)
@@ -86,19 +90,6 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 		parent = os.NewFile(uintptr(fd), part)
 		defer parent.Close()
 	}
-	validate := func(u *url.URL) error {
-		if u.Scheme != "https" || u.Host == "" || u.User != nil {
-			return errors.New("認証情報を含まない HTTPS URL のみ取得できる")
-		}
-		return nil
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return err
-	}
-	if err := validate(u); err != nil {
-		return err
-	}
 	u = captureFetchURL(u)
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
@@ -107,7 +98,7 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 		if req.URL.Host != u.Host {
 			return errors.New("別のホストへの転送は許可されていない")
 		}
-		return validate(req.URL)
+		return source.ValidateURL(req.URL)
 	}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -233,6 +224,10 @@ func captureSourcePath(dir, path string) (string, error) {
 	return absolute, nil
 }
 func readCaptureSource(dir, path string) ([]byte, error) {
+	return readCaptureFile(dir, path, maxSourceFileBytes)
+}
+
+func readCaptureFile(dir, path string, limit int64) ([]byte, error) {
 	absolute, err := captureSourcePath(dir, path)
 	if err != nil {
 		return nil, err
@@ -242,25 +237,6 @@ func readCaptureSource(dir, path string) ([]byte, error) {
 		return nil, err
 	}
 	defer parent.Close()
-	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(absolute), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	file := os.NewFile(uintptr(fd), absolute)
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("capture put requires a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > 1<<20 {
-		return nil, errors.New("capture put source exceeds 1 MiB")
-	}
-	return data, nil
+	data, _, err := readRegularAt(int(parent.Fd()), filepath.Base(absolute), limit)
+	return data, err
 }

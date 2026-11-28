@@ -17,7 +17,7 @@ import (
 )
 
 const listHeaderText = "Kioku: project 未選択。最初のメッセージの namespace を優先する。候補に無い指定は %[2]s -n <namespace> session select で選ぶ。指定が無ければ各 description を確認する。候補を一意に選べるなら %[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。決められなければ %[2]s project list の \"general\": true の namespace を %[2]s -n <namespace> session select で選ぶ。select に失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
-const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -C %[4]s -n %[1]s queue add <URL> \"<何をしたか>\" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。"
+const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。PostToolUse は対象の呼び出しから取得元を queue に足す。queue の行はサーバーの受付を示さない。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
 const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。\n"
 
@@ -43,7 +43,7 @@ func testKiokuCommand(server string) string {
 	return kiokuCommand(exe, server)
 }
 func testTurnRule(ns, p, server string) string {
-	return fmt.Sprintf(turnRuleText, ns, p, testKiokuCommand(server), shellQuote(p))
+	return fmt.Sprintf(turnRuleText, ns, p)
 }
 func testCandidateHeader(server string) string {
 	return fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer), testKiokuCommand(server))
@@ -167,7 +167,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			writeHookFixture(t, catalog, projectsFile{Projects: ps})
 			catalogBefore, _ := os.ReadFile(catalog)
 			catalogInfo, _ := os.Stat(catalog)
-			statePath, _ := sessionPath("session-1")
+			statePath := mustSessionPath(t, "session-1")
 			if tc.selected != "" || tc.blocked {
 				s := sessionTestState(time.Now().UTC())
 				s.Namespace = "org/a"
@@ -185,7 +185,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			oldStart := startProcess
 			t.Cleanup(func() { startProcess = oldStart })
 			var started []*exec.Cmd
-			startProcess = func(c *exec.Cmd) error { started = append(started, c); return nil }
+			startProcess = func(c *exec.Cmd, _ time.Duration) error { started = append(started, c); return nil }
 			t.Setenv("CLAUDE_CODE_SESSION_ID", "wrong-environment-id")
 			t.Setenv("KIOKU_SESSION_PULL", "old")
 			input := map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "cwd": cwd, "prompt": tc.prompt}
@@ -307,7 +307,7 @@ func TestPromptHookSelectionTransitions(t *testing.T) {
 			oldStart := startProcess
 			t.Cleanup(func() { startProcess = oldStart })
 			calls := 0
-			startProcess = func(*exec.Cmd) error {
+			startProcess = func(*exec.Cmd, time.Duration) error {
 				calls++
 				if scenario == "I12_start_failure" {
 					return errors.New("launch failed")
@@ -346,7 +346,7 @@ func TestPromptHookE19MalformedPreservesState(t *testing.T) {
 	sessionTestEnv(t)
 	a := &App{Config: Config{Server: defaultServer, Namespace: "org/p"}, Dir: "/work/p"}
 	a.recordSessionPull(nil)
-	path, _ := sessionPath("session-1")
+	path := mustSessionPath(t, "session-1")
 	before, _ := os.ReadFile(path)
 	for _, input := range []string{"{", `{"session_id":"../escape","hook_event_name":"UserPromptSubmit"}`, `{"session_id":"session-1","hook_event_name":"UserPromptSubmit","agent_id":null}`} {
 		if got := runRawPromptHook(t, input, "../../prompts"); got != "" {

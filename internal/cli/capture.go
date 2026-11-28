@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +13,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mash/kioku/internal/atomicfile"
@@ -20,22 +23,35 @@ import (
 )
 
 type captureLock struct {
-	PID            int       `json:"pid"`
-	StartedAt      time.Time `json:"started_at"`
-	BgID           string    `json:"bg_id,omitempty"`
-	Token          string    `json:"token"`
-	SnapshotHash   string    `json:"snapshot_hash,omitempty"`
-	LaunchComplete bool      `json:"launch_complete,omitempty"`
-	invalid        bool
+	PID          int       `json:"pid"`
+	StartedAt    time.Time `json:"started_at"`
+	BgID         string    `json:"bg_id,omitempty"`
+	Token        string    `json:"token"`
+	SnapshotHash string    `json:"snapshot_hash,omitempty"`
+	invalid      bool
 }
 
 const captureLockTTL = 30 * time.Minute
+const captureInstructionsFile = "instructions.md"
+const captureGuardCLIEnv = "KIOKU_CAPTURE_CLI"
 
 var captureWaitDelay = 5 * time.Second
 
 var errCaptureBusy = errors.New("capture already running")
 var captureBackgroundID = regexp.MustCompile(`backgrounded · ([0-9a-f]{8})\b`)
 var captureTokenPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+func captureTokenFlag(f *flag.FlagSet) *string {
+	var token string
+	f.Func("capture-token", "capture ownership token", func(value string) error {
+		if token != "" || !captureTokenPattern.MatchString(value) {
+			return errors.New("invalid or repeated capture token")
+		}
+		token = value
+		return nil
+	})
+	return &token
+}
 
 func readCaptureLock(path string) (*captureLock, error) {
 	data, err := readRegular(path)
@@ -46,7 +62,7 @@ func readCaptureLock(path string) (*captureLock, error) {
 		return nil, err
 	}
 	var lock captureLock
-	if decodeJSON(data, &lock) != nil || lock.StartedAt.IsZero() {
+	if decodeJSON(data, &lock) != nil || lock.StartedAt.IsZero() || !captureTokenPattern.MatchString(lock.Token) {
 		info, err := os.Lstat(path)
 		if err != nil {
 			return nil, err
@@ -56,7 +72,7 @@ func readCaptureLock(path string) (*captureLock, error) {
 	return &lock, nil
 }
 func lockBusy(lock *captureLock, now time.Time) bool {
-	return lock != nil && now.Sub(lock.StartedAt) <= captureLockTTL
+	return lock != nil && !lock.invalid && now.Sub(lock.StartedAt) <= captureLockTTL
 }
 func acquireCaptureLock(path string, now time.Time) (*captureLock, error) {
 	if err := ensureDirectory(filepath.Dir(path)); err != nil {
@@ -94,18 +110,8 @@ func acquireCaptureLock(path string, now time.Time) (*captureLock, error) {
 	}
 	return lock, err
 }
-func readQueue(path string) ([]queueRow, error) {
-	data, err := readRegular(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return parseQueue(data)
-}
 func (a *App) capture(args []string, now time.Time) error {
-	usage := errors.New("usage: kioku capture run [--min N] [--plugin-root DIR] | unlock --token TOKEN")
+	usage := errors.New("usage: kioku capture run|put|result|fetch")
 	if len(args) == 0 {
 		return usage
 	}
@@ -114,32 +120,18 @@ func (a *App) capture(args []string, now time.Time) error {
 	}
 	switch args[0] {
 	case "run":
-		f := flag.NewFlagSet("capture run", flag.ContinueOnError)
-		f.SetOutput(a.Err)
-		min := f.Int("min", 5, "minimum queued sources")
-		pluginRoot := f.String("plugin-root", os.Getenv("CLAUDE_PLUGIN_ROOT"), "plugin root directory")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if f.NArg() != 0 || *min < 1 {
+		if len(args) != 1 {
 			return usage
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		return a.captureRun(*min, cwd, now, *pluginRoot)
-	case "unlock":
-		f := flag.NewFlagSet("capture unlock", flag.ContinueOnError)
-		f.SetOutput(a.Err)
-		token := f.String("token", "", "capture ownership token")
-		if err := f.Parse(args[1:]); err != nil {
-			return err
-		}
-		if f.NArg() != 0 {
-			return usage
-		}
-		return a.captureUnlock(*token)
+		return a.captureRun(cwd, now)
+	case "put":
+		return a.capturePut(args[1:])
+	case "result":
+		return a.captureResult(args[1:])
 	default:
 		return usage
 	}
@@ -162,23 +154,26 @@ func (a *App) cleanupCaptureTmp(now time.Time) error {
 		return err
 	}
 	live := ""
-	if lockBusy(lock, now) && !lock.invalid {
+	if lockBusy(lock, now) {
 		live = lock.Token
+	} else if lock != nil {
+		if err := os.Remove(a.captureLockPath()); err != nil {
+			return err
+		}
 	}
-	receipts, err := filepath.Glob(filepath.Join(a.metadataDir(), "capture-unlocked-*"))
+	files, err := filepath.Glob(filepath.Join(a.metadataDir(), "capture-progress-*.json"))
 	if err != nil {
 		return err
 	}
-	for _, receipt := range receipts {
-		info, err := os.Lstat(receipt)
+	for _, file := range files {
+		info, err := os.Lstat(file)
 		if err != nil {
 			return err
 		}
-		if now.Sub(info.ModTime()) <= captureLockTTL {
-			continue
-		}
-		if err := os.Remove(receipt); err != nil {
-			return err
+		if now.Sub(info.ModTime()) > captureLockTTL {
+			if err := os.Remove(file); err != nil {
+				return err
+			}
 		}
 	}
 	return removeCaptureTmpExcept(filepath.Join(a.metadataDir(), "capture-tmp"), live)
@@ -236,26 +231,42 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 	return filepath.EvalSymlinks(tmp)
 }
 
-func captureAllowedTools(exe, server, ns, p, tmp string) []string {
-	command := kiokuCommand(exe, server)
-	project := command + " -C " + shellQuote(p) + " -n " + ns
+func captureAllowedTools(command, project, tmp string, rows []queueRow) []string {
 	token := filepath.Base(tmp)
-	return []string{
-		"Bash(" + command + " fetch:*)",
-		"Bash(" + project + " put --capture-token " + token + ":*)", "Bash(" + project + " queue remove --capture-token " + token + ":*)", "Bash(" + project + " capture unlock --token " + token + ")",
-		"Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)",
-		"Read(/" + tmp + "/**)", "Edit(/" + tmp + "/**)",
-		"mcp__notion__notion-fetch", "mcp__notion__notion-search",
-		"mcp__claude_ai_Notion__notion-fetch",
-		"mcp__claude_ai_Notion__notion-search",
-		"mcp__claude_ai_Slack__slack_read_thread",
-		"mcp__claude_ai_Slack__slack_read_channel",
-		"mcp__claude_ai_Google_Drive__read_file_content",
-		"mcp__claude_ai_Google_Drive__download_file_content",
+	// Claude Code uses Edit(path) for Write permissions. --tools omits Edit.
+	tools := []string{
+		"Bash(" + command + " capture fetch:*)",
+		"Bash(" + project + " capture put --capture-token " + token + ":*)",
+		"Bash(" + project + " capture result --capture-token " + token + ":*)",
+		"Read(/" + tmp + "/**)", "Edit(/" + tmp + "/**)", "Artifact",
 	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		server, _ := mcpToolParts(captureSourceTool(row.Source))
+		if server != "" && !seen[server] {
+			seen[server] = true
+			tools = append(tools, "mcp__"+server+"__*")
+		}
+	}
+	return tools
 }
+func (a *App) openCaptureLog() (*os.File, error) {
+	log, err := openBackgroundLog(filepath.Join(a.metadataDir(), "capture.log"), os.O_APPEND|syscall.O_NONBLOCK)
+	if err != nil {
+		return nil, err
+	}
+	if stat, err := log.Stat(); err != nil {
+		log.Close()
+		return nil, err
+	} else if !stat.Mode().IsRegular() {
+		log.Close()
+		return nil, errors.New("capture.log must be a regular file")
+	}
+	return log, nil
+}
+
 func (a *App) captureNote(note string) error {
-	log, err := openBackgroundLog(filepath.Join(a.metadataDir(), "capture.log"), os.O_APPEND)
+	log, err := a.openCaptureLog()
 	if err != nil {
 		return err
 	}
@@ -263,43 +274,117 @@ func (a *App) captureNote(note string) error {
 	_, err = fmt.Fprintln(log, strings.NewReplacer("\r", " ", "\n", " ").Replace(note))
 	return err
 }
-func (a *App) captureRun(min int, cwd string, now time.Time, pluginRoots ...string) error {
-	if err := a.cleanupCaptureTmp(now); err != nil {
-		return err
-	}
-	rows, err := readQueue(filepath.Join(a.metadataDir(), "queue.tsv"))
+
+// beginCapture records the attempts and their snapshot before Claude can read either.
+func (a *App) beginCapture(now time.Time) (*captureLock, []queueRow, error) {
+	submit, unlock, err := a.lockCaptureQueue()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	if len(rows) < min {
-		_, err = fmt.Fprintf(a.Out, "kioku: capture run: キューは %d 件で、--min %d に足りない。\n", len(rows), min)
-		return err
+	defer submit()
+	defer unlock()
+	if err := a.cleanupCaptureTmp(now); err != nil {
+		return nil, nil, err
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.State == queueQueued }) {
+		return nil, nil, nil
 	}
 	path := a.captureLockPath()
 	lock, err := acquireCaptureLock(path, now)
 	if errors.Is(err, errCaptureBusy) {
-		id := "不明"
-		if lock.BgID != "" {
-			id = lock.BgID
-		}
-		_, err = fmt.Fprintf(a.Out, "kioku: capture run: kioku-capture は実行中（id %s）。claude logs %s で見る。\n", id, id)
-		return err
+		return nil, nil, nil
 	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var snapshot []queueRow
+	for i := range rows {
+		row := &rows[i]
+		if row.State != queueQueued {
+			continue
+		}
+		if row.Attempts == maxCaptureAttempts {
+			row.State = queueFailed
+			if row.Reason == "" {
+				row.Reason = "capture が 2 回とも結果を返さなかった"
+			}
+			continue
+		}
+		row.Attempts++
+		snapshot = append(snapshot, *row)
+	}
+	if len(snapshot) != 0 {
+		_, err = a.prepareCaptureTmp(lock.Token)
+		if err == nil {
+			err = a.saveCaptureSnapshot(lock.Token, snapshot)
+		}
+	}
+	if err == nil {
+		// queueLock still protects the rows read above, so do not read and parse them again.
+		err = atomicfile.Write(a.queuePath(), formatQueue(rows), 0600)
+	}
+	if err != nil || len(snapshot) == 0 {
+		return nil, nil, errors.Join(err, a.releaseCapture(lock.Token))
+	}
+	return lock, snapshot, nil
+}
+
+func (a *App) undoCaptureLaunch(token string, snapshot []queueRow, cause error) error {
+	submit, unlock, err := a.lockCaptureQueue()
 	if err != nil {
 		return err
 	}
+	defer submit()
+	defer unlock()
+	lock, err := readCaptureLock(a.captureLockPath())
+	if err != nil || lock == nil || lock.Token != token {
+		return err
+	}
+	attempts := make(map[string]queueRow, len(snapshot))
+	for _, row := range snapshot {
+		attempts[row.Source] = row
+	}
+	err = a.updateQueue(func(rows []queueRow) []queueRow {
+		for i, row := range rows {
+			if prior, ok := attempts[row.Source]; ok && row == prior {
+				rows[i].Attempts--
+			}
+		}
+		return rows
+	})
+	// Publish the failure before another launcher can take ownership.
+	return errors.Join(err, a.recordCaptureLaunchError(cause, false), a.releaseCapture(token))
+}
+
+func (a *App) captureRun(cwd string, now time.Time) (err error) {
+	lock, rows, err := a.beginCapture(now)
+	if err != nil {
+		return errors.Join(err, a.recordCaptureLaunchError(err, false))
+	}
+	if lock == nil {
+		return nil
+	}
+	path := a.captureLockPath()
 	launched := false
 	defer func() {
 		if !launched {
-			_ = a.captureUnlock(lock.Token)
-			_ = os.Remove(a.captureReceipt(lock.Token))
+			err = errors.Join(err, a.undoCaptureLaunch(lock.Token, rows, err))
 		}
 	}()
-	tmp, err := a.prepareCaptureTmp(lock.Token)
+	pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	if pluginRoot == "" {
+		return errors.New("capture run: CLAUDE_PLUGIN_ROOT is required to load the capture guard")
+	}
+	root, err := filepath.Abs(pluginRoot)
 	if err != nil {
 		return err
 	}
-	if err := a.saveCaptureSnapshot(lock.Token, rows); err != nil {
+	tmp, err := filepath.EvalSymlinks(a.captureTmp(lock.Token))
+	if err != nil {
 		return err
 	}
 	claude, err := exec.LookPath("claude")
@@ -315,40 +400,55 @@ func (a *App) captureRun(min int, cwd string, now time.Time, pluginRoots ...stri
 		return err
 	}
 	vars := templateVars(exe, a.Config.Server, a.Config.Namespace, a.Dir)
-	vars["tmp"], vars["queue"], vars["token"] = tmp, string(formatQueue(rows)), lock.Token
-	vars["project_kioku"] = vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
-	vars["commands"] = captureCommands(vars["kioku"], vars["project_kioku"], tmp, lock.Token, rows)
+	vars["tmp"] = tmp
+	vars["instructions"] = filepath.Join(tmp, captureInstructionsFile)
+	projectCommand := vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
+	// Keep arbitrary caller inputs out of the single argv element and do
+	// not repeat the snapshot in the launcher's arguments.
+	commands := captureCommands(vars["kioku"], projectCommand, tmp, lock.Token, rows)
+	if err := atomicfile.Write(vars["instructions"], []byte(commands+"\n"), 0600); err != nil {
+		return err
+	}
 
-	settings, err := a.captureSettings(cwd, tmp)
+	// The background daemon can reuse a process that never inherits cmd.Env.
+	settings, err := json.Marshal(map[string]any{
+		"env": map[string]string{
+			captureModeEnv:           "1",
+			captureDirEnv:            tmp,
+			captureCommandEnv:        vars["kioku"],
+			captureProjectCommandEnv: projectCommand,
+			captureGuardCLIEnv:       exe,
+		},
+		"hooks": map[string]any{
+			"PreToolUse": []any{map[string]any{
+				"matcher": captureGuardMatcher,
+				"hooks": []any{map[string]any{
+					"type": "command", "command": "sh " + shellQuote(filepath.Join(root, "hooks", "kioku.sh")) + " tool-guard", "timeout": 10, "onFailure": "block",
+				}},
+			}},
+		},
+	})
 	if err != nil {
 		return err
 	}
-	args := []string{"--bg", "--settings", settings, "--permission-mode", "dontAsk", "--allowedTools"}
-	args = append(args, captureAllowedTools(exe, a.Config.Server, a.Config.Namespace, a.Dir, tmp)...)
-	if len(pluginRoots) > 0 && pluginRoots[0] != "" {
-		root, err := filepath.Abs(pluginRoots[0])
-		if err != nil {
-			return err
-		}
-		vars["capture_md"] = filepath.Join(root, "skills", "kioku", "references", "capture.md")
-		args = append(args, "Read(/"+filepath.Join(root, "skills")+"/**)", "Read(/"+filepath.Join(root, "agents")+"/**)")
-	}
-	template := prompts.CaptureRun
-	if vars["capture_md"] == "" {
-		fmt.Fprintln(a.Err, "kioku: capture run: 警告: plugin root が未指定のため capture.md の Read 許可がない。--plugin-root を指定してください。")
-		_, template, _ = strings.Cut(template, "\n")
-	}
-	prompt := renderTemplate(template, vars)
+	args := []string{"--bg", "--permission-mode", "dontAsk", "--plugin-dir", root, "--settings", string(settings), "--tools", "Artifact,Bash,Read,Write"}
+	args = append(args, "--allowedTools")
+	args = append(args, captureAllowedTools(vars["kioku"], projectCommand, tmp, rows)...)
+	prompt := renderTemplate(prompts.CaptureRun, vars)
 	args = append(args, "--agent", "kioku:kioku-capture", "--", prompt)
-	cmd := exec.Command(claude, args...)
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, claude, args...)
 	cmd.Dir = cwd
-	cmd.Env = processEnv("CLAUDE_CODE_SESSION_ID")
+	cmd.Env = processEnv("CLAUDE_CODE_SESSION_ID", captureModeEnv, captureDirEnv, captureCommandEnv, captureProjectCommandEnv, captureGuardCLIEnv)
 	cmd.WaitDelay = captureWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
 	if runErr != nil && !errors.Is(runErr, exec.ErrWaitDelay) {
-		reason := strings.TrimSpace(stderr.String())
+		reason := queueText(strings.TrimSpace(stderr.String()))
 		if reason == "" {
 			reason = runErr.Error()
 		}
@@ -356,80 +456,32 @@ func (a *App) captureRun(min int, cwd string, now time.Time, pluginRoots ...stri
 	}
 	launched = true
 	if errors.Is(runErr, exec.ErrWaitDelay) {
-		warning := "warning: capture launcher exited but output pipes remained open; session may be running"
-		fmt.Fprintln(a.Err, warning)
-		if err := a.captureNote(warning); err != nil {
-			return err
-		}
+		fmt.Fprintln(a.Err, "warning: capture launcher exited but output pipes remained open; session may be running")
 	}
 	id := ""
 	if match := captureBackgroundID.FindStringSubmatch(stdout.String()); len(match) > 1 {
 		id = match[1]
 	}
 	if id == "" {
-		if err := a.recordCaptureID(path, lock.Token, ""); err != nil {
-			return err
-		}
-		warning := "warning: capture background id could not be parsed; lock retained until token unlock"
-		fmt.Fprintln(a.Err, warning)
-		if err := a.captureNote(warning); err != nil {
-			return err
-		}
-
-		_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。\n", a.Config.Namespace, len(rows))
+		fmt.Fprintln(a.Err, "warning: capture background id could not be parsed; lock retained until all results arrive or it expires")
+		_, err := fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id 不明）。capture.log を確認する。\n", a.Config.Namespace, len(rows))
 		return err
-	}
-	last := filepath.Join(a.metadataDir(), "capture.last")
-	previous := ""
-	if data, err := readRegular(last); err == nil {
-		previous = strings.TrimSpace(string(data))
 	}
 	if err := a.recordCaptureID(path, lock.Token, id); err != nil {
 		return err
 	}
-	if previous != "" && previous != id {
-		cleanup := exec.Command(claude, "rm", previous)
-		cleanup.Dir = cwd
-		cleanup.Env = processEnv("CLAUDE_CODE_SESSION_ID")
-		cleanup.WaitDelay = captureWaitDelay
-		_ = cleanup.Run()
-		guard, err := openLockedFile(a.metadataDir(), os.O_RDONLY)
-		if err != nil {
-			return err
-		}
-		if data, err := readRegular(last); err == nil && strings.TrimSpace(string(data)) == previous {
-			_ = os.Remove(last)
-		}
-		guard.Close()
-	}
 	_, err = fmt.Fprintf(a.Out, "kioku-capture を背景で起動した（%s、%d 件、id %s）。claude logs %s で見る。\n", a.Config.Namespace, len(rows), id, id)
 	return err
 }
-func (a *App) captureReceipt(token string) string {
-	return filepath.Join(a.metadataDir(), "capture-unlocked-"+token)
-}
 func (a *App) recordCaptureID(path, token, id string) error {
 	return updateCaptureLock(path, func(lock *captureLock) error {
-		if lock == nil || lock.Token != token {
-			receipt := a.captureReceipt(token)
-			if _, err := readRegular(receipt); err != nil {
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
-			}
-			if id != "" {
-				if err := atomicfile.Write(filepath.Join(a.metadataDir(), "capture.last"), []byte(id+"\n"), 0600); err != nil {
-					return err
-				}
-			}
-			return os.Remove(receipt)
+		if lock != nil && lock.Token == token {
+			lock.BgID = id
 		}
-		lock.BgID, lock.LaunchComplete = id, true
 		return nil
 	})
 }
-func (a *App) captureUnlock(token string) error {
+func (a *App) releaseCapture(token string) error {
 	guard, err := openLockedFile(a.metadataDir(), os.O_RDONLY)
 	if os.IsNotExist(err) {
 		return nil
@@ -443,80 +495,116 @@ func (a *App) captureUnlock(token string) error {
 	if err != nil || lock == nil {
 		return err
 	}
-	if !lock.invalid {
-		if !captureTokenPattern.MatchString(token) || lock.Token != token {
-			_, err = fmt.Fprintln(a.Out, "kioku: capture unlock: token が合わないので、ロックを残した。")
-			return err
-		}
-		if lock.BgID != "" {
-			err = atomicfile.Write(filepath.Join(a.metadataDir(), "capture.last"), []byte(lock.BgID+"\n"), 0600)
-		} else if !lock.LaunchComplete {
-			err = atomicfile.Write(a.captureReceipt(token), []byte("unlocked\n"), 0600)
-		}
-		if err != nil {
-			return err
-		}
+	if lock.invalid || lock.Token != token {
+		return errors.New("capture lock ownership changed")
 	}
-	if captureTokenPattern.MatchString(token) {
-		if err := os.RemoveAll(a.captureTmp(token)); err != nil {
-			return err
-		}
+	tmp := a.captureTmp(token)
+	if err := os.RemoveAll(tmp); err != nil {
+		return err
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if err := os.Remove(captureProgressPath(tmp)); !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (a *App) captureLaunchErrorPath() string {
+	return filepath.Join(a.metadataDir(), "capture-launch.failed")
+}
+
+type captureLaunchFailure struct {
+	PID      int    `json:"pid"`
+	Reason   string `json:"reason"`
+	Reported bool   `json:"reported"`
+}
+
+func readCaptureLaunchFailure(data []byte) captureLaunchFailure {
+	var failure captureLaunchFailure
+	if decodeJSON(data, &failure) != nil {
+		return captureLaunchFailure{Reason: strings.TrimSpace(string(data))}
+	}
+	return failure
+}
+
+func (a *App) recordCaptureLaunchError(err error, reported bool) error {
+	data, err := json.Marshal(captureLaunchFailure{PID: os.Getpid(), Reason: queueText(err.Error()), Reported: reported})
+	if err != nil {
+		return err
+	}
+	return updateLockedFile(a.captureLaunchErrorPath(), func([]byte) ([]byte, bool, error) {
+		return data, true, nil
+	})
+}
+
+// With a nonzero PID, acknowledge only the child this hook waited for.
+func (a *App) acknowledgeCaptureLaunchError(pid int) bool {
+	path := a.captureLaunchErrorPath()
+	if _, err := os.Lstat(path); err != nil {
+		return false
+	}
+	acknowledged := false
+	err := updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
+		failure := readCaptureLaunchFailure(data)
+		if failure.Reason == "" || failure.Reported || pid != 0 && pid != failure.PID {
+			return nil, false, nil
+		}
+		failure.Reported = true
+		next, err := json.Marshal(failure)
+		acknowledged = err == nil
+		return next, acknowledged, err
+	})
+	return err == nil && acknowledged
+}
+
+func (a *App) lastCaptureLaunchError() string {
+	data, _ := readRegular(a.captureLaunchErrorPath())
+	return readCaptureLaunchFailure(data).Reason
 }
 
 func (a *App) captureLockPath() string { return filepath.Join(a.metadataDir(), "capture.lock") }
 func captureLockPathFromTmp(dir string) string {
-	return filepath.Join(filepath.Dir(filepath.Dir(dir)), "capture.lock")
+	return filepath.Join(captureMetadataDir(dir), "capture.lock")
 }
+func captureMetadataDir(dir string) string { return filepath.Dir(filepath.Dir(dir)) }
+
 func updateCaptureLock(path string, change func(*captureLock) error) error {
 	return updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
 		var lock *captureLock
+		var before captureLock
 		if data != nil {
 			lock = &captureLock{}
 			if err := decodeJSON(data, lock); err != nil {
 				return nil, false, err
 			}
 		}
+		if lock != nil {
+			before = *lock
+		}
 		if err := change(lock); err != nil {
 			return nil, false, err
 		}
-		if lock == nil {
+		if lock == nil || *lock == before {
 			return nil, false, nil
 		}
 		next, err := json.Marshal(lock)
-		return next, !bytes.Equal(bytes.TrimSpace(data), next), err
+		return next, true, err
 	})
 }
-func (a *App) captureSettings(cwd, tmp string) (string, error) {
-	deny := []string{"Glob", "Grep", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "Read(~/.netrc)", "Read(~/.claude.json)", "Read(~/.claude/.credentials.json)"}
-	cwd, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(cwd, tmp)
-	if err != nil {
-		return "", err
-	}
-	if filepath.IsLocal(rel) {
-		if err := a.captureNote("capture: 一時ディレクトリが起動 cwd 内にあるため Read(./**) の deny を省いた。"); err != nil {
-			return "", err
-		}
-	} else {
-		deny = append(deny, "Read(./**)")
-	}
-	data, err := json.Marshal(map[string]any{"disableAllHooks": true, "permissions": map[string]any{"deny": deny}})
-	return string(data), err
-}
-
 func captureCommands(command, project, tmp, token string, rows []queueRow) string {
 	var b strings.Builder
 	for i, row := range rows {
-		raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.input%s", i+1, captureFetchExtension(row.URL, "")))
-		source := filepath.Join(tmp, fmt.Sprintf("source-%03d.md", i+1))
-		fmt.Fprintf(&b, "行 %d: %s\nfetch（公開 Web の原文取得）:\n```sh\n%s fetch %s --capture-token %s --dir %s --out %s\n```\n", i+1, row.URL, command, shellQuote(row.URL), token, shellQuote(tmp), shellQuote(raw))
-		fmt.Fprintf(&b, "Read ツールで fetch が出力した保存先（通常 %s、Content-Type により拡張子が変わる）を読み、検証した資料を Write ツールで %s に書く。connector で取得した本文もこの Markdown ファイルに書く。\nput:\n```sh\n%s put --capture-token %s %s\n```\n", raw, source, project, token, shellQuote(source))
-		fmt.Fprintf(&b, "queue remove（理由だけ置き換える）:\n```sh\n%s queue remove --capture-token %s %s --reason '<理由>'\n```\n", project, token, shellQuote(row.URL))
+		src := shellQuote(row.Source)
+		fmt.Fprintf(&b, "行 %d: %s\n", i+1, row.Source)
+		if captureNeedsFetch(row.Source) {
+			raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.input%s", i+1, captureFetchExtension(row.Source, "")))
+			fmt.Fprintf(&b, "公開 HTTPS の fetch（出力先は Read で読む）:\n```sh\n%s capture fetch %s --capture-token %s --dir %s --out %s\n```\n", command, src, token, shellQuote(tmp), shellQuote(raw))
+		}
+		path := filepath.Join(tmp, fmt.Sprintf("source-%03d.md", i+1))
+		fmt.Fprintf(&b, "Markdown を %s に Write する。\nput:\n```sh\n%s capture put --capture-token %s --source %s %s\n```\n", path, project, token, src, shellQuote(path))
+		fmt.Fprintf(&b, "capture result（受付を確認した場合）:\n```sh\n%s capture result --capture-token %s --result accepted %s\n```\nunsaved または skipped の場合は accepted を置き換え、その直後に --reason '<理由>' を入れる。\n", project, token, src)
 	}
 	return strings.TrimSpace(b.String())
 }

@@ -561,7 +561,7 @@ func TestProjectFlagPullBindsOnlyAfterManifest(t *testing.T) {
 func TestSubcommandHelpSucceeds(t *testing.T) {
 	projectRunHome(t)
 	t.Chdir(t.TempDir())
-	for _, command := range [][]string{{"project", "create"}, {"project", "join"}, {"pull"}, {"put"}, {"generate"}} {
+	for _, command := range [][]string{{"project", "create"}, {"project", "join"}, {"pull"}, {"generate"}} {
 		for _, flag := range []string{"-h", "--help"} {
 			t.Run(strings.Join(command, " ")+"/"+flag, func(t *testing.T) {
 				_, stderr, err := runProjectCLI(append(append([]string{}, command...), flag)...)

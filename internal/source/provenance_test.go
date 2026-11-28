@@ -1,9 +1,20 @@
 package source
 
 import (
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestInboxFileRejectsTrailingYAML(t *testing.T) {
+	input := "---\nsource_url: kioku:local\nupdated_at: 2026-11-28T00:00:00Z\n...\ntitle: Keep me\n---\nBody\n"
+	if _, content, err := InboxFile("note.md", input, time.Time{}); err == nil {
+		t.Fatalf("accepted and discarded frontmatter after YAML end marker: %q", content)
+	}
+}
 
 func TestFileProvenance(t *testing.T) {
 	const updated = "2026-11-07T18:00:00+09:00"
@@ -30,7 +41,7 @@ func TestFileProvenance(t *testing.T) {
 		{"not at top", "Evidence\n" + valid, "frontmatter"},
 		{"leading blank line", "\n" + valid, "frontmatter"},
 		{"bom", "\ufeff" + valid, "frontmatter"},
-		{"empty frontmatter before provenance", "---\n" + valid, "frontmatter"},
+		{"empty frontmatter before provenance", "---\n" + valid, "source_url"},
 		{"unclosed", strings.TrimSuffix(valid, "---\nEvidence"), "frontmatter"},
 		{"missing source_url", strings.ReplaceAll(valid, "source_url: https://example.com/doc\n", ""), "source_url"},
 		{"empty source_url", strings.ReplaceAll(valid, "https://example.com/doc", `""`), "source_url"},
@@ -40,7 +51,6 @@ func TestFileProvenance(t *testing.T) {
 		{"relative", strings.ReplaceAll(valid, "https://example.com/doc", "/doc"), "source_url"},
 		{"credentials", strings.ReplaceAll(valid, "https://example.com/doc", "https://user:pass@example.com/doc"), "source_url"},
 		{"http", strings.ReplaceAll(valid, "https:", "http:"), "source_url"},
-		{"private", strings.ReplaceAll(valid, "example.com", "127.0.0.1"), "source_url"},
 		{"missing updated_at", strings.ReplaceAll(valid, "updated_at: "+updated+"\n", ""), "updated_at"},
 		{"empty updated_at", strings.ReplaceAll(valid, updated, `""`), "updated_at"},
 		{"null updated_at", strings.ReplaceAll(valid, updated, "null"), "updated_at"},
@@ -75,5 +85,136 @@ func TestFileProvenance(t *testing.T) {
 				t.Fatalf("document = %+v, error = %v", doc, err)
 			}
 		})
+	}
+}
+
+func TestLocalInboxBodyKey(t *testing.T) {
+	const key = "kioku:local/5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+	for _, tc := range []struct{ header, body, want string }{
+		{"updated_at: 2026-11-21T00:00:00+09:00\n", "hello\n", key},
+		{"updated_at: 2026-11-26T00:00:00Z\ntitle: New title\n", "hello\n", key},
+		{"updated_at: 2026-11-26T00:00:00Z\n", "hello\r\n", "kioku:local/cd2eca3535741f27a8ae40c31b0c41d4057a7a7b912b33b9aed86485d1c84676"},
+		{"updated_at: 2026-11-26T00:00:00Z\n", " \r\n", ""},
+	} {
+		content := "---\nsource_url: kioku:local\n" + tc.header + "---\n" + tc.body
+		doc, saved, err := InboxFile("notes.md", content, time.Time{})
+		if tc.want == "" {
+			if err == nil {
+				t.Fatal("accepted whitespace-only body")
+			}
+		} else if err != nil || doc.URL != tc.want || !strings.HasSuffix(saved, "---\n"+tc.body) {
+			t.Fatalf("got %q, %q, %v, want %s", doc.URL, saved, err, tc.want)
+		}
+	}
+}
+
+func TestHTTPSIdentityDoesNotCheckNetworkDestination(t *testing.T) {
+	const u = "https://127.0.0.1:8443/private"
+	doc, err := FileWithProvenance("notes.md", "---\nsource_url: "+u+"\nupdated_at: 2026-11-28T00:00:00Z\n---\nBody")
+	if err != nil || doc.URL != u {
+		t.Fatal(doc, err)
+	}
+}
+
+func TestLocalFileFrontmatterOrMarkdownRules(t *testing.T) {
+	for _, tc := range []struct{ name, front, body string }{
+		{"empty", "---\n---\n", "hello\n"},
+		{"empty CRLF", "---\r\n---\r\n", "hello\r\n"},
+		{"comments are not a mapping", "", "---\n# Notes\n---\nhello\n"},
+		{"scalar is not a mapping", "", "---\nNotes\n---\nhello\n"},
+		{"sequence is not a mapping", "", "---\n- Notes\n---\nhello\n"},
+		{"invalid YAML", "", "---\ntitle: [Notes\n---\nhello\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := LocalFileContent("notes.md", tc.front+tc.body, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, _, err := InboxFile("notes.md", content, time.Time{})
+			want := fmt.Sprintf("%s/%x", LocalSource, sha256.Sum256([]byte(tc.body)))
+			if err != nil || doc.URL != want || !strings.HasSuffix(content, "---\n"+tc.body) {
+				t.Fatalf("want %s and body %q, got %s and %q: %v", want, tc.body, doc.URL, content, err)
+			}
+		})
+	}
+}
+
+func TestProvenanceRewritePreservesReferencesToReplacedValues(t *testing.T) {
+	const input = "---\nsource_url: &identity kioku:local\nupdated_at: &old {x: &nested [one, two]}\nsource_copy: *identity\nlist_copy: *nested\nmap_copy: *old\nagain: *old\n---\nBody\n"
+	stamp := time.Date(2026, 11, 28, 13, 0, 0, 0, time.UTC)
+	local, err := LocalFileContent("notes.md", input, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, inbox, err := InboxFile("notes.md", input, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ content, key string }{{local, LocalSource}, {inbox, doc.URL}} {
+		meta, err := Frontmatter(tc.content)
+		if err != nil {
+			t.Fatal(tc.content, err)
+		}
+		var values map[string]any
+		if err := meta.Decode(&values); err != nil {
+			t.Fatal(tc.content, err)
+		}
+		for key, want := range map[string]string{
+			"source_url": tc.key, "source_copy": LocalSource, "updated_at": stamp.Format(time.RFC3339),
+			"list_copy": "[one two]", "map_copy": "map[x:[one two]]", "again": "map[x:[one two]]",
+		} {
+			if got := fmt.Sprint(values[key]); got != want {
+				t.Fatalf("%s: %q, want %q\n%s", key, got, want, tc.content)
+			}
+		}
+	}
+	for _, invalid := range []string{"source_url: {nested: &identity kioku:local}", "identity: &identity kioku:local\nsource_url: *identity"} {
+		if _, err := LocalFileContent("notes.md", "---\n"+invalid+"\n---\nBody", stamp); !errors.Is(err, ErrLocalFileSource) {
+			t.Fatalf("local file accepted non-string source_url %q: %v", invalid, err)
+		}
+	}
+}
+
+func TestProvenanceRewriteKeepsUnrelatedAliases(t *testing.T) {
+	const input = "---\ntitle: &title Before\noriginal_title: *title\n---\nBody\n"
+	content, err := LocalFileContent("notes.md", input, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stored, err := InboxFile("notes.md", content, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := Frontmatter(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]string
+	if err := meta.Decode(&values); err != nil || values["title"] != "Before" || values["original_title"] != "Before" {
+		t.Fatal(values, err, stored)
+	}
+}
+
+func TestLocalFileKeepsAliasesToRedefinedAnchors(t *testing.T) {
+	for _, prefix := range []string{
+		"updated_at:\n  old: &value before\n  composite: &details {copied: *value}\n",
+		"earlier: &value before\nupdated_at: &details {copied: *value}\n",
+	} {
+		input := "---\n" + prefix + "later: &value after\nmetadata: *details\ntitle: *value\n---\nBody\n"
+		content, err := LocalFileContent("notes.md", input, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, err := Frontmatter(content)
+		if err != nil {
+			t.Fatal(content, err)
+		}
+		var values struct {
+			Title    string
+			Metadata map[string]string
+		}
+		if err := meta.Decode(&values); err != nil || values.Title != "after" || values.Metadata["copied"] != "before" {
+			t.Fatal(values, err, content)
+		}
 	}
 }

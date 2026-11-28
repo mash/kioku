@@ -7,9 +7,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   It creates the directory; use pull first to bind an existing project.
   -C with -n binds the specified directory to that namespace on pull.
   Without -n, commands use cwd (or -C) .kioku/config; create requires -n.
-  Command flags must precede positional arguments, except fetch and queue remove.
-  fetch takes the URL first, then flags.
-  put accepts --capture-token TOKEN before files; queue remove flags may precede or follow URLs.
+  Command flags must precede positional arguments.
   -n cannot be combined with project join.
 
   version                             Show client build information
@@ -31,15 +29,13 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
   org add-owner --yes ORG EMAIL_OR_ID   Add an organization co-owner
   project share remove EMAIL_OR_ID
-  delete SOURCE_URL...                Remove sources at the next generation
-  fetch URL --capture-token TOKEN --dir DIR --out FILE  HTTPS GET (20 MiB max) into the owned capture directory.
-  capture run [--min N] [--plugin-root DIR] | capture unlock --token TOKEN
-  queue add URL NOTE | queue list | queue remove [--capture-token TOKEN] URL... [--reason TEXT]
-  put [--capture-token TOKEN] FILE...                        Save sources from files or directories
+  delete SOURCE...                    Remove queued sources or request removal by HTTPS URL or local key
+  put PATH...                         Send files or directories with HTTPS provenance
+  put file:///PATH                    Send a local file without changing the original
   view list|show|set         Inspect and update View settings
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [--description TEXT]           Bind on first pull; fetch one project
-  status | open
+  status | open                     Status includes the local queue and capture
   project usage | project audit
   project delete --yes                         Delete project and cloud objects
   job status|wait JOB_ID

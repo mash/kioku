@@ -26,6 +26,11 @@ to read the skill, select a relevant project, and pull/read its wiki before work
 It preserves the conversation's selected project and completed pull state.
 Model compliance is not guaranteed by successful hook execution.
 
+Use `put PATH` for Markdown with an original HTTPS URL. For local Markdown
+without one, use `put file:///PATH` with the bundled CLI and an absolute path.
+The CLI sends the file modification time and does not change the file. Report the
+full accepted key. Codex sends directly and does not use the Claude Code queue.
+
 If the hook is not trusted, explicitly invoke the kioku skill. It resolves the
 bundled CLI relative to its own SKILL.md. A missing/corrupt binary requires
 reinstallation, not switching to a different CLI from PATH. The launcher checks

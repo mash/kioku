@@ -2,60 +2,65 @@ package cli
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
-	"net/url"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
-	"gopkg.in/yaml.v3"
 )
 
+const putUsage = "usage: kioku put PATH... | kioku put file:///PATH"
+
+var putScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
+
 func (a *App) put(args []string) error {
-	f := flag.NewFlagSet("put", flag.ContinueOnError)
-	f.SetOutput(a.Err)
-	token := ""
-	tokenSet := false
-	f.Func("capture-token", "capture ownership token", func(value string) error {
-		if tokenSet || !captureTokenPattern.MatchString(value) {
-			return errors.New("invalid or repeated capture token")
-		}
-		token, tokenSet = value, true
-		return nil
-	})
-	if err := f.Parse(args); err != nil {
-		return err
+	if len(args) == 0 {
+		return errors.New(putUsage)
 	}
-	if f.NArg() == 0 {
-		return errors.New("usage: kioku put FILE...")
-	}
-	captureDir := ""
-	var snapshot []queueRow
-	if token != "" {
-		if _, err := a.projectPath(); err != nil {
-			return err
-		}
-		dir, err := resolveCaptureDir(token, a.captureTmp(token))
-		if err != nil {
-			return err
-		}
-		captureDir = dir
-		snapshot, err = captureSnapshot(dir)
-		if err != nil {
-			return fmt.Errorf("put: %w", err)
+	scheme := putScheme.FindString(args[0])
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") || putScheme.FindString(arg) != scheme {
+			return errors.New(putUsage)
 		}
 	}
-	if captureDir != "" {
-		for _, path := range f.Args() {
-			if _, err := captureSourcePath(captureDir, path); err != nil {
-				return err
-			}
+	switch scheme {
+	case "file:":
+		if len(args) != 1 {
+			return errors.New(putUsage)
 		}
+		return a.putLocalFile(args[0])
+	case "":
+		return a.putPaths(args)
+	default:
+		return fmt.Errorf("put: 対応しないスキーム %s。コロンを含む相対パスは ./ を付ける\n%s", scheme, putUsage)
 	}
+}
+
+func (a *App) postPut(endpoint string, input model.PutRequest, output *model.PutResponse) (int, error) {
+	var result any
+	if output != nil {
+		result = output
+	}
+	code, err := a.request(http.MethodPost, endpoint+"/put", input, result)
+	if code == http.StatusAccepted {
+		// For operations without a response body contract, the status is the receipt.
+		if output == nil {
+			return code, nil
+		}
+		return code, err
+	}
+	if err != nil {
+		return code, err
+	}
+	return code, fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
+}
+
+func (a *App) putPaths(paths []string) error {
 	p, err := a.projectPath()
 	if err != nil {
 		return err
@@ -63,13 +68,7 @@ func (a *App) put(args []string) error {
 	if err = a.ensureProject(); err != nil {
 		return err
 	}
-	unlock, err := a.localLock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	inputs := []model.FileInput{}
-	paths := f.Args()
 	for _, root := range paths {
 		info, err := os.Lstat(root)
 		if err != nil {
@@ -96,15 +95,10 @@ func (a *App) put(args []string) error {
 			if err != nil {
 				return err
 			}
-			if info.Size() > 1<<20 {
+			if info.Size() > maxSourceFileBytes {
 				return fmt.Errorf("%s exceeds 1 MiB", p)
 			}
-			var b []byte
-			if captureDir == "" {
-				b, err = os.ReadFile(p)
-			} else {
-				b, err = readCaptureSource(captureDir, p)
-			}
+			b, err := os.ReadFile(p)
 			if err != nil {
 				return err
 			}
@@ -113,29 +107,14 @@ func (a *App) put(args []string) error {
 				return err
 			}
 			content := string(b)
-			// This is a pre-flight check; the server is authoritative.
-			doc, err := source.FileWithProvenance(name, content)
-			if err != nil {
+			if _, err := source.FileWithProvenance(name, content); err != nil {
+				switch {
+				case errors.Is(err, source.ErrLocalKeyForPut):
+					return fmt.Errorf("put: %s のローカルキーは delete にだけ指定する", name)
+				case errors.Is(err, source.ErrLocalMarker):
+					return fmt.Errorf("put: %s の source_url は %s です。ローカル資料は file:///abs/notes.md の形で put する", name, source.LocalSource)
+				}
 				return fmt.Errorf("%s: %w", p, err)
-			}
-			if captureDir != "" {
-				canonical := ""
-				for _, row := range snapshot {
-					u, parseErr := url.Parse(row.URL)
-					if row.URL == doc.URL || (parseErr == nil && captureFetchURL(u).String() == doc.URL) {
-						canonical = row.URL
-						break
-					}
-				}
-				if canonical == "" {
-					return errors.New("put: source_url が capture のスナップショット URL と一致しない")
-				}
-				if canonical != doc.URL {
-					content, err = captureCanonicalSource(content, canonical)
-					if err != nil {
-						return fmt.Errorf("put: %w", err)
-					}
-				}
 			}
 			inputs = append(inputs, model.FileInput{Name: filepath.ToSlash(name), Content: content})
 			return nil
@@ -148,8 +127,11 @@ func (a *App) put(args []string) error {
 		fmt.Fprintln(a.Out, "新しい投入ファイルはありません。")
 		return nil
 	}
+	if err := a.selectCredential(false); err != nil {
+		return err
+	}
 	for _, input := range inputs {
-		if _, err = a.request("POST", p+"/put", model.PutRequest{File: &input}, nil); err != nil {
+		if _, err = a.postPut(p, model.PutRequest{File: &input}, nil); err != nil {
 			return err
 		}
 		if _, err = fmt.Fprintf(a.Out, "accepted %s\n", input.Name); err != nil {
@@ -157,30 +139,4 @@ func (a *App) put(args []string) error {
 		}
 	}
 	return nil
-}
-
-// captureCanonicalSource preserves the body and records the snapshot URL.
-func captureCanonicalSource(content, canonical string) (string, error) {
-	metadata, err := source.Frontmatter(content)
-	if err != nil {
-		return "", err
-	}
-	for i := 0; i < len(metadata.Content); i += 2 {
-		if metadata.Content[i].Value == "source_url" {
-			metadata.Content[i+1].Value = canonical
-		}
-	}
-	encoded, err := yaml.Marshal(metadata)
-	if err != nil {
-		return "", err
-	}
-	_, rest, _ := strings.Cut(content, "\n")
-	for rest != "" {
-		line, body, _ := strings.Cut(rest, "\n")
-		if strings.TrimSuffix(line, "\r") == "---" {
-			return "---\n" + string(encoded) + "---\n" + body, nil
-		}
-		rest = body
-	}
-	return "", errors.New("frontmatter closing delimiter missing")
 }

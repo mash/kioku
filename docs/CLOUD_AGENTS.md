@@ -20,7 +20,7 @@ The MCP endpoint exposes seven tools:
 - `projects_list`: list the projects that you chose at consent and where you are still a member.
 - `wiki_read`: read a current Wiki page and follow `next_offset` to read long files.
 - `wiki_search`: find a case-insensitive substring in the current Wiki pages.
-- `source_put`: accept one UTF-8 text file or one removal and return `{}` after acceptance.
+- `source_put`: accept one UTF-8 text file or one removal. Return the assigned `source_url` for local put and `{}` for HTTPS put or removal.
 - `view_list`: list a selected project's Views and their generation status in creation order, with the Wiki View (`slug: wiki`) first. Prompts are not returned.
 - `view_read`: read `index.html`, `summary.md`, or `data.json` from the last successful non-Wiki View result. Follow `next_offset` to read long files. For `view:"wiki"`, it returns the tool error `the wiki view has no bundle; read it with wiki_read or wiki_search`.
 
@@ -31,7 +31,7 @@ The MCP endpoint exposes seven tools:
 {"project":"acme/docs","remove":true,"source_url":"https://example.com/design"}
 ```
 
-Inbox items use `remove: true` for removals and omit the flag for submitted bodies. The normalized put request is limited to 1 MiB including JSON overhead. File frontmatter and removal arguments follow the [put contract](WORKERS.md#put-and-inbox). The client fetches the source and sends its text. source_url is client-asserted provenance; the server does not verify that the text came from that URL. The tool saves an inbox item without starting generation. The scheduler includes it in a later run. Waiting items with the same exact URL are replaced, while items pinned to an active run remain unchanged.
+Inbox items use `remove: true` for removals and omit the flag for submitted bodies. The normalized put request is limited to 1 MiB including JSON overhead. File frontmatter and removal arguments follow the [put contract](WORKERS.md#put-and-inbox). The client reads the source and sends its text. Without an original HTTPS URL, send `source_url: kioku:local` in the frontmatter. The server uses receipt time for `updated_at` and returns the derived key. Use the full key to remove a local source. For HTTPS provenance, the server does not verify that the text came from the URL. The tool saves an inbox item without starting generation. The scheduler includes it in a later run. Waiting items with the same exact source_url are replaced, while items pinned to an active run remain unchanged.
 
 ```text
 user ──> claude.ai chat ──(skill kioku loads from the plugin)

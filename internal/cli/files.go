@@ -8,12 +8,41 @@ import (
 	"syscall"
 )
 
-// A process lock protects project configuration and snapshot publication.
+// A process lock protects project configuration and Wiki publication.
 func (a *App) localLock() (func(), error) {
+	return a.projectLock("lock")
+}
+
+// Queue mutations must not wait for the network requests in Wiki sync.
+func (a *App) queueLock() (func(), error) {
+	return a.projectLock("queue.lock")
+}
+
+// captureSubmissionLock orders puts, deletes and changes to active capture
+// ownership without making asynchronous queue registration wait on HTTP.
+func (a *App) captureSubmissionLock() (func(), error) {
+	return a.projectLock("capture-submit.lock")
+}
+
+// lockCaptureQueue always takes the submission lock before the queue lock.
+func (a *App) lockCaptureQueue() (unlockSubmission, unlockQueue func(), err error) {
+	unlockSubmission, err = a.captureSubmissionLock()
+	if err != nil {
+		return nil, nil, err
+	}
+	unlockQueue, err = a.queueLock()
+	if err != nil {
+		unlockSubmission()
+		return nil, nil, err
+	}
+	return unlockSubmission, unlockQueue, nil
+}
+
+func (a *App) projectLock(name string) (func(), error) {
 	if err := ensureDirectory(a.metadataDir()); err != nil {
 		return nil, err
 	}
-	f, err := lockRegularFile(filepath.Join(a.metadataDir(), "lock"), os.O_CREATE)
+	f, err := lockRegularFile(filepath.Join(a.metadataDir(), name), os.O_CREATE)
 	if err != nil {
 		return nil, err
 	}

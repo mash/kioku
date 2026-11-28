@@ -2,100 +2,624 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestQueueCommands(t *testing.T) {
-	t.Run("E12_E20_queue_lifecycle", func(t *testing.T) {
-		home := projectRunHome(t)
-		a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(home, ".config/kioku/auth"), Config: Config{Server: defaultServer, Namespace: "org/a"}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
-		if err := ensureDirectory(a.metadataDir()); err != nil {
+func TestCaptureResultUpdatesQueueWhenLogFails(t *testing.T) {
+	a := projectEntryApp(t)
+	u := "https://example.com/accepted"
+	now := time.Now()
+	if err := a.registerQueueSource(u, now); err != nil {
+		t.Fatal(err)
+	}
+	lock, _, err := a.beginCapture(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(a.metadataDir(), "capture.log"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	err = a.captureResult([]string{"--capture-token", lock.Token, "--result", "skipped", "--reason", "not a document", u})
+	if err == nil || !strings.Contains(err.Error(), "capture.log") {
+		t.Fatalf("want log error, got %v", err)
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("skipped result should remove the row even when logging fails: %v, %v", rows, err)
+	}
+}
+
+func TestQueueRegistration(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	const first, second = "https://example.com/a", "https://example.com/b"
+	rows := []queueRow{
+		{Date: "2026-11-18", Source: first, Attempts: 1, State: queueQueued, Reason: "early failure"},
+		{Date: "2026-11-18", Source: second, Attempts: 2, State: queueFailed, Reason: "late failure"},
+		{Date: "2026-11-18", Source: "https://example.com/c", State: queueQueued},
+	}
+	if err := a.ensureProject(); err != nil {
+		t.Fatal(err)
+	}
+	before := bytes.TrimSuffix(formatQueue(rows), []byte("\n"))
+	if err := os.WriteFile(a.queuePath(), before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.registerQueueSource(first, now); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(a.queuePath()); err != nil || !bytes.Equal(got, before) {
+		t.Fatal(string(got), err)
+	}
+	if err := a.registerQueueSource(second, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readQueue(a.queuePath(), true)
+	want := queueRow{Date: now.Local().Format(time.DateOnly), Source: second, State: queueQueued}
+	if err != nil || len(got) != 3 || got[0] != rows[0] || got[1] != rows[2] || got[2] != want {
+		t.Fatal(got, err)
+	}
+	if info, err := os.Stat(a.queuePath()); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal(info, err)
+	}
+}
+
+func TestQueueRegistrationDoesNotWaitForProjectSync(t *testing.T) {
+	a := projectEntryApp(t)
+	unlock, err := a.localLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- a.registerQueueSource("https://example.com/during-pull", time.Now()) }()
+	select {
+	case err := <-done:
+		unlock()
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := a.saveProjectConfig(); err != nil {
+	case <-time.After(time.Second):
+		unlock()
+		<-done
+		t.Fatal("queue registration waited for the lock held during remote Wiki sync")
+	}
+}
+
+func TestCaptureIDOnlyUpdatesMatchingLock(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	const first = "https://example.com/older"
+	old := startTestCapture(t, a, now, first)
+	if err := a.captureResult([]string{"--capture-token", old.Token, "--result", "skipped", "--reason", "fixture", first}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recordCaptureID(a.captureLockPath(), old.Token, "aaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readCaptureLock(a.captureLockPath()); err != nil || got != nil {
+		t.Fatal(got, err)
+	}
+	next := startTestCapture(t, a, now, "https://example.com/newer")
+	if err := a.recordCaptureID(a.captureLockPath(), next.Token, "bbbbbbbb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recordCaptureID(a.captureLockPath(), old.Token, "aaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readCaptureLock(a.captureLockPath()); err != nil || got == nil || got.BgID != "bbbbbbbb" {
+		t.Fatal(got, err)
+	}
+}
+
+func startTestCapture(t *testing.T, a *App, now time.Time, sources ...string) *captureLock {
+	t.Helper()
+	for _, src := range sources {
+		if err := a.registerQueueSource(src, now); err != nil {
 			t.Fatal(err)
 		}
-		now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)
-		path := filepath.Join(a.metadataDir(), "queue.tsv")
-		run := func(args ...string) string {
-			t.Helper()
-			out, stderr, err := runProjectCLI(append([]string{"-n", "org/a", "queue"}, args...)...)
-			if err != nil || stderr != "" {
-				t.Fatal(out, stderr, err)
-			}
-			return out
+	}
+	lock, rows, err := a.beginCapture(now)
+	if err != nil || lock == nil || len(rows) != len(sources) {
+		t.Fatal(lock, rows, err)
+	}
+	return lock
+}
+
+func TestPutRejectsOldEntryPoints(t *testing.T) {
+	projectRunHome(t)
+	a := projectEntryApp(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "session-1")
+	claude := t.TempDir()
+	t.Setenv("PATH", claude)
+	marker := filepath.Join(claude, "ran")
+	if err := os.WriteFile(filepath.Join(claude, "claude"), []byte("#!/bin/sh\necho ran > '"+marker+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	const u = "https://example.com/page"
+	if err := a.registerQueueSource(u, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(a.queuePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"put", u}, {"put", "-h"}, {"put", "--help"}, {"put", "--now", u}, {"put", "--note", "note", u},
+		{"put", "--date", "2026-11-20", "file:///a.md"},
+		{"put", "note.md", "file:///a.md"}, {"put", "--capture-token", "anything", "note.md"},
+		{"queue", "add", u}, {"queue", "list"}, {"queue", "remove", u}, {"fetch", u},
+	} {
+		out, _, runErr := runProjectCLI(append([]string{"-C", a.Dir}, args...)...)
+		after, err := os.ReadFile(a.queuePath())
+		if err != nil || runErr == nil || out != "" || !bytes.Equal(before, after) {
+			t.Fatal(args, out, runErr, err)
 		}
-		if got := run("list"); got != "" {
-			t.Fatal(got)
+		if args[0] == "put" && !strings.Contains(runErr.Error(), putUsage) {
+			t.Fatal(args, runErr)
 		}
-		if got := run("remove", "https://x.example/missing"); got != "" {
-			t.Fatal(got)
-		}
+	}
+	for _, path := range []string{marker, a.captureLockPath()} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatal("remove created missing queue", err)
+			t.Fatal(path, err)
 		}
-		if err := a.queue([]string{"add", "https://x.example/1", "読んだ"}, now); err != nil {
+	}
+}
+
+func TestParseQueueRejectsLegacyAndInvalidRows(t *testing.T) {
+	for _, raw := range []string{
+		"2026-11-28\thttps://example.com\tnote\n",
+		"2026-11-28\thttps://example.com\tnote\t0\tqueued\t\n",
+		"2026-11-28\thttps://example.com\t3\tqueued\t\n",
+		"2026-11-28\thttps://example.com\tnote\t0\tunknown\t\n",
+	} {
+		if _, err := parseQueue([]byte(raw), true); err == nil || !strings.Contains(err.Error(), "delete .kioku/queue.tsv") {
+			t.Fatal(raw, err)
+		}
+	}
+}
+
+func TestStatusShowsLocalStateWithoutServer(t *testing.T) {
+	home := projectRunHome(t)
+	ts := httptest.NewServer(http.NotFoundHandler())
+	ts.Close()
+	a := projectEntryApp(t, ts)
+	a.AuthDir = filepath.Join(home, ".config/kioku/auth")
+	a.Config.Namespace = "org/a"
+	if err := a.ensureProject(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.saveProjectConfig(); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"https://example.com/page", "https://example.com/other"} {
+		if err := a.registerQueueSource(u, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if got := run("list"); got != "2026-11-17\thttps://x.example/1\t読んだ\n" {
-			t.Fatal(got)
+	}
+	now := time.Now().UTC()
+	lock, err := acquireCaptureLock(a.captureLockPath(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recordCaptureID(a.captureLockPath(), lock.Token, "1a2b3c4d"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runProjectCLI("-C", a.Dir, "status")
+	var result struct {
+		Queue   []queueRow
+		Capture struct {
+			ID        string
+			StartedAt time.Time `json:"started_at"`
 		}
-		for _, args := range [][]string{{"add", "http://x.example/2", "読んだ"}, {"add", "https://x.example/2", ""}, {"add", "https://x.example/a\tb", "note"}, {"remove"}, {"list", "extra"}} {
-			before, _ := os.ReadFile(path)
-			if _, _, err := runProjectCLI(append([]string{"-n", "org/a", "queue"}, args...)...); err == nil {
-				t.Fatal(args)
+		ServerError string `json:"server_error"`
+	}
+	if decodeErr := json.Unmarshal([]byte(out), &result); err == nil || decodeErr != nil || len(result.Queue) != 2 || result.Capture.ID != "1a2b3c4d" || !result.Capture.StartedAt.Equal(now) || result.ServerError == "" {
+		t.Fatal(out, err, decodeErr)
+	}
+	if out, _, err := runProjectCLI("-C", a.Dir, "delete", "https://example.com/page", "https://example.com/other"); err == nil ||
+		out != "removed https://example.com/page\nremoved https://example.com/other\n" {
+		t.Fatal(out, err)
+	}
+	if rows, err := readQueue(a.queuePath(), true); err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+}
+
+func TestCaptureResultsReleaseAfterEveryRowEvenIfDeleted(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	tool, err := captureToolSource("mcp__linear__get_issue", json.RawMessage(`{"id":"test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://example.com/other"
+	lock := startTestCapture(t, a, now, tool, url)
+	dir := a.captureTmp(lock.Token)
+	snapshotPath := filepath.Join(dir, captureSnapshotFile)
+	before, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.deleteSources([]string{tool}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.registerQueueSource(tool, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.capturePut([]string{"--capture-token", lock.Token, "--source", tool, filepath.Join(dir, "source.md")}); err == nil || !strings.Contains(err.Error(), "再登録") {
+		t.Fatal(err)
+	}
+	apply := func(result string, args ...string) error {
+		return a.captureResult(append([]string{"--capture-token", lock.Token, "--result", result}, args...))
+	}
+	if err := apply("skipped", tool); err == nil {
+		t.Fatal("skipped must require a reason")
+	}
+	if err := apply("skipped", "--reason", "numbers only", tool); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.ReadFile(snapshotPath); err != nil || !bytes.Equal(before, after) {
+		t.Fatal(string(after), err)
+	}
+	if err := apply("accepted", url); err == nil || !strings.Contains(err.Error(), "HTTP 202") {
+		t.Fatal("accepted without any submission", err)
+	}
+	if err := apply("accepted", "--reason", "unexpected", url); err == nil || !strings.Contains(err.Error(), "usage:") {
+		t.Fatal("accepted with a reason", err)
+	}
+	if err := apply("skipped", "--reason", "not a document", url); err != nil {
+		t.Fatal(err)
+	}
+	if read, err := readCaptureLock(a.captureLockPath()); err != nil || read != nil {
+		t.Fatal(read, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.log")); err != nil || !strings.Contains(string(data), "numbers only") {
+		t.Fatal(string(data), err)
+	}
+	if remaining, err := readQueue(a.queuePath(), true); err != nil || len(remaining) != 1 || remaining[0].Source != tool || remaining[0].Attempts != 0 {
+		t.Fatal(remaining, err)
+	}
+}
+
+func TestCaptureNoResultExhaustionRetainsLastReason(t *testing.T) {
+	for _, firstReason := range []string{"", "sign-in required"} {
+		t.Run("first-reason="+firstReason, func(t *testing.T) {
+			a := projectEntryApp(t)
+			now := time.Now()
+			const src = "https://example.com/story"
+			if err := a.registerQueueSource(src, now); err != nil {
+				t.Fatal(err)
 			}
-			after, _ := os.ReadFile(path)
-			if !bytes.Equal(before, after) {
-				t.Fatal("invalid args changed queue")
+			expire := func() {
+				t.Helper()
+				if err := updateCaptureLock(a.captureLockPath(), func(lock *captureLock) error {
+					if lock == nil {
+						return errors.New("expected live capture")
+					}
+					lock.StartedAt = now.Add(-31 * time.Minute)
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-		if err := a.queue([]string{"add", "https://x.example/2", "other"}, now); err != nil {
+			for attempt := 1; attempt <= 2; attempt++ {
+				lock, snapshot, err := a.beginCapture(now)
+				if err != nil || lock == nil || len(snapshot) != 1 || snapshot[0].Attempts != attempt {
+					t.Fatal(lock, snapshot, err)
+				}
+				if attempt == 1 && firstReason != "" {
+					if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "unsaved", "--reason", firstReason, src}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					expire()
+				}
+			}
+			if lock, snapshot, err := a.beginCapture(now); err != nil || lock != nil || len(snapshot) != 0 {
+				t.Fatal(lock, snapshot, err)
+			}
+			want := firstReason
+			if want == "" {
+				want = "capture が 2 回とも結果を返さなかった"
+			}
+			rows, err := readQueue(a.queuePath(), true)
+			if err != nil || len(rows) != 1 || rows[0].Attempts != 2 || rows[0].State != queueFailed || rows[0].Reason != want {
+				t.Fatal(rows, err)
+			}
+			if lock, err := readCaptureLock(a.captureLockPath()); lock != nil || err != nil {
+				t.Fatal(lock, err)
+			}
+		})
+	}
+}
+
+func TestStatusRejectsOldQueueWithoutModifyingIt(t *testing.T) {
+	a := projectEntryApp(t)
+	if err := a.ensureProject(); err != nil {
+		t.Fatal(err)
+	}
+	old := []byte("2026-11-28\thttps://example.com/page\told note\n")
+	if err := os.WriteFile(a.queuePath(), old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.status(); !errors.Is(err, errQueueFormat) || !strings.Contains(err.Error(), "delete .kioku/queue.tsv") {
+		t.Fatal(err)
+	}
+	if stored, err := os.ReadFile(a.queuePath()); err != nil || !bytes.Equal(stored, old) {
+		t.Fatal(string(stored), err)
+	}
+}
+
+func TestCaptureSubmissionDoesNotBlockNewRegistration(t *testing.T) {
+	a := projectEntryApp(t)
+	const first, second = "https://example.com/slow", "https://example.com/new"
+	lock := startTestCapture(t, a, time.Now(), first)
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "source.md")
+	if err := os.WriteFile(path, []byte(SourceContentForTest(first, "evidence")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entered, respond := make(chan struct{}), make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-respond
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, "{}")
+	}))
+	defer ts.Close()
+	release := sync.OnceFunc(func() { close(respond) })
+	defer release()
+	a.Config.Server, a.Client, a.ctx = ts.URL, ts.Client(), t.Context()
+	posted := make(chan error, 1)
+	go func() {
+		posted <- a.capturePut([]string{"--capture-token", lock.Token, "--source", first, path})
+	}()
+	select {
+	case <-entered:
+	case err := <-posted:
+		t.Fatal("put did not reach HTTP fixture", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("put did not start")
+	}
+	registered := make(chan error, 1)
+	go func() { registered <- a.registerQueueSource(second, time.Now()) }()
+	select {
+	case err := <-registered:
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := a.queue([]string{"add", "https://x.example/1", "結論を変えた"}, now.Add(24*time.Hour)); err != nil {
+	case <-time.After(time.Second):
+		t.Fatal("queue registration blocked by HTTP put")
+	}
+	// Deliver 202 before accepting the result. The new row must remain.
+	release()
+	if err := <-posted; err != nil {
+		t.Fatal(err)
+	}
+	if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "accepted", first}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 1 || rows[0].Source != second {
+		t.Fatal(rows, err)
+	}
+}
+
+type failedDeleteOutput struct{}
+
+func (failedDeleteOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestDeleteSendsRemoveWhenOutputFails(t *testing.T) {
+	a := projectEntryApp(t)
+	const src = "https://example.com/already-accepted"
+	if err := a.registerQueueSource(src, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	request := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		request <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer ts.Close()
+	a.Config.Server, a.Client, a.ctx, a.Out = ts.URL, ts.Client(), t.Context(), failedDeleteOutput{}
+	if err := a.deleteSources([]string{src}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatal(err)
+	}
+	select {
+	case body := <-request:
+		if body["source_url"] != src || body["remove"] != true {
+			t.Fatal(body)
+		}
+	default:
+		t.Fatal("delete did not reach the server")
+	}
+}
+
+func TestDeleteAttemptsRemainingRemoteRemovalsAfterFailure(t *testing.T) {
+	a := projectEntryApp(t)
+	const first, later = "https://example.com/first", "https://example.com/later"
+	for _, src := range []string{first, later} {
+		if err := a.registerQueueSource(src, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if got := run("list"); got != "2026-11-17\thttps://x.example/2\tother\n2026-11-18\thttps://x.example/1\t結論を変えた\n" {
-			t.Fatal(got)
+	}
+	requests := make(chan string, 2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			SourceURL string `json:"source_url"`
 		}
-		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0600 {
-			t.Fatal(info, err)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
 		}
-		if got := run("remove", "https://x.example/1", "https://x.example/missing"); got != "" {
-			t.Fatal(got)
+		requests <- body.SourceURL
+		if body.SourceURL == first {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"fixture failure"}`)
+		} else {
+			w.WriteHeader(http.StatusAccepted)
 		}
-		if got := run("list"); got != "2026-11-17\thttps://x.example/2\tother\n" {
-			t.Fatal(got)
+	}))
+	defer ts.Close()
+	var out bytes.Buffer
+	a.Config.Server, a.Client, a.ctx, a.Out = ts.URL, ts.Client(), t.Context(), &out
+	if err := a.deleteSources([]string{first, later}); err == nil || !strings.Contains(err.Error(), first+": fixture failure") {
+		t.Fatal("delete did not report the failed remove", err)
+	}
+	if len(requests) != 2 || <-requests != first || <-requests != later {
+		t.Fatal("delete did not attempt both remote removals")
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 0 || out.String() != "removed "+first+"\nremoved "+later+"\n" {
+		t.Fatal(rows, err, out.String())
+	}
+}
+
+func TestCapturePutKeepsAcceptedStatusWhenBodyIsTruncated(t *testing.T) {
+	a := projectEntryApp(t)
+	const src = "https://example.com/accepted"
+	lock := startTestCapture(t, a, time.Now(), src)
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "source.md")
+	if err := os.WriteFile(file, []byte(SourceContentForTest(src, "evidence")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2")
+		w.WriteHeader(http.StatusAccepted)
+		w.(http.Flusher).Flush()
+	}))
+	defer ts.Close()
+	var out bytes.Buffer
+	a.Config.Server, a.Client, a.ctx, a.Out = ts.URL, ts.Client(), t.Context(), &out
+	if err := a.capturePut([]string{"--capture-token", lock.Token, "--source", src, file}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.log"))
+	want := "accepted " + src + "\n"
+	if err != nil || string(log) != want || out.String() != want {
+		t.Fatal(string(log), out.String(), err)
+	}
+	if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "accepted", src}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureReceiptStillFinalizesWhenLoggingFails(t *testing.T) {
+	a := projectEntryApp(t)
+	const src = "https://example.com/accepted"
+	lock := startTestCapture(t, a, time.Now(), src)
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "source.md")
+	if err := os.WriteFile(file, []byte(SourceContentForTest(src, "evidence")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(a.metadataDir(), "capture.log"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer ts.Close()
+	var out, stderr bytes.Buffer
+	a.Config.Server, a.Client, a.ctx, a.Out, a.Err = ts.URL, ts.Client(), t.Context(), &out, &stderr
+	err = a.capturePut([]string{"--capture-token", lock.Token, "--source", src, file})
+	if err != nil || out.String() != "accepted "+src+"\n" || !strings.Contains(stderr.String(), "capture.log") {
+		t.Errorf("receipt: stdout=%q stderr=%q error=%v", out.String(), stderr.String(), err)
+	}
+	for _, outcome := range []string{"unsaved", "skipped"} {
+		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", outcome, "--reason", "fixture", src}); err == nil {
+			t.Fatalf("receipt finalized as %s", outcome)
 		}
-		run("remove", "https://x.example/2")
-		if got := run("list"); got != "" {
-			t.Fatal(got)
+	}
+	if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "accepted", src}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+}
+
+func TestRegisterQueueRejectsToolSourceOver4096Bytes(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	const name = "mcp__fixture__get_document"
+	encode := func(n int) (string, error) {
+		return captureToolSource(name, json.RawMessage(`{"query":"`+strings.Repeat("x", n)+`"}`))
+	}
+	empty, err := encode(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := maxCaptureSourceBytes - len(empty)
+	src, err := encode(n)
+	if err != nil || len(src) != 4096 {
+		t.Fatal(len(src), err)
+	}
+	if err := a.registerQueueSource(src, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := encode(n + 1); err == nil {
+		t.Fatal("oversized input produced an identity")
+	}
+	if err := a.registerQueueSource(src+"x", now); err == nil {
+		t.Fatal("registered oversized identity")
+	}
+	if err := a.deleteSources([]string{"-"}); err == nil {
+		t.Fatal("accepted old stdin deletion")
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 1 || rows[0].Source != src {
+		t.Fatal(rows, err)
+	}
+}
+
+func TestCaptureSecondUnsavedReasonReplacesFirst(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	const src = "https://example.com/retry"
+	if err := a.registerQueueSource(src, now); err != nil {
+		t.Fatal(err)
+	}
+	for i, reason := range []string{"first failure", "second failure"} {
+		lock, _, err := a.beginCapture(now)
+		if err != nil || lock == nil {
+			t.Fatal(lock, err)
 		}
-	})
-	t.Run("I9_note_sanitization_and_pure_rows", func(t *testing.T) {
-		original := []queueRow{{"2026-11-17", "https://x.example/1", "before"}, {"2026-11-17", "https://x.example/2", "keep"}}
-		got := addRow(original, "2026-11-18", "https://x.example/1", "a\tb\nc\rd")
-		want := []queueRow{original[1], {"2026-11-18", "https://x.example/1", "a b c d"}}
-		if !reflect.DeepEqual(got, want) || original[0].Note != "before" {
-			t.Fatal(got, original)
-		}
-		parsed, err := parseQueue(formatQueue(got))
-		if err != nil || !reflect.DeepEqual(parsed, got) {
-			t.Fatal(parsed, err)
-		}
-	})
-	t.Run("E12_unbound", func(t *testing.T) {
-		projectRunHome(t)
-		_, _, err := runProjectCLI("-n", "org/missing", "queue", "list")
-		if err == nil || !strings.Contains(err.Error(), "no project configured") {
+		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "unsaved", "--reason", reason, src}); err != nil {
 			t.Fatal(err)
 		}
-	})
+		want := queueQueued
+		if i == 1 {
+			want = queueFailed
+		}
+		rows, err := readQueue(a.queuePath(), true)
+		if err != nil || len(rows) != 1 || rows[0].Attempts != i+1 || rows[0].Reason != reason || rows[0].State != want {
+			t.Fatal(rows, err)
+		}
+	}
 }

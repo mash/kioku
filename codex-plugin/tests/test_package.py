@@ -82,13 +82,19 @@ class PackageTests(unittest.TestCase):
         self.assertIn('原本の HTTPS', text)
         self.assertIn('426', text)
         self.assertIn('checksum', text)
-        self.assertIn('Claude Code では、親が共有範囲・機密・保存禁止を確認し', text)
-        self.assertIn('Codex では今どおり直接 put する。', text)
-        self.assertIn('--plugin-root "/absolute/claude-plugin"', text)
+        self.assertIn('Claude Code 以外の local mode', text)
+        self.assertIn('remote mode は queue を使わず', text)
+        self.assertIn('put file:///絶対パス', text)
+        self.assertNotIn('queue add', text)
+        self.assertNotIn('--plugin-root', text)
+        self.assertNotIn('--date', text)
+        self.assertNotIn('--now', text)
+        self.assertIn('[views.md](references/views.md)', text)
         selection = (plugin / 'skills/kioku/references/selection.md').read_text()
         self.assertIn('Claude Code では、選んだ対象以外を先に pull', selection)
         remote = (plugin / 'skills/kioku/references/remote.md').read_text()
         self.assertNotIn('1000', remote)
+        self.assertIn('source_url: kioku:local', remote)
 
     def test_binary_changed_after_verification_is_rejected(self):
         original = pkg.check_binary

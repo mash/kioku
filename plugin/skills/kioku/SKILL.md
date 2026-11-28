@@ -10,20 +10,16 @@ description: Kiokuで共有するプロジェクトの対象選択、Wikiの参�
 原資料は、ユーザー自身の Claude セッションが全文を読み、Markdown にして Kioku に送信する。
 コネクター、CLI（コマンドラインの操作ツール）、手元のファイル、ユーザーが貼った本文を使える。
 資料の種類にかかわらず、[capture.md](references/capture.md) の共通規則と送信前の確認に従う。
-原本の HTTPS（暗号化した Web 通信）URL（資料のアドレス）がなければ送信しない。
-未保存と伝える。サーバーは原資料を取得しない。
+サーバーは原資料を取得しない。原本の HTTPS URL の有無で送信方法を選ぶ。
 Kioku への送信には、local mode で CLI、remote mode で MCP（Model Context Protocol）を使う。
 
 ## 原資料の取り込みを任せる
 
-Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-以下のキュー手順は Claude Code の local mode に適用する。remote mode の送信手順は変えない。
-参照・作成した重要な文書や、結論を変えた文書の HTTPS URL は、`kioku -C P -n NAMESPACE queue add URL "何をしたか"` で1行足す。字句修正や日常のコマンド出力は足さない。
-URL と NOTE はキューに残り、セッションをまたいで同じ project が共有する。同じ URL の再追加は日付と NOTE を更新し、末尾へ移す。
-Stop は5件以上、SessionEnd は1件以上で、フックが背景の `capture run` を起動する。親は Agent で取り込みを起動しない。
-利用者が今すぐ送るよう頼んだら、`kioku -C P -n NAMESPACE capture run --min 1 --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を実行する。起動結果の id を使い、`claude logs <id>` で URL ごとの受付結果を確認する。キュー追加や起動だけで受付済みとは伝えない。
-`kioku-capture` として capture セッションへの文を受け取った場合は、対象選択と pull を繰り返さず、文の一時ディレクトリを使う。以下のモード判定を省略し、status・version を実行せず、受付成否が不明なら「受付不明」とする。[capture.md](references/capture.md) と agent の手順に従う。
-Codex では今どおり直接 put する。Claude Chat と Cowork も直接 put する。
+Claude Code の local mode では、PostToolUse が対象ツールの取得元を queue に足す。Artifact も同じ経路で、親は URL を手動登録せず、子を起動しない。queue は受付前。今すぐ送る依頼には、次の Stop・SessionEnd または SessionStart で起動を試すと案内する。
+Claude Code の親が自分で送るのは、原本 URL のないローカル Markdown に限る。利用者はこの `kioku -n NAMESPACE put file:///絶対パス` を継続して許可する。その対象だけを確認せず送るが、利用者の保存禁止を優先する。受付後はローカルキーの全文を示す。
+保存禁止を伝えられたら、受付前は `kioku status` の queue にある取得元を、受付後は `capture.log` または capture の結果にある `source_url` を、`kioku delete` に渡す。
+`kioku-capture` として起動された場合は、対象選択と pull を繰り返さず、起動プロンプトの一時ディレクトリと手順を使う。
+Claude Code 以外の local mode では、原本の HTTPS URL がある資料は `kioku -n NAMESPACE put PATH`、ないローカル Markdown は `kioku -n NAMESPACE put file:///絶対パス` で直接送る。remote mode は queue を使わず、[remote.md](references/remote.md) に従う。
 
 View を設定・生成する場合は、プロンプトを書く前に [views.md](references/views.md) を読む。
 
@@ -98,7 +94,7 @@ Claude Code の UserPromptSubmit フックは、未選択なら trigger 語を�
 候補一覧が出たら、最初のメッセージに namespace の指定があれば、候補に無くても優先する。指定が無ければ description から一意に決まる namespace を使う。対象が不明か複数候補で決められなければ、フックの案内に従い一覧の `"general": true` の項目からアカウントの General の namespace を確認する。どちらも `kioku -n NAMESPACE session select` で選ぶ。
 Wiki の入口を読めたら、選択したターンの返答の冒頭に「Kioku: NAMESPACE の wiki を読み込みました（理由: …）」を1行書く。General の入口がまだなければ、General を選んだことを伝える。
 利用者が訂正したら、指定された project で `session select` を実行する。話題が変わった場合は `kioku session list` から選び直せる。
-選択済みなら、フックは入口 index.md のパスと queue add の規則を示す。背景の pull 中や失敗の文があれば、その状態を成功・最新と扱わない。失敗時は [selection.md](references/selection.md) の復旧手順に従う。
+選択済みなら、フックは入口 index.md のパスと、自動登録が受付前であることを示す。背景の pull 中や失敗の文があれば、その状態を成功・最新と扱わない。失敗時は [selection.md](references/selection.md) の復旧手順に従う。
 
 その他の環境の local mode では、作業開始時に [selection.md](references/selection.md) で対象と認証方法を確定する。
 既存の人の認証を優先し、必要な場合だけ [connector.md](references/connector.md) へ進む。
@@ -107,7 +103,6 @@ Wiki の入口を読めたら、選択したターンの返答の冒頭に「Kio
 projects.json で `"general": true` の項目には説明案を作らない。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
-Claude Code の local mode では、親が共有できる重要な文書の URL を決め、毎ターンの規則に従って `queue add` で記録する。
 その他の環境では、重要文書を参照・作成した時と結論を変えた文書を確定した時に原資料を送信する。
 操作や要約の「記録」を別途 put しない。
 複数段階の作業では [progress.md](references/progress.md) で既存の進捗と根拠を確認する。
@@ -126,9 +121,9 @@ Claude Code の local mode では、親が共有できる重要な文書の URL 
   送信する資料は [capture.md](references/capture.md) の手順で一時ディレクトリに書く。
 - local mode: CLI が接続先別に認証を管理する。認証ファイルやトークンを表示・編集しない。スキルが会話の選択を管理し、Claude Code の CLI が選択を状態ファイルに最後の書き込みから30日まで置く。CLI が projects.json を管理し、スキルは読むだけにする。
 - `wiki/` はサーバーが生成する。直接編集せず、訂正を送信する資料にする。
-  source ページの `source_url` から原本を確認する。
-- 原資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。
-- local mode: `put` の成功は Kioku がファイルを受け付けたことを示す。ユーザーに受付を伝える。Wiki の生成を待たない。
+  source ページの `source_url` が HTTPS なら原本を確認する。ローカルキーは外部リンクではない。
+- 原本 URL のある資料の `source_url`・`updated_at` を含む frontmatter は [capture.md](references/capture.md) の取得・検証規則に従う。
+- local mode: `accepted` は受付済み、`queued` は capture 待ちを示す。受付と Wiki の生成を区別する。
   Wiki は最後の put の約 10 秒後の自動生成か `generate --wait` で更新する。`generate --wait` は生成完了後に pull する。
   `status` の inbox と `wiki_updated_at` を区別する。
 - local mode: pull 失敗時はローカルコピーを最新と呼ばない。権限エラーを別アカウントや別プロジェクトへの切り替えで回避しない。

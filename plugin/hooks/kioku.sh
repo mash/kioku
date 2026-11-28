@@ -1,8 +1,26 @@
 #!/bin/sh
 exec 2>/dev/null
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ "${1:-}" = tool-guard ]; then
+    case ${KIOKU_CAPTURE_CLI:-} in
+        /*)
+            if [ "${KIOKU_CAPTURE:-}" = 1 ] && decision=$("$KIOKU_CAPTURE_CLI" hook tool-guard); then
+                [ -z "$decision" ] || printf '%s\n' "$decision"
+                exit 0
+            fi
+            ;;
+    esac
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kioku capture guard unavailable"}}'
+    exit 0
+fi
+[ "${KIOKU_CAPTURE:-}" != 1 ] || exit 0
 DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
 TARGET="$DATA/bin/kioku"
+case ${1:-} in
+    tool) "$TARGET" hook tool >/dev/null; exit 0 ;;
+esac
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$ROOT}"
 T=
 trap '[ -n "$T" ] && rm -rf "$T"' 0
 
@@ -90,16 +108,22 @@ download() {
     mv -f "$T/x/kioku" "$TARGET"
 }
 
-if [ "${1:-}" = compact ]; then
-    INPUT=$(cat)
-    # Compact and resume never install or replace the CLI.
-    CONTEXT=$(printf '%s' "$INPUT" | "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
-    if [ -n "$CONTEXT" ]; then
-        printf '%s\n' "$CONTEXT"
-        exit 0
+session_start() {
+    START_OUTPUT=$("$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
+    if [ -n "$START_OUTPUT" ]; then
+        printf '%s\n' "$START_OUTPUT"
+    else
+        cat "$ROOT/prompts/$1"
     fi
-    cat "$ROOT/prompts/hook-compact.txt"
-    current_version >/dev/null || cat "$ROOT/prompts/hook-no-cli.txt"
+}
+
+if [ "${1:-}" = compact ]; then
+    # Compact and resume never install or replace the CLI.
+    if current_version >/dev/null; then
+        session_start hook-compact.txt
+    else
+        cat "$ROOT/prompts/hook-compact.txt" "$ROOT/prompts/hook-no-cli.txt"
+    fi
     exit 0
 fi
 if [ "${1:-}" = precompact ]; then
@@ -122,7 +146,7 @@ else
     download
 fi
 if current_version >/dev/null; then
-    cat "$ROOT/prompts/hook-start.txt"
+    session_start hook-start.txt
 else
     cat "$ROOT/prompts/hook-no-cli.txt"
 fi

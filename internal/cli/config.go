@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/mash/kioku/internal/atomicfile"
+	"golang.org/x/sys/unix"
 )
 
 const defaultServer = "https://kioku.magicians.ee"
@@ -54,14 +55,38 @@ func decodeJSON(data []byte, value any) error {
 }
 
 func readRegular(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
+	b, _, err := readRegularAt(unix.AT_FDCWD, path, -1)
+	return b, err
+}
+
+// readRegularAt reads a regular file without following a link at path.
+// Use a negative limit for files that have no size limit.
+func readRegularAt(dirFD int, path string, limit int64) ([]byte, os.FileInfo, error) {
+	fd, err := unix.Openat(dirFD, path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("expected a regular file: %s", path)
+		return nil, nil, fmt.Errorf("expected a regular file: %s", path)
 	}
-	return os.ReadFile(path)
+	var r io.Reader = f
+	if limit >= 0 {
+		r = io.LimitReader(f, limit+1)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	if limit >= 0 && int64(len(data)) > limit {
+		return nil, nil, fmt.Errorf("%s exceeds %d MiB", path, limit>>20)
+	}
+	return data, info, nil
 }
 
 func (a *App) readProjectConfig() (Config, error) {

@@ -505,26 +505,53 @@ func (a *App) captureLaunchErrorPath() string {
 	return filepath.Join(a.metadataDir(), "capture-launch.failed")
 }
 
-func (a *App) reportedCaptureLaunchErrorPath() string {
-	return filepath.Join(a.metadataDir(), "capture-launch.reported")
+type captureLaunchFailure struct {
+	PID      int    `json:"pid"`
+	Reason   string `json:"reason"`
+	Reported bool   `json:"reported"`
+}
+
+func readCaptureLaunchFailure(data []byte) captureLaunchFailure {
+	var failure captureLaunchFailure
+	if decodeJSON(data, &failure) != nil {
+		return captureLaunchFailure{Reason: strings.TrimSpace(string(data))}
+	}
+	return failure
 }
 
 func (a *App) recordCaptureLaunchError(err error, reported bool) error {
-	path := a.captureLaunchErrorPath()
-	if reported {
-		path = a.reportedCaptureLaunchErrorPath()
+	data, err := json.Marshal(captureLaunchFailure{PID: os.Getpid(), Reason: queueText(err.Error()), Reported: reported})
+	if err != nil {
+		return err
 	}
-	return atomicfile.Write(path, []byte(queueText(err.Error())+"\n"), 0600)
+	return updateLockedFile(a.captureLaunchErrorPath(), func([]byte) ([]byte, bool, error) {
+		return data, true, nil
+	})
+}
+
+// With a nonzero PID, acknowledge only the child this hook waited for.
+func (a *App) acknowledgeCaptureLaunchError(pid int) bool {
+	path := a.captureLaunchErrorPath()
+	if _, err := os.Lstat(path); err != nil {
+		return false
+	}
+	acknowledged := false
+	err := updateLockedFile(path, func(data []byte) ([]byte, bool, error) {
+		failure := readCaptureLaunchFailure(data)
+		if failure.Reason == "" || failure.Reported || pid != 0 && pid != failure.PID {
+			return nil, false, nil
+		}
+		failure.Reported = true
+		next, err := json.Marshal(failure)
+		acknowledged = err == nil
+		return next, acknowledged, err
+	})
+	return err == nil && acknowledged
 }
 
 func (a *App) lastCaptureLaunchError() string {
-	for _, path := range []string{a.captureLaunchErrorPath(), a.reportedCaptureLaunchErrorPath()} {
-		data, err := readRegular(path)
-		if err == nil {
-			return strings.TrimSpace(string(data))
-		}
-	}
-	return ""
+	data, _ := readRegular(a.captureLaunchErrorPath())
+	return readCaptureLaunchFailure(data).Reason
 }
 
 func (a *App) captureLockPath() string { return filepath.Join(a.metadataDir(), "capture.lock") }

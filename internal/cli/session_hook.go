@@ -52,6 +52,12 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	}
 	var in sessionHookInput
 	if decodeHookEvent(input, &in) != nil || (*event != "" && in.Event != *event) || len(in.AgentID) != 0 {
+		if *event == "SessionStart" {
+			// An empty object distinguishes an ignored event from an older
+			// CLI that did not handle SessionStart.
+			_, err := fmt.Fprintln(a.Out, "{}")
+			return err
+		}
 		return nil
 	}
 	if !allowedHookEvent(in.Event) {
@@ -371,7 +377,7 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 	var messages []string
 	// Only a hook that can notify the user acknowledges a pending failure.
 	// Keep its reason available to status after the notification.
-	launchFailed := os.Rename(a.captureLaunchErrorPath(), a.reportedCaptureLaunchErrorPath()) == nil
+	launchFailed := a.acknowledgeCaptureLaunchError(0)
 	if queued != 0 && a.captureIdle(now) {
 		// Observe the detached launcher briefly, without cancelling it.
 		wait := 750 * time.Millisecond
@@ -384,7 +390,9 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 		if err := startHookCapture(captureCwd(in, p), p, wait); err != nil {
 			launchFailed = true
 			var exited *exec.ExitError
-			if !errors.As(err, &exited) {
+			if errors.As(err, &exited) {
+				a.acknowledgeCaptureLaunchError(exited.Pid())
+			} else {
 				// The child could not run to record its own error.
 				_ = a.recordCaptureLaunchError(err, true)
 			}
@@ -424,11 +432,19 @@ func startHookCapture(cwd string, p projectEntry, wait time.Duration) error {
 		args = append(args, "--server", p.Server)
 	}
 	args = append(args, "-C", p.Path, "-n", p.Namespace, "capture", "run")
-	log, err := (&App{Dir: p.Path}).openCaptureLog()
+	a := &App{Dir: p.Path}
+	log, err := a.openCaptureLog()
 	if err != nil {
 		return err
 	}
 	defer log.Close()
+	bound, err := a.readProjectConfig()
+	if err != nil {
+		return err
+	}
+	if bound.Server != p.Server || bound.Namespace != p.Namespace {
+		return errors.New("capture run: project selection conflicts with .kioku/config")
+	}
 	c := exec.Command(exe, args...)
 	c.Dir = cwd
 	c.Env = processEnv("KIOKU_SERVER", "CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL")

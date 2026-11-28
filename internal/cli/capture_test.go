@@ -50,6 +50,22 @@ exit "$CAPTURE_TEST_STATUS"
 
 type fetchTestTransport http.HandlerFunc
 
+func TestCaptureLaunchErrorAcknowledgesOnlyMatchingChild(t *testing.T) {
+	a := projectEntryApp(t)
+	if err := a.recordCaptureLaunchError(errors.New("fixture failure"), false); err != nil {
+		t.Fatal(err)
+	}
+	if a.acknowledgeCaptureLaunchError(os.Getpid() + 1) {
+		t.Fatal("acknowledged the failure of a different process")
+	}
+	if !a.acknowledgeCaptureLaunchError(os.Getpid()) || a.acknowledgeCaptureLaunchError(0) {
+		t.Fatal("expected exactly one notification of the failure")
+	}
+	if got := a.lastCaptureLaunchError(); got != "fixture failure" {
+		t.Fatal("lost the failure reason after notification:", got)
+	}
+}
+
 func (h fetchTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	w := httptest.NewRecorder()
 	h(w, r)

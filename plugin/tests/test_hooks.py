@@ -540,6 +540,10 @@ fi
                 self.assertEqual(self.hook('SessionStart', source=source),
                                  (self.root / 'prompts' / prompt).read_text())
 
+    def test_session_start_does_not_override_the_current_clis_ignore_decision(self):
+        output = self.hook('SessionStart', source='startup', agent_id='child')
+        self.assertEqual(json.loads(output), {})
+
     def test_precompact_works_without_cli_or_state(self):
         (self.data / 'bin/kioku').unlink()
         self.state_path.unlink()
@@ -1117,7 +1121,7 @@ print('backgrounded · 1a2b3c4d')
         launcher.write_text("#!/bin/sh\nprintf 'backgrounded · 5e6f7a8b\n'\n")
         output = json.loads(self.hook('Stop', cwd=str(root)))
         self.assertIn('起動に失敗', output['systemMessage'])
-        self.assertFalse(marker.exists())
+        self.assertTrue(json.loads(marker.read_text())['reported'])
         self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
         status = subprocess.run([str(self.cli), '-C', str(root), 'status'],
                                 capture_output=True, text=True, env=self.env)
@@ -1158,6 +1162,36 @@ else:
         log = metadata / 'capture.log'
         wait_until(lambda: 'claude logs 5e6f7a8b' in log.read_text())
         self.assertIn('newer launcher failed', marker.read_text())
+
+    def test_session_start_does_not_report_the_same_failure_twice(self):
+        root = self.work / 'project'
+        metadata, project = make_project(root, 'org/project')
+        queue = metadata / 'queue.tsv'
+        queue.write_text('2026-11-28\thttps://example.com/fixture\t0\tqueued\t\n')
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+        catalog.write_text(json.dumps({'projects': [project]}))
+        self.fake_claude('#!/bin/sh\nprintf "fixture failure\\n" >&2\nexit 1\n')
+
+        output = self.hook('SessionStart', source='startup', cwd=str(root))
+        self.assertIn('起動に失敗', json.loads(output)['systemMessage'])
+        queue.write_text('')
+        output = self.hook('SessionStart', source='startup', cwd=str(root))
+        self.assertEqual(output, (self.root / 'prompts/hook-start.txt').read_text())
+
+    def test_session_start_records_a_stale_project_binding_in_status(self):
+        root = self.work / 'project'
+        metadata, project = make_project(root, 'org/project')
+        (metadata / 'queue.tsv').write_text('2026-11-28\thttps://example.com/fixture\t0\tqueued\t\n')
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+        catalog.write_text(json.dumps({'projects': [dict(project, namespace='org/old')]}))
+
+        output = self.hook('SessionStart', source='startup', cwd=str(root))
+        self.assertIn('起動に失敗', json.loads(output)['systemMessage'])
+        status = subprocess.run([str(self.cli), '-C', str(root), 'status'],
+                                capture_output=True, text=True, env=self.env)
+        self.assertIn('.kioku/config', json.loads(status.stdout)['last_capture_launch_error'])
 
     def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
         self.fake_claude('#!' + sys.executable + '\n' + """

@@ -226,24 +226,27 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 	return filepath.EvalSymlinks(tmp)
 }
 
-func captureAllowedTools(exe, server, ns, p, tmp string) []string {
-	command := kiokuCommand(exe, server)
-	project := command + " -C " + shellQuote(p) + " -n " + ns
+func captureAllowedTools(command, project, tmp string, rows []queueRow) []string {
 	token := filepath.Base(tmp)
-	return []string{
+	tools := []string{
 		"Bash(" + command + " capture fetch:*)",
 		"Bash(" + project + " capture put --capture-token " + token + ":*)",
 		"Bash(" + project + " capture result --capture-token " + token + ":*)",
-		"Bash(gh pr view:*)", "Bash(gh issue view:*)", "Bash(gh pr diff:*)",
-		"Read(/" + tmp + "/**)", "Edit(/" + tmp + "/**)",
-		"mcp__notion__notion-fetch", "mcp__notion__notion-search",
-		"mcp__claude_ai_Notion__notion-fetch",
-		"mcp__claude_ai_Notion__notion-search",
-		"mcp__claude_ai_Slack__slack_read_thread",
-		"mcp__claude_ai_Slack__slack_read_channel",
-		"mcp__claude_ai_Google_Drive__read_file_content",
-		"mcp__claude_ai_Google_Drive__download_file_content",
+		"Read(/" + tmp + "/**)", "Write(/" + tmp + "/**)", "Artifact",
 	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		call, err := parseCaptureSource(row.Source)
+		if err != nil || call == nil {
+			continue
+		}
+		server, _ := mcpToolParts(call.Tool)
+		if !seen[server] {
+			seen[server] = true
+			tools = append(tools, "mcp__"+server)
+		}
+	}
+	return tools
 }
 func (a *App) captureNote(note string) error {
 	log, err := openBackgroundLog(filepath.Join(a.metadataDir(), "capture.log"), os.O_APPEND|syscall.O_NONBLOCK)
@@ -380,25 +383,17 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 	vars["project_kioku"] = vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
 	vars["commands"] = captureCommands(vars["kioku"], vars["project_kioku"], tmp, lock.Token, rows)
 
-	settings, err := a.captureSettings(cwd, tmp)
-	if err != nil {
-		return err
-	}
-	args := []string{"--bg", "--settings", settings, "--permission-mode", "dontAsk", "--allowedTools"}
-	args = append(args, captureAllowedTools(exe, a.Config.Server, a.Config.Namespace, a.Dir, tmp)...)
+	args := []string{"--bg", "--permission-mode", "dontAsk"}
 	if pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT"); pluginRoot != "" {
 		root, err := filepath.Abs(pluginRoot)
 		if err != nil {
 			return err
 		}
-		vars["capture_md"] = filepath.Join(root, "skills", "kioku", "references", "capture.md")
-		args = append(args, "Read(/"+filepath.Join(root, "skills")+"/**)", "Read(/"+filepath.Join(root, "agents")+"/**)")
+		args = append(args, "--plugin-dir", root)
 	}
-	template := prompts.CaptureRun
-	if vars["capture_md"] == "" {
-		_, template, _ = strings.Cut(template, "\n")
-	}
-	prompt := renderTemplate(template, vars)
+	args = append(args, "--allowedTools")
+	args = append(args, captureAllowedTools(vars["kioku"], vars["project_kioku"], tmp, rows)...)
+	prompt := renderTemplate(prompts.CaptureRun, vars)
 	args = append(args, "--agent", "kioku:kioku-capture", "--", prompt)
 	ctx := a.ctx
 	if ctx == nil {
@@ -406,7 +401,8 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 	}
 	cmd := exec.CommandContext(ctx, claude, args...)
 	cmd.Dir = cwd
-	cmd.Env = processEnv("CLAUDE_CODE_SESSION_ID")
+	cmd.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", captureModeEnv, captureDirEnv, captureCommandEnv, captureProjectCommandEnv),
+		captureModeEnv+"=1", captureDirEnv+"="+tmp, captureCommandEnv+"="+vars["kioku"], captureProjectCommandEnv+"="+vars["project_kioku"])
 	cmd.WaitDelay = captureWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -564,33 +560,12 @@ func updateCaptureLock(path string, change func(*captureLock) error) error {
 		return next, !bytes.Equal(bytes.TrimSpace(data), next), err
 	})
 }
-func (a *App) captureSettings(cwd, tmp string) (string, error) {
-	deny := []string{"Glob", "Grep", "WebFetch", "WebSearch", "Bash(curl:*)", "Bash(wget:*)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "Read(~/.netrc)", "Read(~/.claude.json)", "Read(~/.claude/.credentials.json)"}
-	cwd, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(cwd, tmp)
-	if err != nil {
-		return "", err
-	}
-	if filepath.IsLocal(rel) {
-		if err := a.captureNote("capture: 一時ディレクトリが起動 cwd 内にあるため Read(./**) の deny を省いた。"); err != nil {
-			return "", err
-		}
-	} else {
-		deny = append(deny, "Read(./**)")
-	}
-	data, err := json.Marshal(map[string]any{"disableAllHooks": true, "permissions": map[string]any{"deny": deny}})
-	return string(data), err
-}
-
 func captureCommands(command, project, tmp, token string, rows []queueRow) string {
 	var b strings.Builder
 	for i, row := range rows {
 		src := shellQuote(row.Source)
 		fmt.Fprintf(&b, "行 %d: %s\n", i+1, row.Source)
-		if !strings.HasPrefix(row.Source, toolSourcePrefix) {
+		if !strings.HasPrefix(row.Source, toolSourcePrefix) && !isArtifactURL(row.Source) {
 			raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.input%s", i+1, captureFetchExtension(row.Source, "")))
 			fmt.Fprintf(&b, "公開 HTTPS の fetch（出力先は Read で読む）:\n```sh\n%s capture fetch %s --capture-token %s --dir %s --out %s\n```\n", command, src, token, shellQuote(tmp), shellQuote(raw))
 		}

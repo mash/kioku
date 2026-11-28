@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,6 +35,7 @@ fi
 printf '%s\000' "$@" > "$CAPTURE_TEST_LOG.args"
 pwd > "$CAPTURE_TEST_LOG.cwd"
 printf '%s' "${CLAUDE_CODE_SESSION_ID-unset}" > "$CAPTURE_TEST_LOG.sid"
+printf '%s\n%s\n' "$KIOKU_CAPTURE" "$KIOKU_CAPTURE_DIR" > "$CAPTURE_TEST_LOG.capture"
 IFS= read -r line && exit 9
 printf '%s' "$CAPTURE_TEST_OUTPUT"
 if [ "$CAPTURE_TEST_STATUS" != 0 ]; then printf 'Workspace not trusted\n' >&2; fi
@@ -100,6 +102,45 @@ func TestCaptureRun(t *testing.T) {
 		}
 		return a
 	}
+	t.Run("launch passes mode, snapshot and scoped server rule", func(t *testing.T) {
+		a := setup(t, 1)
+		log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
+		root := t.TempDir()
+		t.Setenv("CLAUDE_PLUGIN_ROOT", root)
+		tool, err := captureToolSource("mcp__linear__get_issue", json.RawMessage(`{"id":42}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.registerQueueSource(tool, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.captureRun(t.TempDir(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		environment, err := os.ReadFile(log + ".capture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mode, rest, _ := strings.Cut(string(environment), "\n")
+		dir := strings.TrimSpace(rest)
+		if mode != "1" || !filepath.IsAbs(dir) {
+			t.Fatal(string(environment))
+		}
+		if _, err := captureSnapshot(dir); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(log + ".args")
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+		if !slices.Contains(args, "--plugin-dir") || !slices.Contains(args, root) ||
+			!slices.Contains(args, "mcp__linear") || slices.Contains(args, "mcp__linear__get_issue") ||
+			!strings.Contains(args[len(args)-1], "modifiedTime") ||
+			strings.Contains(args[len(args)-1], "capture unlock") {
+			t.Fatal(args)
+		}
+	})
 	t.Run("I14_missing_id", func(t *testing.T) {
 		a := setup(t, 5)
 		log := fakeCaptureClaude(t, "started without id\n", 0)

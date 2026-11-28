@@ -38,6 +38,9 @@ func allowedHookEvent(event string) bool {
 
 // Parse hook JSON in the CLI so sh needs neither jq nor a language runtime.
 func (a *App) sessionHook(args []string, input io.Reader) error {
+	if os.Getenv(captureModeEnv) == "1" {
+		return nil
+	}
 	f := flag.NewFlagSet("session hook", flag.ContinueOnError)
 	f.SetOutput(a.Err)
 	event := f.String("event", "", "hook event (defaults to the input event)")

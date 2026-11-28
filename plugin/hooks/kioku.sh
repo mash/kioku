@@ -91,6 +91,18 @@ download() {
     mv -f "$T/x/kioku" "$TARGET"
 }
 
+if [ "${KIOKU_CAPTURE:-}" = 1 ]; then
+    if [ "${1:-}" = tool-guard ]; then
+        if [ -x "$TARGET" ] && "$TARGET" hook tool-guard; then
+            exit 0
+        fi
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kioku capture guard unavailable"}}'
+    fi
+    exit 0
+fi
+if [ "${1:-}" = tool-guard ]; then
+    exit 0
+fi
 if [ "${1:-}" = compact ]; then
     INPUT=$(cat)
     # Compact and resume never install or replace the CLI.

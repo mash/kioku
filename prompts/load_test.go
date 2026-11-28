@@ -30,7 +30,7 @@ func loadFiles(t *testing.T, files map[string]string) (*Rendered, error) {
 }
 func TestDefaultsAndCopiedFiles(t *testing.T) {
 	t.Run("capture_run_template", func(t *testing.T) {
-		for _, variable := range []string{"kioku", "namespace", "server", "p", "tmp", "queue", "capture_md", "commands"} {
+		for _, variable := range []string{"kioku", "namespace", "server", "p", "tmp", "queue", "commands"} {
 			if !strings.Contains(CaptureRun, "{{"+variable+"}}") {
 				t.Fatal("missing variable", variable)
 			}

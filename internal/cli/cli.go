@@ -53,6 +53,9 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 1 && args[0] == "version" {
 		return json.NewEncoder(out).Encode(buildinfo.Info())
 	}
+	if slices.Equal(args, []string{"hook", "tool-guard"}) {
+		return hookToolGuard(os.Stdin, out)
+	}
 	authDir, err := defaultAuthDir()
 	if err != nil {
 		return err

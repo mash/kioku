@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import hashlib
 import json
@@ -121,6 +122,19 @@ class ToolHooksTest(unittest.TestCase):
         self.assertEqual(self.invoke("Artifact", {"url":self.artifact, "file_path":"fixture.html"},
                                      event, tool_response=published), "")
         self.assertEqual(before, queue.read_bytes())
+
+        # Separate hook processes contend for the same project's queue. Each
+        # source must survive and duplicate calls must not add another row.
+        urls = [f"https://example.test/parallel/{n}" for n in range(12)]
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            outputs = list(pool.map(lambda url: self.invoke("WebFetch", {"url":url}, event), urls * 2))
+        self.assertEqual(outputs, [""] * (len(urls) * 2))
+        before = queue.read_bytes()
+        rows = [line.split("\t") for line in before.decode().splitlines()]
+        self.assertCountEqual([row[1] for row in rows], [page["url"], self.artifact, *urls])
+        for row in rows:
+            self.assertEqual(row[2:], ["0", "queued", ""])
+
         self.env["KIOKU_CAPTURE"] = "1"
         self.assertEqual(self.invoke("mcp__linear__get_issue", {"id":42}, event), "")
         self.assertEqual(before, queue.read_bytes())

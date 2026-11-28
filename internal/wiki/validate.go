@@ -32,7 +32,7 @@ func SourceURL(body string) (string, error) {
 	return source.FrontmatterSourceURL(metadata)
 }
 
-// ValidateSources checks source identities and local filenames, not bodies or log entries.
+// ValidateSources checks source identities and existing filenames, not bodies or log entries.
 func ValidateSources(pages, previous map[string]string, items []model.InboxItem) []string {
 	var problems []string
 	previousNames := map[string]string{}
@@ -48,20 +48,11 @@ func ValidateSources(pages, previous map[string]string, items []model.InboxItem)
 			problems = append(problems, "(a) "+name+": "+err.Error())
 			continue
 		}
-		if strings.HasPrefix(u, source.LocalSource) {
-			date := source.LocalKeyDate(u)
-			if date == "" {
-				problems = append(problems, "(a) "+name+": invalid local source key")
-			} else if old := previousNames[u]; old != "" {
-				if old != name {
-					problems = append(problems, "(a) "+name+": keep existing filename "+old)
-				}
-			} else {
-				slug, ok := strings.CutPrefix(strings.TrimSuffix(name, ".md"), "wiki/source-"+date+"-")
-				if !ok || slug == "" {
-					problems = append(problems, "(a) "+name+": local source filename must use source-"+date+"-<slug>.md")
-				}
-			}
+		if strings.HasPrefix(u, source.LocalSource) && !source.IsLocalKey(u) {
+			problems = append(problems, "(a) "+name+": invalid local source key")
+		}
+		if old := previousNames[u]; old != "" && old != name {
+			problems = append(problems, "(a) "+name+": keep existing filename "+old)
 		}
 		if prior, ok := urls[u]; ok {
 			problems = append(problems, "(b) "+name+": duplicate source_url with "+prior)

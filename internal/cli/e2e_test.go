@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +20,7 @@ import (
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/cli"
+	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/server"
 	"github.com/mash/kioku/internal/store"
 	"github.com/mash/kioku/prompts"
@@ -133,87 +136,80 @@ func TestCLIFullWorkflow(t *testing.T) {
 	if out := must("put", source); !strings.Contains(out, "accepted notes.md") {
 		t.Fatal(out)
 	}
-	t.Run("local key, UTC boundary, and writeback", func(t *testing.T) {
+	t.Run("local source uses mtime without changing the original", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "meeting notes.md")
 		uri := (&url.URL{Scheme: "file", Path: path}).String()
 		const body = "hello\n"
-		const stamp = "updated_at: 2026-11-20T15:00:00Z"
-		const key = "kioku:local/20261121-5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+		const key = "kioku:local/5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+		mtime := time.Date(2026, 11, 20, 15, 0, 0, 0, time.UTC)
 		write := func(content string) {
 			t.Helper()
 			if err := os.WriteFile(path, []byte(content), 0640); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chtimes(path, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
 		}
-		read := func() string {
+		unchanged := func(content string) {
 			t.Helper()
 			b, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
+			if err != nil || string(b) != content {
+				t.Fatal(string(b), err)
 			}
-			return string(b)
+			fi, err := os.Stat(path)
+			if err != nil || fi.Mode().Perm() != 0640 || !fi.ModTime().Equal(mtime) {
+				t.Fatal(fi, err)
+			}
 		}
-		write("---\n" + stamp + "\ntitle: Original\nextra: [one, two]\n---\n" + body)
+		first := "---\nupdated_at: [invalid]\ntitle: Original\nextra: [one, two]\n---\n" + body
+		write(first)
+		inspect := func(w http.ResponseWriter, r *http.Request) {
+			b, err := io.ReadAll(r.Body)
+			var req model.PutRequest
+			if err != nil || json.Unmarshal(b, &req) != nil || req.File == nil {
+				t.Error("invalid put request", err)
+			} else if got := req.File.Content; !strings.Contains(got, "source_url: kioku:local") || !strings.Contains(got, mtime.Format(time.RFC3339)) || !strings.HasSuffix(got, "---\n"+body) {
+				t.Error(got)
+			}
+			r.Body = io.NopCloser(bytes.NewReader(b))
+			handler.ServeHTTP(w, r)
+		}
+		afterPut.Store(&inspect)
+		count := putCount.Load()
+		for range 2 {
+			if out := must("put", uri); out != "accepted "+key+"\n" {
+				t.Fatal(out)
+			}
+			unchanged(first)
+		}
+		afterPut.Store(nil)
+		if out := must("status"); !strings.Contains(out, `"inbox_count": 2`) || putCount.Load() != count+2 {
+			t.Fatal(out)
+		}
+		mtime = mtime.Add(25 * time.Hour)
+		write(strings.Replace(first, "Original", "Revised", 1))
 		if out := must("put", uri); out != "accepted "+key+"\n" {
 			t.Fatal(out)
 		}
-		first := read()
-		fi, err := os.Stat(path)
-		if err != nil {
+		write("Hallo\n")
+		if out := must("put", uri); !strings.HasPrefix(out, "accepted kioku:local/") || out == "accepted "+key+"\n" {
+			t.Fatal(out)
+		}
+		unchanged("Hallo\n")
+
+		queue := filepath.Join(config, ".kioku", "queue.tsv")
+		if err := os.WriteFile(queue, []byte("invalid queue row\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if fi.Mode().Perm() != 0640 || !strings.Contains(first, "source_url: "+key) || !strings.Contains(first, stamp+"\ntitle: Original\nextra: [one, two]") || !strings.HasSuffix(first, "---\n"+body) {
-			t.Fatal(fi.Mode(), first)
-		}
-		if out := must("put", uri); out != "accepted "+key+"\n" {
+		if out := must("delete", key); out != "removed "+key+"\n" {
 			t.Fatal(out)
 		}
-		if out := must("status"); !strings.Contains(out, `"inbox_count": 2`) {
-			t.Fatal(out)
+		if b, err := os.ReadFile(queue); err != nil || string(b) != "invalid queue row\n" {
+			t.Fatal(string(b), err)
 		}
-		write("---\n" + stamp + "\nsource_url: &original kioku:local\noriginal_marker: *original\n---\n" + body)
-		if out := must("put", uri); out != "accepted "+key+"\n" || !strings.Contains(read(), "original_marker: kioku:local") {
-			t.Fatal(out, read())
-		}
-
-		write(strings.Replace(first, "title: Original", "title: Revised", 1))
-		if out := must("put", uri); out != "accepted "+key+"\n" {
-			t.Fatal(out)
-		}
-		write(strings.Replace(first, body, "Hallo\n", 1))
-		if out := must("put", uri); !strings.HasPrefix(out, "accepted kioku:local/20261121-") || out == "accepted "+key+"\n" {
-			t.Fatal(out)
-		}
-		t.Run("delete local key without reading the HTTPS queue", func(t *testing.T) {
-			queue := filepath.Join(config, ".kioku", "queue.tsv")
-			const malformed = "invalid queue row\n"
-			if err := os.WriteFile(queue, []byte(malformed), 0600); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := os.Remove(queue); err != nil {
-					t.Error(err)
-				}
-			})
-			if out, err := run("delete", key); err != nil || out != "removed "+key+"\n" {
-				t.Fatal(out, err)
-			}
-			if data, err := os.ReadFile(queue); err != nil || string(data) != malformed {
-				t.Fatal(string(data), err)
-			}
-		})
-		write(strings.Replace(first, "15:00:00Z", "14:59:59Z", 1))
-		if out := must("put", uri); !strings.HasPrefix(out, "accepted kioku:local/20261120-") {
-			t.Fatal(out)
-		}
-		write("hello\r\n")
-		out := must("put", "--date", "2026-11-20", uri)
-		written := read()
-		if !strings.HasPrefix(out, "accepted kioku:local/20261120-") ||
-			!strings.Contains(written, `updated_at: "2026-11-20T00:00:00+09:00"`) ||
-			!strings.Contains(written, "\nsource_url: "+strings.TrimPrefix(out, "accepted ")) ||
-			!strings.HasSuffix(written, "hello\r\n") || must("put", uri) != out {
-			t.Fatal(out, written)
+		if err := os.Remove(queue); err != nil {
+			t.Fatal(err)
 		}
 
 		reject := func(want string, args ...string) {
@@ -224,13 +220,16 @@ func TestCLIFullWorkflow(t *testing.T) {
 				t.Fatal(args, out, err)
 			}
 		}
-		reject("には updated_at がある", "--date", "2026-11-20", uri)
-		reject("file:///abs/notes.md", path)
-		write(body)
-		reject("put: meeting notes.md に updated_at が無い。資料自身の日付（例: 会議の日）を --date 2026-11-20 で渡すか、frontmatter に updated_at を書く。ファイルの更新時刻や put した時刻で補わない", uri)
-		reject("--date は YYYY-MM-DD", "--date", "2026-02-29", uri)
-		write("---\n" + stamp + "\nsource_url: https://example.com/a\n---\n" + body)
-		reject("通常のパスで put する: kioku put '"+path+"'", uri)
+		write("---\nsource_url: https://example.com/a\n---\n" + body)
+		reject("通常のパスで put", uri)
+		for _, u := range []string{"ftp://example.com/x", key, "null"} {
+			write("---\nsource_url: " + u + "\n---\n" + body)
+			reject("省くか kioku:local", uri)
+		}
+		write("---\nsource_url: " + key + "\n---\n" + body)
+		reject("delete", source, path)
+		write("---\nsource_url: kioku:local\n---\n" + body)
+		reject("file:///abs/notes.md", source, path)
 		reject("ホストとユーザー情報", "file://host/a.md")
 		reject("クエリとフラグメント", uri+"?#")
 		reject("解釈できない", "file:a.md")
@@ -242,38 +241,8 @@ func TestCLIFullWorkflow(t *testing.T) {
 		}
 		reject("シンボリックリンク", (&url.URL{Scheme: "file", Path: link}).String())
 		reject("usage:", uri, path)
-
-		write(body)
-		change := func(w http.ResponseWriter, r *http.Request) {
-			if err := os.WriteFile(path, []byte("edited during upload\n"), 0640); err != nil {
-				t.Error(err)
-			}
-			handler.ServeHTTP(w, r)
-		}
-		afterPut.Store(&change)
-		out, err = run("put", "--date", "2026-11-21", uri)
-		afterPut.Store(nil)
-		if out != "accepted "+key+"\n" || err == nil || !strings.Contains(err.Error(), "変わったので書き戻さなかった") || read() != "edited during upload\n" {
-			t.Fatal(out, err, read())
-		}
-		if os.Geteuid() != 0 {
-			write(body)
-			readOnly := func(w http.ResponseWriter, r *http.Request) {
-				if err := os.Chmod(filepath.Dir(path), 0500); err != nil {
-					t.Error(err)
-				}
-				handler.ServeHTTP(w, r)
-			}
-			afterPut.Store(&readOnly)
-			out, err = run("put", "--date", "2026-11-21", uri)
-			afterPut.Store(nil)
-			if chmodErr := os.Chmod(filepath.Dir(path), 0700); chmodErr != nil {
-				t.Fatal(chmodErr)
-			}
-			if out != "accepted "+key+"\n" || err == nil || !strings.Contains(err.Error(), "に書き戻せなかった") || read() != body {
-				t.Fatal(out, err, read())
-			}
-		}
+		reject("usage:", uri, uri)
+		reject("usage:", source, "--date")
 
 		write(body)
 		lost := func(w http.ResponseWriter, r *http.Request) {
@@ -286,67 +255,23 @@ func TestCLIFullWorkflow(t *testing.T) {
 			_ = conn.Close()
 		}
 		afterPut.Store(&lost)
-		out, err = run("put", "--date", "2026-11-21", uri)
+		out, err := run("put", uri)
 		afterPut.Store(nil)
-		if out != "" || err == nil || !strings.Contains(err.Error(), "受付を確かめられない") || read() != body {
-			t.Fatal(out, err, read())
+		if out != "" || err == nil || !strings.Contains(err.Error(), "本文を変えずに同じコマンド") {
+			t.Fatal(out, err)
 		}
-		if out := must("put", "--date", "2026-11-21", uri); out != "accepted "+key+"\n" {
+		unchanged(body)
+		if out := must("put", uri); out != "accepted "+key+"\n" {
 			t.Fatal(out)
 		}
+		unchanged(body)
 
-		write(body)
-		closedOutput, err := os.CreateTemp(t.TempDir(), "output")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := closedOutput.Close(); err != nil {
-			t.Fatal(err)
-		}
-		err = cli.Run(ctx, []string{"-C", config, "--server", ts.URL, "put", "--date", "2026-11-21", uri}, closedOutput, &bytes.Buffer{})
-		if err == nil || !strings.Contains(read(), "source_url: "+key) {
-			t.Fatal("accepted put must write back even when stdout is closed", err, read())
-		}
-
-		const maxFile = 1 << 20
-		header := "---\n" + stamp + "\nsource_url: kioku:local\n---\n"
-		write(header + strings.Repeat("x", maxFile-len(header)-65))
-		out = must("put", uri)
-		if !strings.HasPrefix(out, "accepted kioku:local/20261121-") || len(read()) <= maxFile {
-			t.Fatal("fixture must write back a file larger than 1 MiB", out)
-		}
-		if repeated, err := run("put", uri); err != nil || repeated != out {
-			t.Fatal(out, repeated, err)
-		}
-		write(header + strings.Repeat("x", maxFile-len(header)+1))
+		write(strings.Repeat("x", (1<<20)+1))
 		reject("exceeds 1 MiB", uri)
-	})
-	t.Run("local writeback uses the file's resolved parent", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("requires a non-writable directory")
-		}
-		lexical, actual := t.TempDir(), t.TempDir()
-		child := filepath.Join(actual, "child")
-		if err := os.Mkdir(child, 0700); err != nil {
-			t.Fatal(err)
-		}
-		link := filepath.Join(lexical, "link")
-		if err := os.Symlink(child, link); err != nil {
-			t.Fatal(err)
-		}
-		actualFile := filepath.Join(actual, "notes.md")
-		if err := os.WriteFile(actualFile, []byte("notes\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(lexical, 0500); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(lexical, 0700) })
-		uri := (&url.URL{Scheme: "file", Path: link + "/../notes.md"}).String()
-		out, err := run("put", "--date", "2026-11-20", uri)
-		data, readErr := os.ReadFile(actualFile)
-		if err != nil || readErr != nil || !strings.HasPrefix(out, "accepted kioku:local/20261120-") || !strings.Contains(string(data), "source_url: "+strings.TrimSpace(strings.TrimPrefix(out, "accepted "))) {
-			t.Fatal(out, err, string(data), readErr)
+
+		write(cli.SourceContentForTest("https://127.0.0.1:8443/login", "Authenticated source"))
+		if out := must("put", path); out != "accepted meeting notes.md\n" {
+			t.Fatal(out)
 		}
 	})
 	t.Run("capture retry, status, and delete against SQLite", func(t *testing.T) {
@@ -406,7 +331,23 @@ func TestCLIFullWorkflow(t *testing.T) {
 			t.Helper()
 			must("capture", "result", "--capture-token", token, "--result", state, "--reason", reason, u)
 		}
-		must("put", okURL, failedURL, goneURL)
+		enqueue := func(urls ...string) {
+			t.Helper()
+			q := filepath.Join(config, ".kioku", "queue.tsv")
+			f, err := os.OpenFile(q, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, u := range urls {
+				if _, err := fmt.Fprintf(f, "%s\t%s\t\t0\tqueued\t\n", time.Now().Format(time.DateOnly), u); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		enqueue(okURL, failedURL, goneURL)
 		token := start()
 		st := readStatus()
 		if st.Capture == nil || st.Capture.ID != "1a2b3c4d" || st.Capture.StartedAt.IsZero() || len(st.Queue) != 3 || st.Queue[0].Attempts != 1 {
@@ -437,7 +378,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		if out, err := run("capture", "put", "--capture-token", token, path); err == nil || !strings.Contains(err.Error(), "delete 済み") || out != "" {
 			t.Fatal(out, err)
 		}
-		must("put", goneURL)
+		enqueue(goneURL)
 		count := putCount.Load()
 		if out, err := run("capture", "put", "--capture-token", token, path); err == nil || out != "" || putCount.Load() != count {
 			t.Fatal("old snapshot must not submit after delete and requeue", out, err)
@@ -477,13 +418,14 @@ func TestCLIFullWorkflow(t *testing.T) {
 				t.Fatalf("%+v", st)
 			}
 		}
-		must("put", failedURL)
+		must("delete", failedURL)
+		enqueue(failedURL)
 		st = readStatus()
 		if len(st.Queue) != 1 || st.Queue[0].State != "queued" || st.Queue[0].Attempts != 0 || st.Queue[0].Reason != "" {
 			t.Fatalf("%+v", st)
 		}
 		must("delete", failedURL)
-		must("put", abandonedURL)
+		enqueue(abandonedURL)
 		for range 3 {
 			start()
 			_, lock := readLock()
@@ -501,7 +443,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 
 		const blob = "https://github.com/owner/repo/blob/main/source.md"
 		const raw = "https://raw.githubusercontent.com/owner/repo/main/source.md"
-		must("put", blob, raw)
+		enqueue(blob, raw)
 		token = start()
 		must("delete", blob)
 		dir, err = filepath.EvalSymlinks(filepath.Join(config, ".kioku", "capture-tmp", token))

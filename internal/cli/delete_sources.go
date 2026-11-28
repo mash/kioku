@@ -16,7 +16,7 @@ func (a *App) deleteSources(args []string) error {
 	for _, url := range args {
 		if err := source.ValidateSourceURL(url); err != nil {
 			if strings.HasPrefix(url, source.LocalSource) {
-				return errors.New("delete: ローカルキーは kioku:local/YYYYMMDD-<64 桁> の全体を書く")
+				return errors.New("delete: ローカルキーは kioku:local/<64 桁> の全体を書く")
 			}
 			return err
 		}

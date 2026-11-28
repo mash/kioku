@@ -102,7 +102,7 @@ func TestInboxStoresSourceURLAndVerbatimBody(t *testing.T) {
 		} else if c := f.request("POST", "/api/projects/"+p.ID+"/put", human, model.PutRequest{File: &model.FileInput{Name: "a.md", Content: content}}, &result); c != 202 {
 			t.Fatal(c)
 		}
-		if result["source_url"] != "https://example.com/a" || len(result) != 1 {
+		if len(result) != 0 {
 			t.Fatal("unexpected put response", result)
 		}
 		item := waitingInboxItem(t, f, p.ID, "https://example.com/a")

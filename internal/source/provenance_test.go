@@ -3,11 +3,12 @@ package source
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInboxFileRejectsTrailingYAML(t *testing.T) {
 	input := "---\nsource_url: kioku:local\nupdated_at: 2026-11-28T00:00:00Z\n...\ntitle: Keep me\n---\nBody\n"
-	if _, content, err := InboxFile("note.md", input); err == nil {
+	if _, content, err := InboxFile("note.md", input, time.Time{}); err == nil {
 		t.Fatalf("accepted and discarded frontmatter after YAML end marker: %q", content)
 	}
 }
@@ -47,7 +48,6 @@ func TestFileProvenance(t *testing.T) {
 		{"relative", strings.ReplaceAll(valid, "https://example.com/doc", "/doc"), "source_url"},
 		{"credentials", strings.ReplaceAll(valid, "https://example.com/doc", "https://user:pass@example.com/doc"), "source_url"},
 		{"http", strings.ReplaceAll(valid, "https:", "http:"), "source_url"},
-		{"private", strings.ReplaceAll(valid, "example.com", "127.0.0.1"), "source_url"},
 		{"missing updated_at", strings.ReplaceAll(valid, "updated_at: "+updated+"\n", ""), "updated_at"},
 		{"empty updated_at", strings.ReplaceAll(valid, updated, `""`), "updated_at"},
 		{"null updated_at", strings.ReplaceAll(valid, updated, "null"), "updated_at"},
@@ -82,5 +82,33 @@ func TestFileProvenance(t *testing.T) {
 				t.Fatalf("document = %+v, error = %v", doc, err)
 			}
 		})
+	}
+}
+
+func TestLocalInboxBodyKey(t *testing.T) {
+	const key = "kioku:local/5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+	for _, tc := range []struct{ header, body, want string }{
+		{"updated_at: 2026-11-21T00:00:00+09:00\n", "hello\n", key},
+		{"updated_at: 2026-11-26T00:00:00Z\ntitle: New title\n", "hello\n", key},
+		{"updated_at: 2026-11-26T00:00:00Z\n", "hello\r\n", "kioku:local/cd2eca3535741f27a8ae40c31b0c41d4057a7a7b912b33b9aed86485d1c84676"},
+		{"updated_at: 2026-11-26T00:00:00Z\n", " \r\n", ""},
+	} {
+		content := "---\nsource_url: kioku:local\n" + tc.header + "---\n" + tc.body
+		doc, saved, err := InboxFile("notes.md", content, time.Time{})
+		if tc.want == "" {
+			if err == nil {
+				t.Fatal("accepted whitespace-only body")
+			}
+		} else if err != nil || doc.URL != tc.want || !strings.HasSuffix(saved, "---\n"+tc.body) {
+			t.Fatalf("got %q, %q, %v, want %s", doc.URL, saved, err, tc.want)
+		}
+	}
+}
+
+func TestHTTPSIdentityDoesNotCheckNetworkDestination(t *testing.T) {
+	const u = "https://127.0.0.1:8443/private"
+	doc, err := FileWithProvenance("notes.md", "---\nsource_url: "+u+"\nupdated_at: 2026-11-28T00:00:00Z\n---\nBody")
+	if err != nil || doc.URL != u {
+		t.Fatal(doc, err)
 	}
 }

@@ -9,112 +9,39 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
 )
 
-const putUsage = "usage: kioku put PATH... | put [--date DATE] file:///PATH | put [--note TEXT] [--now [--plugin-root DIR]] https://URL..."
+const putUsage = "usage: kioku put PATH... | kioku put file:///PATH"
 
 var putScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
 func (a *App) put(args []string) error {
-	f := flag.NewFlagSet("put", flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	date := f.String("date", "", "document date")
-	note := f.String("note", "kioku put", "why the URL was queued")
-	now := f.Bool("now", false, "start capture now")
-	pluginRoot := f.String("plugin-root", os.Getenv("CLAUDE_PLUGIN_ROOT"), "plugin root")
-	if err := f.Parse(args); errors.Is(err, flag.ErrHelp) {
-		_, err = fmt.Fprintln(a.Err, "Usage of put:\n"+putUsage)
-		return err
-	} else if err != nil || f.NArg() == 0 {
+	if len(args) == 0 {
 		return errors.New(putUsage)
 	}
-	scheme := putScheme.FindString(f.Arg(0))
-	for _, arg := range f.Args() {
-		if s := putScheme.FindString(arg); s != "" && s != "file:" && s != "https:" {
-			return fmt.Errorf("put: 対応しないスキーム %s です。https://、file:///、通常のパスのどれかを使う。コロンを含む相対パスは ./ を付ける", s)
-		}
-		if putScheme.FindString(arg) != scheme {
+	scheme := putScheme.FindString(args[0])
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") || putScheme.FindString(arg) != scheme {
 			return errors.New(putUsage)
 		}
 	}
-	var dateSet, noteSet, nowSet, rootSet bool
-	f.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "date":
-			dateSet = true
-		case "note":
-			noteSet = true
-		case "now":
-			nowSet = true
-		case "plugin-root":
-			rootSet = true
-		}
-	})
 	switch {
-	case scheme == "file:" && f.NArg() == 1 && !noteSet && !nowSet && !rootSet:
-		return a.putLocalFile(f.Arg(0), *date, dateSet)
-	case scheme == "https:" && !dateSet && (!rootSet || *now):
-		return a.putURLs(f.Args(), *note, *now, *pluginRoot)
-	case scheme == "" && f.NFlag() == 0:
-		return a.putPaths(f.Args())
+	case scheme == "file:" && len(args) == 1:
+		return a.putLocalFile(args[0])
+	case scheme == "":
+		return a.putPaths(args)
+	case scheme != "file:":
+		return fmt.Errorf("put: 対応しないスキーム %s。コロンを含む相対パスは ./ を付ける\n%s", scheme, putUsage)
 	default:
 		return errors.New(putUsage)
 	}
-}
-
-func (a *App) putURLs(urls []string, note string, now bool, pluginRoot string) error {
-	for _, u := range urls {
-		if strings.ContainsAny(u, "\t\r\n") {
-			return errors.New("put: URL にタブと改行を書かない")
-		}
-		if err := source.ValidateHTTPS(u); err != nil {
-			return fmt.Errorf("put: %w", err)
-		}
-	}
-	if now {
-		if _, err := exec.LookPath("claude"); err != nil {
-			return errors.New("put: claude コマンドが無いので --now を使えない。--now を外すか、Markdown を用意して kioku put PATH で送る")
-		}
-		if pluginRoot == "" {
-			return errors.New("put: --now には plugin root が要る。--plugin-root DIR を付ける")
-		}
-	} else if os.Getenv("CLAUDE_CODE_SESSION_ID") == "" {
-		return errors.New("put: Claude Code の外では capture が動かないので put https:// を使えない。--now を付けるか、Markdown を用意して kioku put PATH で送る")
-	}
-
-	at := time.Now()
-	count, err := a.addQueueURLs(urls, note, at)
-	if err != nil {
-		return err
-	}
-	var outErr error
-	for _, u := range urls {
-		if _, outErr = fmt.Fprintf(a.Out, "queued %s（queue %d 件）\n", u, count); outErr != nil {
-			break
-		}
-	}
-	if !now {
-		return outErr
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return errors.Join(outErr, err)
-	}
-	if outErr != nil {
-		app := *a
-		app.Out = io.Discard
-		a = &app
-	}
-	return errors.Join(outErr, a.captureRun(1, cwd, at.UTC(), pluginRoot))
 }
 
 func (a *App) capturePut(args []string) error {
@@ -254,7 +181,10 @@ func (a *App) putPaths(paths []string) error {
 			if _, err := source.FileWithProvenance(name, content); err != nil {
 				if metadata, parseErr := source.Frontmatter(content); parseErr == nil {
 					u, _ := source.FrontmatterSourceURL(metadata)
-					if u == source.LocalSource || source.LocalKeyDate(u) != "" {
+					if source.IsLocalKey(u) {
+						return fmt.Errorf("put: %s のローカルキーは delete にだけ指定する", name)
+					}
+					if u == source.LocalSource {
 						return fmt.Errorf("put: %s の source_url は %s です。ローカル資料は file:///abs/notes.md の形で put する", name, u)
 					}
 				}

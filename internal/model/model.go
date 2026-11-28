@@ -94,7 +94,7 @@ type PutRequest struct {
 }
 
 type PutResponse struct {
-	SourceURL string `json:"source_url"`
+	SourceURL string `json:"source_url,omitempty"`
 }
 
 type InboxItem struct {

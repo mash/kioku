@@ -14,8 +14,8 @@ func BenchmarkValidateSources(b *testing.B) {
 		name := fmt.Sprintf("wiki/source-%d.md", i)
 		key := fmt.Sprintf("https://example.com/%d", i)
 		if i%2 == 0 {
-			name = fmt.Sprintf("wiki/source-20261121-%d.md", i)
-			key = fmt.Sprintf("kioku:local/20261121-%064x", i)
+			name = fmt.Sprintf("wiki/source-%d.md", i)
+			key = fmt.Sprintf("kioku:local/%064x", i)
 		}
 		pages[name] = "---\nsource_url: " + key + "\ntitle: Example\n---\nBody"
 	}
@@ -40,7 +40,7 @@ func TestSourceValidationRules(t *testing.T) {
 		{"c", map[string]string{"wiki/source-a.md": page("https://example.com/a")}, nil, []model.InboxItem{{Remove: true, SourceURL: "https://example.com/a"}}, "(c)"},
 		{"d", nil, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, nil, "(d)"},
 		{"e", nil, nil, []model.InboxItem{{SourceURL: "https://example.com/a"}}, "(e)"},
-		{"updated-name", map[string]string{"wiki/source-new.md": page("https://example.com/a")}, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, []model.InboxItem{{SourceURL: "https://example.com/a"}}, ""},
+		{"updated-name", map[string]string{"wiki/source-new.md": page("https://example.com/a")}, map[string]string{"wiki/source-old.md": page("https://example.com/a")}, []model.InboxItem{{SourceURL: "https://example.com/a"}}, "(a)"},
 		{"slug-collision", map[string]string{"wiki/source-title.md": page("https://example.com/a"), "wiki/source-title-2.md": page("https://example.com/b")}, nil, nil, ""},
 		{"removed", nil, map[string]string{"wiki/source-a.md": page("https://example.com/a")}, []model.InboxItem{{Remove: true, SourceURL: "https://example.com/a"}}, ""},
 	} {
@@ -83,19 +83,17 @@ func TestSourceURLFrontmatterBoundaries(t *testing.T) {
 }
 
 func TestLocalSourceNames(t *testing.T) {
-	key := "kioku:local/20261121-" + strings.Repeat("1", 64)
+	key := "kioku:local/" + strings.Repeat("1", 64)
 	content := "---\nsource_url: " + key + "\n---\nBody"
-	previous := map[string]string{"wiki/source-20261121-note.md": content}
+	previous := map[string]string{"wiki/source-note.md": content}
 	for _, tc := range []struct {
 		name     string
 		previous map[string]string
 		valid    bool
 	}{
-		{"wiki/source-20261121-note-2.md", nil, true},
-		{"wiki/source-20261120-note.md", nil, false},
-		{"wiki/source-20261121-.md", nil, false},
-		{"wiki/source-20261121-note-2.md", previous, false},
-		{"wiki/source-20261121-note.md", previous, true},
+		{"wiki/source-note-2.md", nil, true},
+		{"wiki/source-note-2.md", previous, false},
+		{"wiki/source-note.md", previous, true},
 	} {
 		problems := ValidateSources(map[string]string{tc.name: content}, tc.previous, nil)
 		if (len(problems) == 0) != tc.valid {

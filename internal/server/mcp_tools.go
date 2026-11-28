@@ -401,7 +401,7 @@ func (s *Server) mcpSourcePut(ctx context.Context, key, namespace string, req mo
 	}); err != nil {
 		return nil, err
 	}
-	return s.acceptInbox(ctx, project.ID, uid, req, mutationHook{check: func(q *store.Queries) error {
+	return s.acceptInbox(ctx, project.ID, uid, req, true, mutationHook{check: func(q *store.Queries) error {
 		p, user, err := connectorProject(q, key, namespace)
 		if err != nil {
 			return err

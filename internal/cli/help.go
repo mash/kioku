@@ -30,9 +30,8 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org add-owner --yes ORG EMAIL_OR_ID   Add an organization co-owner
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove queued URLs and request source removal by HTTPS URL or local key
-  put PATH...                         Send files or directories with public HTTPS provenance
-  put [--date DATE] file:///PATH      Send a local file and write back its source key
-  put [--note TEXT] [--now [--plugin-root DIR]] https://URL...  Queue public URLs
+  put PATH...                         Send files or directories with HTTPS provenance
+  put file:///PATH                    Send a local file without changing the original
   view list|show|set         Inspect and update View settings
   generate [--wait]         Generate wiki from waiting inbox items (wait also pulls)
   pull [--description TEXT]           Bind on first pull; fetch one project

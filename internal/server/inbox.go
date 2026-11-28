@@ -32,7 +32,7 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	if !decodeMCPArguments(body, &req) {
 		return fail(400, "invalid put request")
 	}
-	result, err := s.acceptInbox(r.Context(), pid, uid, req)
+	result, err := s.acceptInbox(r.Context(), pid, uid, req, false)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	return nil
 }
 
-func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest, hooks ...mutationHook) (model.PutResponse, error) {
+func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest, useReceiptTime bool, hooks ...mutationHook) (model.PutResponse, error) {
 	item := model.InboxItem{ID: auth.Token()[:20], ProjectID: pid, Submitter: uid, Created: time.Now().UTC()}
 	encoded, err := json.Marshal(req)
 	if err != nil {
@@ -50,13 +50,21 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 		return model.PutResponse{}, fail(413, "put exceeds 1 MiB")
 	}
 	var body string
+	var response model.PutResponse
 	switch {
 	case req.File != nil && !req.Remove && req.SourceURL == "":
-		doc, content, err := source.InboxFile(req.File.Name, req.File.Content)
+		var receivedAt time.Time
+		if useReceiptTime {
+			receivedAt = item.Created
+		}
+		doc, content, err := source.InboxFile(req.File.Name, req.File.Content, receivedAt)
 		if err != nil {
 			return model.PutResponse{}, fail(400, err.Error())
 		}
 		item.SourceURL, body = doc.URL, content
+		if source.IsLocalKey(doc.URL) {
+			response.SourceURL = doc.URL
+		}
 	case req.File == nil && req.Remove && req.SourceURL != "":
 		if err := source.ValidateSourceURL(req.SourceURL); err != nil {
 			return model.PutResponse{}, fail(400, err.Error())
@@ -69,5 +77,5 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 	if err := s.storage.putInbox(ctx, store.InboxRow{ID: item.ID, ProjectID: pid, SourceURL: item.SourceURL, Remove: item.Remove, Created: item.Created.UnixMilli(), Data: store.InboxData{Submitter: uid}}, []byte(body), hooks...); err != nil {
 		return model.PutResponse{}, err
 	}
-	return model.PutResponse{SourceURL: item.SourceURL}, nil
+	return response, nil
 }

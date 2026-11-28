@@ -14,48 +14,31 @@ import (
 
 const LocalSource = "kioku:local"
 
-// LocalKeyLength is the byte length of a full local key.
-const LocalKeyLength = len(LocalSource+"/YYYYMMDD-") + 2*sha256.Size
+var localKey = regexp.MustCompile(`^kioku:local/[0-9a-f]{64}$`)
 
-const invalidLocalKey = "invalid kioku:local key: use kioku:local or kioku:local/YYYYMMDD-<64 lowercase hex>"
-
-var localKey = regexp.MustCompile(`^kioku:local/([0-9]{8})-[0-9a-f]{64}$`)
-
-// LocalKeyDate returns the date of a full local key, or an empty string.
-func LocalKeyDate(raw string) string {
-	m := localKey.FindStringSubmatch(raw)
-	if m == nil {
-		return ""
-	}
-	if _, err := time.Parse("20060102", m[1]); err != nil {
-		return ""
-	}
-	return m[1]
-}
+func IsLocalKey(raw string) bool { return localKey.MatchString(raw) }
 
 // ValidateSourceURL validates a stored source identity without fetching it.
 func ValidateSourceURL(raw string) error {
-	switch {
-	case raw == LocalSource:
-		return errors.New("remove requires a full kioku:local/YYYYMMDD-<hash> key")
-	case LocalKeyDate(raw) != "":
+	if IsLocalKey(raw) {
 		return nil
-	case strings.HasPrefix(raw, LocalSource):
-		return errors.New(invalidLocalKey)
+	}
+	if strings.HasPrefix(raw, LocalSource) {
+		return errors.New("remove requires a full kioku:local/<64 lowercase hex> key")
 	}
 	return ValidateHTTPS(raw)
 }
 
-// ValidateHTTPS validates a public source URL without fetching it.
+// ValidateHTTPS validates an HTTPS source identity, not a network destination.
 func ValidateHTTPS(raw string) error {
-	if raw == "" {
-		return errors.New("source_url is required")
-	}
 	u, err := url.Parse(raw)
-	if err != nil || len(raw) > 4096 {
+	if err != nil || len(raw) > 4096 || strings.ContainsAny(raw, "\t\r\n") {
 		return errors.New("invalid source URL")
 	}
-	return ValidateURL(u)
+	if u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return errors.New("source URL must be HTTPS with a host and without user information")
+	}
+	return nil
 }
 
 // time.Parse accepts some non-RFC 3339 forms, including single-digit hours,
@@ -71,18 +54,18 @@ func ParseUpdatedAt(raw string) (time.Time, error) {
 	return time.Time{}, errors.New("updated_at must be an RFC 3339 timestamp with an explicit offset in YAML frontmatter")
 }
 
-// FileWithProvenance reads the public HTTPS provenance used by put PATH and capture put.
+// FileWithProvenance reads the HTTPS provenance used by put PATH and capture put.
 func FileWithProvenance(name, content string) (Document, error) {
-	doc, _, err := fileWithProvenance(name, content, false)
+	doc, _, err := fileWithProvenance(name, content, false, time.Time{})
 	return doc, err
 }
 
 // InboxFile resolves the source identity and replaces the local key request in the inbox body.
-func InboxFile(name, content string) (Document, string, error) {
-	return fileWithProvenance(name, content, true)
+func InboxFile(name, content string, localReceivedAt time.Time) (Document, string, error) {
+	return fileWithProvenance(name, content, true, localReceivedAt)
 }
 
-func fileWithProvenance(name, content string, allowLocal bool) (Document, string, error) {
+func fileWithProvenance(name, content string, allowLocal bool, localReceivedAt time.Time) (Document, string, error) {
 	doc, err := File(name, content)
 	if err != nil {
 		return Document{}, "", err
@@ -95,45 +78,36 @@ func fileWithProvenance(name, content string, allowLocal bool) (Document, string
 	if err != nil {
 		return Document{}, "", err
 	}
-	isLocal := allowLocal && strings.HasPrefix(sourceURL, LocalSource)
-	switch {
-	case isLocal && sourceURL != LocalSource && LocalKeyDate(sourceURL) == "":
-		return Document{}, "", errors.New(invalidLocalKey)
-	case !isLocal:
+	isLocal := allowLocal && sourceURL == LocalSource
+	if IsLocalKey(sourceURL) {
+		return Document{}, "", errors.New("local keys are only for remove; to put a local document use source_url: kioku:local")
+	}
+	if !isLocal {
 		if err := ValidateHTTPS(sourceURL); err != nil {
 			return Document{}, "", fmt.Errorf("source_url: %w", err)
 		}
 	}
-	updatedAt := FrontmatterValue(metadata, "updated_at")
-	var raw string
-	if updatedAt != nil && updatedAt.Kind == yaml.ScalarNode {
-		raw = updatedAt.Value
-	}
-	stamp, err := ParseUpdatedAt(raw)
-	if err != nil {
-		if sourceURL == LocalSource && isLocal {
-			err = errors.New("updated_at is required for source_url kioku:local: write the document's own date (for example the meeting date) as an RFC 3339 timestamp with an explicit offset")
+	var rewriteTime string
+	if isLocal && !localReceivedAt.IsZero() {
+		rewriteTime = localReceivedAt.UTC().Format(time.RFC3339Nano)
+	} else {
+		var raw string
+		if value := FrontmatterValue(metadata, "updated_at"); value != nil && value.Kind == yaml.ScalarNode {
+			raw = value.Value
 		}
-		return Document{}, "", err
+		if _, err := ParseUpdatedAt(raw); err != nil {
+			return Document{}, "", err
+		}
 	}
 	if isLocal {
 		_, body, _ := splitFrontmatter(content)
 		if strings.TrimSpace(body) == "" {
 			return Document{}, "", errors.New("source body after frontmatter is empty")
 		}
-		date := stamp.In(time.FixedZone("JST", 9*60*60)).Format("20060102")
-		key := fmt.Sprintf("%s/%s-%x", LocalSource, date, sha256.Sum256([]byte(body)))
-		if LocalKeyDate(key) == "" {
-			return Document{}, "", errors.New("updated_at does not have a four-digit JST year")
-		}
-		if sourceURL == LocalSource {
-			content, err = RewriteFrontmatter(content, key, "")
-			if err != nil {
-				return Document{}, "", err
-			}
-			sourceURL = key
-		} else if sourceURL != key {
-			return Document{}, "", fmt.Errorf("source_url %s does not match the body and updated_at; send source_url: kioku:local to get the current key", sourceURL)
+		sourceURL = fmt.Sprintf("%s/%x", LocalSource, sha256.Sum256([]byte(body)))
+		content, err = RewriteFrontmatter(content, sourceURL, rewriteTime)
+		if err != nil {
+			return Document{}, "", err
 		}
 	}
 	doc.URL = sourceURL

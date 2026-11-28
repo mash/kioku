@@ -19,8 +19,7 @@ Workflow:
    - remove true: delete the source page and remove references from other pages.
    Find an existing source by frontmatter source_url, not by its filename.
    Keep its filename. For a new source choose source-<slug>.md from the title
-   using ASCII lowercase letters, digits and hyphens. For a new source with a
-   kioku:local/ key, use source-<YYYYMMDD>-<slug>.md with the date from the key.
+   using ASCII lowercase letters, digits and hyphens for both HTTPS and local sources.
    For a local source without title, use the first heading in the body. If
    there is no heading, choose a short title that describes the body. If the
    filename is occupied by another source, use -2, then -3 etc.

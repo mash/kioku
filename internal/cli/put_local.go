@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/mash/kioku/internal/model"
 	"github.com/mash/kioku/internal/source"
@@ -66,34 +65,6 @@ func readLocalFile(path string) ([]byte, os.FileInfo, error) {
 	return b, info, nil
 }
 
-func localFileContent(path, content string, mtime time.Time) (string, error) {
-	name := filepath.Base(path)
-	if _, err := source.File(name, content); err != nil {
-		return "", fmt.Errorf("%s: %w", path, err)
-	}
-	if source.HasFrontmatter(content) {
-		metadata, err := source.Frontmatter(content)
-		if err != nil {
-			return "", fmt.Errorf("%s: %w", path, err)
-		}
-		if source.FrontmatterValue(metadata, "source_url") != nil {
-			u, _ := source.FrontmatterSourceURL(metadata)
-			switch {
-			case u == source.LocalSource:
-			case strings.HasPrefix(strings.ToLower(u), "https:"):
-				return "", fmt.Errorf("put: %s の source_url は HTTPS の URL です。file: を付けず、通常のパスで put する: kioku put %s", name, shellQuote(path))
-			default:
-				return "", fmt.Errorf("put: %s の source_url は省くか kioku:local にする", name)
-			}
-		}
-	}
-	submitted, err := source.RewriteFrontmatter(content, source.LocalSource, mtime.UTC().Format(time.RFC3339Nano))
-	if err == nil && len(submitted) > maxSourceFileBytes {
-		return "", fmt.Errorf("%s exceeds 1 MiB", path)
-	}
-	return submitted, err
-}
-
 func (a *App) putLocalFile(raw string) error {
 	path, err := localFilePath(raw)
 	if err != nil {
@@ -103,9 +74,17 @@ func (a *App) putLocalFile(raw string) error {
 	if err != nil {
 		return err
 	}
-	submitted, err := localFileContent(path, string(original), info.ModTime())
-	if err != nil {
-		return err
+	name := filepath.Base(path)
+	submitted, err := source.LocalFileContent(name, string(original), info.ModTime())
+	switch {
+	case errors.Is(err, source.ErrHTTPSLocalFile):
+		return fmt.Errorf("put: %s の source_url は HTTPS の URL です。file: を付けず、通常のパスで put する: kioku put %s", name, shellQuote(path))
+	case errors.Is(err, source.ErrLocalFileSource):
+		return fmt.Errorf("put: %s の source_url は省くか kioku:local にする", name)
+	case err != nil:
+		return fmt.Errorf("%s: %w", path, err)
+	case len(submitted) > maxSourceFileBytes:
+		return fmt.Errorf("%s exceeds 1 MiB", path)
 	}
 	endpoint, err := a.projectPath()
 	if err != nil {
@@ -115,7 +94,7 @@ func (a *App) putLocalFile(raw string) error {
 		return err
 	}
 	var result model.PutResponse
-	code, err := a.request(http.MethodPost, endpoint+"/put", model.PutRequest{File: &model.FileInput{Name: filepath.Base(path), Content: submitted}}, &result)
+	code, err := a.request(http.MethodPost, endpoint+"/put", model.PutRequest{File: &model.FileInput{Name: name, Content: submitted}}, &result)
 	if code >= 400 && err != nil {
 		return err
 	}

@@ -14,6 +14,13 @@ import (
 
 const LocalSource = "kioku:local"
 
+var (
+	ErrLocalMarker     = errors.New("source_url: kioku:local is only for local documents")
+	ErrLocalKeyForPut  = errors.New("local keys are only for remove; to put a local document use source_url: kioku:local")
+	ErrHTTPSLocalFile  = errors.New("the local file has an HTTPS source_url")
+	ErrLocalFileSource = errors.New("omit source_url or use kioku:local")
+)
+
 var localKey = regexp.MustCompile(`^kioku:local/[0-9a-f]{64}$`)
 
 func IsLocalKey(raw string) bool { return localKey.MatchString(raw) }
@@ -65,12 +72,48 @@ func InboxFile(name, content string, localReceivedAt time.Time) (Document, strin
 	return fileWithProvenance(name, content, true, localReceivedAt)
 }
 
+// LocalFileContent prepares a local file for upload without changing its body.
+func LocalFileContent(name, content string, mtime time.Time) (string, error) {
+	if _, err := File(name, content); err != nil {
+		return "", err
+	}
+	block, body, found := splitFrontmatter(content)
+	mapping := &yaml.Node{Kind: yaml.MappingNode}
+	if found {
+		decoder := yaml.NewDecoder(strings.NewReader(block))
+		var err error
+		mapping, err = decodeFrontmatter(decoder)
+		if err != nil {
+			return "", err
+		}
+		if FrontmatterValue(mapping, "source_url") != nil {
+			u, _ := FrontmatterSourceURL(mapping)
+			switch {
+			case u == LocalSource:
+			case strings.HasPrefix(strings.ToLower(u), "https:"):
+				return "", ErrHTTPSLocalFile
+			default:
+				return "", ErrLocalFileSource
+			}
+		}
+		if err := checkFrontmatterEnd(decoder); err != nil {
+			return "", err
+		}
+	}
+	return rewriteFrontmatter(mapping, body, LocalSource, mtime.UTC().Format(time.RFC3339Nano))
+}
+
 func fileWithProvenance(name, content string, allowLocal bool, localReceivedAt time.Time) (Document, string, error) {
 	doc, err := File(name, content)
 	if err != nil {
 		return Document{}, "", err
 	}
-	metadata, err := Frontmatter(content)
+	block, body, found := splitFrontmatter(content)
+	if !found {
+		return Document{}, "", errFrontmatter
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(block))
+	metadata, err := decodeFrontmatter(decoder)
 	if err != nil {
 		return Document{}, "", err
 	}
@@ -78,9 +121,12 @@ func fileWithProvenance(name, content string, allowLocal bool, localReceivedAt t
 	if err != nil {
 		return Document{}, "", err
 	}
-	isLocal := allowLocal && sourceURL == LocalSource
+	isLocal := sourceURL == LocalSource
+	if isLocal && !allowLocal {
+		return Document{}, "", ErrLocalMarker
+	}
 	if IsLocalKey(sourceURL) {
-		return Document{}, "", errors.New("local keys are only for remove; to put a local document use source_url: kioku:local")
+		return Document{}, "", ErrLocalKeyForPut
 	}
 	if !isLocal {
 		if err := ValidateHTTPS(sourceURL); err != nil {
@@ -100,12 +146,14 @@ func fileWithProvenance(name, content string, allowLocal bool, localReceivedAt t
 		}
 	}
 	if isLocal {
-		_, body, _ := splitFrontmatter(content)
 		if strings.TrimSpace(body) == "" {
 			return Document{}, "", errors.New("source body after frontmatter is empty")
 		}
+		if err := checkFrontmatterEnd(decoder); err != nil {
+			return Document{}, "", err
+		}
 		sourceURL = fmt.Sprintf("%s/%x", LocalSource, sha256.Sum256([]byte(body)))
-		content, err = RewriteFrontmatter(content, sourceURL, rewriteTime)
+		content, err = rewriteFrontmatter(metadata, body, sourceURL, rewriteTime)
 		if err != nil {
 			return Document{}, "", err
 		}

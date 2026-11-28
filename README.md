@@ -1,6 +1,6 @@
 # Kioku
 
-Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as an inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. For public URLs, the client asserts provenance. For files without a public URL, the server derives a local key from the document date and body.
+Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as an inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. For HTTPS sources, the client asserts provenance. For local files without an original URL, the server derives a key from the body alone.
 
 The repository has three parts:
 

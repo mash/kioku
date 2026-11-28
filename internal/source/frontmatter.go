@@ -16,23 +16,15 @@ func Frontmatter(content string) (*yaml.Node, error) {
 	if !found {
 		return nil, errFrontmatter
 	}
-	return parseFrontmatter(block, false)
+	return decodeFrontmatter(yaml.NewDecoder(strings.NewReader(block)))
 }
 
 var errFrontmatter = errors.New("frontmatter missing or invalid: require a top YAML mapping with unique keys")
 
-func parseFrontmatter(block string, rewriting bool) (*yaml.Node, error) {
-	decoder := yaml.NewDecoder(strings.NewReader(block))
+func decodeFrontmatter(decoder *yaml.Decoder) (*yaml.Node, error) {
 	var root yaml.Node
 	if err := decoder.Decode(&root); err != nil || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
 		return nil, errFrontmatter
-	}
-	if rewriting {
-		// Do not silently drop YAML that Decode left unread when rewriting.
-		var extra yaml.Node
-		if err := decoder.Decode(&extra); err != io.EOF {
-			return nil, errFrontmatter
-		}
 	}
 	mapping := root.Content[0]
 	seen := make(map[string]bool)
@@ -46,9 +38,12 @@ func parseFrontmatter(block string, rewriting bool) (*yaml.Node, error) {
 	return mapping, nil
 }
 
-func HasFrontmatter(content string) bool {
-	_, _, found := splitFrontmatter(content)
-	return found
+// Rewriting must not silently drop data after the first YAML document.
+func checkFrontmatterEnd(decoder *yaml.Decoder) error {
+	if err := decoder.Decode(new(yaml.Node)); err != io.EOF {
+		return errFrontmatter
+	}
+	return nil
 }
 
 func splitFrontmatter(content string) (string, string, bool) {
@@ -82,19 +77,8 @@ func FrontmatterValue(mapping *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// RewriteFrontmatter updates provenance in the top mapping without changing body bytes.
-func RewriteFrontmatter(content, sourceURL, updatedAt string) (string, error) {
-	block, body, found := splitFrontmatter(content)
-	var mapping *yaml.Node
-	if found {
-		var err error
-		mapping, err = parseFrontmatter(block, true)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		mapping = &yaml.Node{Kind: yaml.MappingNode}
-	}
+// rewriteFrontmatter updates provenance without changing body bytes.
+func rewriteFrontmatter(mapping *yaml.Node, body, sourceURL, updatedAt string) (string, error) {
 	set := func(key, value string) {
 		next := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 		for i := 0; i < len(mapping.Content); i += 2 {

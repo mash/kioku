@@ -116,6 +116,7 @@ func TestPromptNamespaces(t *testing.T) {
 		{"team/docs. other/wiki:", []string{"team/docs", "other/wiki"}},
 		{"\texample: (team/docs),\n「other/wiki」", []string{"team/docs", "other/wiki"}},
 		{"https://example.com/doc", nil},
+		{"Tesla の件は `org/b`で確認（https://example.com/doc）", []string{"org/b"}},
 		{"Tesla https://example.com/?next=org/b", nil},
 		{"internal/cli/session.go", nil},
 		{"(./team/docs) internal/session.go", nil},
@@ -154,6 +155,8 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		{name: "explicit_namespace_conflicts_with_branch", prompt: "org/b を続けて", branch: "feat/tesla-x"},
 		{name: "uncached_explicit_namespace", prompt: "Tesla は `new-org/not-cached` を使って", config: "local/context", configServer: "https://local.example"},
 		{name: "own_namespace_does_not_conflict", prompt: "Tesla は `org/a` を使って", auto: "org/a"},
+		{name: "adjacent_url_keeps_explicit_namespace", prompt: "Tesla の件は `org/b`で確認（https://example.com/doc）"},
+		{name: "url_query_namespace_does_not_conflict", prompt: "Tesla https://example.com/?next=org/b", auto: "org/a"},
 		{name: "url_and_path_do_not_conflict", prompt: "Tesla https://example.com/doc internal/cli/session.go", auto: "org/a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,7 +305,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				default:
 					aLine := "- org/a: A 案件の説明"
 					bLine := "- org/b: （説明なし）"
-					if tc.name == "E2_namespace_hint" || tc.name == "explicit_namespace_conflicts_with_branch" {
+					if tc.name == "E2_namespace_hint" || tc.name == "explicit_namespace_conflicts_with_branch" || tc.name == "adjacent_url_keeps_explicit_namespace" {
 						bLine += "［ヒント: プロンプトに namespace］"
 					}
 					if tc.config == "org/a" {
@@ -312,7 +315,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 						aLine += "［ヒント: trigger 語 tesla］"
 						bLine += "［ヒント: trigger 語 充電］"
 					}
-					if tc.blocked || tc.name == "explicit_namespace_conflicts_with_branch" || tc.name == "uncached_explicit_namespace" {
+					if tc.blocked || tc.name == "explicit_namespace_conflicts_with_branch" || tc.name == "uncached_explicit_namespace" || tc.name == "adjacent_url_keeps_explicit_namespace" {
 						aLine += "［ヒント: trigger 語 tesla］"
 					}
 					want := testCandidateHeader(configServer) + "\n" + aLine + "\n" + bLine

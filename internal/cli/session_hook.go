@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -130,18 +131,16 @@ func promptTurnContext(prompts string, s *sessionState) string {
 	return line
 }
 
+// A URL ends at a non-graphical ASCII character, a non-ASCII character, or a prose closer.
+var promptURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^[:^graph:])\]>"'\x60]*`)
+
 func promptNamespaces(prompt string) []string {
 	var namespaces []string
-	for field := range strings.FieldsSeq(prompt) {
-		if strings.Contains(field, "://") {
-			continue
-		}
-		for run := range strings.FieldsFuncSeq(field, func(r rune) bool {
-			return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("_./:-", r))
-		}) {
-			if namespace := strings.TrimRight(run, ".:"); validNamespace(namespace) {
-				namespaces = append(namespaces, namespace)
-			}
+	for run := range strings.FieldsFuncSeq(promptURL.ReplaceAllString(prompt, " "), func(r rune) bool {
+		return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("_./:-", r))
+	}) {
+		if namespace := strings.TrimRight(run, ".:"); validNamespace(namespace) {
+			namespaces = append(namespaces, namespace)
 		}
 	}
 	return namespaces

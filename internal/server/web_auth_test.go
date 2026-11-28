@@ -122,7 +122,7 @@ func TestWikiBrowserAccess(t *testing.T) {
 
 func TestLoginReturnPaths(t *testing.T) {
 	t.Parallel()
-	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/alice/general", "/u-private/general"} {
+	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/alice/general", "/private-team/general"} {
 		if got, err := authorizeReturn(value); err != nil || got != value {
 			t.Errorf("valid %q: %q %v", value, got, err)
 		}
@@ -204,20 +204,20 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 	}
 }
 
-func TestUserPrefixedNamespaceLoginReturn(t *testing.T) {
+func TestHyphenatedNamespaceLoginReturn(t *testing.T) {
 	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
-	createTestOrg(t, f, owner, "u-private")
+	createTestOrg(t, f, owner, "private-team")
 	var p fixtureProject
-	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "u-private/wiki"}, &p); code != 201 {
+	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "private-team/wiki"}, &p); code != 201 {
 		t.Fatal(code)
 	}
-	page := browserPage(t, f, "/u-private/wiki", "")
-	if page.Code != 404 || !strings.Contains(page.Body.String(), `href="/?return=%2Fu-private%2Fwiki"`) {
+	page := browserPage(t, f, "/private-team/wiki", "")
+	if page.Code != 404 || !strings.Contains(page.Body.String(), `href="/?return=%2Fprivate-team%2Fwiki"`) {
 		t.Fatal(page.Code, page.Body)
 	}
-	if page := browserPage(t, f, "/u-private/wiki", owner); page.Code != 200 {
+	if page := browserPage(t, f, "/private-team/wiki", owner); page.Code != 200 {
 		t.Fatal(page.Code, page.Body)
 	}
 }

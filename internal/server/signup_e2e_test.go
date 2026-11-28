@@ -397,7 +397,7 @@ func TestE2EUserSlugChoiceAndReservation(t *testing.T) {
 	if duration := time.Until(time.UnixMilli(expires)); duration <= 90*24*time.Hour-time.Minute || duration > 90*24*time.Hour {
 		t.Fatal("slug was not reserved for 90 days", duration)
 	}
-	another := e.submitSignup(e.signupCallback("google", "third"), "u-private")
+	another := e.submitSignup(e.signupCallback("google", "third"), "reservation-check")
 	e.expect(another, 303, nil)
 	otherToken := signupCookies(t, another, true)
 	e.expect(e.call("POST", "/api/orgs", otherToken, map[string]string{"slug": "chosen"}), 409, nil)

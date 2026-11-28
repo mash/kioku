@@ -104,6 +104,7 @@ Wiki の入口を読めたら、選択したターンの返答の冒頭に「Kio
 既存の人の認証を優先し、必要な場合だけ [connector.md](references/connector.md) へ進む。
 対象を選んだ直後に pull し、完了を待つ。
 新規作成時と projects.json に description（プロジェクトの説明）がない時は、[selection.md](references/selection.md) に従って説明案を作り、ユーザーの確認後に `--description` で渡す。
+projects.json で `"general": true` の項目には説明案を作らない。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
 Claude Code の local mode では、親が共有できる重要な文書の URL を決め、毎ターンの規則に従って `queue add` で記録する。

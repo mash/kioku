@@ -131,9 +131,14 @@ func promptTurnContext(prompts string, s *sessionState) string {
 }
 
 func promptNamespaces(prompt string) []string {
-	return slices.DeleteFunc(strings.FieldsFunc(prompt, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '/' || r == '_')
-	}), func(token string) bool { return !validNamespace(token) })
+	var namespaces []string
+	for _, word := range strings.Fields(prompt) {
+		word = strings.Trim(word, "\"'`‘’“”[]{}()<>.,:;!?、。「」『』（）［］")
+		if validNamespace(word) {
+			namespaces = append(namespaces, word)
+		}
+	}
+	return namespaces
 }
 
 func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.Time) string {

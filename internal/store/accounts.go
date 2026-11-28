@@ -44,12 +44,9 @@ func (q *Queries) PutOrganizationOwner(org, user string) error {
 	return err
 }
 
-// ReplaceOrganizationOwners makes user the only owner of org.
-func (q *Queries) ReplaceOrganizationOwners(org, user string) error {
-	if _, err := q.exec("DELETE FROM organization_owners WHERE org_id=?", org); err != nil {
-		return err
-	}
-	return q.PutOrganizationOwner(org, user)
+func (q *Queries) DeleteOrganizationOwner(org, user string) error {
+	_, err := q.exec("DELETE FROM organization_owners WHERE org_id=? AND user_id=?", org, user)
+	return err
 }
 func (q *Queries) ProjectMembers(project string) (map[string]string, error) {
 	return q.members("SELECT user_id,role FROM project_members WHERE project_id=?", project)

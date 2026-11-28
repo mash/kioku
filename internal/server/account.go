@@ -261,7 +261,27 @@ func checkAccountDeletion(q *store.Queries, uid, generalID, personalOrgID string
 		return err
 	}
 	owned[personalOrgID] = true
+organizations:
 	for org := range owned {
+		if org != personalOrgID {
+			owners, err := q.OrganizationOwners(org)
+			if err != nil {
+				return err
+			}
+			for owner := range owners {
+				if owner == uid {
+					continue
+				}
+				// An admitted deletion cannot leave this organization with an owner.
+				deleting, err := q.AccountDeleting(owner)
+				if err != nil {
+					return err
+				}
+				if !deleting {
+					continue organizations
+				}
+			}
+		}
 		projects, err := q.OrganizationProjects(org)
 		if err != nil {
 			return err
@@ -392,10 +412,13 @@ func (s *Server) changeOrganizationOwner(w http.ResponseWriter, r *http.Request,
 		if target == uid || !eligible {
 			return fail(409, "new owner must already belong to an organization project")
 		}
-		if transfer {
-			return q.ReplaceOrganizationOwners(org.ID, target)
+		if err := q.PutOrganizationOwner(org.ID, target); err != nil {
+			return err
 		}
-		return q.PutOrganizationOwner(org.ID, target)
+		if transfer {
+			return q.DeleteOrganizationOwner(org.ID, uid)
+		}
+		return nil
 	}); err != nil {
 		return err
 	}

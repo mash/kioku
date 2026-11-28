@@ -16,7 +16,7 @@ import (
 	"unicode/utf8"
 )
 
-const listHeaderText = "Kioku: このセッションは project が未選択。最初のメッセージに namespace の指定があれば、候補に無くてもその指定を優先する。指定が無ければ各 description を確認する。対象が一意に決まれば、%[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。対象が不明か、同じくらい合う候補が複数あれば、%[2]s project list でアカウントの General（\"general\": true の項目）を確認し、その namespace で %[2]s -n <namespace> session select を実行する。select が失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
+const listHeaderText = "Kioku: project 未選択。最初のメッセージの namespace を優先する。候補に無い指定は %[2]s -n <namespace> session select で選ぶ。指定が無ければ各 description を確認する。候補を一意に選べるなら %[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。決められなければ %[2]s project list の \"general\": true の namespace を %[2]s -n <namespace> session select で選ぶ。select に失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
 const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -C %[4]s -n %[1]s queue add <URL> \"<何をしたか>\" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
 const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たり、別の namespace の指定が無ければ hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。\n"
@@ -103,10 +103,32 @@ func runRawPromptHook(t *testing.T, input, prompts string) string {
 	return result.Output.Context
 }
 
+func TestPromptNamespaces(t *testing.T) {
+	for _, tc := range []struct {
+		prompt string
+		want   []string
+	}{
+		{"team/docs", []string{"team/docs"}},
+		{"\x60team/docs\x60", []string{"team/docs"}},
+		{"team/docs。", []string{"team/docs"}},
+		{"\texample: (team/docs),\n「other/wiki」", []string{"team/docs", "other/wiki"}},
+		{"https://example.com/doc", nil},
+		{"internal/cli/session.go", nil},
+		{"(./team/docs) internal/session.go", nil},
+		{"prefix:team/docs docs/team/wiki team/docs?query=x", nil},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			if got := promptNamespaces(tc.prompt); !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPromptHookAcceptanceExamples(t *testing.T) {
 	for _, tc := range []struct {
-		name, prompt, config, branch, selected, auto string
-		child, noWiki, blocked, other, many          bool
+		name, prompt, config, configServer, branch, selected, auto string
+		child, noWiki, blocked, other, many                        bool
 	}{
 		{name: "E1_list", prompt: "テスト通して"},
 		{name: "E2_namespace_hint", prompt: "org/b を続けて"},
@@ -126,8 +148,9 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		{name: "I11_unreadable_state", prompt: "Tesla", blocked: true},
 		{name: "I13_other_server", prompt: "Tesla", other: true, auto: "org/a"},
 		{name: "explicit_namespace_conflicts_with_branch", prompt: "org/b を続けて", branch: "feat/tesla-x"},
-		{name: "uncached_explicit_namespace", prompt: "Tesla は `new-org/not-cached` を使って"},
+		{name: "uncached_explicit_namespace", prompt: "Tesla は `new-org/not-cached` を使って", config: "local/context", configServer: "https://local.example"},
 		{name: "own_namespace_does_not_conflict", prompt: "Tesla は `org/a` を使って", auto: "org/a"},
+		{name: "url_and_path_do_not_conflict", prompt: "Tesla https://example.com/doc internal/cli/session.go", auto: "org/a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.blocked && os.Geteuid() == 0 {
@@ -155,8 +178,12 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					}
 				}
 			}
+			configServer := tc.configServer
+			if configServer == "" {
+				configServer = defaultServer
+			}
 			if tc.config != "" {
-				writeHookFixture(t, filepath.Join(cwd, ".kioku/config"), Config{Server: defaultServer, Namespace: tc.config})
+				writeHookFixture(t, filepath.Join(cwd, ".kioku/config"), Config{Server: configServer, Namespace: tc.config})
 			}
 			if tc.branch != "" {
 				if err := os.MkdirAll(filepath.Join(cwd, ".git"), 0700); err != nil {
@@ -274,7 +301,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					if tc.name == "E2_namespace_hint" || tc.name == "explicit_namespace_conflicts_with_branch" {
 						bLine += "［ヒント: プロンプトに namespace］"
 					}
-					if tc.config != "" {
+					if tc.config == "org/a" {
 						aLine += "［ヒント: cwd の .kioku/config］"
 					}
 					if tc.name == "E23_two_triggers" || tc.name == "R4_prompt_and_branch_conflicting_hits" {
@@ -284,7 +311,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					if tc.blocked || tc.name == "explicit_namespace_conflicts_with_branch" || tc.name == "uncached_explicit_namespace" {
 						aLine += "［ヒント: trigger 語 tesla］"
 					}
-					want := testCandidateHeader(defaultServer) + "\n" + aLine + "\n" + bLine
+					want := testCandidateHeader(configServer) + "\n" + aLine + "\n" + bLine
 					if got != want {
 						t.Fatalf("got %q\nwant %q", got, want)
 					}

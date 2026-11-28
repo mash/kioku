@@ -55,6 +55,69 @@ func TestUnlinkIdentityPreservesOtherLoginAndRevokesSessions(t *testing.T) {
 		t.Fatal("remaining login lost", c)
 	}
 }
+func TestCoOwnerCanDeleteAccountWithoutDeletingOthersPersonalOrganization(t *testing.T) {
+	t.Parallel()
+	f := setupWithWorker(t, false)
+	alice := f.login("alice@example.com")
+	bob := f.login("bob@example.com")
+	aliceID, bobID := accountID(t, f, alice), accountID(t, f, bob)
+	shared := consentProject(t, f, alice, "alice/shared")
+	joinConsentProject(t, f, shared.ID, alice, bob)
+	if status := f.request("POST", "/api/orgs/alice/owners", alice, map[string]string{"target": bobID}, nil); status != 200 {
+		t.Fatal("add co-owner", status)
+	}
+	if status := f.request("DELETE", "/api/account", bob, map[string]string{"confirm": "delete-account"}, nil); status != 200 {
+		t.Fatal("delete co-owner account", status)
+	}
+	if status := f.request("GET", "/api/me", bob, nil, nil); status != 401 {
+		t.Fatal("co-owner session survived", status)
+	}
+	if status := f.request("GET", "/api/projects/alice/general/snapshot?manifest=1", alice, nil, nil); status != 200 {
+		t.Fatal("Alice lost access to her General", status)
+	}
+	if err := f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		org, err := q.OrganizationBySlug("alice")
+		if err != nil {
+			return err
+		}
+		owners, err := q.OrganizationOwners(org.ID)
+		if err == nil && (len(owners) != 1 || !owners[aliceID]) {
+			t.Errorf("expected only Alice as owner, got %v", owners)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOrganizationTransferPreservesOtherCoOwners(t *testing.T) {
+	t.Parallel()
+	f := setupWithWorker(t, false)
+	alice := f.login("alice@example.com")
+	bob := f.login("bob@example.com")
+	carol := f.login("carol@example.com")
+	aliceID, bobID, carolID := accountID(t, f, alice), accountID(t, f, bob), accountID(t, f, carol)
+	createTestOrg(t, f, alice, "team")
+	project := consentProject(t, f, alice, "team/docs")
+	joinConsentProject(t, f, project.ID, alice, bob)
+	joinConsentProject(t, f, project.ID, alice, carol)
+	if status := f.request("POST", "/api/orgs/team/owners", alice, map[string]string{"target": bobID}, nil); status != 200 {
+		t.Fatal("add co-owner", status)
+	}
+	if status := f.request("POST", "/api/orgs/team/owner", bob, map[string]string{"target": carolID}, nil); status != 200 {
+		t.Fatal("transfer co-ownership", status)
+	}
+	if err := f.stateStore.Read(t.Context(), func(q *store.Queries) error {
+		owners, err := q.OrganizationOwners(project.OrgID)
+		if err == nil && (len(owners) != 2 || !owners[aliceID] || !owners[carolID]) {
+			t.Errorf("expected Alice and Carol as owners, got %v", owners)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	t.Parallel()
 	f := setupWithWorker(t, false)

@@ -123,6 +123,50 @@ func (b pausedGeneralDeletion) List(ctx context.Context, prefix string) ([]blob.
 	return b.Store.List(ctx, prefix)
 }
 
+func TestConcurrentCoOwnerDeletionsKeepAnOwnerForNonemptyOrganization(t *testing.T) {
+	t.Parallel()
+	f := setupWithWorker(t, false)
+	alice := f.login("alice@example.com")
+	bob := f.login("bob@example.com")
+	carol := f.login("carol@example.com")
+	aliceID, bobID, carolID := accountID(t, f, alice), accountID(t, f, bob), accountID(t, f, carol)
+	createTestOrg(t, f, alice, "team")
+	project := consentProject(t, f, alice, "team/docs")
+	joinConsentProject(t, f, project.ID, alice, bob)
+	joinConsentProject(t, f, project.ID, alice, carol)
+	if status := f.request("POST", "/api/orgs/team/owners", alice, map[string]string{"target": bobID}, nil); status != 200 {
+		t.Fatal("add co-owner", status)
+	}
+	if status := f.request("POST", "/api/projects/team/docs/owner", alice, map[string]string{"target": carolID}, nil); status != 200 {
+		t.Fatal("transfer project ownership", status)
+	}
+	gate := pausedGeneralDeletion{
+		Store: f.s.Blobs, prefix: "projects/" + testGeneralID(t, f, aliceID) + "/",
+		reached: make(chan struct{}), resume: make(chan struct{}),
+	}
+	f.s.storage.objects = gate
+	confirm := map[string]string{"confirm": "delete-account"}
+	result := make(chan int, 1)
+	go func() { result <- f.request("DELETE", "/api/account", alice, confirm, nil) }()
+	defer func() {
+		close(gate.resume)
+		if status := <-result; status != http.StatusOK {
+			t.Error("first co-owner could not delete account", status)
+		}
+		if status := f.request("GET", "/api/projects/team/docs/snapshot?manifest=1", carol, nil, nil); status != http.StatusOK {
+			t.Error("organization project did not survive", status)
+		}
+	}()
+	select {
+	case <-gate.reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("account deletion did not reach content cleanup")
+	}
+	if status := f.request("DELETE", "/api/account", bob, confirm, nil); status != http.StatusConflict {
+		t.Fatal("last remaining owner could delete account", status)
+	}
+}
+
 func TestAccountDeletionBlocksConcurrentCreation(t *testing.T) {
 	t.Parallel()
 	f := setupWithWorker(t, false)

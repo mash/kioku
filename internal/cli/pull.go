@@ -37,60 +37,49 @@ func (a *App) pullCommand(args []string) (resultErr error) {
 }
 
 func (a *App) syncProject() (syncResult, error) {
-	var list []model.ProjectEntry
-	binding := a.Config.Namespace == "" && a.projectNamespace != ""
-	if binding {
-		var err error
-		list, err = a.bindPullProject(a.projectNamespace)
-		if err != nil {
-			return syncResult{}, err
-		}
+	if a.Config.Namespace != "" || a.projectNamespace == "" {
+		return a.syncWiki()
+	}
+	project, err := a.bindPullProject(a.projectNamespace)
+	if err != nil {
+		return syncResult{}, err
 	}
 	result, err := a.syncWiki()
 	if err != nil {
 		return result, err
 	}
-	if !binding {
-		list, err = a.fetchProjectList()
-		if err != nil {
-			if a.Err != nil {
-				fmt.Fprintf(a.Err, "warning: could not refresh the General flag: %v\n", err)
-			}
-			return result, nil
-		}
-	}
-	return result, a.projectEntryResult(a.updateGeneralFlags(list), "the next list or pull will refresh the General flag")
+	return result, a.projectEntryResult(a.updateGeneralFlags([]model.ProjectEntry{project}), "the next project list will refresh the General flag")
 }
 
 // Bind only a server-verified namespace, and never overwrite another binding.
-func (a *App) bindPullProject(namespace string) ([]model.ProjectEntry, error) {
+func (a *App) bindPullProject(namespace string) (model.ProjectEntry, error) {
 	unlock, err := a.localLock()
 	if err != nil {
-		return nil, err
+		return model.ProjectEntry{}, err
 	}
 	defer unlock()
 	current, err := a.readProjectConfig()
 	if err != nil {
-		return nil, err
+		return model.ProjectEntry{}, err
 	}
 	if current.Server != "" && (current.Server != a.Config.Server || current.Namespace != namespace) {
-		return nil, errors.New("working directory is already bound to a different project")
+		return model.ProjectEntry{}, errors.New("working directory is already bound to a different project")
 	}
 	if err := a.checkUnboundMirror(); err != nil {
-		return nil, err
+		return model.ProjectEntry{}, err
 	}
 	a.Config.Namespace = namespace
 	if _, err := a.projectPath(); err != nil {
-		return nil, err
+		return model.ProjectEntry{}, err
 	}
 	projects, err := a.fetchProjectList()
 	if err != nil {
-		return nil, err
+		return model.ProjectEntry{}, err
 	}
 	for _, project := range projects {
 		if project.Namespace == namespace {
-			return projects, nil
+			return project, nil
 		}
 	}
-	return nil, fmt.Errorf("project %s not found, or you are not a member", namespace)
+	return model.ProjectEntry{}, fmt.Errorf("project %s not found, or you are not a member", namespace)
 }

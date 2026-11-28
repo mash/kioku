@@ -145,20 +145,18 @@ func (a *App) addProjectEntry(server, namespace, dir string, description *string
 	})
 }
 
-// Only update bound mirrors. Listing does not create or bind local directories.
+// Update only bound mirrors present in the response, which may be project-scoped.
 func (a *App) updateGeneralFlags(list []model.ProjectEntry) error {
-	general := make(map[string]bool)
+	general := make(map[string]bool, len(list))
 	for _, project := range list {
-		if project.General {
-			general[project.Namespace] = true
-		}
+		general[project.Namespace] = project.General
 	}
 	return updateProjects(a.projectsPath(), func(p *projectsFile) bool {
 		changed := false
 		for i := range p.Projects {
 			entry := &p.Projects[i]
-			if entry.Server == a.Config.Server && entry.General != general[entry.Namespace] {
-				entry.General = general[entry.Namespace]
+			if flag, ok := general[entry.Namespace]; ok && entry.Server == a.Config.Server && entry.General != flag {
+				entry.General = flag
 				changed = true
 			}
 		}

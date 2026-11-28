@@ -346,7 +346,7 @@ func TestE2EUserSlugChoiceAndReservation(t *testing.T) {
 	badCSRF := signupFormRequest(t, e.url, page.Result().Cookies(), page.Body.String(), "chosen")
 	badCSRF.Header.Set("Cookie", "kioku_signup=wrong")
 	e.expect(e.do(badCSRF), 403, nil)
-	for _, slug := range []string{"api", "u-private", "Upper", "with--gap"} {
+	for _, slug := range []string{"mcp", "oauth", "Upper", "with--gap"} {
 		invalid := e.submitSignup(page, slug)
 		e.expect(invalid, 400, nil)
 		if !strings.Contains(invalid.Body.String(), "ユーザースラッグには") {
@@ -356,6 +356,9 @@ func TestE2EUserSlugChoiceAndReservation(t *testing.T) {
 	first := e.submitSignup(page, "chosen")
 	e.expect(first, 303, nil)
 	token := signupCookies(t, first, true)
+	for _, slug := range []string{"mcp", "oauth"} {
+		e.expect(e.call("POST", "/api/orgs", token, map[string]string{"slug": slug}), 400, nil)
+	}
 	e.expect(e.submitSignup(page, "cannot-replay"), 410, nil)
 
 	var project, org, slug, namespace string
@@ -394,7 +397,7 @@ func TestE2EUserSlugChoiceAndReservation(t *testing.T) {
 	if duration := time.Until(time.UnixMilli(expires)); duration <= 90*24*time.Hour-time.Minute || duration > 90*24*time.Hour {
 		t.Fatal("slug was not reserved for 90 days", duration)
 	}
-	another := e.submitSignup(e.signupCallback("google", "third"), "third")
+	another := e.submitSignup(e.signupCallback("google", "third"), "u-private")
 	e.expect(another, 303, nil)
 	otherToken := signupCookies(t, another, true)
 	e.expect(e.call("POST", "/api/orgs", otherToken, map[string]string{"slug": "chosen"}), 409, nil)

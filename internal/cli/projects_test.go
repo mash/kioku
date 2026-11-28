@@ -293,13 +293,20 @@ func TestProjectDeleteWriteFailureWarnsWithoutPullAdvice(t *testing.T) {
 	}
 }
 
-func TestPullAndListRefreshGeneralFlag(t *testing.T) {
+func TestBindingAndListRefreshGeneralFlagsWithoutOrdinaryPullListing(t *testing.T) {
 	const namespace = "alice/general"
-	var listGeneral atomic.Bool
+	const team = "team/general"
+	var listCalls atomic.Int32
+	var listGeneral, scoped atomic.Bool
 	listGeneral.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/projects":
+			listCalls.Add(1)
+			if scoped.Load() {
+				fmt.Fprint(w, `[{"namespace":"team/general","name":"Team notes"}]`)
+				return
+			}
 			general := ""
 			if listGeneral.Load() {
 				general = `,"general":true`
@@ -315,18 +322,39 @@ func TestPullAndListRefreshGeneralFlag(t *testing.T) {
 	defer server.Close()
 	a := projectEntryApp(t)
 	a.Client, a.ctx = server.Client(), t.Context()
-	a.Config = Config{Server: server.URL, Namespace: namespace}
-	if err := a.addProjectEntry(a.Config.Server, namespace, a.Dir, nil); err != nil {
-		t.Fatal(err)
+	a.Config = Config{Server: server.URL}
+	a.projectNamespace = namespace
+	path := writeProjectsFixture(t, a, fmt.Sprintf(`{"projects":[{"server":%q,"namespace":%q,"path":"/other","general":true}]}`, server.URL, team))
+	assertFlags := func(alice, other bool) {
+		t.Helper()
+		p, err := readProjects(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i, j := p.find(server.URL, namespace), p.find(server.URL, team)
+		if i < 0 || j < 0 || p.Projects[i].General != alice || p.Projects[j].General != other {
+			t.Fatalf("want General flags %t and %t, got %+v", alice, other, p.Projects)
+		}
 	}
 	if _, err := a.syncProject(); err != nil {
 		t.Fatal(err)
 	}
-	path := a.projectsPath()
-	data, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(data), `"general": true`) {
-		t.Fatal("pull did not mark General", string(data), err)
+	assertFlags(true, true)
+	scoped.Store(true)
+	if _, err := a.syncProject(); err != nil {
+		t.Fatal(err)
 	}
+	if got := listCalls.Load(); got != 1 {
+		t.Fatal("only binding should fetch the project list", got)
+	}
+	assertFlags(true, true)
+
+	if err := a.list(); err != nil {
+		t.Fatal(err)
+	}
+	assertFlags(true, false)
+
+	scoped.Store(false)
 	var out bytes.Buffer
 	a.Out = &out
 	if err := a.list(); err != nil {
@@ -342,8 +370,5 @@ func TestPullAndListRefreshGeneralFlag(t *testing.T) {
 	if err := a.list(); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(path)
-	if err != nil || strings.Contains(string(data), `"general":`) {
-		t.Fatal("list did not clear the stale General flag", string(data), err)
-	}
+	assertFlags(false, false)
 }

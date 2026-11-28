@@ -15,11 +15,8 @@ import (
 
 func validSlug(s string) bool { return model.ValidSlug(s) }
 func reservedNamespace(s string) bool {
-	if strings.HasPrefix(s, "u-") {
-		return true
-	}
 	switch s {
-	case "api", "auth", "invite", "projects", "healthz", "metrics", "webhooks", "settings", "billing":
+	case "api", "auth", "invite", "projects", "healthz", "mcp", "metrics", "oauth", "webhooks", "settings", "billing":
 		return true
 	}
 	return false

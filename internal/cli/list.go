@@ -13,7 +13,7 @@ func (a *App) list() error {
 	if err != nil {
 		return err
 	}
-	if err := a.projectEntryResult(a.updateGeneralFlags(list), "the next list or pull will refresh the General flag"); err != nil {
+	if err := a.projectEntryResult(a.updateGeneralFlags(list), "the next project list will refresh the General flag"); err != nil {
 		return err
 	}
 	out := make([]map[string]any, 0, len(list))

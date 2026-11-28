@@ -1,1 +1,1 @@
-Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たり、別の namespace の指定が無ければ hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。
+Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。

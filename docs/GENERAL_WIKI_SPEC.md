@@ -41,8 +41,8 @@ API の `GET /api/projects` と MCP の `projects_list` は、本人の General 
 General の説明文は提案しない。
 
 利用者が namespace を指定したら、ローカル一覧に無くても指定を優先する。
-最初のメッセージが自動選択の候補とは別の有効な `org/project` を単語として含む場合、フックは自動選択しない。指定が `projects.json` に無くても同じ。URL やファイルパスの一部は数えない。
-フックは、`cmd/kiokud` のようにドットを含まない2階層のパスも namespace とみなす。
+trigger 語が1つのプロジェクトにだけ一致すると、フックはそのプロジェクトを自動選択する。
+利用者のメッセージに別の namespace の明示指定があれば、Claude はその namespace を選び直す。
 指定した namespace がフックの候補に無ければ、General を探す接続先でその namespace を選ぶ。
 指定が無ければ、選択済みのプロジェクトか、最初のメッセージに一意に合うプロジェクトを使う。
 対象を絞り込めない場合は、一覧の `"general": true` の項目から General を選ぶ。

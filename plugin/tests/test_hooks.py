@@ -646,11 +646,10 @@ class SessionHooksTest(unittest.TestCase):
         output = self.hook('UserPromptSubmit', **fields)
         return self.context(output, 'UserPromptSubmit') if output else ''
 
-    def test_E1_E2_E3_E23_candidates(self):
+    def test_E1_E3_E23_candidates(self):
         self.state_path.unlink()
         cases = [
             ('E1', 'テスト通して', None),
-            ('E2', 'org/b を続けて', None),
             ('E3', '続けて', 'org/a'),
             ('E23', 'Tesla の充電', None),
         ]
@@ -673,8 +672,6 @@ class SessionHooksTest(unittest.TestCase):
                 catalog_before = catalog_path.read_bytes()
                 config_before = config_path.read_bytes() if config else None
                 lines = ['- org/a: A 案件の説明', '- org/b: （説明なし）']
-                if example == 'E2':
-                    lines[1] += '［ヒント: プロンプトに namespace］'
                 if example == 'E3':
                     lines[0] += '［ヒント: cwd の .kioku/config］'
                 if example == 'E23':

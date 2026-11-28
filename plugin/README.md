@@ -133,13 +133,13 @@ UserPromptSubmit・Stop・SessionEnd は `agent_id` がある入力では何も�
 UserPromptSubmit は未選択時に、projects.json の trigger 語をプロンプトと cwd のブランチ名に照合する。
 ASCII だけの語は大文字小文字を区別せず、前後が `[a-z0-9]` でない位置に一致する。その他は部分一致で、ASCII 部分の大文字小文字を区別しない。
 Git を起動せず `.git/HEAD` を読み、worktree の `.git` ファイルにも対応する。detached HEAD や Git の外ではブランチ名を使わない。
-1 project だけに当たり、プロンプトに別の有効な namespace がなければ、hook が選択を保存し、背景で `kioku --server SERVER -n NAMESPACE pull` を起動する。
+1 project だけに当たれば、hook が選択を保存し、背景で `kioku --server SERVER -n NAMESPACE pull` を起動する。
 手元コピーの index.md・overview.md と選択理由を渡し、pull の完了を待たずに戻る。コピーがなければ背景で取得中と伝える。
-別の namespace が projects.json に無くても、自動選択しない。
+利用者のメッセージに別の namespace の明示指定があれば、Claude は `kioku -n NAMESPACE session select` で選び直す。
 背景 pull は、その完了時も server・namespace・path が同じ場合だけ結果を保存する。
 
 自動選択できない場合は、手元の全 project の namespace・description を一覧で出す。
-同じ server・namespace を1件にまとめ、trigger 語に当たった project を先頭へ並べる。namespace 完全一致と最寄りの `.kioku/config` はヒントとして表示する。
+同じ server・namespace を1件にまとめ、trigger 語に当たった project を先頭へ並べる。最寄りの `.kioku/config` はヒントとして表示する。
 既定以外の server も表示する。projects.json が無い・空・不正なら、最寄りの設定をヒントとして出す。候補がなくても General の選択手順を表示する。
 親は最初のメッセージで namespace の指定があれば、projects.json に無くても優先する。指定が無ければ description で対象を選ぶ。対象が不明なら、`kioku project list` の `"general": true` の項目から namespace を使う。選択には `kioku -n NAMESPACE session select` を使う。
 選択済みなら trigger 語を照合せず、毎ターン index.md の場所と queue add の規則を出す。背景 pull 中と失敗の文を区別する。

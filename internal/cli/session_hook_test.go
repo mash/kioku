@@ -148,8 +148,8 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(path, 0600) })
-	got := runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "org/p https://example.com/doc"})
-	if got != testCandidateHeader(defaultServer)+"\n- org/p: （説明なし）［ヒント: プロンプトに namespace］" {
+	got := runPromptHook(t, map[string]any{"session_id": "session-1", "hook_event_name": "UserPromptSubmit", "prompt": "続けて"})
+	if got != testCandidateHeader(defaultServer)+"\n- org/p: （説明なし）" {
 		t.Fatal(got)
 	}
 }

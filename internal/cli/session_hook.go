@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -131,21 +130,6 @@ func promptTurnContext(prompts string, s *sessionState) string {
 	return line
 }
 
-// A URL ends at a non-graphical ASCII character, a non-ASCII character, or a prose closer.
-var promptURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^[:^graph:])\]>"'\x60]*`)
-
-func promptNamespaces(prompt string) []string {
-	var namespaces []string
-	for run := range strings.FieldsFuncSeq(promptURL.ReplaceAllString(prompt, " "), func(r rune) bool {
-		return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("_./:-", r))
-	}) {
-		if namespace := strings.TrimRight(run, ".:"); validNamespace(namespace) {
-			namespaces = append(namespaces, namespace)
-		}
-	}
-	return namespaces
-}
-
 func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.Time) string {
 	if s != nil {
 		return promptTurnContext(prompts, s)
@@ -175,10 +159,7 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 			}
 		}
 	}
-	explicit := promptNamespaces(in.Prompt)
-	if len(hits) == 1 && !slices.ContainsFunc(explicit, func(namespace string) bool {
-		return namespace != hits[0].Namespace
-	}) {
+	if len(hits) == 1 {
 		if line := autoSelect(in, hits[0], words[projectKey(hits[0])], prompts, now); line != "" {
 			return line
 		}
@@ -197,9 +178,6 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 	hints := make(map[string][]string)
 	for _, p := range ps {
 		key := projectKey(p)
-		if slices.Contains(explicit, p.Namespace) {
-			hints[key] = append(hints[key], "プロンプトに namespace")
-		}
 		if p.Namespace == config.Namespace && p.Server == config.Server {
 			hints[key] = append(hints[key], "cwd の .kioku/config")
 		}

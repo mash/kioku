@@ -100,15 +100,18 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request, _ string) error 
 		if _, err := authorizeReturn(data.ReturnPath); err != nil {
 			return err
 		}
+		var login store.SessionRow
+		var loginData store.CLILoginData
 		if data.Device != "" {
-			_, login, ok, err := pendingLoopback(q, data.Device)
+			var ok bool
+			login, loginData, ok, err = pendingLoopback(q, data.Device)
 			if err != nil {
 				return err
 			}
 			if !ok {
 				return errLoopbackExpired
 			}
-			loopbackOrigin = redirectOrigin(store.ValueString(login.LoopbackRedirectURI))
+			loopbackOrigin = redirectOrigin(store.ValueString(loginData.LoopbackRedirectURI))
 		}
 		provider, identity := store.ValueString(data.IdentityProvider), store.ValueString(data.IdentityID)
 		if _, err = q.UserByIdentity(provider, identity); err == nil {
@@ -132,7 +135,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request, _ string) error 
 		if err = q.PutIdentity(row.UserID, provider, identity); err != nil {
 			return err
 		}
-		completed, err = completeOAuth(q, row.UserID, data.Device, data.IdentitySessionData)
+		completed, err = completeOAuth(q, row.UserID, data.IdentitySessionData, login, loginData)
 		return err
 	})
 	if errors.Is(err, errLoopbackExpired) {

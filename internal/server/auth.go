@@ -208,14 +208,18 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	var completed oauthCompletion
 	var signup, loopbackOrigin string
 	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
+		var login store.SessionRow
+		var loginData store.CLILoginData
 		if device != "" {
-			if _, data, ok, e := pendingLoopback(q, device); e != nil {
+			row, data, ok, e := pendingLoopback(q, device)
+			if e != nil {
 				return e
-			} else if !ok {
-				return errLoopbackExpired
-			} else {
-				loopbackOrigin = redirectOrigin(store.ValueString(data.LoopbackRedirectURI))
 			}
+			if !ok {
+				return errLoopbackExpired
+			}
+			login, loginData = row, data
+			loopbackOrigin = redirectOrigin(store.ValueString(data.LoopbackRedirectURI))
 		}
 		user, e := q.UserByIdentity(pending.Provider, identity.ID)
 		if errors.Is(e, sql.ErrNoRows) {
@@ -234,7 +238,7 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 			return e
 		}
 		data := identityData(s.Cipher, credential, user.ID, pending.Provider, identity.ID)
-		completed, e = completeOAuth(q, user.ID, device, data)
+		completed, e = completeOAuth(q, user.ID, data, login, loginData)
 		return e
 	})
 	if errors.Is(err, errSignupDenied) {
@@ -265,15 +269,11 @@ type oauthCompletion struct {
 	token, loopbackURL string
 }
 
-func completeOAuth(q *store.Queries, uid, device string, data store.IdentitySessionData) (oauthCompletion, error) {
+func completeOAuth(q *store.Queries, uid string, data store.IdentitySessionData, login store.SessionRow, loginData store.CLILoginData) (oauthCompletion, error) {
 	var result oauthCompletion
 	now := time.Now()
-	if device != "" {
-		login, loginData, ok, err := pendingLoopback(q, device)
-		if err != nil {
-			return result, err
-		}
-		if !ok {
+	if login.ID != "" {
+		if login.Expires <= now.UnixMilli() {
 			return result, errLoopbackExpired
 		}
 		code := "kioku_loopback." + auth.Token()
@@ -281,6 +281,7 @@ func completeOAuth(q *store.Queries, uid, device string, data store.IdentitySess
 		login.Expires = now.Add(time.Minute).UnixMilli()
 		loginData.IdentitySessionData = data
 		loginData.LoopbackCodeHash = store.NullableString(auth.Hash(code))
+		var err error
 		login.Data, err = store.EncodeSessionData(loginData)
 		if err != nil {
 			return result, err

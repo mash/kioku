@@ -116,6 +116,7 @@ func TestPromptNamespaces(t *testing.T) {
 		{"team/docs. other/wiki:", []string{"team/docs", "other/wiki"}},
 		{"\texample: (team/docs),\n「other/wiki」", []string{"team/docs", "other/wiki"}},
 		{"https://example.com/doc", nil},
+		{"Tesla https://example.com/?next=org/b", nil},
 		{"internal/cli/session.go", nil},
 		{"(./team/docs) internal/session.go", nil},
 		{"prefix:team/docs docs/team/wiki team/docs?query=x", []string{"team/docs"}},

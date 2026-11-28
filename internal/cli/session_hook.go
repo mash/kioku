@@ -132,11 +132,16 @@ func promptTurnContext(prompts string, s *sessionState) string {
 
 func promptNamespaces(prompt string) []string {
 	var namespaces []string
-	for _, run := range strings.FieldsFunc(prompt, func(r rune) bool {
-		return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("_./:-", r))
-	}) {
-		if namespace := strings.TrimRight(run, ".:"); validNamespace(namespace) {
-			namespaces = append(namespaces, namespace)
+	for field := range strings.FieldsSeq(prompt) {
+		if strings.Contains(field, "://") {
+			continue
+		}
+		for run := range strings.FieldsFuncSeq(field, func(r rune) bool {
+			return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("_./:-", r))
+		}) {
+			if namespace := strings.TrimRight(run, ".:"); validNamespace(namespace) {
+				namespaces = append(namespaces, namespace)
+			}
 		}
 	}
 	return namespaces

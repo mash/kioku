@@ -46,7 +46,7 @@ func (a *App) loadAgentCredentials(allowExpired bool) error {
 	if err = saved.validate(allowExpired); err != nil {
 		return err
 	}
-	a.AgentToken, a.storedAgentPath = saved.Token, path
+	a.AgentToken, a.storedAgentPath, a.agentRole = saved.Token, path, saved.Role
 	return nil
 }
 

@@ -103,6 +103,10 @@ fi
 if [ "${1:-}" = tool-guard ]; then
     exit 0
 fi
+if [ "${1:-}" = tool ]; then
+    "$TARGET" hook tool >/dev/null
+    exit 0
+fi
 if [ "${1:-}" = compact ]; then
     INPUT=$(cat)
     # Compact and resume never install or replace the CLI.

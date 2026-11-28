@@ -30,6 +30,7 @@ type App struct {
 	projectGeneral   *bool
 	description      *string
 	kind             credentialKind
+	agentRole        string
 }
 
 // credentialKind names the credential that Run selects for every request.
@@ -55,6 +56,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	if slices.Equal(args, []string{"hook", "tool-guard"}) {
 		return hookToolGuard(os.Stdin, out)
+	}
+	if slices.Equal(args, []string{"hook", "tool"}) {
+		hookTool(ctx, os.Stdin)
+		return nil
 	}
 	authDir, err := defaultAuthDir()
 	if err != nil {

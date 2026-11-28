@@ -63,6 +63,9 @@ class ManifestTest(unittest.TestCase):
             'PreToolUse': [{'matcher': '.*', 'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" tool-guard', 'timeout': 10,
             }]}],
+            'PostToolUse': [{'matcher': '^(WebFetch|Bash|Artifact|mcp__.*)$', 'hooks': [{
+                'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" tool', 'async': True, 'timeout': 10,
+            }]}],
             'Stop': [{'hooks': [{
                 'type': 'command', 'command': 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/kioku.sh" stop', 'timeout': 10,
             }]}],

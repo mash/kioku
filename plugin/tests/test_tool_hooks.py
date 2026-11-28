@@ -42,12 +42,12 @@ class ToolHooksTest(unittest.TestCase):
         self.env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(ROOT), CLAUDE_PLUGIN_DATA=str(self.data),
                         KIOKU_CAPTURE="1", KIOKU_CAPTURE_DIR=str(self.snapshot))
 
-    def invoke(self, name, input, event="PreToolUse"):
+    def invoke(self, name, input, event="PreToolUse", **metadata):
         guard = "tool-guard" if event == "PreToolUse" else "tool"
         result = subprocess.run(["sh", str(ROOT / "hooks/kioku.sh"), guard],
                                 env=self.env, text=True, capture_output=True, check=True,
                                 input=json.dumps({"hook_event_name":event, "session_id":"session-1",
-                                                  "tool_name":name, "tool_input":input}))
+                                                  "tool_name":name, "tool_input":input, **metadata}))
         self.assertEqual(result.stderr, "")
         return result.stdout
 
@@ -83,6 +83,48 @@ class ToolHooksTest(unittest.TestCase):
         self.denied(self.invoke("mcp__linear__get_issue", {"id":42}))
         self.env.pop("KIOKU_CAPTURE")
         self.assertEqual(self.invoke("Artifact", {"action":"publish"}), "")
+
+
+    def test_post_hook_queues_sources_only_for_existing_local_writer(self):
+        self.env.update(HOME=str(self.base / "home"), XDG_STATE_HOME=str(self.base / "state"))
+        self.env.pop("KIOKU_CAPTURE")
+        event = "PostToolUse"
+        hook = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"][event][0]
+        self.assertTrue(hook["hooks"][0]["async"])
+        self.assertIn("Artifact", hook["matcher"])
+        project = self.base / "project"
+        meta = project / ".kioku"
+        meta.mkdir(parents=True)
+        config = {"namespace":"org/p", "server":"https://example.invalid"}
+        (meta / "config").write_text(json.dumps(config))
+        queue = meta / "queue.tsv"
+        page = {"url":"https://example.test/source"}
+        self.assertEqual(self.invoke("WebFetch", page, event), "")
+        self.assertFalse(queue.exists())
+        state = self.base / "state" / "kioku" / "sessions" / "session-1.json"
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps(dict(config, mode="local", path=str(project))))
+        auth = self.base / "home" / ".config" / "kioku" / "auth"
+        auth.mkdir(parents=True)
+        key = hashlib.sha256(config["server"].encode()).hexdigest()
+        (auth / (key+".json")).write_text(json.dumps({"server":config["server"], "token":"fixture"}))
+        self.assertEqual(self.invoke("WebFetch", page, event, agent_id="child", tool_response="discarded"), "")
+        first = queue.read_bytes()
+        self.assertIn(b"example.test/source", first)
+        self.assertNotIn(b"discarded", first)
+        self.assertEqual(self.invoke("WebFetch", page, event), "")
+        self.assertEqual(first, queue.read_bytes())
+        published = f"Published «fixture» at {self.artifact} (Version 1, version id 1790000000-aa11)"
+        self.assertEqual(self.invoke("Artifact", {"file_path":"fixture.html"}, event, tool_response=published), "")
+        self.assertIn(self.artifact.encode(), queue.read_bytes())
+        before = queue.read_bytes()
+        self.assertEqual(self.invoke("Artifact", {"url":self.artifact, "file_path":"fixture.html"},
+                                     event, tool_response=published), "")
+        self.assertEqual(before, queue.read_bytes())
+        self.env["KIOKU_CAPTURE"] = "1"
+        self.assertEqual(self.invoke("mcp__linear__get_issue", {"id":42}, event), "")
+        self.assertEqual(before, queue.read_bytes())
+        self.assertFalse((meta / "capture.lock").exists())
 
 
 if __name__ == "__main__":

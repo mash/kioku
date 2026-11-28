@@ -95,9 +95,11 @@ func (a *App) capturePut(args []string) error {
 	// The 202 status confirms receipt; capture does not use the response body.
 	results[sourceID] = captureProgress{PutURL: doc.URL}
 	receiptErr := writeCaptureResults(dir, results)
-	logErr := a.captureNote("accepted " + doc.URL)
+	if logErr := a.captureNote("accepted " + doc.URL); logErr != nil {
+		fmt.Fprintf(a.Err, "warning: could not record acceptance in capture.log: %v\n", logErr)
+	}
 	_, err = fmt.Fprintf(a.Out, "accepted %s\n", doc.URL)
-	return errors.Join(receiptErr, logErr, err)
+	return errors.Join(receiptErr, err)
 }
 
 func (a *App) captureResult(args []string) error {
@@ -144,6 +146,9 @@ func (a *App) captureResult(args []string) error {
 	progress := results[src]
 	if *result == "accepted" && progress.PutURL == "" {
 		return errors.New("capture result: HTTP 202 has not been recorded for this source")
+	}
+	if *result != "accepted" && progress.PutURL != "" {
+		return errors.New("capture result: HTTP 202 was recorded; use --result accepted")
 	}
 	var logErr error
 	if progress.Outcome == "" {

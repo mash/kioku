@@ -362,13 +362,16 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 	}
 	if in.Event == "SessionEnd" {
 		if queued != 0 && a.captureIdle(now) {
-			_ = startHookCapture(captureCwd(in, p), p, 0)
+			if err := startHookCapture(captureCwd(in, p), p, 0); err != nil {
+				_ = a.recordCaptureLaunchError(err, false)
+			}
 		}
 		return ""
 	}
 	var messages []string
-	// Only a hook that can notify the user consumes an earlier failure.
-	launchFailed := os.Remove(a.captureLaunchErrorPath()) == nil
+	// Only a hook that can notify the user acknowledges a pending failure.
+	// Keep its reason available to status after the notification.
+	launchFailed := os.Rename(a.captureLaunchErrorPath(), a.reportedCaptureLaunchErrorPath()) == nil
 	if queued != 0 && a.captureIdle(now) {
 		// Observe the detached launcher briefly, without cancelling it.
 		wait := 750 * time.Millisecond
@@ -380,7 +383,11 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 		}
 		if err := startHookCapture(captureCwd(in, p), p, wait); err != nil {
 			launchFailed = true
-			_ = os.Remove(a.captureLaunchErrorPath())
+			var exited *exec.ExitError
+			if !errors.As(err, &exited) {
+				// The child could not run to record its own error.
+				_ = a.recordCaptureLaunchError(err, true)
+			}
 		}
 		if _, currentFailed, err := readHookQueueCounts(a.queuePath()); err == nil {
 			failed = currentFailed

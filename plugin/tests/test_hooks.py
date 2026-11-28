@@ -525,6 +525,21 @@ class SessionHooksTest(unittest.TestCase):
             self.assertEqual(self.prompt_context(prompt='https://example.com/doc'), self.list_header())
             self.assertEqual(self.prompt_context(prompt='https://example.com'), self.list_header())
 
+    def test_session_start_falls_back_when_an_older_cli_is_silent(self):
+        older = self.work / 'older-kioku'
+        older.write_text("""#!/bin/sh
+if [ "$1" = version ]; then
+    printf '%s\n' '{"version":"v0.3.0"}'
+fi
+""")
+        older.chmod(0o755)
+        shutil.copy2(older, self.data / 'bin/kioku')
+        self.env['KIOKU_CLI'] = str(older)
+        for source, prompt in [('startup', 'hook-start.txt'), ('resume', 'hook-compact.txt')]:
+            with self.subTest(source=source):
+                self.assertEqual(self.hook('SessionStart', source=source),
+                                 (self.root / 'prompts' / prompt).read_text())
+
     def test_precompact_works_without_cli_or_state(self):
         (self.data / 'bin/kioku').unlink()
         self.state_path.unlink()
@@ -1104,6 +1119,9 @@ print('backgrounded · 1a2b3c4d')
         self.assertIn('起動に失敗', output['systemMessage'])
         self.assertFalse(marker.exists())
         self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
+        status = subprocess.run([str(self.cli), '-C', str(root), 'status'],
+                                capture_output=True, text=True, env=self.env)
+        self.assertIn('fixture failure', json.loads(status.stdout)['last_capture_launch_error'])
 
     def test_delayed_success_does_not_clear_a_newer_launch_failure(self):
         root = self.work / 'project'

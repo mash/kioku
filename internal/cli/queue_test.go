@@ -525,6 +525,45 @@ func TestCapturePutKeepsAcceptedStatusWhenBodyIsTruncated(t *testing.T) {
 	}
 }
 
+func TestCaptureReceiptStillFinalizesWhenLoggingFails(t *testing.T) {
+	a := projectEntryApp(t)
+	const src = "https://example.com/accepted"
+	lock := startTestCapture(t, a, time.Now(), src)
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "source.md")
+	if err := os.WriteFile(file, []byte(SourceContentForTest(src, "evidence")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(a.metadataDir(), "capture.log"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer ts.Close()
+	var out, stderr bytes.Buffer
+	a.Config.Server, a.Client, a.ctx, a.Out, a.Err = ts.URL, ts.Client(), t.Context(), &out, &stderr
+	err = a.capturePut([]string{"--capture-token", lock.Token, "--source", src, file})
+	if err != nil || out.String() != "accepted "+src+"\n" || !strings.Contains(stderr.String(), "capture.log") {
+		t.Errorf("receipt: stdout=%q stderr=%q error=%v", out.String(), stderr.String(), err)
+	}
+	for _, outcome := range []string{"unsaved", "skipped"} {
+		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", outcome, "--reason", "fixture", src}); err == nil {
+			t.Fatalf("receipt finalized as %s", outcome)
+		}
+	}
+	if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "accepted", src}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+}
+
 func TestRegisterQueueRejectsToolSourceOver4096Bytes(t *testing.T) {
 	a := projectEntryApp(t)
 	now := time.Now()

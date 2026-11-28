@@ -105,10 +105,19 @@ download() {
     mv -f "$T/x/kioku" "$TARGET"
 }
 
+session_start() {
+    START_OUTPUT=$("$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
+    if [ -n "$START_OUTPUT" ]; then
+        printf '%s\n' "$START_OUTPUT"
+    else
+        cat "$ROOT/prompts/$1"
+    fi
+}
+
 if [ "${1:-}" = compact ]; then
     # Compact and resume never install or replace the CLI.
     if current_version >/dev/null; then
-        "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts"
+        session_start hook-compact.txt
     else
         cat "$ROOT/prompts/hook-compact.txt" "$ROOT/prompts/hook-no-cli.txt"
     fi
@@ -134,7 +143,7 @@ else
     download
 fi
 if current_version >/dev/null; then
-    "$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts"
+    session_start hook-start.txt
 else
     cat "$ROOT/prompts/hook-no-cli.txt"
 fi

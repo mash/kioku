@@ -24,6 +24,9 @@ func (a *App) status() error {
 	if lockBusy(lock, time.Now()) {
 		result["capture"] = map[string]any{"id": lock.BgID, "started_at": lock.StartedAt}
 	}
+	if reason := a.lastCaptureLaunchError(); reason != "" {
+		result["last_capture_launch_error"] = reason
+	}
 	serverError := func(err error) error {
 		result["server_error"] = err.Error()
 		return errors.Join(err, a.print(result))

@@ -46,6 +46,15 @@ func TestSessionStartIgnoresBlockedCaptureLog(t *testing.T) {
 		<-done
 		t.Fatal("SessionStart blocked opening capture.log without a reader")
 	}
+	var out bytes.Buffer
+	a.Out = &out
+	_ = a.status()
+	var result struct {
+		LaunchError string `json:"last_capture_launch_error"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil || !strings.Contains(result.LaunchError, "capture.log") {
+		t.Fatal(out.String(), err)
+	}
 }
 
 func TestStopHookIsSilentWhileCaptureRuns(t *testing.T) {

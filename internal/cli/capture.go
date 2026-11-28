@@ -356,13 +356,13 @@ func (a *App) undoCaptureLaunch(token string, snapshot []queueRow, cause error) 
 		return rows
 	})
 	// Publish the failure before another launcher can take ownership.
-	return errors.Join(err, a.recordCaptureLaunchError(cause), a.releaseCapture(token))
+	return errors.Join(err, a.recordCaptureLaunchError(cause, false), a.releaseCapture(token))
 }
 
 func (a *App) captureRun(cwd string, now time.Time) (err error) {
 	lock, rows, err := a.beginCapture(now)
 	if err != nil {
-		return errors.Join(err, a.recordCaptureLaunchError(err))
+		return errors.Join(err, a.recordCaptureLaunchError(err, false))
 	}
 	if lock == nil {
 		return nil
@@ -505,8 +505,26 @@ func (a *App) captureLaunchErrorPath() string {
 	return filepath.Join(a.metadataDir(), "capture-launch.failed")
 }
 
-func (a *App) recordCaptureLaunchError(err error) error {
-	return atomicfile.Write(a.captureLaunchErrorPath(), []byte(queueText(err.Error())+"\n"), 0600)
+func (a *App) reportedCaptureLaunchErrorPath() string {
+	return filepath.Join(a.metadataDir(), "capture-launch.reported")
+}
+
+func (a *App) recordCaptureLaunchError(err error, reported bool) error {
+	path := a.captureLaunchErrorPath()
+	if reported {
+		path = a.reportedCaptureLaunchErrorPath()
+	}
+	return atomicfile.Write(path, []byte(queueText(err.Error())+"\n"), 0600)
+}
+
+func (a *App) lastCaptureLaunchError() string {
+	for _, path := range []string{a.captureLaunchErrorPath(), a.reportedCaptureLaunchErrorPath()} {
+		data, err := readRegular(path)
+		if err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return ""
 }
 
 func (a *App) captureLockPath() string { return filepath.Join(a.metadataDir(), "capture.lock") }

@@ -57,7 +57,7 @@ func captureSnapshot(dir string) ([]queueRow, error) {
 	if !lockBusy(lock, time.Now()) || lock.Token != filepath.Base(dir) {
 		return nil, errors.New("capture lock ownership changed")
 	}
-	data, err := readCaptureSource(dir, filepath.Join(dir, "snapshot.tsv"))
+	data, err := readCaptureFile(dir, filepath.Join(dir, "snapshot.tsv"), maxCaptureSnapshotBytes)
 	if err != nil {
 		return nil, err
 	}

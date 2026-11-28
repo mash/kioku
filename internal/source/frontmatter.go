@@ -47,13 +47,13 @@ func parseFrontmatter(block string, rewriting bool) (*yaml.Node, error) {
 }
 
 func HasFrontmatter(content string) bool {
-	opening, _, _ := strings.Cut(content, "\n")
-	return strings.TrimSuffix(opening, "\r") == "---"
+	_, _, found := splitFrontmatter(content)
+	return found
 }
 
 func splitFrontmatter(content string) (string, string, bool) {
-	_, rest, found := strings.Cut(content, "\n")
-	if !found || !HasFrontmatter(content) {
+	opening, rest, found := strings.Cut(content, "\n")
+	if !found || strings.TrimSuffix(opening, "\r") != "---" {
 		return "", content, false
 	}
 	start := len(content) - len(rest)
@@ -92,22 +92,20 @@ func RewriteFrontmatter(content, sourceURL, updatedAt string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-	} else if HasFrontmatter(content) {
-		return "", errFrontmatter
 	} else {
 		mapping = &yaml.Node{Kind: yaml.MappingNode}
 	}
 	set := func(key, value string) {
-		node := FrontmatterValue(mapping, key)
-		if node == nil {
-			node = &yaml.Node{}
-			mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, node)
+		next := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+		for i := 0; i < len(mapping.Content); i += 2 {
+			if mapping.Content[i].Value == key {
+				old := mapping.Content[i+1]
+				mapping.Content[i+1] = next
+				preserveAliases(mapping, old)
+				return
+			}
 		}
-		if node.Anchor != "" && node.Kind == yaml.ScalarNode && node.Value != value {
-			preserveScalarAliases(mapping, node)
-		}
-		node.Kind, node.Tag, node.Value = yaml.ScalarNode, "!!str", value
-		node.Alias, node.Content = nil, nil
+		mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, next)
 	}
 	if updatedAt != "" {
 		set("updated_at", updatedAt)
@@ -120,15 +118,43 @@ func RewriteFrontmatter(content, sourceURL, updatedAt string) (string, error) {
 	return "---\n" + string(encoded) + "---\n" + body, nil
 }
 
-// Preserve other fields that refer to the old value of an edited scalar.
-func preserveScalarAliases(root, old *yaml.Node) {
-	if root.Kind == yaml.AliasNode && root.Alias == old {
-		root.Kind, root.Style, root.Tag, root.Value = old.Kind, old.Style, old.Tag, old.Value
-		root.Alias = nil
+// Keep anchors of replaced values if another field still references them.
+// Promote the first remaining alias to the original node, so later aliases
+// still resolve and other fields do not inherit the replacement value.
+func preserveAliases(mapping, removed *yaml.Node) {
+	anchors := make(map[*yaml.Node]bool)
+	var collect func(*yaml.Node)
+	collect = func(n *yaml.Node) {
+		if n.Anchor != "" {
+			anchors[n] = true
+		}
+		for _, child := range n.Content {
+			collect(child)
+		}
 	}
-	for _, child := range root.Content {
-		preserveScalarAliases(child, old)
+	collect(removed)
+	if len(anchors) == 0 {
+		return
 	}
+	declared := map[*yaml.Node]bool{}
+	var visit func(*yaml.Node) *yaml.Node
+	visit = func(n *yaml.Node) *yaml.Node {
+		if n.Kind == yaml.AliasNode && anchors[n.Alias] {
+			n = n.Alias
+		}
+		if n.Anchor != "" {
+			if declared[n] {
+				return &yaml.Node{Kind: yaml.AliasNode, Value: n.Anchor, Alias: n}
+			}
+			declared[n] = true
+		}
+		delete(anchors, n)
+		for i, child := range n.Content {
+			n.Content[i] = visit(child)
+		}
+		return n
+	}
+	visit(mapping)
 }
 
 // FrontmatterSourceURL reads the source identity from a parsed frontmatter mapping.

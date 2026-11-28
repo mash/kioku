@@ -20,6 +20,19 @@ func (a *App) localLock() (func(), error) {
 	return func() { _ = f.Close() }, nil
 }
 
+// captureSubmissionLock orders puts, deletes and changes to active capture
+// ownership without making asynchronous queue registration wait on HTTP.
+func (a *App) captureSubmissionLock() (func(), error) {
+	if err := ensureDirectory(a.metadataDir()); err != nil {
+		return nil, err
+	}
+	f, err := lockRegularFile(filepath.Join(a.metadataDir(), "capture-submit.lock"), os.O_CREATE)
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = f.Close() }, nil
+}
+
 func lockRegularFile(path string, flags int) (*os.File, error) {
 	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("expected a regular file: %s", path)

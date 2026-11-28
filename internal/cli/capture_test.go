@@ -135,10 +135,48 @@ func TestCaptureRun(t *testing.T) {
 		}
 		args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 		if !slices.Contains(args, "--plugin-dir") || !slices.Contains(args, root) ||
-			!slices.Contains(args, "mcp__linear") || slices.Contains(args, "mcp__linear__get_issue") ||
+			!slices.Contains(args, "mcp__linear__*") || slices.Contains(args, "mcp__linear__get_issue") ||
 			!strings.Contains(args[len(args)-1], "modifiedTime") ||
 			strings.Contains(args[len(args)-1], "capture unlock") {
 			t.Fatal(args)
+		}
+	})
+	t.Run("large capture input stays out of launch args", func(t *testing.T) {
+		a := setup(t, 1)
+		log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
+		input := json.RawMessage(`{"query":"` + strings.Repeat("x", 350<<10) + `"}`)
+		src, err := captureToolSource("mcp__fixture__get_document", input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.registerQueueSource(src, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.captureRun(t.TempDir(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		args, err := os.ReadFile(log + ".args")
+		if err != nil || len(args) > 16<<10 {
+			t.Fatal(len(args), err)
+		}
+		lock, err := readCaptureLock(a.captureLockPath())
+		if err != nil || lock == nil {
+			t.Fatal(lock, err)
+		}
+		path := filepath.Join(a.captureTmp(lock.Token), captureInstructionsFile)
+		body, err := os.ReadFile(path)
+		if err != nil || strings.Contains(string(body), src) || !strings.Contains(string(body), "--source @2") {
+			t.Fatal(len(body), err)
+		}
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+			t.Fatal(info, err)
+		}
+		if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "unsaved", "--reason", "fixture", "@2"}); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := readQueue(a.queuePath())
+		if err != nil || len(rows) != 2 || rows[1].Source != src || rows[1].Attempts != 1 || rows[1].Reason != "fixture" {
+			t.Fatal(len(rows), err)
 		}
 	})
 	t.Run("I14_missing_id", func(t *testing.T) {
@@ -298,6 +336,10 @@ func TestCaptureRun(t *testing.T) {
 
 		if err := a.capturePut([]string{"--capture-token", lock.Token, outside}); err == nil {
 			t.Fatal("capture put accepted outside file")
+		}
+		if err := fetchCommand(context.Background(), []string{server.URL, "--capture-token", lock.Token, "--out", "private", "--dir", tmp}); err == nil ||
+			(!strings.Contains(err.Error(), "public HTTPS") && !strings.Contains(err.Error(), "private address")) {
+			t.Fatal("production fetch must not accept private destinations", err)
 		}
 		for _, path := range []string{outside, filepath.Join(tmp, "link"), filepath.Join(tmp, "dirlink/outside")} {
 			if _, err := readCaptureSource(tmp, path); err == nil {

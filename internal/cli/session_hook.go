@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -335,14 +336,14 @@ func sessionStartCapture(in sessionHookInput, now time.Time) string {
 
 func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) string {
 	a := &App{Dir: p.Path}
-	rows, err := readHookQueue(a.queuePath())
+	queued, failed, err := readHookQueueCounts(a.queuePath())
 	if err != nil {
 		return ""
 	}
-	queued, failed := queueCounts(rows)
 	var messages []string
 	if queued != 0 {
 		lock, err := readCaptureLock(a.captureLockPath())
+		_, markerErr := os.Stat(a.captureLaunchErrorPath())
 		if err == nil && !lockBusy(lock, now) {
 			cwd := in.Cwd
 			if !filepath.IsAbs(cwd) {
@@ -356,11 +357,11 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 			} else if in.Event == "SessionEnd" {
 				wait = 0
 			}
-			if err := startHookCapture(cwd, p, wait); err != nil {
+			if err := startHookCapture(cwd, p, wait); err != nil || markerErr == nil {
 				messages = append(messages, fmt.Sprintf("Kioku: %s の capture の起動に失敗した。kioku -C %s status と capture.log を確認する", p.Namespace, shellQuote(p.Path)))
 			}
-			if rows, err := readHookQueue(a.queuePath()); err == nil {
-				_, failed = queueCounts(rows)
+			if _, currentFailed, err := readHookQueueCounts(a.queuePath()); err == nil {
+				failed = currentFailed
 			}
 		}
 	}
@@ -416,30 +417,36 @@ func startHookCapture(cwd string, p projectEntry, wait time.Duration) error {
 	}
 }
 
-// Bound hook reads without counting failed or malformed rows as pending work.
-func readHookQueue(path string) ([]queueRow, error) {
+// Bound each row, not the whole backlog. Other rows can be picked up after
+// the current snapshot completes without loading the full queue in each hook.
+func readHookQueueCounts(path string) (queued, failed int, err error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return 0, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return 0, 0, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return 0, 0, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("queue must be a regular file")
+		return 0, 0, errors.New("queue must be a regular file")
 	}
-	const maxQueueBytes = 8 << 20
-	data, err := io.ReadAll(io.LimitReader(f, maxQueueBytes+1))
-	if err != nil {
-		return nil, err
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 4096), maxCaptureSnapshotBytes+1)
+	for scanner.Scan() {
+		row, err := parseQueueRow(scanner.Text())
+		if err != nil {
+			return 0, 0, err
+		}
+		if row.State == queueQueued {
+			queued++
+		} else {
+			failed++
+		}
 	}
-	if len(data) > maxQueueBytes {
-		return nil, errors.New("queue exceeds 8 MiB")
-	}
-	return parseQueue(data)
+	return queued, failed, scanner.Err()
 }

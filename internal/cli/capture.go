@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/atomicfile"
 	"github.com/mash/kioku/prompts"
@@ -32,6 +33,8 @@ type captureLock struct {
 }
 
 const captureLockTTL = 30 * time.Minute
+const captureInstructionsFile = "instructions.md"
+const maxCaptureSnapshotBytes = maxCaptureSourceBytes + 1<<20
 
 var captureWaitDelay = 5 * time.Second
 
@@ -60,7 +63,7 @@ func readCaptureLock(path string) (*captureLock, error) {
 		return nil, err
 	}
 	var lock captureLock
-	if decodeJSON(data, &lock) != nil || lock.StartedAt.IsZero() {
+	if decodeJSON(data, &lock) != nil || lock.StartedAt.IsZero() || !captureTokenPattern.MatchString(lock.Token) {
 		info, err := os.Lstat(path)
 		if err != nil {
 			return nil, err
@@ -152,23 +155,29 @@ func (a *App) cleanupCaptureTmp(now time.Time) error {
 		return err
 	}
 	live := ""
-	if lockBusy(lock, now) && !lock.invalid {
+	if lockBusy(lock, now) {
 		live = lock.Token
+	} else if lock != nil {
+		if err := os.Remove(a.captureLockPath()); err != nil {
+			return err
+		}
 	}
-	receipts, err := filepath.Glob(filepath.Join(a.metadataDir(), "capture-unlocked-*"))
-	if err != nil {
-		return err
-	}
-	for _, receipt := range receipts {
-		info, err := os.Lstat(receipt)
+	for _, pattern := range []string{"capture-unlocked-*", "capture-progress-*.json"} {
+		files, err := filepath.Glob(filepath.Join(a.metadataDir(), pattern))
 		if err != nil {
 			return err
 		}
-		if now.Sub(info.ModTime()) <= captureLockTTL {
-			continue
-		}
-		if err := os.Remove(receipt); err != nil {
-			return err
+		for _, file := range files {
+			info, err := os.Lstat(file)
+			if err != nil {
+				return err
+			}
+			if now.Sub(info.ModTime()) <= captureLockTTL {
+				continue
+			}
+			if err := os.Remove(file); err != nil {
+				return err
+			}
 		}
 	}
 	return removeCaptureTmpExcept(filepath.Join(a.metadataDir(), "capture-tmp"), live)
@@ -228,11 +237,13 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 
 func captureAllowedTools(command, project, tmp string, rows []queueRow) []string {
 	token := filepath.Base(tmp)
+	// Claude Code uses Edit(path) for Write permissions. The synchronous
+	// guard separately rejects actual Edit calls.
 	tools := []string{
 		"Bash(" + command + " capture fetch:*)",
 		"Bash(" + project + " capture put --capture-token " + token + ":*)",
 		"Bash(" + project + " capture result --capture-token " + token + ":*)",
-		"Read(/" + tmp + "/**)", "Write(/" + tmp + "/**)", "Artifact",
+		"Read(/" + tmp + "/**)", "Edit(/" + tmp + "/**)", "Artifact",
 	}
 	seen := map[string]bool{}
 	for _, row := range rows {
@@ -243,7 +254,7 @@ func captureAllowedTools(command, project, tmp string, rows []queueRow) []string
 		server, _ := mcpToolParts(call.Tool)
 		if !seen[server] {
 			seen[server] = true
-			tools = append(tools, "mcp__"+server)
+			tools = append(tools, "mcp__"+server+"__*")
 		}
 	}
 	return tools
@@ -260,6 +271,14 @@ func (a *App) captureNote(note string) error {
 
 // beginCapture records the attempts and their snapshot before Claude can read either.
 func (a *App) beginCapture(now time.Time) (*captureLock, []queueRow, error) {
+	submit, err := a.captureSubmissionLock()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer submit()
+	if err := a.cleanupCaptureTmp(now); err != nil {
+		return nil, nil, err
+	}
 	unlock, err := a.localLock()
 	if err != nil {
 		return nil, nil, err
@@ -282,6 +301,7 @@ func (a *App) beginCapture(now time.Time) (*captureLock, []queueRow, error) {
 		return nil, nil, err
 	}
 	var snapshot []queueRow
+	snapshotBytes := 0
 	for i := range rows {
 		row := &rows[i]
 		if row.State != queueQueued {
@@ -294,6 +314,11 @@ func (a *App) beginCapture(now time.Time) (*captureLock, []queueRow, error) {
 			}
 			continue
 		}
+		size := len(row.Date) + len(row.Source) + len(row.State) + len(row.Reason) + 6 // TSV separators, attempt and newline.
+		if snapshotBytes+size > maxCaptureSnapshotBytes {
+			continue // The next hook can pick up the remaining queued rows.
+		}
+		snapshotBytes += size
 		row.Attempts++
 		snapshot = append(snapshot, *row)
 	}
@@ -323,6 +348,11 @@ func (a *App) discardCapture(token string) error {
 }
 
 func (a *App) undoCaptureLaunch(token string, snapshot []queueRow) error {
+	submit, err := a.captureSubmissionLock()
+	if err != nil {
+		return err
+	}
+	defer submit()
 	unlock, err := a.localLock()
 	if err != nil {
 		return err
@@ -348,15 +378,19 @@ func (a *App) undoCaptureLaunch(token string, snapshot []queueRow) error {
 }
 
 func (a *App) captureRun(cwd string, now time.Time) (err error) {
-	if err := a.cleanupCaptureTmp(now); err != nil {
-		return err
-	}
+	launched := false
+	defer func() {
+		if err != nil && !launched {
+			// Stop can return before a slow launcher fails. Preserve its
+			// failure for the next notification-capable hook.
+			_ = atomicfile.Write(a.captureLaunchErrorPath(), []byte(queueText(err.Error())+"\n"), 0600)
+		}
+	}()
 	lock, rows, err := a.beginCapture(now)
 	if err != nil || lock == nil {
 		return err
 	}
 	path := a.captureLockPath()
-	launched := false
 	defer func() {
 		if !launched {
 			err = errors.Join(err, a.undoCaptureLaunch(lock.Token, rows))
@@ -379,9 +413,15 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		return err
 	}
 	vars := templateVars(exe, a.Config.Server, a.Config.Namespace, a.Dir)
-	vars["tmp"], vars["queue"], vars["token"] = tmp, string(formatQueue(rows)), lock.Token
-	vars["project_kioku"] = vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
-	vars["commands"] = captureCommands(vars["kioku"], vars["project_kioku"], tmp, lock.Token, rows)
+	vars["tmp"] = tmp
+	vars["instructions"] = filepath.Join(tmp, captureInstructionsFile)
+	projectCommand := vars["kioku"] + " -C " + shellQuote(a.Dir) + " -n " + a.Config.Namespace
+	// Keep arbitrary caller inputs out of the single argv element and do
+	// not repeat the snapshot in the launcher's arguments.
+	commands := captureCommands(vars["kioku"], projectCommand, tmp, lock.Token, rows)
+	if err := atomicfile.Write(vars["instructions"], []byte(commands+"\n"), 0600); err != nil {
+		return err
+	}
 
 	args := []string{"--bg", "--permission-mode", "dontAsk"}
 	if pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT"); pluginRoot != "" {
@@ -392,7 +432,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		args = append(args, "--plugin-dir", root)
 	}
 	args = append(args, "--allowedTools")
-	args = append(args, captureAllowedTools(vars["kioku"], vars["project_kioku"], tmp, rows)...)
+	args = append(args, captureAllowedTools(vars["kioku"], projectCommand, tmp, rows)...)
 	prompt := renderTemplate(prompts.CaptureRun, vars)
 	args = append(args, "--agent", "kioku:kioku-capture", "--", prompt)
 	ctx := a.ctx
@@ -402,7 +442,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 	cmd := exec.CommandContext(ctx, claude, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", captureModeEnv, captureDirEnv, captureCommandEnv, captureProjectCommandEnv),
-		captureModeEnv+"=1", captureDirEnv+"="+tmp, captureCommandEnv+"="+vars["kioku"], captureProjectCommandEnv+"="+vars["project_kioku"])
+		captureModeEnv+"=1", captureDirEnv+"="+tmp, captureCommandEnv+"="+vars["kioku"], captureProjectCommandEnv+"="+projectCommand)
 	cmd.WaitDelay = captureWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -415,6 +455,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		return fmt.Errorf("capture run: claude --bg failed: %s", reason)
 	}
 	launched = true
+	_ = os.Remove(a.captureLaunchErrorPath())
 	if errors.Is(runErr, exec.ErrWaitDelay) {
 		warning := "warning: capture launcher exited but output pipes remained open; session may be running"
 		fmt.Fprintln(a.Err, warning)
@@ -529,12 +570,21 @@ func (a *App) releaseCapture(token string) error {
 			return err
 		}
 	}
-	if captureTokenPattern.MatchString(token) {
-		if err := os.RemoveAll(a.captureTmp(token)); err != nil {
-			return err
-		}
+	tmp := a.captureTmp(token)
+	if err := os.RemoveAll(tmp); err != nil {
+		return err
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if err := os.Remove(captureProgressPath(tmp)); !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (a *App) captureLaunchErrorPath() string {
+	return filepath.Join(a.metadataDir(), "capture-launch.failed")
 }
 
 func (a *App) captureLockPath() string { return filepath.Join(a.metadataDir(), "capture.lock") }
@@ -564,7 +614,21 @@ func captureCommands(command, project, tmp, token string, rows []queueRow) strin
 	var b strings.Builder
 	for i, row := range rows {
 		src := shellQuote(row.Source)
-		fmt.Fprintf(&b, "行 %d: %s\n", i+1, row.Source)
+		if len(row.Source) > maxCaptureLiteralSource {
+			src = fmt.Sprintf("@%d", i+1)
+			fmt.Fprintf(&b, "行 %d: 取得元のデータは次の行を改行なしで連結する。CLI コマンドは %s のまま実行する。\n", i+1, src)
+			for rest := row.Source; rest != ""; {
+				n := min(4096, len(rest))
+				for n < len(rest) && !utf8.RuneStart(rest[n]) {
+					n--
+				}
+				b.WriteString(rest[:n])
+				b.WriteByte('\n')
+				rest = rest[n:]
+			}
+		} else {
+			fmt.Fprintf(&b, "行 %d: %s\n", i+1, row.Source)
+		}
 		if !strings.HasPrefix(row.Source, toolSourcePrefix) && !isArtifactURL(row.Source) {
 			raw := filepath.Join(tmp, fmt.Sprintf("source-%03d.input%s", i+1, captureFetchExtension(row.Source, "")))
 			fmt.Fprintf(&b, "公開 HTTPS の fetch（出力先は Read で読む）:\n```sh\n%s capture fetch %s --capture-token %s --dir %s --out %s\n```\n", command, src, token, shellQuote(tmp), shellQuote(raw))

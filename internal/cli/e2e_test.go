@@ -198,6 +198,14 @@ func TestCLIFullWorkflow(t *testing.T) {
 		}
 		unchanged("Hallo\n")
 
+		// A Markdown horizontal rule is not frontmatter without a closing delimiter.
+		const plain = "---\n\n# Notes\n\nPlain Markdown\n"
+		write(plain)
+		if out := must("put", uri); out != "accepted kioku:local/3022fe26ef68ec5b83ada5f05ee8141c44fa4a283a67a8e2c7cfcd0b009f5bb5\n" {
+			t.Fatal(out)
+		}
+		unchanged(plain)
+
 		queue := filepath.Join(config, ".kioku", "queue.tsv")
 		if err := os.WriteFile(queue, []byte("invalid queue row\n"), 0600); err != nil {
 			t.Fatal(err)

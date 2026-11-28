@@ -29,14 +29,15 @@ type hookToolEvent struct {
 	Response  json.RawMessage `json:"tool_response"`
 }
 
+const maxHookToolInputBytes = 8 << 20
+
 func readToolHookEvent(input io.Reader) (hookToolEvent, error) {
-	const maxInput = 8 << 20
 	var event hookToolEvent
-	b, err := io.ReadAll(io.LimitReader(input, maxInput+1))
+	b, err := io.ReadAll(io.LimitReader(input, maxHookToolInputBytes+1))
 	if err != nil {
 		return event, err
 	}
-	if len(b) > maxInput || json.Unmarshal(b, &event) != nil {
+	if len(b) > maxHookToolInputBytes || json.Unmarshal(b, &event) != nil {
 		return event, errors.New("invalid hook event")
 	}
 	return event, nil
@@ -123,7 +124,7 @@ func captureToolPath(dir, path string, writing bool) bool {
 	if err != nil || !filepath.IsLocal(rel) || rel == "." {
 		return false
 	}
-	if writing && (rel == "snapshot.tsv" || rel == "results.json") {
+	if writing && (strings.EqualFold(rel, "snapshot.tsv") || strings.EqualFold(rel, captureInstructionsFile)) {
 		return false
 	}
 	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
@@ -160,12 +161,12 @@ func captureBashAllowed(command, dir string, rows []queueRow) bool {
 		return false
 	}
 	if after := trimCommandPrefix(args, project, "capture", "put", "--capture-token", token, "--source"); len(after) == 2 {
-		return snapshotRow(rows, after[0]) >= 0 && captureToolPath(dir, after[1], false)
+		return resolveSnapshotSource(rows, after[0]) >= 0 && captureToolPath(dir, after[1], false)
 	}
 	if after := trimCommandPrefix(args, project, "capture", "result", "--capture-token", token, "--result"); len(after) == 2 || len(after) == 4 {
 		result := after[0]
 		src := after[len(after)-1]
-		if snapshotRow(rows, src) < 0 {
+		if resolveSnapshotSource(rows, src) < 0 {
 			return false
 		}
 		if len(after) == 2 {

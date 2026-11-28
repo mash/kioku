@@ -39,23 +39,31 @@ func parseQueue(data []byte) ([]queueRow, error) {
 		return rows, nil
 	}
 	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 5 {
-			return nil, errQueueFormat
+		row, err := parseQueueRow(line)
+		if err != nil {
+			return nil, err
 		}
-		attempts, err := strconv.Atoi(fields[2])
-		if err != nil || attempts < 0 || attempts > maxCaptureAttempts || (fields[3] != queueQueued && fields[3] != queueFailed) {
-			return nil, errQueueFormat
-		}
-		if _, err := time.Parse(time.DateOnly, fields[0]); err != nil {
-			return nil, errQueueFormat
-		}
-		if _, err := parseCaptureSource(fields[1]); err != nil {
-			return nil, errQueueFormat
-		}
-		rows = append(rows, queueRow{fields[0], fields[1], attempts, fields[3], fields[4]})
+		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func parseQueueRow(line string) (queueRow, error) {
+	fields := strings.Split(line, "\t")
+	if len(fields) != 5 {
+		return queueRow{}, errQueueFormat
+	}
+	attempts, err := strconv.Atoi(fields[2])
+	if err != nil || attempts < 0 || attempts > maxCaptureAttempts || (fields[3] != queueQueued && fields[3] != queueFailed) {
+		return queueRow{}, errQueueFormat
+	}
+	if _, err := time.Parse(time.DateOnly, fields[0]); err != nil {
+		return queueRow{}, errQueueFormat
+	}
+	if _, err := parseCaptureSource(fields[1]); err != nil {
+		return queueRow{}, errQueueFormat
+	}
+	return queueRow{fields[0], fields[1], attempts, fields[3], fields[4]}, nil
 }
 
 func formatQueue(rows []queueRow) []byte {
@@ -111,16 +119,19 @@ func (a *App) registerQueueSource(source string, now time.Time) error {
 		return err
 	}
 	defer unlock()
-	return a.updateQueue(func(rows []queueRow) []queueRow {
-		for _, row := range rows {
-			if row.Source == source && row.State == queueQueued {
-				return rows
-			}
+	rows, err := readQueue(a.queuePath())
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.Source == source && row.State == queueQueued {
+			return nil
 		}
-		return append(removeQueueSource(rows, source), queueRow{
-			Date: now.Local().Format(time.DateOnly), Source: source, State: queueQueued,
-		})
+	}
+	rows = append(removeQueueSource(rows, source), queueRow{
+		Date: now.Local().Format(time.DateOnly), Source: source, State: queueQueued,
 	})
+	return atomicfile.Write(a.queuePath(), formatQueue(rows), 0600)
 }
 
 func queueCounts(rows []queueRow) (queued, failed int) {
@@ -142,6 +153,22 @@ func snapshotRow(snapshot []queueRow, source string) int {
 	return slices.IndexFunc(snapshot, func(row queueRow) bool { return row.Source == source })
 }
 
+// A normal argument is the exact SOURCE. Generated commands use a compact
+// token-bound row reference only when the SOURCE exceeds OS argv limits.
+const maxCaptureLiteralSource = 96 << 10
+
+func resolveSnapshotSource(snapshot []queueRow, arg string) int {
+	if number, ok := strings.CutPrefix(arg, "@"); ok {
+		i, err := strconv.Atoi(number)
+		if err == nil && i > 0 && i <= len(snapshot) && strconv.Itoa(i) == number &&
+			len(snapshot[i-1].Source) > maxCaptureLiteralSource {
+			return i - 1
+		}
+		return -1
+	}
+	return snapshotRow(snapshot, arg)
+}
+
 func (a *App) captureResult(args []string) error {
 	usage := errors.New("usage: kioku capture result --capture-token TOKEN --result accepted|unsaved|skipped [--reason TEXT] SOURCE")
 	f := flag.NewFlagSet("capture result", flag.ContinueOnError)
@@ -161,6 +188,11 @@ func (a *App) captureResult(args []string) error {
 	default:
 		return usage
 	}
+	submit, err := a.captureSubmissionLock()
+	if err != nil {
+		return err
+	}
+	defer submit()
 	unlock, err := a.localLock()
 	if err != nil {
 		return err
@@ -174,17 +206,21 @@ func (a *App) captureResult(args []string) error {
 	if err != nil {
 		return err
 	}
-	src := f.Arg(0)
-	index := snapshotRow(snapshot, src)
+	index := resolveSnapshotSource(snapshot, f.Arg(0))
 	if index < 0 {
 		return errors.New("capture result: 取得元は capture の snapshot にない")
 	}
+	src := snapshot[index].Source
 	results, err := readCaptureResults(dir)
 	if err != nil {
 		return err
 	}
+	progress := results[src]
+	if *result == "accepted" && progress.PutURL == "" {
+		return errors.New("capture result: HTTP 202 has not been recorded for this source")
+	}
 	var logErr error
-	if results[src] == "" {
+	if progress.Outcome == "" {
 		reasonText := queueText(strings.TrimSpace(*reason))
 		err := a.updateQueue(func(rows []queueRow) []queueRow {
 			for i, row := range rows {
@@ -205,7 +241,8 @@ func (a *App) captureResult(args []string) error {
 		if err != nil {
 			return err
 		}
-		results[src] = *result
+		progress.Outcome = *result
+		results[src] = progress
 		if err := writeCaptureResults(dir, results); err != nil {
 			return err
 		}
@@ -214,16 +251,26 @@ func (a *App) captureResult(args []string) error {
 		}
 	}
 	for _, row := range snapshot {
-		if results[row.Source] == "" {
+		if results[row.Source].Outcome == "" {
 			return logErr
 		}
 	}
 	return errors.Join(logErr, a.releaseCapture(*token))
 }
 
-func readCaptureResults(dir string) (map[string]string, error) {
-	results := map[string]string{}
-	data, err := readRegular(filepath.Join(dir, "results.json"))
+type captureProgress struct {
+	PutURL  string `json:"put_url,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+}
+
+// Keep verified HTTP receipts outside the agent-writable capture directory.
+func captureProgressPath(dir string) string {
+	return filepath.Join(filepath.Dir(captureLockPathFromTmp(dir)), "capture-progress-"+filepath.Base(dir)+".json")
+}
+
+func readCaptureResults(dir string) (map[string]captureProgress, error) {
+	results := map[string]captureProgress{}
+	data, err := readRegular(captureProgressPath(dir))
 	if os.IsNotExist(err) {
 		return results, nil
 	}
@@ -239,10 +286,10 @@ func readCaptureResults(dir string) (map[string]string, error) {
 	return results, nil
 }
 
-func writeCaptureResults(dir string, results map[string]string) error {
+func writeCaptureResults(dir string, results map[string]captureProgress) error {
 	data, err := json.Marshal(results)
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(filepath.Join(dir, "results.json"), data, 0600)
+	return atomicfile.Write(captureProgressPath(dir), data, 0600)
 }

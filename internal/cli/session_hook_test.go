@@ -206,8 +206,8 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 func TestReadHookQueue(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "queue.tsv")
-	if rows, err := readHookQueue(path); err != nil || len(rows) != 0 {
-		t.Fatal(rows, err)
+	if queued, failed, err := readHookQueueCounts(path); err != nil || queued != 0 || failed != 0 {
+		t.Fatal(queued, failed, err)
 	}
 	data := formatQueue([]queueRow{
 		{Date: "2026-11-18", Source: "https://example.com/queued", State: queueQueued},
@@ -216,8 +216,7 @@ func TestReadHookQueue(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := readHookQueue(path)
-	if queued, failed := queueCounts(rows); err != nil || queued != 1 || failed != 1 {
+	if queued, failed, err := readHookQueueCounts(path); err != nil || queued != 1 || failed != 1 {
 		t.Fatal(queued, failed, err)
 	}
 	if err := os.Symlink(path, filepath.Join(dir, "symlink")); err != nil {
@@ -230,7 +229,7 @@ func TestReadHookQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"symlink", "fifo", "queue.tsv"} {
-		if _, err := readHookQueue(filepath.Join(dir, name)); err == nil {
+		if _, _, err := readHookQueueCounts(filepath.Join(dir, name)); err == nil {
 			t.Errorf("readHookQueue accepted %s", name)
 		}
 	}

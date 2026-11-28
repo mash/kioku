@@ -66,9 +66,7 @@ func TestHookToolSources(t *testing.T) {
 }
 
 func TestHookToolUsesOnlySelectedWritableProject(t *testing.T) {
-	home := projectRunHome(t)
-	sessionTestEnv(t)
-	t.Setenv("HOME", home)
+	home := sessionTestEnv(t)
 	t.Setenv(captureModeEnv, "")
 	dir := t.TempDir()
 	const origin = "https://fixture.invalid"

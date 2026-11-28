@@ -970,7 +970,8 @@ class SessionHooksTest(unittest.TestCase):
 log = pathlib.Path(os.environ['CAPTURE_FIXTURE_LOG'])
 if sys.argv[1] == 'rm':
     sys.exit(0)
-log.write_text(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(),
+instructions = (pathlib.Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
+log.write_text(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(), 'instructions':instructions,
                           'sid': os.environ.get('CLAUDE_CODE_SESSION_ID')}))
 assert sys.stdin.read() == ''
 # A detached fixture session reports acceptance only after its launcher returns.
@@ -984,7 +985,7 @@ cli = os.environ['CAPTURE_FIXTURE_CLI']
 urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().splitlines()]
 for url in urls:
     subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'result', '--capture-token', lock['token'],
-                    '--result', 'accepted', '--reason', '受付済み', url], check=True)
+                    '--result', 'skipped', '--reason', 'not a document fixture', url], check=True)
 """
 subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1008,8 +1009,16 @@ print('backgrounded · 1a2b3c4d')
                 self.state = {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)}
                 self.save_state()
                 queue = metadata / 'queue.tsv'
-                queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t0\tqueued\t\n' for i in range(count))
-                queue.write_text(queued)
+                auth = catalog.parent / 'auth'
+                auth.mkdir(exist_ok=True)
+                server = self.state['server']
+                credential = auth / (hashlib.sha256(server.encode()).hexdigest() + '.json')
+                credential.write_text(json.dumps({'server': server, 'token': 'fixture'}))
+                for i in range(count):
+                    self.assertEqual(self.hook('PostToolUse', cwd=str(root), tool_name='WebFetch',
+                                               tool_input={'url': f'https://x.example/{i}'},
+                                               agent_id='fixture-child'), '')
+                self.assertIn('https://x.example/0', queue.read_text())
                 log = root / 'fixture.json'
                 self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
                                 CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work))
@@ -1026,7 +1035,9 @@ print('backgrounded · 1a2b3c4d')
                 self.assertIsNone(recorded['sid'])
                 self.assertEqual(recorded['args'][0], '--bg')
                 self.assertNotIn('-p', recorded['args'])
-                self.assertIn(queued.replace('\t0\tqueued', '\t1\tqueued'), recorded['args'][-1])
+                self.assertIn('instructions.md', recorded['args'][-1])
+                self.assertIn('https://x.example/0', recorded['instructions'])
+                self.assertNotIn('https://x.example/0', recorded['args'][-1])
                 self.assertNotIn('capture unlock', recorded['args'][-1])
 
     def test_session_start_recovers_all_projects_and_reports_failed_rows(self):
@@ -1061,7 +1072,7 @@ print('backgrounded · 1a2b3c4d')
                     if name == 'busy':
                         (metadata / 'capture.lock').write_text(json.dumps({
                             'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                            'bg_id': 'abcdef00',
+                            'bg_id': 'abcdef00', 'token': 'a' * 32,
                         }))
                 catalog.write_text(json.dumps({'projects': projects}))
                 self.state.update(projects[3])
@@ -1091,12 +1102,40 @@ print('backgrounded · 1a2b3c4d')
                 self.assertIn('受付済みにならなかった資料 1 件', obj['systemMessage'])
                 self.assertNotIn('capture 実行中', obj['systemMessage'])
 
+    def test_late_stop_launcher_failure_is_visible_at_next_hook(self):
+        root = self.work / 'project'
+        metadata = root / '.kioku'
+        metadata.mkdir(parents=True)
+        config = {'namespace': 'org/project', 'server': 'https://kioku.magicians.ee'}
+        (metadata / 'config').write_text(json.dumps(config))
+        queue = metadata / 'queue.tsv'
+        pending = '2026-11-28\thttps://example.com/fixture\t0\tqueued\t\n'
+        queue.write_text(pending)
+        bin_dir = self.work / 'fake-bin'
+        bin_dir.mkdir()
+        launcher = bin_dir / 'claude'
+        launcher.write_text('#!/bin/sh\nsleep 1\necho fixture failure >&2\nexit 1\n')
+        launcher.chmod(0o755)
+        self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+
+        self.assertEqual(self.hook('Stop', cwd=str(root)), '')
+        marker = metadata / 'capture-launch.failed'
+        self.wait_until(marker.exists)
+        self.assertEqual(queue.read_text(), pending)
+        self.assertIn('fixture failure', marker.read_text())
+
+        launcher.write_text("#!/bin/sh\nprintf 'backgrounded · 5e6f7a8b\n'\n")
+        output = json.loads(self.hook('Stop', cwd=str(root)))
+        self.assertIn('起動に失敗', output['systemMessage'])
+        self.assertFalse(marker.exists())
+        self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
+
     def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
         bin_dir = self.work / 'fake-bin'
         bin_dir.mkdir()
         claude = bin_dir / 'claude'
         claude.write_text("""#!/bin/sh
-case "$*" in
+case "$(cat "$KIOKU_CAPTURE_DIR/instructions.md")" in
     *https://example.com/one*)
         for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
             [ -e "$CAPTURE_TEST_MARKER" ] && break

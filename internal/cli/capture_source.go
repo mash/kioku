@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mash/kioku/internal/source"
 )
@@ -19,6 +20,7 @@ type captureToolCall struct {
 }
 
 const toolSourcePrefix = "tool:"
+const maxCaptureSourceBytes = 2 * maxHookToolInputBytes
 
 func captureToolSource(name string, input json.RawMessage) (string, error) {
 	if !isMCPReadTool(name) {
@@ -28,14 +30,20 @@ func captureToolSource(name string, input json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := json.Marshal(captureToolCall{Input: data, Tool: name})
+	out, err := encodeCaptureJSON(captureToolCall{Input: data, Tool: name})
 	if err != nil {
 		return "", err
+	}
+	if len(out)+len(toolSourcePrefix) > maxCaptureSourceBytes {
+		return "", errors.New("tool source exceeds the capture input limit")
 	}
 	return toolSourcePrefix + string(out), nil
 }
 
 func canonicalToolInput(input json.RawMessage) (json.RawMessage, error) {
+	if !utf8.Valid(input) {
+		return nil, errors.New("tool input must be UTF-8")
+	}
 	d := json.NewDecoder(bytes.NewReader(input))
 	d.UseNumber()
 	var v any
@@ -45,7 +53,17 @@ func canonicalToolInput(input json.RawMessage) (json.RawMessage, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return nil, errors.New("expected one tool input JSON value")
 	}
-	return json.Marshal(v)
+	return encodeCaptureJSON(v)
+}
+
+func encodeCaptureJSON(value any) ([]byte, error) {
+	var b bytes.Buffer
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	if err := e.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // parseCaptureSource returns a nil call for a valid HTTPS identity.
@@ -71,7 +89,7 @@ func parseCaptureSource(raw string) (*captureToolCall, error) {
 func mcpToolParts(name string) (server, tool string) {
 	tail, ok := strings.CutPrefix(name, "mcp__")
 	at := strings.LastIndex(tail, "__")
-	if !ok || at <= 0 || at+2 == len(tail) || strings.ContainsAny(tail, " \t\r\n") {
+	if !ok || at <= 0 || at+2 == len(tail) || strings.ContainsAny(tail, " \t\r\n*?[]") {
 		return "", ""
 	}
 	return tail[:at], tail[at+2:]

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,9 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	check("Read", map[string]any{"file_path": outside}, true)
 	check("Write", map[string]any{"file_path": link}, true)
 	check("Write", map[string]any{"file_path": filepath.Join(dir, "snapshot.tsv")}, true)
+	check("Write", map[string]any{"file_path": filepath.Join(dir, "Snapshot.TSV")}, true)
+	check("Write", map[string]any{"file_path": filepath.Join(dir, "Instructions.MD")}, true)
+	check("Write", map[string]any{"file_path": captureProgressPath(dir)}, true)
 	check("Edit", nil, true)
 	for _, cmd := range []string{
 		base + " capture fetch " + web + " --capture-token " + lock.Token + " --dir " + shellQuote(dir) + " --out " + shellQuote(inside),
@@ -112,7 +116,10 @@ func TestCaptureAllowedToolsByServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := captureAllowedTools("/bin/kioku", "/bin/kioku -C /tmp -n org/p", tmp, []queueRow{{Source: tool}, {Source: tool}, {Source: web}})
-	if len(got) != len(webRules)+1 || got[len(got)-1] != "mcp__connector__server" {
+	if !slices.Contains(webRules, "Edit(/"+tmp+"/**)") {
+		t.Fatal(webRules)
+	}
+	if len(got) != len(webRules)+1 || got[len(got)-1] != "mcp__connector__server__*" {
 		t.Fatal(got)
 	}
 }

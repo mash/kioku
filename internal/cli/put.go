@@ -21,6 +21,10 @@ const putUsage = "usage: kioku put PATH... | kioku put file:///PATH"
 var putScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 
 func (a *App) put(args []string) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		_, err := fmt.Fprintln(a.Err, "Usage of put:\n"+putUsage)
+		return err
+	}
 	if len(args) == 0 {
 		return errors.New(putUsage)
 	}
@@ -57,7 +61,7 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return err
 	}
-	unlock, err := a.localLock()
+	unlock, err := a.captureSubmissionLock()
 	if err != nil {
 		return err
 	}
@@ -70,16 +74,17 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return fmt.Errorf("put: %w", err)
 	}
-	i := snapshotRow(snapshot, *src)
+	i := resolveSnapshotSource(snapshot, *src)
 	if i < 0 {
 		return errors.New("put: 取得元は capture の snapshot にない")
 	}
 	attempt := snapshot[i]
+	sourceID := attempt.Source
 	queue, err := readQueue(a.queuePath())
 	if err != nil {
 		return err
 	}
-	j := snapshotRow(queue, *src)
+	j := snapshotRow(queue, sourceID)
 	if j < 0 {
 		return errors.New("put: queue に行が無い（delete 済み）")
 	}
@@ -90,7 +95,7 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return err
 	}
-	if results[*src] != "" {
+	if results[sourceID].Outcome != "" {
 		return errors.New("put: この capture は取得元の結果を記録済み")
 	}
 	path := f.Arg(0)
@@ -107,8 +112,12 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if !strings.HasPrefix(*src, toolSourcePrefix) && doc.URL != *src {
+	if !strings.HasPrefix(sourceID, toolSourcePrefix) && doc.URL != sourceID {
 		return errors.New("put: source_url が capture の HTTPS 取得元と一致しない")
+	}
+	if ack := results[sourceID].PutURL; ack != "" {
+		_, err := fmt.Fprintf(a.Out, "accepted %s\n", ack)
+		return err
 	}
 	if err := a.selectCredential(false); err != nil {
 		return err
@@ -121,9 +130,11 @@ func (a *App) capturePut(args []string) error {
 	if code != http.StatusAccepted {
 		return fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
 	}
+	results[sourceID] = captureProgress{PutURL: doc.URL}
+	receiptErr := writeCaptureResults(dir, results)
 	logErr := a.captureNote("accepted " + doc.URL)
 	_, err = fmt.Fprintf(a.Out, "accepted %s\n", doc.URL)
-	return errors.Join(logErr, err)
+	return errors.Join(receiptErr, logErr, err)
 }
 
 func (a *App) putPaths(paths []string) error {
@@ -134,7 +145,7 @@ func (a *App) putPaths(paths []string) error {
 	if err = a.ensureProject(); err != nil {
 		return err
 	}
-	unlock, err := a.localLock()
+	unlock, err := a.captureSubmissionLock()
 	if err != nil {
 		return err
 	}

@@ -30,6 +30,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   org add-owner --yes ORG EMAIL_OR_ID   Add an organization co-owner
   project share remove EMAIL_OR_ID
   delete SOURCE...                    Remove queued sources or request removal by HTTPS URL or local key
+  delete -                           Read one queued tool: source from stdin
   put PATH...                         Send files or directories with HTTPS provenance
   put file:///PATH                    Send a local file without changing the original
   view list|show|set         Inspect and update View settings

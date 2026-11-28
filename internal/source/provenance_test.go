@@ -1,6 +1,7 @@
 package source
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -110,5 +111,30 @@ func TestHTTPSIdentityDoesNotCheckNetworkDestination(t *testing.T) {
 	doc, err := FileWithProvenance("notes.md", "---\nsource_url: "+u+"\nupdated_at: 2026-11-28T00:00:00Z\n---\nBody")
 	if err != nil || doc.URL != u {
 		t.Fatal(doc, err)
+	}
+}
+
+func TestRewriteFrontmatterKeepsAliasedValues(t *testing.T) {
+	const input = "---\nsource_url: &identity kioku:local\nupdated_at: &old {x: &nested [one, two]}\nsource_copy: *identity\nlist_copy: *nested\nmap_copy: *old\nagain: *old\n---\nBody\n"
+	content, err := RewriteFrontmatter(input, "changed", "2026-11-28T13:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := Frontmatter(content)
+	if err != nil {
+		t.Fatal(content, err)
+	}
+	var values map[string]any
+	if err := meta.Decode(&values); err != nil {
+		t.Fatal(content, err)
+	}
+	for key, want := range map[string]any{
+		"source_url": "changed", "source_copy": "kioku:local", "updated_at": "2026-11-28T13:00:00Z",
+		"list_copy": []any{"one", "two"}, "map_copy": map[string]any{"x": []any{"one", "two"}},
+		"again": map[string]any{"x": []any{"one", "two"}},
+	} {
+		if got := values[key]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: %#v, want %#v\n%s", key, got, want, content)
+		}
 	}
 }

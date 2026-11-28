@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mash/kioku/internal/source"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,6 +43,15 @@ func fetchCommand(ctx context.Context, args []string, outputs ...io.Writer) (err
 	}
 	resolved, err := resolveCaptureDir(*token, *dir)
 	if err != nil {
+		return err
+	}
+	target, err := url.Parse(args[0])
+	if err != nil {
+		return err
+	}
+	// Being eligible as a source identity does not make a URL a public
+	// fetch destination. Keep the public URL restrictions on this path.
+	if err := source.ValidateURL(target); err != nil {
 		return err
 	}
 	return fetchURL(ctx, nil, args[0], resolved, *out, outputs...)
@@ -233,6 +243,10 @@ func captureSourcePath(dir, path string) (string, error) {
 	return absolute, nil
 }
 func readCaptureSource(dir, path string) ([]byte, error) {
+	return readCaptureFile(dir, path, maxSourceFileBytes)
+}
+
+func readCaptureFile(dir, path string, limit int64) ([]byte, error) {
 	absolute, err := captureSourcePath(dir, path)
 	if err != nil {
 		return nil, err
@@ -255,12 +269,12 @@ func readCaptureSource(dir, path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("capture put requires a regular file")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > 1<<20 {
-		return nil, errors.New("capture put source exceeds 1 MiB")
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("capture file exceeds %d MiB", limit>>20)
 	}
 	return data, nil
 }

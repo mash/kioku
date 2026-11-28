@@ -31,9 +31,9 @@ POST `/api/projects/{organization}/{project}/put` accepts one file or one remova
 {"remove":true,"source_url":"https://example.com/doc"}
 ```
 
-A file creates an item without the remove flag. A removal creates an item with `remove: true`. The server returns 202 with `{"source_url":"<accepted key>"}` for both operations. It does not create a job.
+A file creates an item without the remove flag. A removal creates an item with `remove: true`. Acceptance does not create a job.
 
-Every submission must start with YAML frontmatter delimited by complete `---` lines. Empty mappings and duplicate keys are rejected. A file must have `source_url` set to an HTTPS identity, or to `kioku:local` to request a local key. HTTPS submissions and HTTP local submissions must include an RFC 3339 `updated_at` with an explicit offset. HTTPS sources use the origin's update time or the fetch time if update metadata is absent. HTTP local submissions preserve the sent timestamp. MCP local submissions ignore that field and use server receipt time.
+Every submitted file must start with YAML frontmatter delimited by complete `---` lines. Empty mappings and duplicate keys are rejected. A file must have `source_url` set to an HTTPS identity, or to `kioku:local` to request a local key. HTTPS submissions and HTTP local submissions must include an RFC 3339 `updated_at` with an explicit offset. HTTPS sources use the origin's update time or the fetch time if update metadata is absent. HTTP local submissions preserve the sent timestamp. MCP local submissions ignore that field and use server receipt time.
 
 The server builds the local key as `kioku:local/<64 lowercase hex>` from the SHA-256 of the exact bytes after the frontmatter. CRLF and LF are distinct. The body cannot be blank and the server replaces the marker before storing the file. Full keys are valid only for removals, which also accept HTTPS identities. The server returns HTTP 202 with `{"source_url":"<local key>"}` for local put and `{}` for HTTPS put or removal. MCP returns the same JSON result.
 

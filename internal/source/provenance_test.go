@@ -142,3 +142,27 @@ func TestInboxFileKeepsAliasedValues(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalFileKeepsAliasesToRedefinedAnchors(t *testing.T) {
+	for _, prefix := range []string{
+		"updated_at:\n  old: &value before\n  composite: &details {copied: *value}\n",
+		"earlier: &value before\nupdated_at: &details {copied: *value}\n",
+	} {
+		input := "---\n" + prefix + "later: &value after\nmetadata: *details\ntitle: *value\n---\nBody\n"
+		content, err := LocalFileContent("notes.md", input, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, err := Frontmatter(content)
+		if err != nil {
+			t.Fatal(content, err)
+		}
+		var values map[string]any
+		if err := meta.Decode(&values); err != nil {
+			t.Fatal(content, err)
+		}
+		if values["title"] != "after" || !reflect.DeepEqual(values["metadata"], map[string]any{"copied": "before"}) {
+			t.Fatalf("rewriting provenance changed other YAML values: %#v\n%s", values, content)
+		}
+	}
+}

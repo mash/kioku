@@ -91,12 +91,13 @@ func (a *App) capturePut(args []string) error {
 	}
 	input := model.FileInput{Name: name, Content: content}
 	code, err := a.request(http.MethodPost, endpoint+"/put", model.PutRequest{File: &input}, nil)
-	if err != nil {
-		return err
-	}
 	if code != http.StatusAccepted {
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
 	}
+	// The 202 status confirms receipt; capture does not use the response body.
 	results[sourceID] = captureProgress{PutURL: doc.URL}
 	receiptErr := writeCaptureResults(dir, results)
 	logErr := a.captureNote("accepted " + doc.URL)

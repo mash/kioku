@@ -405,6 +405,45 @@ func TestCaptureSubmissionDoesNotBlockNewRegistration(t *testing.T) {
 	}
 }
 
+func TestCapturePutKeepsAcceptedStatusWhenBodyIsTruncated(t *testing.T) {
+	a := projectEntryApp(t)
+	const src = "https://example.com/accepted"
+	if err := a.registerQueueSource(src, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	lock, _, err := a.beginCapture(time.Now())
+	if err != nil || lock == nil {
+		t.Fatal(lock, err)
+	}
+	dir, _, err := captureSnapshot(lock.Token, a.captureTmp(lock.Token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "source.md")
+	if err := os.WriteFile(file, []byte(SourceContentForTest(src, "evidence")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2")
+		w.WriteHeader(http.StatusAccepted)
+		w.(http.Flusher).Flush()
+	}))
+	defer ts.Close()
+	var out bytes.Buffer
+	a.Config.Server, a.Client, a.ctx, a.Out = ts.URL, ts.Client(), t.Context(), &out
+	if err := a.capturePut([]string{"--capture-token", lock.Token, "--source", src, file}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.log"))
+	want := "accepted " + src + "\n"
+	if err != nil || string(log) != want || out.String() != want {
+		t.Fatal(string(log), out.String(), err)
+	}
+	if err := a.captureResult([]string{"--capture-token", lock.Token, "--result", "accepted", src}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeleteLargeToolSourceFromStdin(t *testing.T) {
 	a := projectEntryApp(t)
 	source, err := captureToolSource("mcp__fixture__get_document", json.RawMessage(`{"query":"`+strings.Repeat("x", 350<<10)+`"}`))

@@ -107,23 +107,32 @@ func rewriteFrontmatter(mapping *yaml.Node, body, sourceURL, updatedAt string) (
 // still resolve and other fields do not inherit the replacement value.
 func preserveAliases(mapping, removed *yaml.Node) {
 	anchors := make(map[*yaml.Node]bool)
-	var collect func(*yaml.Node)
-	collect = func(n *yaml.Node) {
+	names := make(map[string]int)
+	var collect func(*yaml.Node, bool)
+	collect = func(n *yaml.Node, detached bool) {
 		if n.Anchor != "" {
-			anchors[n] = true
+			names[n.Anchor]++
+			if detached {
+				anchors[n] = true
+			}
 		}
 		for _, child := range n.Content {
-			collect(child)
+			collect(child, detached)
 		}
 	}
-	collect(removed)
+	collect(removed, true)
 	if len(anchors) == 0 {
 		return
 	}
+	collect(mapping, false)
 	declared := map[*yaml.Node]bool{}
 	var visit func(*yaml.Node) *yaml.Node
 	visit = func(n *yaml.Node) *yaml.Node {
-		if n.Kind == yaml.AliasNode && anchors[n.Alias] {
+		if n.Kind == yaml.AliasNode {
+			if !anchors[n.Alias] {
+				n.Value = n.Alias.Anchor
+				return n
+			}
 			n = n.Alias
 		}
 		if n.Anchor != "" {
@@ -131,6 +140,14 @@ func preserveAliases(mapping, removed *yaml.Node) {
 				return &yaml.Node{Kind: yaml.AliasNode, Value: n.Anchor, Alias: n}
 			}
 			declared[n] = true
+			if names[n.Anchor] > 1 {
+				// Moving a node must not change which declaration its aliases use.
+				name := n.Anchor + "_kioku"
+				for names[name] != 0 {
+					name += "_"
+				}
+				n.Anchor, names[name] = name, 1
+			}
 		}
 		delete(anchors, n)
 		for i, child := range n.Content {

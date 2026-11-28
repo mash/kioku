@@ -32,7 +32,7 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	if !decodeMCPArguments(body, &req) {
 		return fail(400, "invalid put request")
 	}
-	result, err := s.acceptInbox(r.Context(), pid, uid, req, false)
+	result, err := s.acceptInbox(r.Context(), pid, uid, req, time.Time{})
 	if err != nil {
 		return err
 	}
@@ -40,8 +40,12 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request, uid string) error {
 	return nil
 }
 
-func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest, useReceiptTime bool, hooks ...mutationHook) (model.PutResponse, error) {
-	item := model.InboxItem{ID: auth.Token()[:20], ProjectID: pid, Submitter: uid, Created: time.Now().UTC()}
+func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.PutRequest, receivedAt time.Time, hooks ...mutationHook) (model.PutResponse, error) {
+	created := receivedAt
+	if created.IsZero() {
+		created = time.Now().UTC()
+	}
+	item := model.InboxItem{ID: auth.Token()[:20], ProjectID: pid, Submitter: uid, Created: created}
 	encoded, err := json.Marshal(req)
 	if err != nil {
 		return model.PutResponse{}, err
@@ -53,10 +57,6 @@ func (s *Server) acceptInbox(ctx context.Context, pid, uid string, req model.Put
 	var response model.PutResponse
 	switch {
 	case req.File != nil && !req.Remove && req.SourceURL == "":
-		var receivedAt time.Time
-		if useReceiptTime {
-			receivedAt = item.Created
-		}
 		doc, content, err := source.InboxFile(req.File.Name, req.File.Content, receivedAt)
 		if err != nil {
 			return model.PutResponse{}, fail(400, err.Error())

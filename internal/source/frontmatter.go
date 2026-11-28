@@ -9,41 +9,49 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Frontmatter reads only the first YAML block, delimited by complete --- lines.
-// A closing delimiter at EOF is valid; empty blocks and duplicate keys are not.
+// Frontmatter reads only the first YAML mapping delimited by complete --- lines.
+// Empty blocks and closing delimiters at EOF are valid. Duplicate keys are not.
 func Frontmatter(content string) (*yaml.Node, error) {
-	block, _, found := splitFrontmatter(content)
-	if !found {
+	fm, err := parseFrontmatter(content)
+	if err != nil || fm.mapping == nil {
 		return nil, errFrontmatter
 	}
-	return decodeFrontmatter(yaml.NewDecoder(strings.NewReader(block)))
+	return fm.mapping, nil
 }
 
 var errFrontmatter = errors.New("frontmatter missing or invalid: require a top YAML mapping with unique keys")
 
-func decodeFrontmatter(decoder *yaml.Decoder) (*yaml.Node, error) {
+type markdownFrontmatter struct {
+	mapping *yaml.Node
+	body    string
+	decoder *yaml.Decoder
+}
+
+func parseFrontmatter(content string) (markdownFrontmatter, error) {
+	block, body, found := splitFrontmatter(content)
+	absent := markdownFrontmatter{body: content}
+	if !found {
+		return absent, nil
+	}
+	if strings.TrimSpace(block) == "" {
+		return markdownFrontmatter{mapping: &yaml.Node{Kind: yaml.MappingNode}, body: body}, nil
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(block))
 	var root yaml.Node
 	if err := decoder.Decode(&root); err != nil || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
-		return nil, errFrontmatter
+		// A pair of Markdown rules does not make the text between them metadata.
+		return absent, nil
 	}
 	mapping := root.Content[0]
 	seen := make(map[string]bool)
 	for i := 0; i < len(mapping.Content); i += 2 {
 		key := mapping.Content[i]
 		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || seen[key.Value] {
-			return nil, errFrontmatter
+			return markdownFrontmatter{}, errFrontmatter
 		}
 		seen[key.Value] = true
 	}
-	return mapping, nil
-}
-
-// Rewriting must not silently drop data after the first YAML document.
-func checkFrontmatterEnd(decoder *yaml.Decoder) error {
-	if err := decoder.Decode(new(yaml.Node)); err != io.EOF {
-		return errFrontmatter
-	}
-	return nil
+	return markdownFrontmatter{mapping: mapping, body: body, decoder: decoder}, nil
 }
 
 func splitFrontmatter(content string) (string, string, bool) {
@@ -65,8 +73,8 @@ func splitFrontmatter(content string) (string, string, bool) {
 	return "", content, false
 }
 
-// FrontmatterValue returns the node for key, or nil when key is absent.
-func FrontmatterValue(mapping *yaml.Node, key string) *yaml.Node {
+// frontmatterValue returns the node for key, or nil when key is absent.
+func frontmatterValue(mapping *yaml.Node, key string) *yaml.Node {
 	if mapping != nil {
 		for i := 0; i < len(mapping.Content); i += 2 {
 			if mapping.Content[i].Value == key {
@@ -77,91 +85,61 @@ func FrontmatterValue(mapping *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// rewriteFrontmatter updates provenance without changing body bytes.
-func rewriteFrontmatter(mapping *yaml.Node, body, sourceURL, updatedAt string) (string, error) {
-	set := func(key, value string) {
+// rewrite updates provenance without changing body bytes.
+func (fm markdownFrontmatter) rewrite(sourceURL, updatedAt string) (string, error) {
+	// Rewriting must not silently drop data after the first YAML document.
+	if fm.decoder != nil && fm.decoder.Decode(new(yaml.Node)) != io.EOF {
+		return "", errFrontmatter
+	}
+	mapping := fm.mapping
+	if mapping == nil {
+		mapping = &yaml.Node{Kind: yaml.MappingNode}
+	}
+	set := func(key, value string) error {
 		next := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 		for i := 0; i < len(mapping.Content); i += 2 {
 			if mapping.Content[i].Value == key {
-				old := mapping.Content[i+1]
+				if hasAnchorOrAlias(mapping.Content[i+1]) {
+					return errFrontmatter
+				}
 				mapping.Content[i+1] = next
-				preserveAliases(mapping, old)
-				return
+				return nil
 			}
 		}
 		mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, next)
+		return nil
 	}
 	if updatedAt != "" {
-		set("updated_at", updatedAt)
+		if err := set("updated_at", updatedAt); err != nil {
+			return "", err
+		}
 	}
-	set("source_url", sourceURL)
+	if err := set("source_url", sourceURL); err != nil {
+		return "", err
+	}
 	encoded, err := yaml.Marshal(mapping)
 	if err != nil {
 		return "", fmt.Errorf("write frontmatter: %w", err)
 	}
-	return "---\n" + string(encoded) + "---\n" + body, nil
+	return "---\n" + string(encoded) + "---\n" + fm.body, nil
 }
 
-// Keep anchors of replaced values if another field still references them.
-// Promote the first remaining alias to the original node, so later aliases
-// still resolve and other fields do not inherit the replacement value.
-func preserveAliases(mapping, removed *yaml.Node) {
-	anchors := make(map[*yaml.Node]bool)
-	names := make(map[string]int)
-	var collect func(*yaml.Node, bool)
-	collect = func(n *yaml.Node, detached bool) {
-		if n.Anchor != "" {
-			names[n.Anchor]++
-			if detached {
-				anchors[n] = true
-			}
-		}
-		for _, child := range n.Content {
-			collect(child, detached)
+func hasAnchorOrAlias(n *yaml.Node) bool {
+	if n.Anchor != "" || n.Kind == yaml.AliasNode {
+		return true
+	}
+	for _, child := range n.Content {
+		if hasAnchorOrAlias(child) {
+			return true
 		}
 	}
-	collect(removed, true)
-	if len(anchors) == 0 {
-		return
-	}
-	collect(mapping, false)
-	declared := map[*yaml.Node]bool{}
-	var visit func(*yaml.Node) *yaml.Node
-	visit = func(n *yaml.Node) *yaml.Node {
-		if n.Kind == yaml.AliasNode {
-			if !anchors[n.Alias] {
-				n.Value = n.Alias.Anchor
-				return n
-			}
-			n = n.Alias
-		}
-		if n.Anchor != "" {
-			if declared[n] {
-				return &yaml.Node{Kind: yaml.AliasNode, Value: n.Anchor, Alias: n}
-			}
-			declared[n] = true
-			if names[n.Anchor] > 1 {
-				// Moving a node must not change which declaration its aliases use.
-				name := n.Anchor + "_kioku"
-				for names[name] != 0 {
-					name += "_"
-				}
-				n.Anchor, names[name] = name, 1
-			}
-		}
-		delete(anchors, n)
-		for i, child := range n.Content {
-			n.Content[i] = visit(child)
-		}
-		return n
-	}
-	visit(mapping)
+	return false
 }
 
 // FrontmatterSourceURL reads the source identity from a parsed frontmatter mapping.
 // File intake and Wiki apply their own identity rules.
 func FrontmatterSourceURL(mapping *yaml.Node) (string, error) {
-	value := FrontmatterValue(mapping, "source_url")
+	value := frontmatterValue(mapping, "source_url")
 	if value != nil && value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value != "" {
 		return value.Value, nil
 	}

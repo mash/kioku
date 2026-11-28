@@ -9,7 +9,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_binary(cls):
+def build_test_binary(cls):
     binary = os.environ.get('KIOKU_BIN') or os.environ.get('KIOKU_TEST_BINARY')
     if binary:
         return Path(binary).resolve()

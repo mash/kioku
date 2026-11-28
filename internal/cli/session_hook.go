@@ -58,38 +58,46 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 		return nil
 	}
 	path, err := sessionPath(in.SessionID)
-	if err != nil {
-		return nil
-	}
 	now := time.Now().UTC()
 
 	if in.Event == "SessionStart" {
-		var additionalContext string
-		contextPrompt := "hook-start.txt"
-		if in.Source == "compact" || in.Source == "resume" {
-			s, _ := readSession(path, now)
-			additionalContext = sessionContext(s)
-			contextPrompt = "hook-compact.txt"
-		}
-		message := sessionStartCapture(in, now)
-		if additionalContext == "" {
-			if message == "" {
-				data, err := os.ReadFile(filepath.Join(*prompts, contextPrompt))
-				if err != nil {
-					return err
-				}
-				_, err = a.Out.Write(data)
-				return err
-			}
-			additionalContext, _ = readHookPrompt(*prompts, contextPrompt)
-		}
-		return writeHookOutput(a.Out, in.Event, additionalContext, message)
+		return a.sessionStartHook(in, path, *prompts, now)
+	}
+	if err != nil {
+		return nil
 	}
 	s, _ := readSession(path, now)
 	if in.Event == "Stop" || in.Event == "SessionEnd" {
 		return writeHookOutput(a.Out, in.Event, "", stopHook(in, s, now))
 	}
 	return writeHookOutput(a.Out, in.Event, promptHook(in, s, *prompts, now), "")
+}
+
+func (a *App) sessionStartHook(in sessionHookInput, path, prompts string, now time.Time) error {
+	var additionalContext, message string
+	contextPrompt := "hook-start.txt"
+	if in.Source == "compact" || in.Source == "resume" {
+		contextPrompt = "hook-compact.txt"
+		if path != "" {
+			s, _ := readSession(path, now)
+			additionalContext = sessionContext(s)
+		}
+	}
+	if path != "" {
+		message = sessionStartCapture(in, now)
+	}
+	if additionalContext == "" {
+		data, err := os.ReadFile(filepath.Join(prompts, contextPrompt))
+		if message == "" {
+			if err != nil {
+				return err
+			}
+			_, err = a.Out.Write(data)
+			return err
+		}
+		additionalContext = strings.TrimSpace(string(data))
+	}
+	return writeHookOutput(a.Out, in.Event, additionalContext, message)
 }
 
 func readHookPrompt(prompts, name string) (string, error) {

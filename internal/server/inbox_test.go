@@ -91,6 +91,7 @@ func TestInboxRejectsInvalidPutWithoutState(t *testing.T) {
 	p := securityProject(t, f, token)
 	for _, req := range []any{
 		map[string]any{"url": "https://example.com/a"},
+		model.PutRequest{Remove: true, SourceURL: "kioku:local"},
 		model.PutRequest{File: &model.FileInput{Name: "a.md", Content: testSourceContent("https://example.com/a", "body")}, Remove: true},
 		map[string]any{"url": "https://example.com/a", "remove": true, "source_url": "https://example.com/a"},
 		map[string]any{"files": []model.FileInput{{Name: "a.md"}, {Name: "b.md"}}},

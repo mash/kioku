@@ -52,7 +52,7 @@ func ValidateHTTPS(raw string) error {
 // comma fractions and out-of-range offsets. Check the syntax before parsing.
 var provenanceTimestamp = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$`)
 
-func ParseUpdatedAt(raw string) (time.Time, error) {
+func parseUpdatedAt(raw string) (time.Time, error) {
 	if provenanceTimestamp.MatchString(raw) {
 		if stamp, err := time.Parse(time.RFC3339, strings.ToUpper(raw)); err == nil {
 			return stamp, nil
@@ -63,101 +63,108 @@ func ParseUpdatedAt(raw string) (time.Time, error) {
 
 // FileWithProvenance reads the HTTPS provenance used by put PATH and capture put.
 func FileWithProvenance(name, content string) (Document, error) {
-	doc, _, err := fileWithProvenance(name, content, false, time.Time{})
-	return doc, err
+	doc, fm, err := fileWithProvenance(name, content)
+	if err != nil {
+		return Document{}, err
+	}
+	if doc.URL == LocalSource {
+		return Document{}, ErrLocalMarker
+	}
+	if err := fm.validateUpdatedAt(); err != nil {
+		return Document{}, err
+	}
+	return doc, nil
 }
 
 // InboxFile resolves the source identity and replaces the local key request in the inbox body.
 func InboxFile(name, content string, localReceivedAt time.Time) (Document, string, error) {
-	return fileWithProvenance(name, content, true, localReceivedAt)
+	doc, fm, err := fileWithProvenance(name, content)
+	if err != nil {
+		return Document{}, "", err
+	}
+	isLocal := doc.URL == LocalSource
+	var rewriteTime string
+	if isLocal && !localReceivedAt.IsZero() {
+		rewriteTime = localReceivedAt.UTC().Format(time.RFC3339Nano)
+	} else if err := fm.validateUpdatedAt(); err != nil {
+		return Document{}, "", err
+	}
+	if !isLocal {
+		return doc, content, nil
+	}
+	if strings.TrimSpace(fm.body) == "" {
+		return Document{}, "", errors.New("source body after frontmatter is empty")
+	}
+	doc.URL = fmt.Sprintf("%s/%x", LocalSource, sha256.Sum256([]byte(fm.body)))
+	content, err = fm.rewrite(doc.URL, rewriteTime)
+	if err != nil {
+		return Document{}, "", err
+	}
+	return doc, content, nil
 }
 
 // LocalFileContent prepares a local file for upload without changing its body.
 func LocalFileContent(name, content string, mtime time.Time) (string, error) {
-	if _, err := File(name, content); err != nil {
+	_, fm, err := parseFileFrontmatter(name, content)
+	if err != nil {
 		return "", err
 	}
-	block, body, found := splitFrontmatter(content)
-	mapping := &yaml.Node{Kind: yaml.MappingNode}
-	if found {
-		decoder := yaml.NewDecoder(strings.NewReader(block))
-		var err error
-		mapping, err = decodeFrontmatter(decoder)
-		if err != nil {
-			return "", err
+	if value := frontmatterValue(fm.mapping, "source_url"); value != nil {
+		if hasAnchorOrAlias(value) {
+			return "", errFrontmatter
 		}
-		if FrontmatterValue(mapping, "source_url") != nil {
-			u, _ := FrontmatterSourceURL(mapping)
-			switch {
-			case u == LocalSource:
-			case strings.HasPrefix(strings.ToLower(u), "https:"):
-				return "", ErrHTTPSLocalFile
-			default:
-				return "", ErrLocalFileSource
-			}
-		}
-		if err := checkFrontmatterEnd(decoder); err != nil {
-			return "", err
+		u, _ := FrontmatterSourceURL(fm.mapping)
+		switch {
+		case u == LocalSource:
+		case strings.HasPrefix(strings.ToLower(u), "https:"):
+			return "", ErrHTTPSLocalFile
+		default:
+			return "", ErrLocalFileSource
 		}
 	}
-	return rewriteFrontmatter(mapping, body, LocalSource, mtime.UTC().Format(time.RFC3339Nano))
+	return fm.rewrite(LocalSource, mtime.UTC().Format(time.RFC3339Nano))
 }
 
-func fileWithProvenance(name, content string, allowLocal bool, localReceivedAt time.Time) (Document, string, error) {
+func parseFileFrontmatter(name, content string) (Document, markdownFrontmatter, error) {
 	doc, err := File(name, content)
 	if err != nil {
-		return Document{}, "", err
+		return Document{}, markdownFrontmatter{}, err
 	}
-	block, body, found := splitFrontmatter(content)
-	if !found {
-		return Document{}, "", errFrontmatter
-	}
-	decoder := yaml.NewDecoder(strings.NewReader(block))
-	metadata, err := decodeFrontmatter(decoder)
+	fm, err := parseFrontmatter(content)
+	return doc, fm, err
+}
+
+func fileWithProvenance(name, content string) (Document, markdownFrontmatter, error) {
+	doc, fm, err := parseFileFrontmatter(name, content)
 	if err != nil {
-		return Document{}, "", err
+		return Document{}, fm, err
 	}
-	sourceURL, err := FrontmatterSourceURL(metadata)
+	if fm.mapping == nil {
+		return Document{}, fm, errFrontmatter
+	}
+	if value := frontmatterValue(fm.mapping, "source_url"); value != nil && value.Kind != yaml.ScalarNode && hasAnchorOrAlias(value) {
+		return Document{}, fm, errFrontmatter
+	}
+	doc.URL, err = FrontmatterSourceURL(fm.mapping)
 	if err != nil {
-		return Document{}, "", err
+		return Document{}, fm, err
 	}
-	isLocal := sourceURL == LocalSource
-	if isLocal && !allowLocal {
-		return Document{}, "", ErrLocalMarker
+	if IsLocalKey(doc.URL) {
+		return Document{}, fm, ErrLocalKeyForPut
 	}
-	if IsLocalKey(sourceURL) {
-		return Document{}, "", ErrLocalKeyForPut
-	}
-	if !isLocal {
-		if err := ValidateHTTPS(sourceURL); err != nil {
-			return Document{}, "", fmt.Errorf("source_url: %w", err)
+	if doc.URL != LocalSource {
+		if err := ValidateHTTPS(doc.URL); err != nil {
+			return Document{}, fm, fmt.Errorf("source_url: %w", err)
 		}
 	}
-	var rewriteTime string
-	if isLocal && !localReceivedAt.IsZero() {
-		rewriteTime = localReceivedAt.UTC().Format(time.RFC3339Nano)
-	} else {
-		var raw string
-		if value := FrontmatterValue(metadata, "updated_at"); value != nil && value.Kind == yaml.ScalarNode {
-			raw = value.Value
-		}
-		if _, err := ParseUpdatedAt(raw); err != nil {
-			return Document{}, "", err
-		}
+	return doc, fm, nil
+}
+
+func (fm markdownFrontmatter) validateUpdatedAt() error {
+	var raw string
+	if value := frontmatterValue(fm.mapping, "updated_at"); value != nil && value.Kind == yaml.ScalarNode {
+		raw = value.Value
 	}
-	if isLocal {
-		if strings.TrimSpace(body) == "" {
-			return Document{}, "", errors.New("source body after frontmatter is empty")
-		}
-		if err := checkFrontmatterEnd(decoder); err != nil {
-			return Document{}, "", err
-		}
-		sourceURL = fmt.Sprintf("%s/%x", LocalSource, sha256.Sum256([]byte(body)))
-		content, err = rewriteFrontmatter(metadata, body, sourceURL, rewriteTime)
-		if err != nil {
-			return Document{}, "", err
-		}
-	}
-	doc.URL = sourceURL
-	return doc, content, nil
+	_, err := parseUpdatedAt(raw)
+	return err
 }

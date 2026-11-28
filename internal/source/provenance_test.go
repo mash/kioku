@@ -1,7 +1,9 @@
 package source
 
 import (
-	"reflect"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +41,7 @@ func TestFileProvenance(t *testing.T) {
 		{"not at top", "Evidence\n" + valid, "frontmatter"},
 		{"leading blank line", "\n" + valid, "frontmatter"},
 		{"bom", "\ufeff" + valid, "frontmatter"},
-		{"empty frontmatter before provenance", "---\n" + valid, "frontmatter"},
+		{"empty frontmatter before provenance", "---\n" + valid, "source_url"},
 		{"unclosed", strings.TrimSuffix(valid, "---\nEvidence"), "frontmatter"},
 		{"missing source_url", strings.ReplaceAll(valid, "source_url: https://example.com/doc\n", ""), "source_url"},
 		{"empty source_url", strings.ReplaceAll(valid, "https://example.com/doc", `""`), "source_url"},
@@ -114,55 +116,65 @@ func TestHTTPSIdentityDoesNotCheckNetworkDestination(t *testing.T) {
 	}
 }
 
-func TestInboxFileKeepsAliasedValues(t *testing.T) {
-	const input = "---\nsource_url: &identity kioku:local\nupdated_at: &old {x: &nested [one, two]}\nsource_copy: *identity\nlist_copy: *nested\nmap_copy: *old\nagain: *old\n---\nBody\n"
-	stamp, err := time.Parse(time.RFC3339, "2026-11-28T13:00:00Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, content, err := InboxFile("notes.md", input, stamp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	meta, err := Frontmatter(content)
-	if err != nil {
-		t.Fatal(content, err)
-	}
-	var values map[string]any
-	if err := meta.Decode(&values); err != nil {
-		t.Fatal(content, err)
-	}
-	for key, want := range map[string]any{
-		"source_url": doc.URL, "source_copy": "kioku:local", "updated_at": "2026-11-28T13:00:00Z",
-		"list_copy": []any{"one", "two"}, "map_copy": map[string]any{"x": []any{"one", "two"}},
-		"again": map[string]any{"x": []any{"one", "two"}},
+func TestLocalFileFrontmatterOrMarkdownRules(t *testing.T) {
+	for _, tc := range []struct{ name, front, body string }{
+		{"empty", "---\n---\n", "hello\n"},
+		{"empty CRLF", "---\r\n---\r\n", "hello\r\n"},
+		{"comments are not a mapping", "", "---\n# Notes\n---\nhello\n"},
+		{"scalar is not a mapping", "", "---\nNotes\n---\nhello\n"},
+		{"sequence is not a mapping", "", "---\n- Notes\n---\nhello\n"},
+		{"invalid YAML", "", "---\ntitle: [Notes\n---\nhello\n"},
 	} {
-		if got := values[key]; !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s: %#v, want %#v\n%s", key, got, want, content)
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := LocalFileContent("notes.md", tc.front+tc.body, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, _, err := InboxFile("notes.md", content, time.Time{})
+			want := fmt.Sprintf("%s/%x", LocalSource, sha256.Sum256([]byte(tc.body)))
+			if err != nil || doc.URL != want || !strings.HasSuffix(content, "---\n"+tc.body) {
+				t.Fatalf("want %s and body %q, got %s and %q: %v", want, tc.body, doc.URL, content, err)
+			}
+		})
+	}
+}
+
+func TestProvenanceRewriteRejectsAnchorsAndAliasesInReplacedValues(t *testing.T) {
+	for _, header := range []string{
+		"source_url: &identity kioku:local\n",
+		"identity: &identity kioku:local\nsource_url: *identity\n",
+		"source_url: {nested: &identity kioku:local}\n",
+		"source_url: kioku:local\nupdated_at: &old 2026-11-28T00:00:00Z\n",
+		"source_url: kioku:local\nupdated_at: {x: &nested [one, two]}\n",
+		"source_url: kioku:local\nvalue: &old 2026-11-28T00:00:00Z\nupdated_at: {nested: *old}\n",
+	} {
+		input := "---\n" + header + "---\nBody\n"
+		stamp := time.Now()
+		if _, err := LocalFileContent("notes.md", input, stamp); !errors.Is(err, errFrontmatter) {
+			t.Fatalf("local file accepted %q: %v", header, err)
+		}
+		if _, _, err := InboxFile("notes.md", input, stamp); !errors.Is(err, errFrontmatter) {
+			t.Fatalf("inbox accepted %q: %v", header, err)
 		}
 	}
 }
 
-func TestLocalFileKeepsAliasesToRedefinedAnchors(t *testing.T) {
-	for _, prefix := range []string{
-		"updated_at:\n  old: &value before\n  composite: &details {copied: *value}\n",
-		"earlier: &value before\nupdated_at: &details {copied: *value}\n",
-	} {
-		input := "---\n" + prefix + "later: &value after\nmetadata: *details\ntitle: *value\n---\nBody\n"
-		content, err := LocalFileContent("notes.md", input, time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		meta, err := Frontmatter(content)
-		if err != nil {
-			t.Fatal(content, err)
-		}
-		var values map[string]any
-		if err := meta.Decode(&values); err != nil {
-			t.Fatal(content, err)
-		}
-		if values["title"] != "after" || !reflect.DeepEqual(values["metadata"], map[string]any{"copied": "before"}) {
-			t.Fatalf("rewriting provenance changed other YAML values: %#v\n%s", values, content)
-		}
+func TestProvenanceRewriteKeepsUnrelatedAliases(t *testing.T) {
+	const input = "---\ntitle: &title Before\noriginal_title: *title\n---\nBody\n"
+	content, err := LocalFileContent("notes.md", input, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stored, err := InboxFile("notes.md", content, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := Frontmatter(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]string
+	if err := meta.Decode(&values); err != nil || values["title"] != "Before" || values["original_title"] != "Before" {
+		t.Fatal(values, err, stored)
 	}
 }

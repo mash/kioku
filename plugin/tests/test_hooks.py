@@ -15,7 +15,7 @@ import threading
 import time
 import unittest
 
-from hook_test_helpers import ROOT, make_project, test_binary, wait_until, write_auth
+from hook_test_helpers import ROOT, make_project, build_test_binary, wait_until, write_auth
 
 
 def cli(version, status=0):
@@ -412,7 +412,7 @@ class SessionHooksTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.cli = test_binary(cls)
+        cls.cli = build_test_binary(cls)
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix='kioku session hook ')
@@ -952,6 +952,7 @@ class SessionHooksTest(unittest.TestCase):
         executable = bin_dir / 'claude'
         executable.write_text(script)
         executable.chmod(0o755)
+        self.env['PYTHONPATH'] = str(Path(__file__).parent)
         if restricted:
             for command in ('sh', 'dirname'):
                 (bin_dir / command).symlink_to(shutil.which(command))
@@ -1006,8 +1007,7 @@ print('backgrounded · 1a2b3c4d')
                 self.assertIn('https://x.example/0', queue.read_text())
                 log = root / 'fixture.json'
                 self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
-                                CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work),
-                                PYTHONPATH=str(Path(__file__).parent))
+                                CAPTURE_FIXTURE_CLI=str(self.cli))
                 output = self.hook(event, cwd=str(root))
                 self.assertEqual(output, '')
                 wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
@@ -1106,18 +1106,18 @@ print('backgrounded · 1a2b3c4d')
         self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
 
     def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
-        self.fake_claude("""#!/bin/sh
-case "$(cat "$KIOKU_CAPTURE_DIR/instructions.md")" in
-    *https://example.com/one*)
-        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-            [ -e "$CAPTURE_TEST_MARKER" ] && break
-            sleep 0.1
-        done
-        [ -e "$CAPTURE_TEST_MARKER" ] || exit 1
-        ;;
-    *https://example.com/two*) touch "$CAPTURE_TEST_MARKER" ;;
-esac
-printf 'backgrounded · 5e6f7a8b\n'
+        self.fake_claude('#!' + sys.executable + '\n' + """
+import os
+from pathlib import Path
+from hook_test_helpers import wait_until
+
+instructions = (Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
+marker = Path(os.environ['CAPTURE_TEST_MARKER'])
+if 'https://example.com/one' in instructions:
+    wait_until(marker.exists, timeout=2)
+elif 'https://example.com/two' in instructions:
+    marker.touch()
+print('backgrounded · 5e6f7a8b')
 """)
         self.env['CAPTURE_TEST_MARKER'] = str(self.work / 'second-started')
         projects = []
@@ -1138,8 +1138,16 @@ printf 'backgrounded · 5e6f7a8b\n'
             self.assertEqual(json.loads(lock.read_text())['bg_id'], '5e6f7a8b')
 
     def test_session_start_does_not_cancel_a_slow_capture_launcher(self):
-        self.fake_claude("#!/bin/sh\nsleep 1\nprintf 'backgrounded · 5e6f7a8b\n'\n")
-        self.env['KIOKU_SESSION_START_CAPTURE_WAIT'] = '100ms'
+        self.fake_claude('#!' + sys.executable + '\n' + """
+import os
+from pathlib import Path
+from hook_test_helpers import wait_until
+
+wait_until(Path(os.environ['CAPTURE_TEST_RELEASE']).exists, timeout=2)
+print('backgrounded · 5e6f7a8b')
+""")
+        release = self.work / 'release-launcher'
+        self.env.update(KIOKU_SESSION_START_CAPTURE_WAIT='100ms', CAPTURE_TEST_RELEASE=str(release))
         project = self.work / 'project'
         metadata, config = make_project(project, 'org/project')
         queue = metadata / 'queue.tsv'
@@ -1148,9 +1156,12 @@ printf 'backgrounded · 5e6f7a8b\n'
         catalog.parent.mkdir(parents=True)
         catalog.write_text(json.dumps({'projects': [config]}))
 
-        self.hook('SessionStart', source='startup', cwd=str(self.work))
+        output = self.hook('SessionStart', source='startup', cwd=str(self.work))
+        release.touch()
+        self.assertNotIn('systemMessage', output)
         lock = metadata / 'capture.lock'
         log = metadata / 'capture.log'
+
         def launched():
             if '\t0\tqueued\t' in queue.read_text() and (metadata / 'capture-launch.failed').exists():
                 self.fail('SessionStart cancelled the launcher while waiting for its ID')

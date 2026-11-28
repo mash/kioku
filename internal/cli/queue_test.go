@@ -171,7 +171,9 @@ func TestStatusShowsLocalStateWithoutServer(t *testing.T) {
 	home := projectRunHome(t)
 	ts := httptest.NewServer(http.NotFoundHandler())
 	ts.Close()
-	a := &App{Dir: t.TempDir(), AuthDir: filepath.Join(home, ".config/kioku/auth"), Config: Config{Server: ts.URL, Namespace: "org/a"}}
+	a := projectEntryApp(t, ts)
+	a.AuthDir = filepath.Join(home, ".config/kioku/auth")
+	a.Config.Namespace = "org/a"
 	if err := a.ensureProject(); err != nil {
 		t.Fatal(err)
 	}

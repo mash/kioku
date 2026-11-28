@@ -16,9 +16,17 @@ import (
 	"sync/atomic"
 )
 
-func projectEntryApp(t *testing.T) *App {
+func projectEntryApp(t *testing.T, servers ...*httptest.Server) *App {
 	t.Helper()
-	return &App{Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"), Config: Config{Server: defaultServer, Namespace: "org/p"}, Out: io.Discard, Err: &bytes.Buffer{}}
+	a := &App{
+		Dir: t.TempDir(), AuthDir: filepath.Join(t.TempDir(), "kioku", "auth"),
+		Config: Config{Server: defaultServer, Namespace: "org/p"},
+		Client: http.DefaultClient, ctx: t.Context(), Out: io.Discard, Err: &bytes.Buffer{},
+	}
+	if len(servers) != 0 {
+		a.Config.Server, a.Client = servers[0].URL, servers[0].Client()
+	}
+	return a
 }
 
 func writeProjectsFixture(t *testing.T, a *App, contents string) string {

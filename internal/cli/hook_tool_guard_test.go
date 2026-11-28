@@ -64,6 +64,7 @@ func TestHookToolGuardSnapshot(t *testing.T) {
 	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": filepath.Join(dir, "new")}, false)
 	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": outside}, true)
 	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": link}, true)
+	check("Artifact", map[string]any{"action": "read", "url": artifact, "out_dir": inside}, true)
 	check("Artifact", map[string]any{"action": "read", "url": artifact + "x"}, true)
 	check("Artifact", map[string]any{"action": "publish", "url": artifact}, true)
 	check("Artifact", map[string]any{"url": artifact}, true)

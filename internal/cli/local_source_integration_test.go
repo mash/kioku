@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mash/kioku/internal/agentgen"
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/blob/local"
 	"github.com/mash/kioku/internal/model"
@@ -30,9 +31,9 @@ import (
 	"github.com/mash/kioku/prompts"
 )
 
-// TestLocalSourceV10Integration uses the real queue, guard, CLI, SQLite inbox
+// TestCaptureToWikiIntegration uses the real queue, guard, CLI, SQLite inbox
 // and publication code. Connector replies and the runner's writing are fixtures.
-func TestLocalSourceV10Integration(t *testing.T) {
+func TestCaptureToWikiIntegration(t *testing.T) {
 	home := sessionTestEnv(t)
 	t.Setenv(captureModeEnv, "")
 	project := t.TempDir()
@@ -68,23 +69,23 @@ func TestLocalSourceV10Integration(t *testing.T) {
 
 	token := auth.Token()
 	if err := db.Write(ctx, func(q *store.Queries) error {
-		if err := q.PutUser(store.UserRow{ID: "v10-user", Email: "v10@example.com", Data: store.UserData{Name: "Fixture"}}); err != nil {
+		if err := q.PutUser(store.UserRow{ID: "capture-user", Email: "capture@example.com", Data: store.UserData{Name: "Fixture"}}); err != nil {
 			return err
 		}
-		if err := q.PutIdentity("v10-user", "test", "v10"); err != nil {
+		if err := q.PutIdentity("capture-user", "test", "capture"); err != nil {
 			return err
 		}
 		raw, err := json.Marshal(store.IdentitySessionData{})
 		if err != nil {
 			return err
 		}
-		return q.PutSession(store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: "v10-user", Expires: time.Now().Add(time.Hour).UnixMilli(), Data: raw})
+		return q.PutSession(store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: "capture-user", Expires: time.Now().Add(time.Hour).UnixMilli(), Data: raw})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	a := &App{
 		Dir: project, AuthDir: filepath.Join(home, ".config/kioku/auth"),
-		Config: Config{Server: httpServer.URL, Namespace: "v10/docs", Token: token},
+		Config: Config{Server: httpServer.URL, Namespace: "capture/docs", Token: token},
 		Client: httpServer.Client(), ctx: ctx, Out: io.Discard, Err: io.Discard,
 	}
 	if err := a.saveCredentials(); err != nil {
@@ -99,15 +100,15 @@ func TestLocalSourceV10Integration(t *testing.T) {
 		}
 		return out.String()
 	}
-	run("org", "create", "v10")
-	run("-n", "v10/docs", "project", "create")
+	run("org", "create", "capture")
+	run("-n", "capture/docs", "project", "create")
 	if err := a.selectCredential(false); err != nil {
 		t.Fatal(err)
 	}
 	fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
 
 	const web = "https://example.com/original"
-	const artifact = "https://claude.ai/artifact/fixture"
+	const artifact = "https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79"
 	const notion = "https://app.notion.com/p/fixture"
 	const linear = "https://linear.app/team/issue/FIX-4"
 	const artifactName = "wiki/source-artifact.md"
@@ -118,7 +119,7 @@ func TestLocalSourceV10Integration(t *testing.T) {
 		name, input, response, url, updated, text string
 	}
 	artifactItem := item{"Artifact", `{"file_path":"fixture.html"}`,
-		`"Published «fixture» at https://claude.ai/artifact/fixture (Version 1, version id 1790000000-aaaa)"`,
+		`"Published «fixture» at https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79 (Version 1, version id 1790000000-aaaa)"`,
 		artifact, "", "First artifact"}
 	webItem := item{"WebFetch", `{"url":"https://example.com/original"}`, "", web, "2026-11-28T08:00:00Z", "Web fixture"}
 	document := item{notionTool, `{"id":"fixture"}`, "", notion, "2026-11-28T08:01:00Z", "Notion fixture"}
@@ -289,8 +290,8 @@ func TestLocalSourceV10Integration(t *testing.T) {
 	checkPage("wiki/source-notion.md", notion)
 	checkPage("wiki/source-web.md", web)
 
-	artifactItem.input = `{"action":"publish","file_path":"fixture.html","url":"https://claude.ai/artifact/fixture"}`
-	artifactItem.response = `"Published «fixture» at https://claude.ai/artifact/fixture (Version 2, version id 1790000001-bbbb)"`
+	artifactItem.input = `{"action":"publish","file_path":"fixture.html","url":"https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79"}`
+	artifactItem.response = `"Published «fixture» at https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79 (Version 2, version id 1790000001-bbbb)"`
 	artifactItem.text = "New artifact content"
 	artifactItem.updated = artifactReadTime(`File saved: "/fixture/read.html" (19 bytes, "text/html", sha256 fixture) — "index.html" from version 1790000001-bbbb.`)
 	post(artifactItem)
@@ -351,16 +352,16 @@ func (f *localSourceWikiFixture) CollectOutput(_ context.Context, a runner.Attem
 }
 
 func (f *localSourceWikiFixture) Start(_ context.Context, spec runner.RunSpec) (runner.RunRef, error) {
-	files, err := readV10FixtureArchive(spec.InputArchive)
+	files, err := agentgen.ReadAcceptedOutput(bytes.NewReader(spec.InputArchive))
 	if err != nil {
 		return runner.RunRef{}, err
 	}
 	pages := map[string]string{"wiki/index.md": "# Fixture", "wiki/log.md": "# Test generation"}
 	names := map[string]string{
-		"https://example.com/original":        "wiki/source-web.md",
-		"https://claude.ai/artifact/fixture":  "wiki/source-artifact.md",
-		"https://app.notion.com/p/fixture":    "wiki/source-notion.md",
-		"https://linear.app/team/issue/FIX-4": "wiki/source-linear.md",
+		"https://example.com/original":                                         "wiki/source-web.md",
+		"https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79": "wiki/source-artifact.md",
+		"https://app.notion.com/p/fixture":                                     "wiki/source-notion.md",
+		"https://linear.app/team/issue/FIX-4":                                  "wiki/source-linear.md",
 	}
 	for name, content := range files {
 		if strings.HasPrefix(name, "wiki/source-") {
@@ -409,28 +410,4 @@ func (f *localSourceWikiFixture) Start(_ context.Context, spec runner.RunSpec) (
 	}
 	f.outputs[ref.ID] = b.Bytes()
 	return ref, nil
-}
-
-func readV10FixtureArchive(data []byte) (map[string]string, error) {
-	gz, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	files := map[string]string{}
-	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			return files, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		body, err := io.ReadAll(tr)
-		if err != nil {
-			return nil, err
-		}
-		files[h.Name] = string(body)
-	}
 }

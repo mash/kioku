@@ -106,7 +106,7 @@ func allowCaptureTool(in hookToolEvent, dir string, rows []queueRow) bool {
 		var arg artifactInput
 		return json.Unmarshal(in.Input, &arg) == nil && arg.Action == "read" &&
 			arg.FilePath == "" && isArtifactURL(arg.URL) && snapshotRow(rows, arg.URL) >= 0 &&
-			(arg.OutDir == "" || arg.OutDir == dir || captureToolPath(dir, arg.OutDir, true))
+			captureArtifactOutDir(dir, arg.OutDir)
 	case "Read", "Write":
 		var arg struct {
 			Path string `json:"file_path"`
@@ -129,6 +129,17 @@ func allowCaptureTool(in hookToolEvent, dir string, rows []queueRow) bool {
 		}
 		return false
 	}
+}
+
+func captureArtifactOutDir(dir, out string) bool {
+	if out == "" || out == dir {
+		return true
+	}
+	if !captureToolPath(dir, out, true) {
+		return false
+	}
+	info, err := os.Lstat(out)
+	return os.IsNotExist(err) || err == nil && info.IsDir()
 }
 
 func captureToolPath(dir, path string, writing bool) bool {

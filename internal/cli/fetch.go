@@ -59,11 +59,8 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 	if err != nil {
 		return err
 	}
-	// Only the default HTTP transport is used for live fetches.
-	if transport == nil {
-		if err := source.ValidateURL(u); err != nil {
-			return err
-		}
+	if err := source.ValidateURL(u); err != nil {
+		return err
 	}
 	if filepath.IsAbs(output) {
 		output, err = filepath.Rel(dir, output)
@@ -93,15 +90,6 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 		parent = os.NewFile(uintptr(fd), part)
 		defer parent.Close()
 	}
-	validate := func(u *url.URL) error {
-		if u.Scheme != "https" || u.Host == "" || u.User != nil {
-			return errors.New("認証情報を含まない HTTPS URL のみ取得できる")
-		}
-		return nil
-	}
-	if err := validate(u); err != nil {
-		return err
-	}
 	u = captureFetchURL(u)
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
@@ -110,7 +98,7 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 		if req.URL.Host != u.Host {
 			return errors.New("別のホストへの転送は許可されていない")
 		}
-		return validate(req.URL)
+		return source.ValidateURL(req.URL)
 	}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {

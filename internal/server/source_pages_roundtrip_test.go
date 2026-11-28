@@ -127,7 +127,13 @@ func TestLocalSourceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	received, err := source.ParseUpdatedAt(source.FrontmatterValue(meta, "updated_at").Value)
+	var frontmatter struct {
+		UpdatedAt string `yaml:"updated_at"`
+	}
+	if err := meta.Decode(&frontmatter); err != nil {
+		t.Fatal(err)
+	}
+	received, err := time.Parse(time.RFC3339Nano, frontmatter.UpdatedAt)
 	if err != nil || received.Before(before) || received.After(time.Now()) || !strings.HasSuffix(string(body), "---\nhello\n") {
 		t.Fatalf("MCP stored body: %q, %v", body, err)
 	}

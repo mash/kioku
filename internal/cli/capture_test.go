@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +46,14 @@ exit "$CAPTURE_TEST_STATUS"
 	t.Setenv("CAPTURE_TEST_STATUS", strconv.Itoa(status))
 	t.Setenv("CLAUDE_PLUGIN_ROOT", dir)
 	return log
+}
+
+type fetchTestTransport http.HandlerFunc
+
+func (h fetchTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	h(w, r)
+	return w.Result(), nil
 }
 
 func BenchmarkBeginCapture(b *testing.B) {
@@ -290,7 +297,9 @@ func TestCaptureRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const origin = "https://example.com"
+		const private = "https://127.0.0.1"
+		transport := fetchTestTransport(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
 				t.Error(r.Method)
 			}
@@ -305,7 +314,7 @@ func TestCaptureRun(t *testing.T) {
 			case "/foreign":
 				http.Redirect(w, r, "https://example.invalid/", http.StatusFound)
 			case "/downgrade":
-				http.Redirect(w, r, "http://example.invalid/", http.StatusFound)
+				http.Redirect(w, r, "http://"+r.Host+"/ok", http.StatusFound)
 			case "/redirect":
 				http.Redirect(w, r, "https://"+r.Host+"/ok", http.StatusFound)
 			case "/large":
@@ -316,11 +325,10 @@ func TestCaptureRun(t *testing.T) {
 			default:
 				fmt.Fprint(w, "source body")
 			}
-		}))
-		defer server.Close()
-		var snapshot []queueRow
+		})
+		snapshot := []queueRow{{"2026-11-18", private, 0, queueQueued, ""}}
 		for _, path := range []string{"", "/ok", "/redirect", "/downgrade", "/foreign", "/large", "/chunked", "/chain?left=9", "/chain?left=10"} {
-			snapshot = append(snapshot, queueRow{"2026-11-18", server.URL + path, 0, queueQueued, ""})
+			snapshot = append(snapshot, queueRow{"2026-11-18", origin + path, 0, queueQueued, ""})
 		}
 		if err := a.saveCaptureSnapshot(lock.Token, snapshot); err != nil {
 			t.Fatal(err)
@@ -332,7 +340,7 @@ func TestCaptureRun(t *testing.T) {
 			{"redirect_nine", "/chain?left=9", "nine", true}, {"redirect_ten", "/chain?left=10", "ten", false}, {"https", "/ok", "ok", true}, {"foreign_redirect", "/foreign", "foreign", false}, {"not_in_snapshot", "/secret", "secret", false}, {"https_redirect", "/redirect", "redirect", true}, {"downgrade", "/downgrade", "bad", false}, {"size_header", "/large", "large", false}, {"size_chunked", "/chunked", "chunked", false}, {"escape", "/ok", "../outside", false},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				err := fetchURL(context.Background(), server.Client().Transport, server.URL+tc.path, tmp, tc.out)
+				err := fetchURL(context.Background(), transport, origin+tc.path, tmp, tc.out)
 				if (err == nil) != tc.ok {
 					t.Fatal(err)
 				}
@@ -355,7 +363,7 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, out := range []string{"link", "dirlink/outside", "ok"} {
-			if err := fetchURL(context.Background(), server.Client().Transport, server.URL, tmp, out); err == nil {
+			if err := fetchURL(context.Background(), transport, origin, tmp, out); err == nil {
 				t.Fatal("accepted existing file or symlink", out)
 			}
 		}
@@ -366,9 +374,12 @@ func TestCaptureRun(t *testing.T) {
 		if err := a.capturePut([]string{"--capture-token", lock.Token, outside}); err == nil {
 			t.Fatal("capture put accepted outside file")
 		}
-		if err := fetchCommand(context.Background(), []string{server.URL, "--capture-token", lock.Token, "--out", "private", "--dir", tmp}); err == nil ||
+		if err := fetchCommand(context.Background(), []string{private, "--capture-token", lock.Token, "--out", "private", "--dir", tmp}); err == nil ||
 			(!strings.Contains(err.Error(), "public HTTPS") && !strings.Contains(err.Error(), "private address")) {
 			t.Fatal("production fetch must not accept private destinations", err)
+		}
+		if err := fetchURL(t.Context(), transport, private, tmp, "private"); err == nil || !strings.Contains(err.Error(), "private address") {
+			t.Fatal("custom transport must not bypass URL validation", err)
 		}
 		for _, path := range []string{outside, filepath.Join(tmp, "link"), filepath.Join(tmp, "dirlink/outside")} {
 			if _, err := readCaptureSource(tmp, path); err == nil {
@@ -379,7 +390,7 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(string(data), err)
 		}
 
-		if err := fetchCommand(context.Background(), []string{server.URL, "--capture-token", lock.Token, "--out", "x", "--dir", filepath.Dir(outside)}); err == nil {
+		if err := fetchCommand(context.Background(), []string{origin, "--capture-token", lock.Token, "--out", "x", "--dir", filepath.Dir(outside)}); err == nil {
 			t.Fatal("accepted foreign --dir")
 		}
 		if err := fetchURL(context.Background(), nil, "http://example.invalid", tmp, "http"); err == nil {
@@ -439,24 +450,13 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		requests := 0
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		transport := fetchTestTransport(func(w http.ResponseWriter, r *http.Request) {
 			requests++
 			if r.Host != "raw.githubusercontent.com" || r.URL.Path != "/owner/repo/abc123/docs/source.md" {
 				t.Error(r.Host, r.URL)
 			}
 			fmt.Fprint(w, "raw source")
-		}))
-		defer server.Close()
-		transport := server.Client().Transport.(*http.Transport).Clone()
-		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
-		transport.TLSClientConfig.ServerName = "example.com"
-		defer transport.CloseIdleConnections()
-		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			if address != "raw.githubusercontent.com:443" {
-				t.Errorf("unexpected destination %s", address)
-			}
-			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-		}
+		})
 		if err := fetchURL(context.Background(), transport, original, tmp, "source"); err != nil {
 			t.Fatal(err)
 		}
@@ -529,16 +529,16 @@ func TestCaptureRun(t *testing.T) {
 				}
 			})
 		}
-		fetchServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const downloadURL = "https://example.com/download"
+		transport := fetchTestTransport(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/pdf")
 			fmt.Fprint(w, "%PDF-test")
-		}))
-		defer fetchServer.Close()
-		if err := a.saveCaptureSnapshot(lock.Token, []queueRow{{"2026-11-18", fetchServer.URL, 0, queueQueued, ""}}); err != nil {
+		})
+		if err := a.saveCaptureSnapshot(lock.Token, []queueRow{{"2026-11-18", downloadURL, 0, queueQueued, ""}}); err != nil {
 			t.Fatal(err)
 		}
 		var output bytes.Buffer
-		if err := fetchURL(context.Background(), fetchServer.Client().Transport, fetchServer.URL, tmp, "download.raw", &output); err != nil {
+		if err := fetchURL(context.Background(), transport, downloadURL, tmp, "download.raw", &output); err != nil {
 			t.Fatal(err)
 		}
 		want := filepath.Join(tmp, "download.pdf")
@@ -564,7 +564,8 @@ func TestCaptureRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const origin = "https://example.com"
+		transport := fetchTestTransport(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/valid":
 				w.Header().Set("Last-Modified", "Wed, 18 Nov 2026 03:04:05 GMT")
@@ -572,11 +573,10 @@ func TestCaptureRun(t *testing.T) {
 				w.Header().Set("Last-Modified", "not a timestamp")
 			}
 			fmt.Fprint(w, "source")
-		}))
-		defer server.Close()
+		})
 		var rows []queueRow
 		for _, name := range []string{"valid", "missing", "invalid"} {
-			rows = append(rows, queueRow{"2026-11-18", server.URL + "/" + name, 0, queueQueued, ""})
+			rows = append(rows, queueRow{"2026-11-18", origin + "/" + name, 0, queueQueued, ""})
 		}
 		if err := a.saveCaptureSnapshot(lock.Token, rows); err != nil {
 			t.Fatal(err)
@@ -586,7 +586,7 @@ func TestCaptureRun(t *testing.T) {
 				var output bytes.Buffer
 				name := filepath.Base(row.Source) + ".txt"
 				before := time.Now().UTC().Truncate(time.Second)
-				if err := fetchURL(context.Background(), server.Client().Transport, row.Source, tmp, name, &output); err != nil {
+				if err := fetchURL(context.Background(), transport, row.Source, tmp, name, &output); err != nil {
 					t.Fatal(err)
 				}
 				after := time.Now().UTC()

@@ -8,13 +8,13 @@ import subprocess
 import tempfile
 import unittest
 
-from hook_test_helpers import ROOT, make_project, test_binary, write_auth
+from hook_test_helpers import ROOT, make_project, build_test_binary, write_auth
 
 
 class ToolHooksTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.binary = test_binary(cls)
+        cls.binary = build_test_binary(cls)
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

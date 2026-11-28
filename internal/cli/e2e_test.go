@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -273,6 +275,45 @@ func TestCLIFullWorkflow(t *testing.T) {
 			t.Fatal(out)
 		}
 		unchanged(body)
+
+		t.Run("command exits one on rejected local puts and incomplete delete keys", func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), "kioku")
+			build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/kioku")
+			build.Dir = filepath.Join("..", "..")
+			if data, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("build fixture: %s: %v", data, err)
+			}
+			runRejected := func(want string, args ...string) {
+				t.Helper()
+				var out, stderr bytes.Buffer
+				cmd := exec.CommandContext(ctx, binary, append([]string{"-C", config, "--server", ts.URL}, args...)...)
+				cmd.Stdout, cmd.Stderr = &out, &stderr
+				err := cmd.Run()
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 1 || out.Len() != 0 || !strings.Contains(stderr.String(), want) {
+					t.Fatalf("%v: stdout=%q stderr=%q error=%v", args, out.String(), stderr.String(), err)
+				}
+			}
+			for _, code := range []int{http.StatusBadRequest, http.StatusServiceUnavailable} {
+				rejectPut := func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(code)
+					_, _ = io.WriteString(w, `{"error":"fixture rejection"}`)
+				}
+				afterPut.Store(&rejectPut)
+				count := putCount.Load()
+				runRejected("server error: fixture rejection", "put", uri)
+				afterPut.Store(nil)
+				if putCount.Load() != count+1 {
+					t.Fatal("expected one put request")
+				}
+				unchanged(body)
+			}
+			count := putCount.Load()
+			runRejected("ローカルキー", "delete", "kioku:local")
+			if putCount.Load() != count {
+				t.Fatal("sent remove for an incomplete key")
+			}
+		})
 
 		write(strings.Repeat("x", (1<<20)+1))
 		reject("exceeds 1 MiB", uri)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,38 +13,47 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mash/kioku/internal/atomicfile"
 )
 
 const (
 	queueQueued        = "queued"
 	queueFailed        = "failed"
-	maxCaptureAttempts = 3
+	maxCaptureAttempts = 2
 )
 
 type queueRow struct {
 	Date     string `json:"date"`
-	URL      string `json:"url"`
-	Note     string `json:"note"`
+	Source   string `json:"source"`
 	Attempts int    `json:"attempts"`
 	State    string `json:"state"`
 	Reason   string `json:"reason"`
 }
 
+var errQueueFormat = errors.New("invalid queue row: delete .kioku/queue.tsv to discard the old or invalid queue")
+
 func parseQueue(data []byte) ([]queueRow, error) {
-	rows := []queueRow{}
-	for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
+	var rows = []queueRow{}
+	if len(data) == 0 {
+		return rows, nil
+	}
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 6 {
-			return nil, errors.New("invalid queue row")
+		if len(fields) != 5 {
+			return nil, errQueueFormat
 		}
-		attempts, err := strconv.Atoi(fields[3])
-		if err != nil || attempts < 0 || attempts > maxCaptureAttempts || (fields[4] != queueQueued && fields[4] != queueFailed) {
-			return nil, errors.New("invalid queue row")
+		attempts, err := strconv.Atoi(fields[2])
+		if err != nil || attempts < 0 || attempts > maxCaptureAttempts || (fields[3] != queueQueued && fields[3] != queueFailed) {
+			return nil, errQueueFormat
 		}
-		rows = append(rows, queueRow{fields[0], fields[1], fields[2], attempts, fields[4], fields[5]})
+		if _, err := time.Parse(time.DateOnly, fields[0]); err != nil {
+			return nil, errQueueFormat
+		}
+		if _, err := parseCaptureSource(fields[1]); err != nil {
+			return nil, errQueueFormat
+		}
+		rows = append(rows, queueRow{fields[0], fields[1], attempts, fields[3], fields[4]})
 	}
 	return rows, nil
 }
@@ -51,7 +61,7 @@ func parseQueue(data []byte) ([]queueRow, error) {
 func formatQueue(rows []queueRow) []byte {
 	var b strings.Builder
 	for _, row := range rows {
-		fmt.Fprintf(&b, "%s\t%s\t%s\t%d\t%s\t%s\n", row.Date, row.URL, row.Note, row.Attempts, row.State, row.Reason)
+		fmt.Fprintf(&b, "%s\t%s\t%d\t%s\t%s\n", row.Date, row.Source, row.Attempts, row.State, row.Reason)
 	}
 	return []byte(b.String())
 }
@@ -85,38 +95,32 @@ func queueText(raw string) string {
 	return strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(raw)
 }
 
-func removeRows(rows []queueRow, urls map[string]bool) []queueRow {
-	return slices.DeleteFunc(rows, func(row queueRow) bool { return urls[row.URL] })
+func removeQueueSource(rows []queueRow, source string) []queueRow {
+	return slices.DeleteFunc(rows, func(row queueRow) bool { return row.Source == source })
 }
 
-func (a *App) addQueueURLs(urls []string, note string, now time.Time) (int, error) {
+func (a *App) registerQueueSource(source string, now time.Time) error {
+	if _, err := parseCaptureSource(source); err != nil {
+		return err
+	}
 	if _, err := a.projectPath(); err != nil {
-		return 0, err
+		return err
 	}
 	unlock, err := a.localLock()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer unlock()
-	var count int
-	err = a.updateQueue(func(rows []queueRow) []queueRow {
-		date, note := now.Local().Format(time.DateOnly), queueText(note)
-		added := make([]queueRow, 0, len(urls))
-		seen := make(map[string]bool, len(urls))
-		// Keep the last occurrence, just as successive puts move a URL to the end.
-		for i := len(urls) - 1; i >= 0; i-- {
-			u := urls[i]
-			if !seen[u] {
-				seen[u] = true
-				added = append(added, queueRow{Date: date, URL: u, Note: note, State: queueQueued})
+	return a.updateQueue(func(rows []queueRow) []queueRow {
+		for _, row := range rows {
+			if row.Source == source && row.State == queueQueued {
+				return rows
 			}
 		}
-		slices.Reverse(added)
-		rows = append(removeRows(rows, seen), added...)
-		count, _ = queueCounts(rows)
-		return rows
+		return append(removeQueueSource(rows, source), queueRow{
+			Date: now.Local().Format(time.DateOnly), Source: source, State: queueQueued,
+		})
 	})
-	return count, err
 }
 
 func queueCounts(rows []queueRow) (queued, failed int) {
@@ -131,21 +135,29 @@ func queueCounts(rows []queueRow) (queued, failed int) {
 }
 
 func sameQueueAttempt(a, b queueRow) bool {
-	return a.URL == b.URL && a.Date == b.Date && a.Note == b.Note && a.Attempts == b.Attempts
+	return a.Source == b.Source && a.Date == b.Date && a.Attempts == b.Attempts
+}
+
+func snapshotRow(snapshot []queueRow, source string) int {
+	return slices.IndexFunc(snapshot, func(row queueRow) bool { return row.Source == source })
 }
 
 func (a *App) captureResult(args []string) error {
-	usage := errors.New("usage: kioku capture result --capture-token TOKEN --result accepted|unsaved|unknown --reason TEXT URL")
+	usage := errors.New("usage: kioku capture result --capture-token TOKEN --result accepted|unsaved|skipped [--reason TEXT] SOURCE")
 	f := flag.NewFlagSet("capture result", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	token := captureTokenFlag(f)
 	result := f.String("result", "", "capture result")
 	reason := f.String("reason", "", "reason for the result")
-	if err := f.Parse(args); err != nil || f.NArg() != 1 || strings.TrimSpace(*reason) == "" {
+	if err := f.Parse(args); err != nil || f.NArg() != 1 || *token == "" {
 		return usage
 	}
 	switch *result {
-	case "accepted", "unsaved", "unknown":
+	case "accepted":
+	case "unsaved", "skipped":
+		if strings.TrimSpace(*reason) == "" {
+			return usage
+		}
 	default:
 		return usage
 	}
@@ -162,27 +174,75 @@ func (a *App) captureResult(args []string) error {
 	if err != nil {
 		return err
 	}
-	u := f.Arg(0)
-	i := slices.IndexFunc(snapshot, func(row queueRow) bool { return row.URL == u })
-	if i == -1 {
-		return errors.New("capture result: URL は capture のスナップショットにない")
+	src := f.Arg(0)
+	index := snapshotRow(snapshot, src)
+	if index < 0 {
+		return errors.New("capture result: 取得元は capture の snapshot にない")
 	}
-	reasonText := queueText(*reason)
-	err = a.updateQueue(func(rows []queueRow) []queueRow {
-		for iRow, row := range rows {
-			if !sameQueueAttempt(row, snapshot[i]) {
-				continue
+	results, err := readCaptureResults(dir)
+	if err != nil {
+		return err
+	}
+	var logErr error
+	if results[src] == "" {
+		reasonText := queueText(strings.TrimSpace(*reason))
+		err := a.updateQueue(func(rows []queueRow) []queueRow {
+			for i, row := range rows {
+				if row.State != queueQueued || !sameQueueAttempt(row, snapshot[index]) {
+					continue
+				}
+				if *result != "unsaved" {
+					return slices.Delete(rows, i, i+1)
+				}
+				rows[i].Reason = reasonText
+				if row.Attempts >= maxCaptureAttempts {
+					rows[i].State = queueFailed
+				}
+				break
 			}
-			if *result == "accepted" {
-				return slices.Delete(rows, iRow, iRow+1)
-			}
-			rows[iRow].Reason = reasonText
-			if row.Attempts >= maxCaptureAttempts {
-				rows[iRow].State = queueFailed
-			}
-			break
+			return rows
+		})
+		if err != nil {
+			return err
 		}
-		return rows
-	})
-	return errors.Join(err, a.captureNote(u+": "+reasonText))
+		results[src] = *result
+		if err := writeCaptureResults(dir, results); err != nil {
+			return err
+		}
+		if *result != "accepted" {
+			logErr = a.captureNote(*result + " " + src + ": " + reasonText)
+		}
+	}
+	for _, row := range snapshot {
+		if results[row.Source] == "" {
+			return logErr
+		}
+	}
+	return errors.Join(logErr, a.releaseCapture(*token))
+}
+
+func readCaptureResults(dir string) (map[string]string, error) {
+	results := map[string]string{}
+	data, err := readRegular(filepath.Join(dir, "results.json"))
+	if os.IsNotExist(err) {
+		return results, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeJSON(data, &results); err != nil {
+		return nil, err
+	}
+	if results == nil {
+		return nil, errors.New("invalid capture results")
+	}
+	return results, nil
+}
+
+func writeCaptureResults(dir string, results map[string]string) error {
+	data, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(filepath.Join(dir, "results.json"), data, 0600)
 }

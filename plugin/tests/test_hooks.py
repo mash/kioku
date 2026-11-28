@@ -966,7 +966,6 @@ urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().split
 for url in urls:
     subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'result', '--capture-token', lock['token'],
                     '--result', 'accepted', '--reason', '受付済み', url], check=True)
-subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'unlock', '--token', lock['token']], check=True)
 """
 subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -977,7 +976,7 @@ print('backgrounded · 1a2b3c4d')
         self.env['KIOKU_SERVER'] = 'https://wrong.example'
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
-        for event, count in [('Stop', 5), ('SessionEnd', 1)]:
+        for event, count in [('Stop', 1), ('SessionEnd', 1)]:
             with self.subTest(event=event):
                 root = self.work / event
                 metadata = root / '.kioku'
@@ -990,17 +989,13 @@ print('backgrounded · 1a2b3c4d')
                 self.state = {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)}
                 self.save_state()
                 queue = metadata / 'queue.tsv'
-                queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t読んだ\t0\tqueued\t\n' for i in range(count))
+                queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t0\tqueued\t\n' for i in range(count))
                 queue.write_text(queued)
                 log = root / 'fixture.json'
                 self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
                                 CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work))
                 output = self.hook(event, cwd=str(root))
-                if event == 'Stop':
-                    self.assertEqual(json.loads(output)['systemMessage'],
-                                     f'Kioku: capture 実行中（id 不明、{count} 件）。capture.log を確認する。')
-                else:
-                    self.assertEqual(output, '')
+                self.assertEqual(output, '')
                 self.wait_until(lambda: (metadata / 'capture.last').exists())
                 self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
                 self.wait_until(lambda: not (metadata / 'capture.lock').exists())
@@ -1013,7 +1008,7 @@ print('backgrounded · 1a2b3c4d')
                 self.assertEqual(recorded['args'][0], '--bg')
                 self.assertNotIn('-p', recorded['args'])
                 self.assertIn(queued.replace('\t0\tqueued', '\t1\tqueued'), recorded['args'][-1])
-                self.assertIn('capture unlock', recorded['args'][-1])
+                self.assertNotIn('capture unlock', recorded['args'][-1])
 
     def test_session_start_recovers_all_projects_and_reports_failed_rows(self):
         bin_dir = self.work / 'fake-bin'
@@ -1039,11 +1034,11 @@ print('backgrounded · 1a2b3c4d')
                     if name == 'empty':
                         continue
                     state, attempts, reason = {
-                        'failed': ('failed', 3, 'login'),
-                        'exhausted': ('queued', 3, ''),
+                        'failed': ('failed', 2, 'login'),
+                        'exhausted': ('queued', 2, ''),
                     }.get(name, ('queued', 0, ''))
                     (metadata / 'queue.tsv').write_text(
-                        f'2026-11-18\thttps://example.com/{name}\tkioku put\t{attempts}\t{state}\t{reason}\n')
+                        f'2026-11-18\thttps://example.com/{name}\t{attempts}\t{state}\t{reason}\n')
                     if name == 'busy':
                         (metadata / 'capture.lock').write_text(json.dumps({
                             'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -1060,7 +1055,7 @@ print('backgrounded · 1a2b3c4d')
                 self.assertIn('org/failed' if source in ('compact', 'resume') else 'trigger 語', context)
                 message = obj['systemMessage']
                 for name in ('one', 'two'):
-                    self.assertIn(f'org/{name} の残り 1 件の capture を起動した（id 5e6f7a8b）', message)
+                    self.assertNotIn(f'org/{name}', message)
                     metadata = self.work / source / name / '.kioku'
                     self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
                     self.assertIn('\t1\tqueued\t', (metadata / 'queue.tsv').read_text())
@@ -1105,15 +1100,17 @@ printf 'backgrounded · 5e6f7a8b\n'
             config = {'namespace': f'org/{name}', 'server': 'https://kioku.magicians.ee'}
             (metadata / 'config').write_text(json.dumps(config))
             (metadata / 'queue.tsv').write_text(
-                f'2026-11-18\thttps://example.com/{name}\tkioku put\t0\tqueued\t\n')
+                f'2026-11-18\thttps://example.com/{name}\t0\tqueued\t\n')
             projects.append(dict(config, path=str(root)))
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
         catalog.write_text(json.dumps({'projects': projects}))
 
-        message = json.loads(self.hook('SessionStart', source='startup'))['systemMessage']
-        self.assertIn('org/one の残り 1 件の capture を起動した', message)
-        self.assertIn('org/two の残り 1 件の capture を起動した', message)
+        output = self.hook('SessionStart', source='startup')
+        self.assertNotIn('systemMessage', output)
+        for name in ('one', 'two'):
+            lock = self.work / name / '.kioku/capture.lock'
+            self.assertEqual(json.loads(lock.read_text())['bg_id'], '5e6f7a8b')
 
     def test_session_start_does_not_cancel_a_slow_capture_launcher(self):
         bin_dir = self.work / 'fake-bin'
@@ -1130,7 +1127,7 @@ printf 'backgrounded · 5e6f7a8b\\n'
         metadata.mkdir(parents=True)
         config = {'namespace': 'org/project', 'server': 'https://kioku.magicians.ee'}
         (metadata / 'config').write_text(json.dumps(config))
-        (metadata / 'queue.tsv').write_text('2026-11-18\thttps://example.com/slow\tkioku put\t0\tqueued\t\n')
+        (metadata / 'queue.tsv').write_text('2026-11-18\thttps://example.com/slow\t0\tqueued\t\n')
         catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
         catalog.parent.mkdir(parents=True)
         catalog.write_text(json.dumps({'projects': [dict(config, path=str(project))]}))

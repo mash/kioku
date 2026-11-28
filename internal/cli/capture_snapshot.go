@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/mash/kioku/internal/atomicfile"
 )
@@ -21,7 +22,7 @@ func resolveCaptureDir(token, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if lock == nil || lock.invalid || lock.Token != token {
+	if !lockBusy(lock, time.Now()) || lock.Token != token {
 		return "", errors.New("capture lock ownership changed")
 	}
 	info, err := os.Lstat(dir)
@@ -53,7 +54,7 @@ func captureSnapshot(dir string) ([]queueRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	if lock == nil || lock.invalid || lock.Token != filepath.Base(dir) {
+	if !lockBusy(lock, time.Now()) || lock.Token != filepath.Base(dir) {
 		return nil, errors.New("capture lock ownership changed")
 	}
 	data, err := readCaptureSource(dir, filepath.Join(dir, "snapshot.tsv"))

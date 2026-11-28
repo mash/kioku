@@ -287,8 +287,8 @@ func TestCLIFullWorkflow(t *testing.T) {
 		const abandonedURL = "https://example.com/abandoned"
 		type status struct {
 			Queue []struct {
-				URL, State, Reason string
-				Attempts           int
+				Source, State, Reason string
+				Attempts              int
 			}
 			Capture *struct {
 				ID        string
@@ -323,7 +323,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		}
 		start := func() string {
 			t.Helper()
-			must("capture", "run", "--min", "1", "--plugin-root", p)
+			must("capture", "run")
 			token, _ := readLock()
 			return token
 		}
@@ -339,7 +339,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, u := range urls {
-				if _, err := fmt.Fprintf(f, "%s\t%s\t\t0\tqueued\t\n", time.Now().Format(time.DateOnly), u); err != nil {
+				if _, err := fmt.Fprintf(f, "%s\t%s\t0\tqueued\t\n", time.Now().Format(time.DateOnly), u); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -369,21 +369,21 @@ func TestCLIFullWorkflow(t *testing.T) {
 			}
 		}
 		write(okURL)
-		if out := must("capture", "put", "--capture-token", token, path); out != "accepted capture.md\n" {
+		if out := must("capture", "put", "--capture-token", token, "--source", okURL, path); out != "accepted "+okURL+"\n" {
 			t.Fatal(out)
 		}
 		result(token, "accepted", "受付済み", okURL)
 		must("delete", goneURL)
 		write(goneURL)
-		if out, err := run("capture", "put", "--capture-token", token, path); err == nil || !strings.Contains(err.Error(), "delete 済み") || out != "" {
+		if out, err := run("capture", "put", "--capture-token", token, "--source", goneURL, path); err == nil || !strings.Contains(err.Error(), "delete 済み") || out != "" {
 			t.Fatal(out, err)
 		}
 		enqueue(goneURL)
 		count := putCount.Load()
-		if out, err := run("capture", "put", "--capture-token", token, path); err == nil || out != "" || putCount.Load() != count {
+		if out, err := run("capture", "put", "--capture-token", token, "--source", goneURL, path); err == nil || out != "" || putCount.Load() != count {
 			t.Fatal("old snapshot must not submit after delete and requeue", out, err)
 		}
-		result(token, "unknown", "delete 済み", goneURL)
+		result(token, "skipped", "delete 済み", goneURL)
 		for _, u := range []string{okURL, goneURL} {
 			found := false
 			for _, row := range readStatus().Inbox {
@@ -403,15 +403,14 @@ func TestCLIFullWorkflow(t *testing.T) {
 			}
 		}
 
-		for i, state := range []string{"unsaved", "unknown", "unsaved"} {
+		for i, state := range []string{"unsaved", "unsaved"} {
 			if i != 0 {
 				token = start()
 			}
 			result(token, state, "ログイン画面", failedURL)
-			must("capture", "unlock", "--token", token)
 			st = readStatus()
 			want := "queued"
-			if i == 2 {
+			if i == 1 {
 				want = "failed"
 			}
 			if st.Capture != nil || len(st.Queue) != 1 || st.Queue[0].State != want || st.Queue[0].Attempts != i+1 || st.Queue[0].Reason != "ログイン画面" {
@@ -426,7 +425,7 @@ func TestCLIFullWorkflow(t *testing.T) {
 		}
 		must("delete", failedURL)
 		enqueue(abandonedURL)
-		for range 3 {
+		for range 2 {
 			start()
 			_, lock := readLock()
 			lock["started_at"] = time.Now().Add(-31 * time.Minute)
@@ -435,9 +434,9 @@ func TestCLIFullWorkflow(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		must("capture", "run", "--min", "1", "--plugin-root", p)
+		must("capture", "run")
 		st = readStatus()
-		if st.Capture != nil || len(st.Queue) != 1 || st.Queue[0].State != "failed" || st.Queue[0].Reason != "capture が 3 回とも結果を返さなかった" {
+		if st.Capture != nil || len(st.Queue) != 1 || st.Queue[0].State != "failed" || st.Queue[0].Reason != "capture が 2 回とも結果を返さなかった" {
 			t.Fatalf("%+v", st)
 		}
 
@@ -452,11 +451,11 @@ func TestCLIFullWorkflow(t *testing.T) {
 		}
 		path = filepath.Join(dir, "capture.md")
 		write(raw)
-		if out, err := run("capture", "put", "--capture-token", token, path); err != nil || out != "accepted capture.md\n" {
+		if out, err := run("capture", "put", "--capture-token", token, "--source", raw, path); err != nil || out != "accepted "+raw+"\n" {
 			t.Fatal("deleting the blob URL must not prevent capture of the separately queued raw URL", out, err)
 		}
 		result(token, "accepted", "受付済み", raw)
-		must("capture", "unlock", "--token", token)
+		result(token, "skipped", "delete 済み", blob)
 	})
 	must("logout")
 	if _, err = run("whoami"); err == nil {

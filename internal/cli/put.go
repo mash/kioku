@@ -7,11 +7,9 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/mash/kioku/internal/model"
@@ -48,11 +46,12 @@ func (a *App) capturePut(args []string) error {
 	f := flag.NewFlagSet("capture put", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	captureToken := captureTokenFlag(f)
+	src := f.String("source", "", "capture snapshot source")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if f.NArg() != 1 || *captureToken == "" {
-		return errors.New("usage: kioku capture put --capture-token TOKEN FILE")
+	if f.NArg() != 1 || *captureToken == "" || *src == "" {
+		return errors.New("usage: kioku capture put --capture-token TOKEN --source SOURCE FILE")
 	}
 	endpoint, err := a.projectPath()
 	if err != nil {
@@ -71,7 +70,33 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return fmt.Errorf("put: %w", err)
 	}
+	i := snapshotRow(snapshot, *src)
+	if i < 0 {
+		return errors.New("put: 取得元は capture の snapshot にない")
+	}
+	attempt := snapshot[i]
+	queue, err := readQueue(a.queuePath())
+	if err != nil {
+		return err
+	}
+	j := snapshotRow(queue, *src)
+	if j < 0 {
+		return errors.New("put: queue に行が無い（delete 済み）")
+	}
+	if queue[j].State != queueQueued || !sameQueueAttempt(queue[j], attempt) {
+		return errors.New("put: queue の行が再登録されたため、この capture では送らない")
+	}
+	results, err := readCaptureResults(dir)
+	if err != nil {
+		return err
+	}
+	if results[*src] != "" {
+		return errors.New("put: この capture は取得元の結果を記録済み")
+	}
 	path := f.Arg(0)
+	if !strings.EqualFold(filepath.Ext(path), ".md") {
+		return errors.New("put: capture の資料は Markdown (.md) にする")
+	}
 	b, err := readCaptureSource(dir, path)
 	if err != nil {
 		return err
@@ -82,33 +107,8 @@ func (a *App) capturePut(args []string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	i := slices.IndexFunc(snapshot, func(row queueRow) bool { return row.URL == doc.URL })
-	if i == -1 {
-		i = slices.IndexFunc(snapshot, func(row queueRow) bool {
-			u, err := url.Parse(row.URL)
-			return err == nil && captureFetchURL(u).String() == doc.URL
-		})
-		if i == -1 {
-			return errors.New("put: source_url が capture のスナップショット URL と一致しない")
-		}
-	}
-	attempt := snapshot[i]
-	queue, err := readQueue(a.queuePath())
-	if err != nil {
-		return err
-	}
-	j := slices.IndexFunc(queue, func(row queueRow) bool { return row.URL == attempt.URL })
-	if j == -1 {
-		return errors.New("put: queue に行が無い（delete 済み）")
-	}
-	if !sameQueueAttempt(queue[j], attempt) {
-		return errors.New("put: queue の行が再登録されたため、この capture では送らない")
-	}
-	if attempt.URL != doc.URL {
-		content, err = source.RewriteFrontmatter(content, attempt.URL, "")
-		if err != nil {
-			return fmt.Errorf("put: %w", err)
-		}
+	if !strings.HasPrefix(*src, toolSourcePrefix) && doc.URL != *src {
+		return errors.New("put: source_url が capture の HTTPS 取得元と一致しない")
 	}
 	if err := a.selectCredential(false); err != nil {
 		return err
@@ -121,8 +121,9 @@ func (a *App) capturePut(args []string) error {
 	if code != http.StatusAccepted {
 		return fmt.Errorf("put: 受付を確かめられない（HTTP %d）", code)
 	}
-	_, err = fmt.Fprintf(a.Out, "accepted %s\n", input.Name)
-	return err
+	logErr := a.captureNote("accepted " + doc.URL)
+	_, err = fmt.Fprintf(a.Out, "accepted %s\n", doc.URL)
+	return errors.Join(logErr, err)
 }
 
 func (a *App) putPaths(paths []string) error {

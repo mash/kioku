@@ -33,7 +33,7 @@ func fetchCommand(ctx context.Context, args []string, outputs ...io.Writer) (err
 	f.SetOutput(io.Discard)
 	out := f.String("out", "", "output file inside capture directory")
 	dir := f.String("dir", "", "capture directory")
-	token := f.String("capture-token", "", "capture ownership token")
+	token := captureTokenFlag(f)
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func fetchURL(ctx context.Context, transport http.RoundTripper, rawURL, dir, out
 	if err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.URL == rawURL }) {
+	if !slices.ContainsFunc(rows, func(row queueRow) bool { return row.Source == rawURL }) {
 		return errors.New("URL は capture のスナップショットにない")
 	}
 	if filepath.IsAbs(output) {

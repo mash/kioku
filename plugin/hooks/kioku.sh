@@ -1,6 +1,7 @@
 #!/bin/sh
 exec 2>/dev/null
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$ROOT}"
 DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
 TARGET="$DATA/bin/kioku"
 T=

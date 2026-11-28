@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,55 +16,58 @@ func TestCaptureResultUpdatesQueueWhenLogFails(t *testing.T) {
 	a := projectEntryApp(t)
 	u := "https://example.com/accepted"
 	now := time.Now()
-	if _, err := a.addQueueURLs([]string{u}, "", now); err != nil {
+	if err := a.registerQueueSource(u, now); err != nil {
 		t.Fatal(err)
 	}
-	lock, _, err := a.beginCapture(1, now)
+	lock, _, err := a.beginCapture(now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(a.metadataDir(), "capture.log"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	err = a.captureResult([]string{"--capture-token", lock.Token, "--result", "accepted", "--reason", "HTTP 202", u})
+	err = a.captureResult([]string{"--capture-token", lock.Token, "--result", "skipped", "--reason", "not a document", u})
 	if err == nil || !strings.Contains(err.Error(), "capture.log") {
 		t.Fatalf("want log error, got %v", err)
 	}
 	rows, err := readQueue(a.queuePath())
 	if err != nil || len(rows) != 0 {
-		t.Fatalf("confirmed acceptance should remove the row even when logging fails: %v, %v", rows, err)
+		t.Fatalf("skipped result should remove the row even when logging fails: %v, %v", rows, err)
 	}
 }
 
-func TestPutHTTPSQueueBatchOrder(t *testing.T) {
+func TestQueueRegistration(t *testing.T) {
 	a := projectEntryApp(t)
 	now := time.Now()
-	const first, second, third = "https://example.com/1", "https://example.com/2", "https://example.com/3"
-	if _, err := a.addQueueURLs([]string{first, second}, "old", now); err != nil {
+	const first, second = "https://example.com/a", "https://example.com/b"
+	rows := []queueRow{
+		{Date: "2026-11-18", Source: first, Attempts: 1, State: queueQueued, Reason: "early failure"},
+		{Date: "2026-11-18", Source: second, Attempts: 2, State: queueFailed, Reason: "late failure"},
+		{Date: "2026-11-18", Source: "https://example.com/c", State: queueQueued},
+	}
+	if err := a.ensureProject(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.addQueueURLs([]string{second, third, second}, "new", now); err != nil {
+	before := formatQueue(rows)
+	if err := os.WriteFile(a.queuePath(), before, 0600); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := readQueue(a.queuePath())
-	if err != nil || len(rows) != 3 || rows[0].URL != first || rows[0].Note != "old" ||
-		rows[1].URL != third || rows[1].Note != "new" || rows[2].URL != second || rows[2].Note != "new" {
-		t.Fatal(rows, err)
+	if err := a.registerQueueSource(first, now); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func BenchmarkAddQueueURLs(b *testing.B) {
-	a := &App{Dir: b.TempDir(), Config: Config{Namespace: "org/p"}}
-	urls := make([]string, 512)
-	for i := range urls {
-		urls[i] = fmt.Sprintf("https://example.com/%d", i)
+	if got, err := os.ReadFile(a.queuePath()); err != nil || !bytes.Equal(got, before) {
+		t.Fatal(string(got), err)
 	}
-	now := time.Now()
-	b.ReportAllocs()
-	for b.Loop() {
-		if _, err := a.addQueueURLs(urls, "", now); err != nil {
-			b.Fatal(err)
-		}
+	if err := a.registerQueueSource(second, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readQueue(a.queuePath())
+	want := queueRow{Date: now.Local().Format(time.DateOnly), Source: second, State: queueQueued}
+	if err != nil || len(got) != 3 || got[0] != rows[0] || got[1] != rows[2] || got[2] != want {
+		t.Fatal(got, err)
+	}
+	if info, err := os.Stat(a.queuePath()); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal(info, err)
 	}
 }
 
@@ -80,7 +82,7 @@ func TestPutRejectsOldEntryPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	const u = "https://example.com/page"
-	if _, err := a.addQueueURLs([]string{u}, "keep", time.Now()); err != nil {
+	if err := a.registerQueueSource(u, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(a.queuePath())
@@ -112,10 +114,11 @@ func TestPutRejectsOldEntryPoints(t *testing.T) {
 func TestParseQueueRejectsLegacyAndInvalidRows(t *testing.T) {
 	for _, raw := range []string{
 		"2026-11-28\thttps://example.com\tnote\n",
-		"2026-11-28\thttps://example.com\tnote\t4\tqueued\t\n",
+		"2026-11-28\thttps://example.com\tnote\t0\tqueued\t\n",
+		"2026-11-28\thttps://example.com\t3\tqueued\t\n",
 		"2026-11-28\thttps://example.com\tnote\t0\tunknown\t\n",
 	} {
-		if _, err := parseQueue([]byte(raw)); err == nil || err.Error() != "invalid queue row" {
+		if _, err := parseQueue([]byte(raw)); err == nil || !strings.Contains(err.Error(), "delete .kioku/queue.tsv") {
 			t.Fatal(raw, err)
 		}
 	}
@@ -132,8 +135,10 @@ func TestStatusShowsLocalStateWithoutServer(t *testing.T) {
 	if err := a.saveProjectConfig(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.addQueueURLs([]string{"https://example.com/page", "https://example.com/other"}, "note", time.Now()); err != nil {
-		t.Fatal(err)
+	for _, u := range []string{"https://example.com/page", "https://example.com/other"} {
+		if err := a.registerQueueSource(u, time.Now()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	now := time.Now().UTC()
 	lock, err := acquireCaptureLock(a.captureLockPath(), now)
@@ -158,7 +163,71 @@ func TestStatusShowsLocalStateWithoutServer(t *testing.T) {
 	if out, _, err := runProjectCLI("-C", a.Dir, "delete", "https://example.com/page", "https://example.com/other"); err == nil || out != "" {
 		t.Fatal(out, err)
 	}
-	if rows, err := readQueue(a.queuePath()); err != nil || len(rows) != 1 || rows[0].URL != "https://example.com/other" {
+	if rows, err := readQueue(a.queuePath()); err != nil || len(rows) != 1 || rows[0].Source != "https://example.com/other" {
 		t.Fatal(rows, err)
+	}
+}
+
+func TestCaptureResultsReleaseAfterEveryRowEvenIfDeleted(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	tool, err := captureToolSource("mcp__linear__get_issue", json.RawMessage(`{"id":"test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://example.com/other"
+	for _, src := range []string{tool, url} {
+		if err := a.registerQueueSource(src, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock, rows, err := a.beginCapture(now)
+	if err != nil || lock == nil || len(rows) != 2 {
+		t.Fatal(lock, rows, err)
+	}
+	dir := a.captureTmp(lock.Token)
+	snapshotPath := filepath.Join(dir, "snapshot.tsv")
+	before, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.deleteSources([]string{tool}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.registerQueueSource(tool, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.capturePut([]string{"--capture-token", lock.Token, "--source", tool, filepath.Join(dir, "source.md")}); err == nil || !strings.Contains(err.Error(), "再登録") {
+		t.Fatal(err)
+	}
+	apply := func(result string, args ...string) error {
+		return a.captureResult(append([]string{"--capture-token", lock.Token, "--result", result}, args...))
+	}
+	if err := apply("skipped", tool); err == nil {
+		t.Fatal("skipped must require a reason")
+	}
+	if err := apply("skipped", "--reason", "numbers only", tool); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.ReadFile(snapshotPath); err != nil || !bytes.Equal(before, after) {
+		t.Fatal(string(after), err)
+	}
+	if err := apply("accepted", url); err != nil {
+		t.Fatal(err)
+	}
+	if read, err := readCaptureLock(a.captureLockPath()); err != nil || read != nil {
+		t.Fatal(read, err)
+	}
+	if err := a.recordCaptureID(a.captureLockPath(), lock.Token, "1a2b3c4d"); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.last")); err != nil || string(data) != "1a2b3c4d\n" {
+		t.Fatal(string(data), err)
+	}
+	if data, err := os.ReadFile(filepath.Join(a.metadataDir(), "capture.log")); err != nil || !strings.Contains(string(data), "numbers only") {
+		t.Fatal(string(data), err)
+	}
+	if remaining, err := readQueue(a.queuePath()); err != nil || len(remaining) != 1 || remaining[0].Source != tool || remaining[0].Attempts != 0 {
+		t.Fatal(remaining, err)
 	}
 }

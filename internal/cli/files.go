@@ -8,9 +8,14 @@ import (
 	"syscall"
 )
 
-// A process lock protects project configuration and snapshot publication.
+// A process lock protects project configuration and Wiki publication.
 func (a *App) localLock() (func(), error) {
 	return a.projectLock("lock")
+}
+
+// Queue mutations must not wait for the network requests in Wiki sync.
+func (a *App) queueLock() (func(), error) {
+	return a.projectLock("queue.lock")
 }
 
 // captureSubmissionLock orders puts, deletes and changes to active capture
@@ -25,7 +30,7 @@ func (a *App) lockCaptureQueue() (unlockSubmission, unlockQueue func(), err erro
 	if err != nil {
 		return nil, nil, err
 	}
-	unlockQueue, err = a.localLock()
+	unlockQueue, err = a.queueLock()
 	if err != nil {
 		unlockSubmission()
 		return nil, nil, err

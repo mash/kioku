@@ -367,6 +367,8 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 		return ""
 	}
 	var messages []string
+	// Only a hook that can notify the user consumes an earlier failure.
+	launchFailed := os.Remove(a.captureLaunchErrorPath()) == nil
 	if queued != 0 && a.captureIdle(now) {
 		// Observe the detached launcher briefly, without cancelling it.
 		wait := 750 * time.Millisecond
@@ -376,13 +378,16 @@ func projectCaptureNotice(in sessionHookInput, p projectEntry, now time.Time) st
 				wait = d
 			}
 		}
-		_, markerErr := os.Stat(a.captureLaunchErrorPath())
-		if err := startHookCapture(captureCwd(in, p), p, wait); err != nil || markerErr == nil {
-			messages = append(messages, fmt.Sprintf("Kioku: %s の capture の起動に失敗した。kioku -C %s status と capture.log を確認する", p.Namespace, shellQuote(p.Path)))
+		if err := startHookCapture(captureCwd(in, p), p, wait); err != nil {
+			launchFailed = true
+			_ = os.Remove(a.captureLaunchErrorPath())
 		}
 		if _, currentFailed, err := readHookQueueCounts(a.queuePath()); err == nil {
 			failed = currentFailed
 		}
+	}
+	if launchFailed {
+		messages = append(messages, fmt.Sprintf("Kioku: %s の capture の起動に失敗した。kioku -C %s status と capture.log を確認する", p.Namespace, shellQuote(p.Path)))
 	}
 	if failed != 0 {
 		messages = append(messages, fmt.Sprintf("Kioku: %s で受付済みにならなかった資料 %d 件。kioku -C %s status で理由を見る", p.Namespace, failed, shellQuote(p.Path)))

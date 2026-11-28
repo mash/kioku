@@ -323,7 +323,7 @@ func (a *App) beginCapture(now time.Time) (*captureLock, []queueRow, error) {
 		}
 	}
 	if err == nil {
-		// localLock still protects the rows read above, so do not read and parse them again.
+		// queueLock still protects the rows read above, so do not read and parse them again.
 		err = atomicfile.Write(a.queuePath(), formatQueue(rows), 0600)
 	}
 	if err != nil || len(snapshot) == 0 {
@@ -332,7 +332,7 @@ func (a *App) beginCapture(now time.Time) (*captureLock, []queueRow, error) {
 	return lock, snapshot, nil
 }
 
-func (a *App) undoCaptureLaunch(token string, snapshot []queueRow) error {
+func (a *App) undoCaptureLaunch(token string, snapshot []queueRow, cause error) error {
 	submit, unlock, err := a.lockCaptureQueue()
 	if err != nil {
 		return err
@@ -355,26 +355,23 @@ func (a *App) undoCaptureLaunch(token string, snapshot []queueRow) error {
 		}
 		return rows
 	})
-	return errors.Join(err, a.releaseCapture(token))
+	// Publish the failure before another launcher can take ownership.
+	return errors.Join(err, a.recordCaptureLaunchError(cause), a.releaseCapture(token))
 }
 
 func (a *App) captureRun(cwd string, now time.Time) (err error) {
-	launched := false
-	defer func() {
-		if err != nil && !launched {
-			// Stop can return before a slow launcher fails. Preserve its
-			// failure for the next notification-capable hook.
-			_ = atomicfile.Write(a.captureLaunchErrorPath(), []byte(queueText(err.Error())+"\n"), 0600)
-		}
-	}()
 	lock, rows, err := a.beginCapture(now)
-	if err != nil || lock == nil {
-		return err
+	if err != nil {
+		return errors.Join(err, a.recordCaptureLaunchError(err))
+	}
+	if lock == nil {
+		return nil
 	}
 	path := a.captureLockPath()
+	launched := false
 	defer func() {
 		if !launched {
-			err = errors.Join(err, a.undoCaptureLaunch(lock.Token, rows))
+			err = errors.Join(err, a.undoCaptureLaunch(lock.Token, rows, err))
 		}
 	}()
 	pluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
@@ -448,7 +445,6 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		return fmt.Errorf("capture run: claude --bg failed: %s", reason)
 	}
 	launched = true
-	_ = os.Remove(a.captureLaunchErrorPath())
 	if errors.Is(runErr, exec.ErrWaitDelay) {
 		fmt.Fprintln(a.Err, "warning: capture launcher exited but output pipes remained open; session may be running")
 	}
@@ -507,6 +503,10 @@ func (a *App) releaseCapture(token string) error {
 
 func (a *App) captureLaunchErrorPath() string {
 	return filepath.Join(a.metadataDir(), "capture-launch.failed")
+}
+
+func (a *App) recordCaptureLaunchError(err error) error {
+	return atomicfile.Write(a.captureLaunchErrorPath(), []byte(queueText(err.Error())+"\n"), 0600)
 }
 
 func (a *App) captureLockPath() string { return filepath.Join(a.metadataDir(), "capture.lock") }

@@ -74,6 +74,27 @@ func TestQueueRegistration(t *testing.T) {
 	}
 }
 
+func TestQueueRegistrationDoesNotWaitForProjectSync(t *testing.T) {
+	a := projectEntryApp(t)
+	unlock, err := a.localLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- a.registerQueueSource("https://example.com/during-pull", time.Now()) }()
+	select {
+	case err := <-done:
+		unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		unlock()
+		<-done
+		t.Fatal("queue registration waited for the lock held during remote Wiki sync")
+	}
+}
+
 func TestCaptureIDOnlyUpdatesMatchingLock(t *testing.T) {
 	a := projectEntryApp(t)
 	now := time.Now()
@@ -428,6 +449,46 @@ func TestDeleteSendsRemoveWhenOutputFails(t *testing.T) {
 		}
 	default:
 		t.Fatal("delete did not reach the server")
+	}
+}
+
+func TestDeleteAttemptsRemainingRemoteRemovalsAfterFailure(t *testing.T) {
+	a := projectEntryApp(t)
+	const first, later = "https://example.com/first", "https://example.com/later"
+	for _, src := range []string{first, later} {
+		if err := a.registerQueueSource(src, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requests := make(chan string, 2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			SourceURL string `json:"source_url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		requests <- body.SourceURL
+		if body.SourceURL == first {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":"fixture failure"}`)
+		} else {
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	defer ts.Close()
+	var out bytes.Buffer
+	a.Config.Server, a.Client, a.ctx, a.Out = ts.URL, ts.Client(), t.Context(), &out
+	if err := a.deleteSources([]string{first, later}); err == nil || !strings.Contains(err.Error(), first+": fixture failure") {
+		t.Fatal("delete did not report the failed remove", err)
+	}
+	if len(requests) != 2 || <-requests != first || <-requests != later {
+		t.Fatal("delete did not attempt both remote removals")
+	}
+	rows, err := readQueue(a.queuePath(), true)
+	if err != nil || len(rows) != 0 || out.String() != "removed "+first+"\nremoved "+later+"\n" {
+		t.Fatal(rows, err, out.String())
 	}
 }
 

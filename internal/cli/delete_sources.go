@@ -35,10 +35,23 @@ func (a *App) deleteSources(args []string) (err error) {
 	if err != nil {
 		return err
 	}
-	defer unlock()
 	removed := make(map[string]bool)
+	// Report completed local or remote removals even if a request fails.
+	// Writing the report must not hold the submission lock.
+	defer func() {
+		unlock()
+		for _, src := range args {
+			if removed[src] {
+				if _, writeErr := fmt.Fprintf(a.Out, "removed %s\n", src); writeErr != nil {
+					err = errors.Join(err, writeErr)
+					return
+				}
+				delete(removed, src)
+			}
+		}
+	}()
 	if len(queuedSources) != 0 {
-		unlockQueue, err := a.localLock()
+		unlockQueue, err := a.queueLock()
 		if err != nil {
 			return err
 		}
@@ -53,22 +66,10 @@ func (a *App) deleteSources(args []string) (err error) {
 		})
 		unlockQueue()
 		if err != nil {
+			clear(removed)
 			return err
 		}
 	}
-	// Report completed local or remote removals even if a later request fails.
-	// A broken stdout pipe must not prevent the server requests.
-	defer func() {
-		for _, src := range args {
-			if removed[src] {
-				if _, writeErr := fmt.Fprintf(a.Out, "removed %s\n", src); writeErr != nil {
-					err = errors.Join(err, writeErr)
-					return
-				}
-				delete(removed, src)
-			}
-		}
-	}()
 	authorized := false
 	for _, src := range args {
 		if strings.HasPrefix(src, toolSourcePrefix) {
@@ -80,10 +81,11 @@ func (a *App) deleteSources(args []string) (err error) {
 			}
 			authorized = true
 		}
-		if _, err := a.postPut(endpoint, model.PutRequest{Remove: true, SourceURL: src}, nil); err != nil {
-			return err
+		if _, requestErr := a.postPut(endpoint, model.PutRequest{Remove: true, SourceURL: src}, nil); requestErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove %s: %w", src, requestErr))
+			continue
 		}
 		removed[src] = true
 	}
-	return nil
+	return err
 }

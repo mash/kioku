@@ -194,3 +194,27 @@ func TestProvenanceRewriteKeepsUnrelatedAliases(t *testing.T) {
 		t.Fatal(values, err, stored)
 	}
 }
+
+func TestLocalFileKeepsAliasesToRedefinedAnchors(t *testing.T) {
+	for _, prefix := range []string{
+		"updated_at:\n  old: &value before\n  composite: &details {copied: *value}\n",
+		"earlier: &value before\nupdated_at: &details {copied: *value}\n",
+	} {
+		input := "---\n" + prefix + "later: &value after\nmetadata: *details\ntitle: *value\n---\nBody\n"
+		content, err := LocalFileContent("notes.md", input, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, err := Frontmatter(content)
+		if err != nil {
+			t.Fatal(content, err)
+		}
+		var values struct {
+			Title    string
+			Metadata map[string]string
+		}
+		if err := meta.Decode(&values); err != nil || values.Title != "after" || values.Metadata["copied"] != "before" {
+			t.Fatal(values, err, content)
+		}
+	}
+}

@@ -1095,7 +1095,7 @@ print('backgrounded · 1a2b3c4d')
 
         self.assertEqual(self.hook('Stop', cwd=str(root)), '')
         marker = metadata / 'capture-launch.failed'
-        wait_until(marker.exists)
+        wait_until(lambda: marker.exists() and not (metadata / 'capture.lock').exists())
         self.assertEqual(queue.read_text(), pending)
         self.assertIn('fixture failure', marker.read_text())
 
@@ -1104,6 +1104,42 @@ print('backgrounded · 1a2b3c4d')
         self.assertIn('起動に失敗', output['systemMessage'])
         self.assertFalse(marker.exists())
         self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
+
+    def test_delayed_success_does_not_clear_a_newer_launch_failure(self):
+        root = self.work / 'project'
+        metadata, _ = make_project(root, 'org/project')
+        queue = metadata / 'queue.tsv'
+        first = 'https://example.com/first'
+        queue.write_text(f'2026-11-28\t{first}\t0\tqueued\t\n')
+        release = self.work / 'release-first-launch'
+        self.env['CAPTURE_TEST_RELEASE'] = str(release)
+        self.fake_claude('#!' + sys.executable + '\n' + """
+import os
+from pathlib import Path
+import sys
+from hook_test_helpers import wait_until
+
+instructions = (Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
+if 'https://example.com/first' in instructions:
+    wait_until(Path(os.environ['CAPTURE_TEST_RELEASE']).exists, timeout=8)
+    print('backgrounded · 5e6f7a8b')
+else:
+    sys.exit('newer launcher failed')
+""")
+        self.assertEqual(self.hook('Stop', cwd=str(root)), '')
+        token = json.loads((metadata / 'capture.lock').read_text())['token']
+        result = subprocess.run([str(self.cli), '-C', str(root), 'capture', 'result',
+                                 '--capture-token', token, '--result', 'skipped', '--reason',
+                                 'fixture', first], capture_output=True, text=True, env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        queue.write_text('2026-11-28\thttps://example.com/second\t0\tqueued\t\n')
+        self.assertEqual(self.hook('SessionEnd', cwd=str(root)), '')
+        marker = metadata / 'capture-launch.failed'
+        wait_until(marker.exists)
+        release.touch()
+        log = metadata / 'capture.log'
+        wait_until(lambda: 'claude logs 5e6f7a8b' in log.read_text())
+        self.assertIn('newer launcher failed', marker.read_text())
 
     def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
         self.fake_claude('#!' + sys.executable + '\n' + """

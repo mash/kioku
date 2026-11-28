@@ -84,7 +84,7 @@ func readQueue(path string, validate bool) ([]queueRow, error) {
 	return parseQueue(data, validate)
 }
 
-// updateQueue runs under localLock. Returning nil leaves the file unchanged.
+// updateQueue runs under queueLock. Returning nil leaves the file unchanged.
 func (a *App) updateQueue(change func([]queueRow) []queueRow) error {
 	return updateLockedFile(a.queuePath(), func(data []byte) ([]byte, bool, error) {
 		rows, err := parseQueue(data, false)
@@ -116,7 +116,7 @@ func (a *App) registerQueueSource(source string, now time.Time) error {
 	if _, err := a.projectPath(); err != nil {
 		return err
 	}
-	unlock, err := a.localLock()
+	unlock, err := a.queueLock()
 	if err != nil {
 		return err
 	}

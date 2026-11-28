@@ -24,6 +24,8 @@ class ToolHooksTest(unittest.TestCase):
         self.cli = self.data / "bin" / "kioku"
         self.cli.parent.mkdir(parents=True)
         self.cli.symlink_to(self.binary)
+        self.guard_cli = self.base / "capture CLI's binary"
+        self.guard_cli.symlink_to(self.binary)
         self.token = "a" * 32
         self.metadata = self.base / ".kioku"
         self.snapshot = self.metadata / "capture-tmp" / self.token
@@ -37,7 +39,8 @@ class ToolHooksTest(unittest.TestCase):
             "snapshot_hash": hashlib.sha256(payload.encode()).hexdigest(),
         }))
         self.env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(ROOT), CLAUDE_PLUGIN_DATA=str(self.data),
-                        KIOKU_CAPTURE="1", KIOKU_CAPTURE_DIR=str(self.snapshot))
+                        KIOKU_CAPTURE="1", KIOKU_CAPTURE_DIR=str(self.snapshot),
+                        KIOKU_CAPTURE_CLI=str(self.guard_cli))
 
     def invoke(self, name, input, event="PreToolUse", **metadata):
         guard = "tool-guard" if event == "PreToolUse" else "tool"
@@ -54,11 +57,25 @@ class ToolHooksTest(unittest.TestCase):
     def test_capture_guard_wiring(self):
         hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
         self.assertNotIn("PreToolUse", hooks)
-        self.assertEqual(self.invoke("Artifact", {"action": "read", "url": self.artifact,
-                                                  "path": "index.html"}), "")
+        read = {"action": "read", "url": self.artifact, "path": "index.html"}
+        self.env["CLAUDE_PLUGIN_DATA"] = str(self.base / "stale-plugin-data")
+        self.assertEqual(self.invoke("Artifact", read), "")
         self.denied(self.invoke("Artifact", {"action": "publish", "url": self.artifact}))
-        self.cli.unlink()
-        self.denied(self.invoke("Artifact", {"action": "read", "url": self.artifact}))
+        self.env.pop("CLAUDE_PLUGIN_DATA")
+        self.assertEqual(self.invoke("Artifact", read), "")
+
+        # A working ordinary plugin CLI must not bypass guard failures.
+        self.env["CLAUDE_PLUGIN_DATA"] = str(self.data)
+        self.env["KIOKU_CAPTURE_CLI"] = str(self.base / "missing-cli")
+        self.denied(self.invoke("Artifact", read))
+        failing_cli = self.base / "failing-cli"
+        failing_cli.write_text("#!/bin/sh\nprintf 'partial response'\nexit 1\n")
+        failing_cli.chmod(0o700)
+        self.env["KIOKU_CAPTURE_CLI"] = str(failing_cli)
+        self.denied(self.invoke("Artifact", read))
+        self.env["KIOKU_CAPTURE_CLI"] = str(self.guard_cli)
+        self.env.pop("KIOKU_CAPTURE")
+        self.denied(self.invoke("Artifact", read))
 
     def test_post_hook_queues_sources_only_for_existing_local_writer(self):
         self.env.update(HOME=str(self.base / "home"), XDG_STATE_HOME=str(self.base / "state"))

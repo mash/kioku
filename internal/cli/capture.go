@@ -33,6 +33,7 @@ type captureLock struct {
 
 const captureLockTTL = 30 * time.Minute
 const captureInstructionsFile = "instructions.md"
+const captureGuardCLIEnv = "KIOKU_CAPTURE_CLI"
 
 var captureWaitDelay = 5 * time.Second
 
@@ -409,14 +410,24 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		return err
 	}
 
-	settings, err := json.Marshal(map[string]any{"hooks": map[string]any{
-		"PreToolUse": []any{map[string]any{
-			"matcher": captureGuardMatcher,
-			"hooks": []any{map[string]any{
-				"type": "command", "command": "sh " + shellQuote(filepath.Join(root, "hooks", "kioku.sh")) + " tool-guard", "timeout": 10, "onFailure": "block",
+	// The background daemon can reuse a process that never inherits cmd.Env.
+	settings, err := json.Marshal(map[string]any{
+		"env": map[string]string{
+			captureModeEnv:           "1",
+			captureDirEnv:            tmp,
+			captureCommandEnv:        vars["kioku"],
+			captureProjectCommandEnv: projectCommand,
+			captureGuardCLIEnv:       exe,
+		},
+		"hooks": map[string]any{
+			"PreToolUse": []any{map[string]any{
+				"matcher": captureGuardMatcher,
+				"hooks": []any{map[string]any{
+					"type": "command", "command": "sh " + shellQuote(filepath.Join(root, "hooks", "kioku.sh")) + " tool-guard", "timeout": 10, "onFailure": "block",
+				}},
 			}},
-		}},
-	}})
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -431,8 +442,7 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 	}
 	cmd := exec.CommandContext(ctx, claude, args...)
 	cmd.Dir = cwd
-	cmd.Env = append(processEnv("CLAUDE_CODE_SESSION_ID", captureModeEnv, captureDirEnv, captureCommandEnv, captureProjectCommandEnv),
-		captureModeEnv+"=1", captureDirEnv+"="+tmp, captureCommandEnv+"="+vars["kioku"], captureProjectCommandEnv+"="+projectCommand)
+	cmd.Env = processEnv("CLAUDE_CODE_SESSION_ID", captureModeEnv, captureDirEnv, captureCommandEnv, captureProjectCommandEnv, captureGuardCLIEnv)
 	cmd.WaitDelay = captureWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

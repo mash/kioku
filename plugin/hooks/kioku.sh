@@ -1,18 +1,21 @@
 #!/bin/sh
 exec 2>/dev/null
-DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
-TARGET="$DATA/bin/kioku"
-if [ "${KIOKU_CAPTURE:-}" = 1 ]; then
-    if [ "${1:-}" = tool-guard ]; then
-        if [ -x "$TARGET" ] && "$TARGET" hook tool-guard; then
-            exit 0
-        fi
-        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kioku capture guard unavailable"}}'
-    fi
+if [ "${1:-}" = tool-guard ]; then
+    case ${KIOKU_CAPTURE_CLI:-} in
+        /*)
+            if [ "${KIOKU_CAPTURE:-}" = 1 ] && decision=$("$KIOKU_CAPTURE_CLI" hook tool-guard); then
+                [ -z "$decision" ] || printf '%s\n' "$decision"
+                exit 0
+            fi
+            ;;
+    esac
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kioku capture guard unavailable"}}'
     exit 0
 fi
+[ "${KIOKU_CAPTURE:-}" != 1 ] || exit 0
+DATA=${CLAUDE_PLUGIN_DATA:-"$HOME/.local/share/kioku"}
+TARGET="$DATA/bin/kioku"
 case ${1:-} in
-    tool-guard) exit 0 ;;
     tool) "$TARGET" hook tool >/dev/null; exit 0 ;;
 esac
 

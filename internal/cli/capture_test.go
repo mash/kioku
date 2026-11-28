@@ -30,7 +30,6 @@ func fakeCaptureClaude(t *testing.T, output string, status int) string {
 printf '%s\000' "$@" > "$CAPTURE_TEST_LOG.args"
 pwd > "$CAPTURE_TEST_LOG.cwd"
 printf '%s' "${CLAUDE_CODE_SESSION_ID-unset}" > "$CAPTURE_TEST_LOG.sid"
-printf '%s\n%s\n' "$KIOKU_CAPTURE" "$KIOKU_CAPTURE_DIR" > "$CAPTURE_TEST_LOG.capture"
 IFS= read -r line && exit 9
 printf '%s' "$CAPTURE_TEST_OUTPUT"
 if [ "$CAPTURE_TEST_STATUS" != 0 ]; then printf 'Workspace not trusted\n' >&2; fi
@@ -141,8 +140,9 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatalf("queue changed: %q, %v", after, err)
 		}
 	})
-	t.Run("launch passes mode, snapshot and scoped server rule", func(t *testing.T) {
+	t.Run("launch passes capture context and guard in settings", func(t *testing.T) {
 		a := setup(t, 1)
+		a.Config.Server = "https://kioku.example"
 		log := fakeCaptureClaude(t, "backgrounded · 1a2b3c4d\n", 0)
 		root := t.TempDir()
 		t.Setenv("CLAUDE_PLUGIN_ROOT", root)
@@ -154,18 +154,6 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := a.captureRun(t.TempDir(), time.Now()); err != nil {
-			t.Fatal(err)
-		}
-		environment, err := os.ReadFile(log + ".capture")
-		if err != nil {
-			t.Fatal(err)
-		}
-		mode, rest, _ := strings.Cut(string(environment), "\n")
-		dir := strings.TrimSpace(rest)
-		if mode != "1" || !filepath.IsAbs(dir) {
-			t.Fatal(string(environment))
-		}
-		if _, _, err := captureSnapshot(filepath.Base(dir), dir); err != nil {
 			t.Fatal(err)
 		}
 		raw, err := os.ReadFile(log + ".args")
@@ -182,6 +170,7 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal("missing capture hook settings", args)
 		}
 		var settings struct {
+			Env   map[string]string
 			Hooks map[string][]struct {
 				Matcher string
 				Hooks   []struct {
@@ -191,6 +180,20 @@ func TestCaptureRun(t *testing.T) {
 			}
 		}
 		if err := json.Unmarshal([]byte(args[at+1]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := settings.Env[captureDirEnv]
+		command := shellQuote(exe) + " --server https://kioku.example"
+		project := command + " -C " + shellQuote(a.Dir) + " -n org/a"
+		if settings.Env[captureModeEnv] != "1" || !filepath.IsAbs(dir) || settings.Env["KIOKU_CAPTURE_CLI"] != exe ||
+			settings.Env[captureCommandEnv] != command || settings.Env[captureProjectCommandEnv] != project {
+			t.Fatal(settings.Env)
+		}
+		if _, _, err := captureSnapshot(filepath.Base(dir), dir); err != nil {
 			t.Fatal(err)
 		}
 		pre := settings.Hooks["PreToolUse"]

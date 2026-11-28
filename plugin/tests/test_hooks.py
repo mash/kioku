@@ -981,10 +981,26 @@ fi
         return executable
 
     def test_E13_E37_background_capture(self):
-        self.fake_claude('#!' + sys.executable + '\n' + r'''import json, os, pathlib, subprocess, sys
+        self.fake_claude('#!' + sys.executable + '\n' + r'''import json, os, pathlib, shlex, subprocess, sys
 log = pathlib.Path(os.environ['CAPTURE_FIXTURE_LOG'])
 assert sys.argv[1] == '--bg'
-instructions = (pathlib.Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
+settings = json.loads(sys.argv[sys.argv.index('--settings') + 1])
+session_env = dict(os.environ, **settings['env'])
+path = pathlib.Path(session_env['KIOKU_CAPTURE_DIR']) / 'instructions.md'
+instructions = path.read_text()
+guard = settings['hooks']['PreToolUse'][0]['hooks'][0]['command']
+read = json.dumps({'hook_event_name': 'PreToolUse', 'tool_name': 'Read', 'tool_input': {'file_path': str(path)}})
+guard_env = dict(session_env, CLAUDE_PLUGIN_DATA=str(log.parent / 'stale-plugin-data'))
+decision = subprocess.run(shlex.split(guard), input=read, text=True, capture_output=True, env=guard_env, check=True)
+assert decision.stdout == '', decision.stdout
+
+queue = pathlib.Path(os.environ['CAPTURE_FIXTURE_PROJECT']) / '.kioku/queue.tsv'
+before = queue.read_bytes()
+plugin = pathlib.Path(sys.argv[sys.argv.index('--plugin-dir') + 1])
+post = json.dumps({'hook_event_name': 'PostToolUse', 'session_id': 'session-1',
+                   'tool_name': 'mcp__linear__get_issue', 'tool_input': {'id': 42}})
+subprocess.run(['sh', str(plugin / 'hooks/kioku.sh'), 'tool'], input=post, text=True, env=session_env, check=True)
+assert queue.read_bytes() == before
 log.write_text(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(), 'instructions':instructions,
                           'sid': os.environ.get('CLAUDE_CODE_SESSION_ID')}))
 assert sys.stdin.read() == ''
@@ -1136,12 +1152,12 @@ print('backgrounded · 1a2b3c4d')
         release = self.work / 'release-first-launch'
         self.env['CAPTURE_TEST_RELEASE'] = str(release)
         self.fake_claude('#!' + sys.executable + '\n' + """
-import os
+import json, os, sys
 from pathlib import Path
-import sys
 from hook_test_helpers import wait_until
 
-instructions = (Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
+settings = json.loads(sys.argv[sys.argv.index('--settings') + 1])
+instructions = (Path(settings['env']['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
 if 'https://example.com/first' in instructions:
     wait_until(Path(os.environ['CAPTURE_TEST_RELEASE']).exists, timeout=8)
     print('backgrounded · 5e6f7a8b')
@@ -1195,11 +1211,12 @@ else:
 
     def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
         self.fake_claude('#!' + sys.executable + '\n' + """
-import os
+import json, os, sys
 from pathlib import Path
 from hook_test_helpers import wait_until
 
-instructions = (Path(os.environ['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
+settings = json.loads(sys.argv[sys.argv.index('--settings') + 1])
+instructions = (Path(settings['env']['KIOKU_CAPTURE_DIR']) / 'instructions.md').read_text()
 marker = Path(os.environ['CAPTURE_TEST_MARKER'])
 if 'https://example.com/one' in instructions:
     wait_until(marker.exists, timeout=2)

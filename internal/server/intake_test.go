@@ -12,7 +12,7 @@ func putFile(t *testing.T, f *fixture, token, pid, name, body string) model.Inbo
 	t.Helper()
 	url := testSourceURL(name, body)
 	var result map[string]any
-	if c := f.request("POST", "/api/projects/"+pid+"/put", token, model.PutRequest{File: &model.FileInput{Name: name, Content: testSourceContent(url, body)}}, &result); c != 202 || result == nil || len(result) != 0 {
+	if c := f.request("POST", "/api/projects/"+pid+"/put", token, model.PutRequest{File: &model.FileInput{Name: name, Content: testSourceContent(url, body)}}, &result); c != 202 || result["source_url"] != url || len(result) != 1 {
 		t.Fatal(c, result)
 	}
 	j := waitingInboxItem(t, f, pid, url)

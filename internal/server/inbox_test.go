@@ -29,7 +29,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		{model.PutRequest{Remove: true, SourceURL: "https://example.com/a"}, true},
 	} {
 		var result map[string]any
-		if code := f.request("POST", base+"/put", token, tc.req, &result); code != 202 || result == nil || len(result) != 0 {
+		if code := f.request("POST", base+"/put", token, tc.req, &result); code != 202 || result["source_url"] != "https://example.com/a" || len(result) != 1 {
 			t.Fatal(code, result)
 		}
 		if item := waitingInboxItem(t, f, p.ID, "https://example.com/a"); item.Remove != tc.remove {
@@ -166,7 +166,7 @@ func TestConnectorAndAgentInboxPuts(t *testing.T) {
 		{"project": p.Namespace, "remove": true, "source_url": "https://example.com/mcp"},
 	} {
 		var result map[string]any
-		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
+		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result["source_url"] != "https://example.com/mcp" || len(result) != 1 {
 			t.Fatal(msg, result)
 		}
 	}

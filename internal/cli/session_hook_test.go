@@ -10,9 +10,70 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestSessionStartIgnoresBlockedCaptureLog(t *testing.T) {
+	home := projectRunHome(t)
+	a := projectEntryApp(t)
+	a.AuthDir = filepath.Join(home, ".config/kioku/auth")
+	now := time.Now()
+	if _, err := a.addQueueURLs([]string{"https://example.com/page"}, "", now); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(a.metadataDir(), "capture.log")
+	if err := syscall.Mkfifo(log, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.addProjectEntry(a.Config.Server, a.Config.Namespace, a.Dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	pluginRoot := t.TempDir()
+	done := make(chan string, 1)
+	go func() {
+		// An absent cwd prevents a late launcher after unblocking the old code.
+		done <- sessionStartCapture(sessionHookInput{Cwd: filepath.Join(a.Dir, "absent")}, now, pluginRoot)
+	}()
+	select {
+	case message := <-done:
+		if message != "" {
+			t.Fatal(message)
+		}
+	case <-time.After(time.Second):
+		f, err := os.OpenFile(log, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		<-done
+		t.Fatal("SessionStart blocked opening capture.log without a reader")
+	}
+}
+
+func TestStopHookCountsSnapshotThroughSymlinkedProjectPath(t *testing.T) {
+	a := projectEntryApp(t)
+	now := time.Now()
+	if _, err := a.addQueueURLs([]string{"https://example.com/first"}, "", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.beginCapture(1, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.addQueueURLs([]string{"https://example.com/next"}, "", now); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(a.Dir, path); err != nil {
+		t.Fatal(err)
+	}
+	s := &sessionState{Server: defaultServer, Namespace: a.Config.Namespace, Path: path}
+	message := stopHook(sessionHookInput{Event: "Stop", Cwd: path}, s, 5, now, "")
+	if !strings.Contains(message, "capture 実行中（id 不明、1 件）") {
+		t.Fatalf("Stop should count the active snapshot, not the full queue: %q", message)
+	}
+}
 
 func TestSessionHookOversizedInputIsSilent(t *testing.T) {
 	sessionTestEnv(t)
@@ -154,22 +215,40 @@ func TestHookUnreadableStateStillOffersCandidates(t *testing.T) {
 	}
 }
 
-func TestStopAndSessionEndHook(t *testing.T) {
-	t.Run("R4_bounded_queue_count", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "queue.tsv")
-		for _, tc := range []struct {
-			body      string
-			min, want int
-		}{{"\n\n", 5, 0}, {"row\n\nother", 5, 2}, {"row\nother\nthird", 1, 1}, {strings.Repeat("x", 9<<20), 5, 1}} {
-			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
-				t.Fatal(err)
-			}
-			got, err := countQueueRows(path, tc.min)
-			if err != nil || got != tc.want {
-				t.Fatal(got, err)
-			}
-		}
+func TestReadHookQueue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "queue.tsv")
+	if rows, err := readHookQueue(path); err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+	data := formatQueue([]queueRow{
+		{Date: "2026-11-18", URL: "https://example.com/queued", State: queueQueued},
+		{Date: "2026-11-18", URL: "https://example.com/failed", State: queueFailed, Attempts: 3},
 	})
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readHookQueue(path)
+	if queued, failed := queueCounts(rows); err != nil || queued != 1 || failed != 1 {
+		t.Fatal(queued, failed, err)
+	}
+	if err := os.Symlink(path, filepath.Join(dir, "symlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, bytes.Repeat([]byte{'\n'}, 8<<20)...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"symlink", "fifo", "queue.tsv"} {
+		if _, err := readHookQueue(filepath.Join(dir, name)); err == nil {
+			t.Errorf("readHookQueue accepted %s", name)
+		}
+	}
+}
+
+func TestStopAndSessionEndHook(t *testing.T) {
 	t.Run("R6_detached_child", func(t *testing.T) {
 		cmd := exec.Command("/usr/bin/true")
 		if err := startProcess(cmd); err != nil {
@@ -225,7 +304,7 @@ func TestStopAndSessionEndHook(t *testing.T) {
 			}
 			var rows []queueRow
 			for i := range tc.rows {
-				rows = append(rows, queueRow{"2026-11-18", fmt.Sprintf("https://x.example/%d", i), "read"})
+				rows = append(rows, queueRow{"2026-11-18", fmt.Sprintf("https://x.example/%d", i), "read", 0, queueQueued, ""})
 			}
 			queue := filepath.Join(root, ".kioku/queue.tsv")
 			if err := os.WriteFile(queue, formatQueue(rows), 0600); err != nil {
@@ -260,7 +339,17 @@ func TestStopAndSessionEndHook(t *testing.T) {
 			if err := a.sessionHook([]string{"--event", tc.event, "--prompts", "../../prompts"}, bytes.NewReader(data)); err != nil {
 				t.Fatal(err)
 			}
-			if out.Len() != 0 || stderr.Len() != 0 {
+			showMessage := tc.event == "Stop" && !tc.child && tc.state == ""
+			if showMessage {
+				var output map[string]string
+				if err := json.Unmarshal(out.Bytes(), &output); err != nil || !strings.HasPrefix(output["systemMessage"], "Kioku: ") {
+					t.Fatal(out.String(), err)
+				}
+				if tc.age > 0 && tc.age <= captureLockTTL && !strings.Contains(output["systemMessage"], "capture 実行中") {
+					t.Fatal(output)
+				}
+			}
+			if (!showMessage && out.Len() != 0) || stderr.Len() != 0 {
 				t.Fatal(out.String(), stderr.String())
 			}
 			after, _ := os.ReadFile(statePath)
@@ -298,7 +387,7 @@ func TestStopAndSessionEndHook(t *testing.T) {
 					}
 				}
 				logInfo, err := os.Stat(logPath)
-				if err != nil || logInfo.Size() != 0 || logInfo.Mode().Perm() != 0600 {
+				if err != nil || logInfo.Size() != int64(len("previous")) || logInfo.Mode().Perm() != 0600 {
 					t.Fatal(logInfo, err)
 				}
 			} else {

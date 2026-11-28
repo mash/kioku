@@ -273,7 +273,7 @@ func TestConnectorSourcePutForOwnerAndMember(t *testing.T) {
 			var result map[string]any
 			content := testSourceContent("https://example.com/record", "A new shared record")
 			args := map[string]any{"project": project.Namespace, "name": "record.md", "content": content}
-			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
+			if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result["source_url"] != "https://example.com/record" || len(result) != 1 {
 				t.Fatal(msg, result)
 			}
 			item := waitingInboxItem(t, f, project.ID, "https://example.com/record")
@@ -352,7 +352,7 @@ func TestSourcePutSetsDeadline(t *testing.T) {
 	} {
 		before := time.Now().UTC().Truncate(time.Millisecond)
 		var result map[string]any
-		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result == nil || len(result) != 0 {
+		if msg := connectorTool(t, f, access, "source_put", args, &result); msg != "" || result["source_url"] != "https://example.com/record" || len(result) != 1 {
 			t.Fatal(msg, result)
 		}
 		st := f

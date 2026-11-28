@@ -1,11 +1,31 @@
 package wiki
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/mash/kioku/internal/model"
 )
+
+func BenchmarkValidateSources(b *testing.B) {
+	pages := make(map[string]string, 512)
+	for i := range 512 {
+		name := fmt.Sprintf("wiki/source-%d.md", i)
+		key := fmt.Sprintf("https://example.com/%d", i)
+		if i%2 == 0 {
+			name = fmt.Sprintf("wiki/source-20261121-%d.md", i)
+			key = fmt.Sprintf("kioku:local/20261121-%064x", i)
+		}
+		pages[name] = "---\nsource_url: " + key + "\ntitle: Example\n---\nBody"
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if problems := ValidateSources(pages, pages, nil); len(problems) != 0 {
+			b.Fatal(problems)
+		}
+	}
+}
 
 func TestSourceValidationRules(t *testing.T) {
 	page := func(u string) string { return "---\nsource_url: " + u + "\n---\nBody" }
@@ -59,5 +79,27 @@ func TestSourceURLFrontmatterBoundaries(t *testing.T) {
 				t.Fatalf("SourceURL = %q, %v; valid = %v", url, err, tc.valid)
 			}
 		})
+	}
+}
+
+func TestLocalSourceNames(t *testing.T) {
+	key := "kioku:local/20261121-" + strings.Repeat("1", 64)
+	content := "---\nsource_url: " + key + "\n---\nBody"
+	previous := map[string]string{"wiki/source-20261121-note.md": content}
+	for _, tc := range []struct {
+		name     string
+		previous map[string]string
+		valid    bool
+	}{
+		{"wiki/source-20261121-note-2.md", nil, true},
+		{"wiki/source-20261120-note.md", nil, false},
+		{"wiki/source-20261121-.md", nil, false},
+		{"wiki/source-20261121-note-2.md", previous, false},
+		{"wiki/source-20261121-note.md", previous, true},
+	} {
+		problems := ValidateSources(map[string]string{tc.name: content}, tc.previous, nil)
+		if (len(problems) == 0) != tc.valid {
+			t.Error(tc, problems)
+		}
 	}
 }

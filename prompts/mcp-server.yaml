@@ -17,9 +17,9 @@ tools:
     description: "Submit Markdown with source_url and updated_at frontmatter, or remove=true with source_url. Limit: 1 MiB. Generation runs later."
     properties:
       content:
-        description: "Markdown with top YAML frontmatter: source_url (public HTTPS) and updated_at (RFC 3339 with an explicit offset)."
+        description: "Markdown with top YAML frontmatter: source_url (public HTTPS, or kioku:local for a document without a public URL; the result returns the assigned key) and updated_at (RFC 3339 with an explicit offset)."
       source_url:
-        description: "Public HTTPS URL to remove; only with remove=true."
+        description: "Public HTTPS URL or kioku:local/… key to remove; only with remove=true."
   view_list:
     description: "List the Views of a Kioku project shared with this connector. Use a View's slug with view_read. The View with slug wiki is the project Wiki; read its pages with wiki_read and wiki_search."
   view_read:

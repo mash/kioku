@@ -42,7 +42,7 @@ CLI はユーザー共通領域で接続先別に認証を管理する。スキ�
 
 ## 原資料の送信
 
-Claude Code の capture セッションは文で指定された一時ディレクトリを使う。その他の環境で送信する原資料は `mktemp -d` で作った一時ディレクトリに Markdown として書き、`kioku -n "$NAMESPACE" put FILE` で送信する。`mktemp -d` は単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使う。シェル変数や `$(...)` は使わない。
+Claude Code の capture セッションは文で指定された一時ディレクトリを使う。その他の環境で送信する公開 HTTPS URL のある原資料は `mktemp -d` で作った一時ディレクトリに Markdown として書き、`kioku -n "$NAMESPACE" put FILE` で送信する。`mktemp -d` は単独の Bash 呼び出しで実行し、出力した絶対パスをそのまま使う。シェル変数や `$(...)` は使わない。
 
 ユーザー自身の Claude が、コネクター、CLI、手元のファイル、ユーザーが貼った本文から原文を読む。
 資料の種類を問わず、全文を Markdown にする。
@@ -51,15 +51,17 @@ Claude Code の capture セッションは文で指定された一時ディレ�
 
 製品名ではなく、[SKILL.md](skills/kioku/SKILL.md) の機能・接続先判定でモードを選ぶ。
 シェル、CLI、サーバー接続を使える local mode を優先する。
-local mode は `.md` ファイルを CLI の `kioku -n "$NAMESPACE" put FILE` で送信する。
+local mode は原本の公開 HTTPS URL がある `.md` ファイルを CLI の `kioku -n "$NAMESPACE" put FILE` で送信する。
 remote mode は MCP（Model Context Protocol）の `source_put` で本文を送信する。
 remote mode の接続先は `https://kioku.magicians.ee` に限る。
 `source_url`・`updated_at` を含む frontmatter と送信前の確認は [capture.md](skills/kioku/references/capture.md) に従う。
-原本の HTTPS URL がない資料は送信せず、未保存と伝える。
+原本の公開 URL が無い資料は、local mode では `kioku -n "$NAMESPACE" put file:///絶対パス` で送る。`updated_at` が無ければ `--date` で資料自身の日付を渡す。CLI は受付キーを表示し、ファイルに書き戻す。
+remote mode では frontmatter に `source_url: kioku:local` と資料自身の `updated_at` を書いて `source_put` で送る。
+両モードとも受付キーを利用者に示し、削除に使えると伝える。
 `source_url` は送信者の申告であり、サーバーは本文と原本の一致を検証しない。
 
 両モードとも操作の成功は Kioku がファイルを受け付けたことを示す。ユーザーに受付を伝え、Wiki の生成を待たない。
-CLI はファイルごとに `accepted <path>`、削除の依頼ごとに `removed <SOURCE_URL>` を表示する。
+CLI は通常のパスで put したファイルごとに `accepted <path>`、`put file:` では `accepted KEY`、削除の依頼ごとに `removed <SOURCE_URL>` を表示する。
 local mode の削除は `kioku -n "$NAMESPACE" delete URL`、即時生成は `kioku -n "$NAMESPACE" generate --wait` を使う。
 remote mode の削除は `source_put` の `remove` を使い、Wiki は最後の put の約 10 秒後の自動生成を待つ。
 原本が変わった時は Claude が本文を読み直して送信する。
@@ -142,7 +144,7 @@ Git を起動せず `.git/HEAD` を読み、worktree の `.git` ファイルに�
 同じ server・namespace を1件にまとめ、trigger 語に当たった project を先頭へ並べる。最寄りの `.kioku/config` はヒントとして表示する。
 既定以外の server も表示する。projects.json が無い・空・不正なら、最寄りの設定をヒントとして出す。候補がなくても General の選択手順を表示する。
 親は最初のメッセージで namespace の指定があれば、projects.json に無くても優先する。指定が無ければ description で対象を選ぶ。対象が不明なら、`kioku project list` の `"general": true` の項目から namespace を使う。選択には `kioku -n NAMESPACE session select` を使う。
-選択済みなら trigger 語を照合せず、毎ターン index.md の場所と queue add の規則を出す。背景 pull 中と失敗の文を区別する。
+選択済みなら trigger 語を照合せず、毎ターン index.md の場所と put の規則を出す。背景 pull 中と失敗の文を区別する。
 
 `session select` は通常の pull と同じ認証・保存先を使い、成功時に選択と結果を保存する。
 stdout は Wiki の入口と冒頭の1行の指示だけを返し、通常の pull の JSON や「最新です」は出さない。
@@ -157,21 +159,19 @@ pull・create・join が成功すると、そのプロジェクトを選択す�
 状態ファイルは0600、ディレクトリは0700、期限は mtime から30日。CLI が書いた後に期限切れを削除する。
 hook が状態を書くのは自動選択時だけ。状態ファイルを送信先や認証・共有権限の正本にしない。
 
-Claude Code の local mode では、親は共有範囲・機密・保存禁止を確認し、重要な文書の URL を `kioku -C P -n NAMESPACE queue add URL "何をしたか"` で記録する。
-`P/.kioku/queue.tsv` は日付・HTTPS URL・NOTE の3列、0600。同じ URL の再追加は日付と NOTE を更新して末尾へ移す。`queue list` で読み、`queue remove URL...` で消す。
-キューはセッションをまたいで project ごとに共有する。NOTE は put 本文に入れない。Codex・Claude Chat・Cowork と remote mode の直接 put は変えない。
+Claude Code の local mode では、親は共有範囲・機密・保存禁止を確認し、重要な文書の HTTPS URL を `kioku -C P -n NAMESPACE put URL` で queue に足す。今すぐ起動する場合は `--now --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を付ける。
+`P/.kioku/queue.tsv` は日付・URL・NOTE・試行・状態・理由の6列、0600。同じ URL の再追加は試行を0に戻す。`status` は queue と capture の状態を示し、`delete URL` は queue の行を消してサーバーに削除を依頼する。
+公開 URL の無い Markdown は `put file:///絶対パス` を使う。`updated_at` が無ければ `--date` を渡す。CLI は受付キーを表示して書き戻す。
 
-Stop は5件以上、SessionEnd は1件以上で、ロックが無いか30分を超えて古い時だけ背景の `capture run --min N` を起動する。hook は出力せず、子を待たない。
-`capture run` の既定の閾値は5件。今すぐ送る依頼では [SKILL.md](skills/kioku/SKILL.md) の「今すぐ送る」手順に従う。
-子は `P/.kioku/capture.lock` を排他作成し、信頼済みの作業 cwd で絶対パスの `claude --bg` を起動する。文は位置引数で渡し、`-p` は使わない。
-この capture セッションは hook 無効・dontAsk・指定したツール許可で Sonnet の `kioku-capture` を使う。資料は P/.kioku/capture-tmp/<token> に書き、所有トークンの一致する unlock が削除する。次の run は稼働ロック以外の一時ディレクトリを削除する。
-URL ごとに全文を取得・検証・put し、受付済み・未保存・受付不明の結果を出力して queue remove する。最後に所有トークンを付けて capture unlock する。処理中に追加された URL は次の run が拾う。
+Stop は選択先の queued が5件以上、SessionEnd は1件以上で `capture run` を切り離して起動し、待たない。SessionStart は projects.json の全 project を確認し、queued があり有効なロックが無ければ起動する。ロックは30分で失効する。
+Stop は待ち件数・実行中・failed を、SessionStart は起動結果・failed を `systemMessage` で知らせる。SessionEnd は出力しない。
+子は所有トークン付きの `P/.kioku/capture.lock` を作り、queued の行だけを snapshot に入れて試行を増やす。指定ツールだけを許可し、hook 無効の `claude --bg --agent kioku:kioku-capture` で起動する。資料は `P/.kioku/capture-tmp/<token>` に書く。
+capture セッションは `capture fetch`・`capture put`・`capture result` を使う。受付済みの行は消す。未保存・受付不明は試行3回で failed にし、次の hook で知らせる。snapshot 後に再 put された行は古い結果で変更しない。最後に `capture unlock` がロックと一時ディレクトリを除く。
 
-Capture は開始時のキューの日時・URL・注記をスナップショットに保存します。`queue remove --capture-token TOKEN URL` は現在の行がそのスナップショットと同じ場合だけ削除し、後から日付や注記を変えて再追加した行は次回に残します。利用者の `queue remove URL` は従来どおり URL に一致する行を削除します。
 起動失敗はロックを消してキューを残す。id が読めない場合は警告と capture.log に残してロックを保持し、前回の片付けは行わない。
 ロックは pid の生死ではなく30分の期限で判定する。unlock は所有トークンが一致した時だけ bg_id を `capture.last` に保存してロックを消す。
 capture セッションは idle で残り、次の run が capture.last の完了済み bg_id だけに `claude rm` を試す。期限切れロックの所有セッションは削除しない。結果は `claude agents` と `claude logs <id>` で確認する。
-背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、hook が子を起動するたびに内容を切り詰めて上書きする。capture の処理中の記録は capture.log に追記する。`capture.last` も0600。
+背景 pull の出力は `pull.log`、背景 capture run の出力は `capture.log` に保存する。両方とも0600で、pull.log は起動ごとに上書きする。capture.log は起動と結果の理由を追記する。`capture.last` も0600。
 
 sh は JSON の解析を `session hook --event EVENT --prompts DIR` に任せる。CLI の hook は直接通信せず、必要な子だけを起動する。jq と Python は不要。
 不正 JSON・不正 SID・8 MiB超の入力は無出力で終了する。sh は stderr を捨て、失敗してもセッションを止めない。

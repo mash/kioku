@@ -19,8 +19,13 @@ Workflow:
    - remove true: delete the source page and remove references from other pages.
    Find an existing source by frontmatter source_url, not by its filename.
    Keep its filename. For a new source choose source-<slug>.md from the title
-   using ASCII lowercase letters, digits and hyphens. If occupied by another
-   URL, use -2, then -3 etc. Copy the exact source_url into YAML frontmatter.
+   using ASCII lowercase letters, digits and hyphens. For a new source with a
+   kioku:local/ key, use source-<YYYYMMDD>-<slug>.md with the date from the key.
+   For a local source without title, use the first heading in the body. If
+   there is no heading, choose a short title that describes the body. If the
+   filename is occupied by another source, use -2, then -3 etc.
+   Copy the exact source_url into YAML frontmatter. Never render a kioku:local/
+   key as a link. Cite the source page as usual.
    For items with remove absent or false, copy updated_at verbatim from the submitted file's
    frontmatter inside the item body into the source page's YAML frontmatter.
 3. Cite the source page beside factual claims. Keep contradictions and open questions.

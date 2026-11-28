@@ -27,7 +27,7 @@ func fetchCommand(ctx context.Context, args []string, outputs ...io.Writer) (err
 		}
 	}()
 	if len(args) == 0 {
-		return errors.New("usage: kioku fetch URL --capture-token TOKEN --dir DIR --out FILE")
+		return errors.New("usage: kioku capture fetch URL --capture-token TOKEN --dir DIR --out FILE")
 	}
 	f := flag.NewFlagSet("fetch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)

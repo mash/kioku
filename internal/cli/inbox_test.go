@@ -71,7 +71,7 @@ func TestPutReportsEachAcceptedFile(t *testing.T) {
 
 func TestPutRequiresPath(t *testing.T) {
 	a := &App{Err: io.Discard}
-	if err := a.put(nil); err == nil || err.Error() != "usage: kioku put FILE..." {
+	if err := a.put(nil); err == nil || err.Error() != putUsage {
 		t.Fatal(err)
 	}
 }

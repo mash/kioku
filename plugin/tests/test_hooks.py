@@ -636,8 +636,8 @@ class SessionHooksTest(unittest.TestCase):
             command += ' --server ' + state['server']
         line = (f'Kioku: {state["namespace"]}（wiki: {state["path"]}/wiki/、入口は index.md）。'
                 '調べる時はここを grep する。参照・作成した重要な文書の URL は '
-                f'{command} -C {shlex.quote(state["path"])} -n {state["namespace"]} queue add <URL> "<何をしたか>" で 1 行足す。'
-                '共有範囲・機密・保存禁止を確かめてから足す。')
+                f'{command} -C {shlex.quote(state["path"])} -n {state["namespace"]} put <URL> で送る。'
+                '共有範囲・機密・保存禁止を確かめてから送る。')
         if 'last_pull_result' not in state:
             line += '\n背景の pull は終わっていない。wiki/ は 1 回前の pull のままか、まだ無い。'
         return line
@@ -954,7 +954,7 @@ if sys.argv[1] == 'rm':
 log.write_text(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(),
                           'sid': os.environ.get('CLAUDE_CODE_SESSION_ID')}))
 assert sys.stdin.read() == ''
-# A detached fixture session removes queued rows only after its launcher returns.
+# A detached fixture session reports acceptance only after its launcher returns.
 code = """import json, os, pathlib, subprocess, time
 p = pathlib.Path(os.environ['CAPTURE_FIXTURE_PROJECT'])
 for _ in range(200):
@@ -963,7 +963,9 @@ for _ in range(200):
     time.sleep(.025)
 cli = os.environ['CAPTURE_FIXTURE_CLI']
 urls = [row.split('\t')[1] for row in (p / '.kioku/queue.tsv').read_text().splitlines()]
-subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'queue', 'remove', '--capture-token', lock['token'], *urls], check=True)
+for url in urls:
+    subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'result', '--capture-token', lock['token'],
+                    '--result', 'accepted', '--reason', '受付済み', url], check=True)
 subprocess.run([cli, '-C', str(p), '-n', 'org/a', 'capture', 'unlock', '--token', lock['token']], check=True)
 """
 subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
@@ -988,12 +990,17 @@ print('backgrounded · 1a2b3c4d')
                 self.state = {'server': 'https://kioku.magicians.ee', 'namespace': 'org/a', 'mode': 'local', 'path': str(root)}
                 self.save_state()
                 queue = metadata / 'queue.tsv'
-                queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t読んだ\n' for i in range(count))
+                queued = ''.join(f'2026-11-18\thttps://x.example/{i}\t読んだ\t0\tqueued\t\n' for i in range(count))
                 queue.write_text(queued)
                 log = root / 'fixture.json'
                 self.env.update(CAPTURE_FIXTURE_LOG=str(log), CAPTURE_FIXTURE_PROJECT=str(root),
                                 CAPTURE_FIXTURE_CLI=str(self.cli), TMPDIR=str(self.work))
-                self.assertEqual(self.hook(event, cwd=str(root)), '')
+                output = self.hook(event, cwd=str(root))
+                if event == 'Stop':
+                    self.assertEqual(json.loads(output)['systemMessage'],
+                                     f'Kioku: capture 実行中（id 不明、{count} 件）。capture.log を確認する。')
+                else:
+                    self.assertEqual(output, '')
                 self.wait_until(lambda: (metadata / 'capture.last').exists())
                 self.wait_until(lambda: (metadata / 'capture.log').exists() and 'claude logs 1a2b3c4d で見る。' in (metadata / 'capture.log').read_text())
                 self.wait_until(lambda: not (metadata / 'capture.lock').exists())
@@ -1005,8 +1012,142 @@ print('backgrounded · 1a2b3c4d')
                 self.assertIsNone(recorded['sid'])
                 self.assertEqual(recorded['args'][0], '--bg')
                 self.assertNotIn('-p', recorded['args'])
-                self.assertIn(queued, recorded['args'][-1])
+                self.assertIn(queued.replace('\t0\tqueued', '\t1\tqueued'), recorded['args'][-1])
                 self.assertIn('capture unlock', recorded['args'][-1])
+
+    def test_session_start_recovers_all_projects_and_reports_failed_rows(self):
+        bin_dir = self.work / 'fake-bin'
+        bin_dir.mkdir()
+        claude = bin_dir / 'claude'
+        claude.write_text("#!/bin/sh\nprintf 'backgrounded · 5e6f7a8b\n'\n")
+        claude.chmod(0o755)
+        self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+
+        for source in ('startup', 'clear', 'fork', 'compact', 'resume'):
+            with self.subTest(source=source):
+                projects = []
+                for name in ('one', 'two', 'busy', 'failed', 'exhausted', 'empty'):
+                    root = self.work / source / name
+                    metadata = root / '.kioku'
+                    metadata.mkdir(parents=True)
+                    server = 'https://other.example' if name == 'two' else 'https://kioku.magicians.ee'
+                    config = {'namespace': f'org/{name}', 'server': server}
+                    (metadata / 'config').write_text(json.dumps(config))
+                    projects.append(dict(config, path=str(root)))
+                    if name == 'empty':
+                        continue
+                    state, attempts, reason = {
+                        'failed': ('failed', 3, 'login'),
+                        'exhausted': ('queued', 3, ''),
+                    }.get(name, ('queued', 0, ''))
+                    (metadata / 'queue.tsv').write_text(
+                        f'2026-11-18\thttps://example.com/{name}\tkioku put\t{attempts}\t{state}\t{reason}\n')
+                    if name == 'busy':
+                        (metadata / 'capture.lock').write_text(json.dumps({
+                            'started_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                            'bg_id': 'abcdef00',
+                        }))
+                catalog.write_text(json.dumps({'projects': projects}))
+                self.state.update(projects[3])
+                self.save_state()
+                before = self.state_path.read_bytes()
+
+                obj = json.loads(self.hook('SessionStart', source=source, cwd=str(self.work)))
+                self.assertEqual(obj['hookSpecificOutput']['hookEventName'], 'SessionStart')
+                context = obj['hookSpecificOutput']['additionalContext']
+                self.assertIn('org/failed' if source in ('compact', 'resume') else 'trigger 語', context)
+                message = obj['systemMessage']
+                for name in ('one', 'two'):
+                    self.assertIn(f'org/{name} の残り 1 件の capture を起動した（id 5e6f7a8b）', message)
+                    metadata = self.work / source / name / '.kioku'
+                    self.assertEqual(json.loads((metadata / 'capture.lock').read_text())['bg_id'], '5e6f7a8b')
+                    self.assertIn('\t1\tqueued\t', (metadata / 'queue.tsv').read_text())
+                for name in ('failed', 'exhausted'):
+                    self.assertIn(f'org/{name} で受付済みにならなかった資料 1 件', message)
+                for name in ('busy', 'empty'):
+                    self.assertNotIn(f'org/{name}', message)
+                self.assertEqual(self.state_path.read_bytes(), before)
+
+                obj = json.loads(self.hook('SessionStart', source=source, cwd=str(self.work)))
+                self.assertNotIn('capture を起動した', obj['systemMessage'])
+                self.assertIn('org/failed で受付済みにならなかった資料 1 件', obj['systemMessage'])
+                obj = json.loads(self.hook('Stop', cwd=str(self.work)))
+                self.assertIn('受付済みにならなかった資料 1 件', obj['systemMessage'])
+                self.assertNotIn('capture 実行中', obj['systemMessage'])
+
+    def test_session_start_does_not_wait_for_one_project_before_launching_another(self):
+        bin_dir = self.work / 'fake-bin'
+        bin_dir.mkdir()
+        claude = bin_dir / 'claude'
+        claude.write_text("""#!/bin/sh
+case "$*" in
+    *https://example.com/one*)
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+            [ -e "$CAPTURE_TEST_MARKER" ] && break
+            sleep 0.1
+        done
+        [ -e "$CAPTURE_TEST_MARKER" ] || exit 1
+        ;;
+    *https://example.com/two*) touch "$CAPTURE_TEST_MARKER" ;;
+esac
+printf 'backgrounded · 5e6f7a8b\n'
+""")
+        claude.chmod(0o755)
+        self.env.update(PATH=str(bin_dir) + os.pathsep + self.env['PATH'],
+                        CAPTURE_TEST_MARKER=str(self.work / 'second-started'))
+        projects = []
+        for name in ('one', 'two'):
+            root = self.work / name
+            metadata = root / '.kioku'
+            metadata.mkdir(parents=True)
+            config = {'namespace': f'org/{name}', 'server': 'https://kioku.magicians.ee'}
+            (metadata / 'config').write_text(json.dumps(config))
+            (metadata / 'queue.tsv').write_text(
+                f'2026-11-18\thttps://example.com/{name}\tkioku put\t0\tqueued\t\n')
+            projects.append(dict(config, path=str(root)))
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+        catalog.write_text(json.dumps({'projects': projects}))
+
+        message = json.loads(self.hook('SessionStart', source='startup'))['systemMessage']
+        self.assertIn('org/one の残り 1 件の capture を起動した', message)
+        self.assertIn('org/two の残り 1 件の capture を起動した', message)
+
+    def test_session_start_does_not_cancel_a_slow_capture_launcher(self):
+        bin_dir = self.work / 'fake-bin'
+        bin_dir.mkdir()
+        claude = bin_dir / 'claude'
+        claude.write_text("""#!/bin/sh
+sleep 11
+printf 'backgrounded · 5e6f7a8b\\n'
+""")
+        claude.chmod(0o755)
+        self.env['PATH'] = str(bin_dir) + os.pathsep + self.env['PATH']
+        project = self.work / 'project'
+        metadata = project / '.kioku'
+        metadata.mkdir(parents=True)
+        config = {'namespace': 'org/project', 'server': 'https://kioku.magicians.ee'}
+        (metadata / 'config').write_text(json.dumps(config))
+        (metadata / 'queue.tsv').write_text('2026-11-18\thttps://example.com/slow\tkioku put\t0\tqueued\t\n')
+        catalog = Path(self.env['HOME']) / '.config/kioku/projects.json'
+        catalog.parent.mkdir(parents=True)
+        catalog.write_text(json.dumps({'projects': [dict(config, path=str(project))]}))
+
+        self.hook('SessionStart', source='startup', cwd=str(self.work))
+        lock = metadata / 'capture.lock'
+        log = metadata / 'capture.log'
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if (lock.exists() and json.loads(lock.read_text()).get('bg_id') == '5e6f7a8b'
+                    and 'claude logs 5e6f7a8b' in log.read_text()):
+                break
+            if '\t0\tqueued\t' in (metadata / 'queue.tsv').read_text():
+                self.fail('SessionStart cancelled the launcher while waiting for its ID')
+            time.sleep(0.05)
+        else:
+            self.fail('detached launcher did not record its ID in capture.lock and capture.log')
 
 
 

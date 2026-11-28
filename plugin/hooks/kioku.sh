@@ -122,7 +122,12 @@ else
     download
 fi
 if current_version >/dev/null; then
-    cat "$ROOT/prompts/hook-start.txt"
+    CONTEXT=$("$TARGET" session hook --event SessionStart --prompts "$ROOT/prompts")
+    if [ -n "$CONTEXT" ]; then
+        printf '%s\n' "$CONTEXT"
+    else
+        cat "$ROOT/prompts/hook-start.txt"
+    fi
 else
     cat "$ROOT/prompts/hook-no-cli.txt"
 fi

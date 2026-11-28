@@ -32,23 +32,36 @@ func SourceURL(body string) (string, error) {
 	return source.FrontmatterSourceURL(metadata)
 }
 
-// ValidateSources implements (a)-(e); source bodies and log entries are not checked.
+// ValidateSources checks source identities and local filenames, not bodies or log entries.
 func ValidateSources(pages, previous map[string]string, items []model.InboxItem) []string {
 	var problems []string
-	urls := map[string]string{}
-	names := make([]string, 0, len(pages))
-	for name := range pages {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if !strings.HasPrefix(name, "wiki/source-") {
-			continue
+	previousNames := map[string]string{}
+	for _, name := range sortedSourceNames(previous) {
+		if u, err := SourceURL(previous[name]); err == nil {
+			previousNames[u] = name
 		}
+	}
+	urls := map[string]string{}
+	for _, name := range sortedSourceNames(pages) {
 		u, err := SourceURL(pages[name])
 		if err != nil {
 			problems = append(problems, "(a) "+name+": "+err.Error())
 			continue
+		}
+		if strings.HasPrefix(u, source.LocalSource) {
+			date := source.LocalKeyDate(u)
+			if date == "" {
+				problems = append(problems, "(a) "+name+": invalid local source key")
+			} else if old := previousNames[u]; old != "" {
+				if old != name {
+					problems = append(problems, "(a) "+name+": keep existing filename "+old)
+				}
+			} else {
+				slug, ok := strings.CutPrefix(strings.TrimSuffix(name, ".md"), "wiki/source-"+date+"-")
+				if !ok || slug == "" {
+					problems = append(problems, "(a) "+name+": local source filename must use source-"+date+"-<slug>.md")
+				}
+			}
 		}
 		if prior, ok := urls[u]; ok {
 			problems = append(problems, "(b) "+name+": duplicate source_url with "+prior)
@@ -68,15 +81,22 @@ func ValidateSources(pages, previous map[string]string, items []model.InboxItem)
 			problems = append(problems, "(e) submitted source missing: "+item.SourceURL)
 		}
 	}
-	for name, body := range previous {
-		if !strings.HasPrefix(name, "wiki/source-") {
-			continue
-		}
-		u, err := SourceURL(body)
-		if err == nil && !removed[u] && urls[u] == "" {
+	for u := range previousNames {
+		if !removed[u] && urls[u] == "" {
 			problems = append(problems, "(d) previous source missing: "+u)
 		}
 	}
 	sort.Strings(problems)
 	return problems
+}
+
+func sortedSourceNames(pages map[string]string) []string {
+	names := make([]string, 0, len(pages))
+	for name := range pages {
+		if strings.HasPrefix(name, "wiki/source-") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

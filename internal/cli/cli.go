@@ -79,8 +79,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		_, err = fmt.Fprint(out, viewHelp)
 		return err
 	}
-	if commands[0] == "fetch" {
-		return fetchCommand(ctx, commands[1:], out)
+	if len(commands) >= 2 && commands[0] == "capture" && commands[1] == "fetch" {
+		return fetchCommand(ctx, commands[2:], out)
 	}
 	if commands[0] == "session" && (len(commands) < 2 || commands[1] != "select") {
 		return runSession(commands[1:], out, errOut)
@@ -162,6 +162,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 	}
 	switch {
+	case commands[0] == "put", commands[0] == "status", commands[0] == "capture", commands[0] == "delete":
+		// These commands also have local-only paths. Select credentials only when sending.
 	case commands[0] == "session", commands[0] == "login", len(commands) >= 2 && commands[0] == "agent" && commands[1] == "login":
 		// login selects no credential; sessionSelect handles credential failures itself.
 	default:
@@ -242,8 +244,6 @@ func (a *App) dispatch(args []string) error {
 		return a.deleteSources(args[1:])
 	case "capture":
 		return a.capture(args[1:], time.Now().UTC())
-	case "queue":
-		return a.queue(args[1:], time.Now())
 	case "put":
 		return a.put(args[1:])
 	case "view":

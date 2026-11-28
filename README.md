@@ -1,6 +1,6 @@
 # Kioku
 
-Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as an inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. The client asserts source_url as provenance; the server does not verify that the text came from that URL.
+Kioku turns a team's source documents into a shared project wiki. The user's Claude fetches each source and sends Markdown following the [capture rules](plugin/skills/kioku/references/capture.md). The server stores the text as an inbox item and runs an agent to update the wiki. Published source pages keep the evidence; successful publication consumes the inbox items. Members pull the wiki to a local directory, or read it in the browser and through the Claude connector. For public URLs, the client asserts provenance. For files without a public URL, the server derives a local key from the document date and body.
 
 The repository has three parts:
 
@@ -110,7 +110,7 @@ export KIOKU_SERVER=http://127.0.0.1:8080
 ./bin/kioku -n "$NAMESPACE" project share invite bob@example.com
 ```
 
-原資料は、ユーザーの Claude が本文を取得して投入します。GitHub、Google Docs、公開 Web など、どの資料も本文と原本 URL を渡します。Kioku は資料取得用の資格情報を保持しません。具体例は[原資料](#原資料)を参照してください。
+原資料は、ユーザーの Claude が本文を取得して投入します。GitHub、Google Docs、公開 Web などは本文と原本 URL を渡します。公開 URL の無い Markdown も送れます。Kioku は資料取得用の資格情報を保持しません。具体例は[原資料](#原資料)を参照してください。
 
 例えば、GitHub にある Kioku の README を取り込み、Wiki を生成して開くには:
 
@@ -180,21 +180,21 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 
 ### プロジェクトの資料アクセス方針
 
-ユーザーの Claude が自身のコネクターや CLI で資料を取得し、本文を送ります。Kioku は受け取った本文をプロジェクトのメンバーへ共有します。`source_url` はクライアントが申告する原本 URL です。サーバーは本文がその URL から来たことや、投稿者の原本への閲覧権限を検証しません。[資料アクセス方針](docs/ACCOUNT_ADMIN.md#project-source-authorization-policy)を参照してください。
+ユーザーの Claude が自身のコネクターや CLI で資料を取得し、本文を送ります。Kioku は受け取った本文をプロジェクトのメンバーへ共有します。`source_url` はクライアントが申告する原本 URL かサーバーが作るローカルキーです。サーバーは本文がその URL から来たことや、投稿者の原本への閲覧権限を検証しません。[資料アクセス方針](docs/ACCOUNT_ADMIN.md#project-source-authorization-policy)を参照してください。
 
-### 1. 本文と原本 URL・最終更新日時を渡す
+### 1. 資料を送る
 
-どの資料も、ユーザーの Claude が本文を読み、UTF-8 の Markdown ファイルとして投入します。CLI 単体で使う場合も、利用者が本文をファイルに保存して送ります。別の要約や操作記録は投入しません。
+| 入力 | 動作 |
+| --- | --- |
+| `kioku -n "$NAMESPACE" put PATH...` | ファイルやディレクトリを送る。各ファイルの YAML frontmatter に公開 HTTPS の `source_url` と `updated_at` が必要。受付は `accepted NAME`。 |
+| `kioku -n "$NAMESPACE" put --date 2026-11-20 file:///tmp/notes.md` | 公開 URL の無い Markdown 1 件を送る。`updated_at` があれば `--date` は不要。受付は `accepted KEY`。CLI はファイルにキーを書き戻す。 |
+| `kioku -n "$NAMESPACE" put https://example.com/doc` | Claude Code では URL を手元の queue に足してすぐ戻る。`queued URL` は受付前。今すぐ capture を起動するなら `--now --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を付ける。 |
 
-ファイル先頭の YAML frontmatter に `source_url` と `updated_at` を付け、[原資料の取得・検証規則](plugin/skills/kioku/references/capture.md)に従って投入します。
-
-```bash
-kioku -n "$NAMESPACE" put ./payment-api-design.md
-```
-
-ファイルの put は削除フラグのない項目を作ります。HTTP は 202 と `{}`、MCP の `source_put` は `{}` を返します。CLI は成功したファイルごとに `accepted <path>` を表示し、終了コードで成功を伝えます。サーバーは本文をそのまま保存し、source_url を取得し直しません。利用者の frontmatter に `remove: true` があっても削除フラグは変わりません。原本 URL がない、または本文を読めない場合は投入を保留します。最後の put から 10 秒後（既定）の自動生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
-
-`kioku -n "$NAMESPACE" put FILE...` にはファイルかディレクトリのパスを1つ以上指定します。複数ファイルは1件ずつ別の要求で送ります。put は送信元のファイルを削除しません。途中で失敗した場合は `accepted <path>` を確認し、未受付のファイルだけを指定して再送します。
+資料の共有範囲と[原資料の取得・検証規則](plugin/skills/kioku/references/capture.md)を確認してください。
+ローカルキーの形式は `kioku:local/<YYYYMMDD>-<64桁のSHA-256>` です。資料自身の日本標準時の日付と、frontmatter を除く本文から作ります。本文が変わると別のキーになります。
+HTTP は 202 と `{"source_url":"<受け付けたキー>"}` を返します。MCP の `source_put` も同じキーを返します。ローカル資料は MCP の frontmatter に `source_url: kioku:local` と資料自身の `updated_at` を書きます。
+サーバーは URL を取得し直しません。利用者の frontmatter に `remove: true` があっても削除フラグは変わりません。最後の受付から約10秒後の自動生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
+複数のパスを送る場合、CLI は先に全ファイルを検証してから1件ずつ送ります。途中の失敗は `accepted NAME` で受付済みと区別します。`put file:` は受付後の書き戻しに失敗しても `accepted KEY` を表示し、終了コード1を返します。
 
 ### 2. 原資料を取り除く
 
@@ -203,7 +203,7 @@ kioku -n "$NAMESPACE" delete https://example.com/the-original-document
 kioku -n "$NAMESPACE" generate --wait
 ```
 
-delete は `remove: true` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
+delete には公開 HTTPS URL か完全なローカルキーを指定します。HTTPS URL に一致する queue の行も消します。サーバーは `remove: true` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
 
 待機中の同じ source_url の項目は、新しい put で置き換えます。削除の依頼も待機中の本文を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
 
@@ -228,7 +228,7 @@ HTML の View の出力規則は [Kioku スキルの参照文書](plugin/skills/
 
 Wiki を先に生成し、完全な Wiki があれば、同じジョブでほかの View を作成順に生成します。各 View は独立した runner セッションで Wiki と保存済みプロンプトを読み、検査に通った結果で前回の表示を上書きします。生成中のタイトル・プロンプトの編集ではスキップせず、各 View の入力アーカイブを作った時点の設定で公開します。View が失敗すると後の View はスキップします。[生成と予算](docs/WORKERS.md#generation-runner-type)
 
-Runner は原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。`WIKI.md` に従ってページを整理し、事実の記述から source ページを引用します。既定の prompt は概念・エンティティ・分析・概要ページと種類ごとの目録を作ります。`wiki/index.md` には source ページを載せません。整理の指示が system の規則と矛盾するときは system を優先します。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
+Runner は新しい原資料を `wiki/source-<slug>.md`、ローカル資料を `wiki/source-<YYYYMMDD>-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。`WIKI.md` に従ってページを整理し、事実の記述から source ページを引用します。既定の prompt は概念・エンティティ・分析・概要ページと種類ごとの目録を作ります。`wiki/index.md` には source ページを載せません。整理の指示が system の規則と矛盾するときは system を優先します。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
 出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開します。原資料ページをサーバーが後から付け足す処理はありません。
 
@@ -284,7 +284,7 @@ export S3_SECRET_ACCESS_KEY=...
   .kioku/audit/<event-id>.json
 ```
 
-Wikiは一組だけを保持し、公開時に 1 つのトランザクションで丸ごと置き換えます。閲覧中に新旧ページは混在しません。実行に固定した inbox を記録し、失敗時の再実行を可能にします。pull は公開済みの Wiki Markdown を取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示し、専用の inbox GET は設けません。
+Wikiは一組だけを保持し、公開時に 1 つのトランザクションで丸ごと置き換えます。閲覧中に新旧ページは混在しません。実行に固定した inbox を記録し、失敗時の再実行を可能にします。pull は公開済みの Wiki Markdown を取得します。生成前の受付状態は `kioku -n "$NAMESPACE" status` の `inbox_count` と `inbox`（`source_url` と、削除の依頼だけに付ける `remove: true`）で確認します。既存の `GET /api/projects` がプロジェクトごとに返す値を表示します。`status` は手元の `queue` と `capture` も、サーバーに届かない場合を含めて表示します。
 
 S3使用時は本文のローカルキャッシュを作成しません。SQLite用の永続ディスクは引き続き必要です。S3への保存が成功してからputを受理済みにし、変更のないファイルはアップロードしません。再起動時はS3から状態を読み込みます。カタログのプロセスロックは単一VPSを前提としており、別VPSとの同時書き込みや自動フェイルオーバーには対応しません。
 
@@ -396,7 +396,7 @@ Claude Code 以外では、スキルは `mktemp -d` を単独の Bash 呼び出�
 
 ### プラグインの運用
 
-Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。v8 では hook が会話セッションごとに対象を自動選択し、手元の Wiki の入口を読み、背景で pull します。原資料の URL はキューに記録し、Stop・SessionEnd が capture セッションを起動します。詳細は [plugin/README](plugin/README.md) を参照してください。
+Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。v8 では hook が会話セッションごとに対象を自動選択し、手元の Wiki の入口を読み、背景で pull します。`put URL` は queue に記録し、Stop・SessionEnd・SessionStart が capture セッションを起動します。詳細は [plugin/README](plugin/README.md) を参照してください。
 
 旧コマンドは削除し、互換エイリアス・旧設定へのフォールバックは提供しません。
 

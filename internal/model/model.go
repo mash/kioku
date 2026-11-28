@@ -93,6 +93,10 @@ type PutRequest struct {
 	SourceURL string     `json:"source_url,omitempty"`
 }
 
+type PutResponse struct {
+	SourceURL string `json:"source_url"`
+}
+
 type InboxItem struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`

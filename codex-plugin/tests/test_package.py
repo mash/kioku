@@ -79,16 +79,19 @@ class PackageTests(unittest.TestCase):
                 self.assertNotIn(forbidden, text)
             self.assertNotIn('Claude', text.replace('Claude Code', '').replace('Claude Chat', ''))
         text = (plugin / 'skills/kioku/SKILL.md').read_text()
-        self.assertIn('原本の HTTPS', text)
+        self.assertIn('公開 HTTPS', text)
         self.assertIn('426', text)
         self.assertIn('checksum', text)
         self.assertIn('Claude Code では、親が共有範囲・機密・保存禁止を確認し', text)
-        self.assertIn('Codex では今どおり直接 put する。', text)
+        self.assertIn('Codex などでは HTTPS 資料の Markdown を用意して直接送る。', text)
+        self.assertIn('put --date YYYY-MM-DD file:///絶対パス', text)
+        self.assertNotIn('queue add', text)
         self.assertIn('--plugin-root "/absolute/claude-plugin"', text)
         selection = (plugin / 'skills/kioku/references/selection.md').read_text()
         self.assertIn('Claude Code では、選んだ対象以外を先に pull', selection)
         remote = (plugin / 'skills/kioku/references/remote.md').read_text()
         self.assertNotIn('1000', remote)
+        self.assertIn('source_url: kioku:local', remote)
 
     def test_binary_changed_after_verification_is_rejected(self):
         original = pkg.check_binary

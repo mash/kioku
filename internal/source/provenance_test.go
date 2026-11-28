@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestInboxFileRejectsTrailingYAML(t *testing.T) {
+	input := "---\nsource_url: kioku:local\nupdated_at: 2026-11-28T00:00:00Z\n...\ntitle: Keep me\n---\nBody\n"
+	if _, content, err := InboxFile("note.md", input); err == nil {
+		t.Fatalf("accepted and discarded frontmatter after YAML end marker: %q", content)
+	}
+}
+
 func TestFileProvenance(t *testing.T) {
 	const updated = "2026-11-07T18:00:00+09:00"
 	valid := "---\nsource_url: https://example.com/doc\nupdated_at: " + updated + "\n---\nEvidence"

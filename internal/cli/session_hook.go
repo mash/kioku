@@ -1,18 +1,20 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -67,22 +69,29 @@ func (a *App) sessionHook(args []string, input io.Reader) error {
 	}
 	now := time.Now().UTC()
 
-	s, _ := readSession(path, now)
 	if in.Event == "SessionStart" {
-		if in.Source != "compact" && in.Source != "resume" {
-			return nil
+		var additionalContext string
+		contextPrompt := "hook-start.txt"
+		if in.Source == "compact" || in.Source == "resume" {
+			s, _ := readSession(path, now)
+			additionalContext = sessionContext(s)
+			contextPrompt = "hook-compact.txt"
 		}
-		return writeHookContext(a.Out, in.Event, sessionContext(s))
+		message := sessionStartCapture(in, now, filepath.Dir(*prompts))
+		if message != "" && additionalContext == "" {
+			additionalContext, _ = readHookPrompt(*prompts, contextPrompt)
+		}
+		return writeHookOutput(a.Out, in.Event, additionalContext, message)
 	}
+	s, _ := readSession(path, now)
 	if in.Event == "Stop" || in.Event == "SessionEnd" {
 		min := 5
 		if in.Event == "SessionEnd" {
 			min = 1
 		}
-		stopHook(in, s, min, now, filepath.Dir(*prompts))
-		return nil
+		return writeHookOutput(a.Out, in.Event, "", stopHook(in, s, min, now, filepath.Dir(*prompts)))
 	}
-	return writeHookContext(a.Out, in.Event, promptHook(in, s, *prompts, now))
+	return writeHookOutput(a.Out, in.Event, promptHook(in, s, *prompts, now), "")
 }
 
 func readHookPrompt(prompts, name string) (string, error) {
@@ -93,11 +102,18 @@ func readHookPrompt(prompts, name string) (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-func writeHookContext(out io.Writer, event, context string) error {
-	if context == "" {
+func writeHookOutput(out io.Writer, event, additionalContext, message string) error {
+	result := map[string]any{}
+	if additionalContext != "" {
+		result["hookSpecificOutput"] = map[string]string{"hookEventName": event, "additionalContext": additionalContext}
+	}
+	if message != "" {
+		result["systemMessage"] = message
+	}
+	if len(result) == 0 {
 		return nil
 	}
-	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": event, "additionalContext": context}})
+	return json.NewEncoder(out).Encode(result)
 }
 
 const sessionPullPendingContext = "背景の pull は終わっていない。wiki/ は 1 回前の pull のままか、まだ無い。"
@@ -294,78 +310,197 @@ func startBackgroundPull(in sessionHookInput, p projectEntry, exe string) error 
 	return startProcess(c)
 }
 
-func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time, pluginRoot string) {
+func stopHook(in sessionHookInput, s *sessionState, min int, now time.Time, pluginRoot string) string {
 	if s == nil || !filepath.IsAbs(in.Cwd) {
-		return
+		return ""
 	}
-	count, err := countQueueRows(filepath.Join(s.Path, ".kioku/queue.tsv"), min)
-	if err != nil || count < min {
-		return
+	a := &App{Dir: s.Path}
+	rows, err := readHookQueue(a.queuePath())
+	if err != nil {
+		return ""
 	}
-	lock, err := readCaptureLock((&App{Dir: s.Path}).captureLockPath())
-	if err != nil || lockBusy(lock, now) {
-		return
+	queued, failed := queueCounts(rows)
+	lock, err := readCaptureLock(a.captureLockPath())
+	busy := lockBusy(lock, now)
+	if err == nil && !busy && queued >= min {
+		p := projectEntry{Server: s.Server, Namespace: s.Namespace, Path: s.Path}
+		_, busy = startHookCapture(in.Cwd, p, min, pluginRoot, false)
+		lock = nil
 	}
+	if in.Event == "SessionEnd" {
+		return ""
+	}
+	var messages []string
+	if busy {
+		id, count := "", queued
+		if lock != nil {
+			id = lock.BgID
+			if dir, err := resolveCaptureDir(lock.Token, a.captureTmp(lock.Token)); err == nil {
+				if snapshot, err := captureSnapshot(dir); err == nil {
+					count = len(snapshot)
+				}
+			}
+		}
+		if id != "" {
+			messages = append(messages, fmt.Sprintf("Kioku: capture 実行中（id %s、%d 件）。claude logs %s", id, count, id))
+		} else {
+			messages = append(messages, fmt.Sprintf("Kioku: capture 実行中（id 不明、%d 件）。capture.log を確認する。", count))
+		}
+	} else if queued != 0 {
+		messages = append(messages, fmt.Sprintf("Kioku: %d 件を送る前。セッションを閉じると SessionEnd が送る。", queued))
+	}
+	if failed != 0 {
+		messages = append(messages, failedCaptureMessage("", s.Path, failed))
+	}
+	return strings.Join(messages, "\n")
+}
+
+func sessionStartCapture(in sessionHookInput, now time.Time, pluginRoot string) string {
+	authDir, err := defaultAuthDir()
+	if err != nil {
+		return ""
+	}
+	catalog, err := readProjects((&App{AuthDir: authDir}).projectsPath())
+	if err != nil {
+		return ""
+	}
+	messages := make([][]string, len(catalog.Projects))
+	var launches sync.WaitGroup
+	for i, p := range catalog.Projects {
+		a := &App{Dir: p.Path}
+		rows, err := readHookQueue(a.queuePath())
+		if err != nil {
+			continue
+		}
+		queued, failed := queueCounts(rows)
+		if queued != 0 {
+			if lock, err := readCaptureLock(a.captureLockPath()); err == nil && !lockBusy(lock, now) {
+				cwd := in.Cwd
+				if !filepath.IsAbs(cwd) {
+					cwd = p.Path
+				}
+				// Waiting for an ID must not delay other projects' launchers.
+				launches.Go(func() {
+					if message, _ := startHookCapture(cwd, p, 1, pluginRoot, true); message != "" {
+						messages[i] = append(messages[i], message)
+					}
+					if rows, err := readHookQueue(a.queuePath()); err == nil {
+						_, failed = queueCounts(rows)
+					}
+					if failed != 0 {
+						messages[i] = append(messages[i], failedCaptureMessage(p.Namespace+" で", p.Path, failed))
+					}
+				})
+				continue
+			}
+		}
+		if failed != 0 {
+			messages[i] = append(messages[i], failedCaptureMessage(p.Namespace+" で", p.Path, failed))
+		}
+	}
+	launches.Wait()
+	return strings.Join(slices.Concat(messages...), "\n")
+}
+
+func failedCaptureMessage(project, path string, count int) string {
+	return fmt.Sprintf("Kioku: %s受付済みにならなかった資料 %d 件。kioku -C %s status で理由を見る", project, count, shellQuote(path))
+}
+
+var captureLaunchLine = regexp.MustCompile(`^kioku-capture を背景で起動した（[^、]+、([0-9]+) 件、id ([0-9a-f]{8}|不明)）。`)
+
+func startHookCapture(cwd string, p projectEntry, min int, pluginRoot string, waitForID bool) (string, bool) {
 	exe, err := os.Executable()
 	if err != nil {
-		return
+		return "", false
 	}
 	pluginRoot, err = filepath.Abs(pluginRoot)
 	if err != nil {
-		return
+		return "", false
 	}
-	args := []string{}
-	if s.Server != defaultServer {
-		args = append(args, "--server", s.Server)
+	var args []string
+	if p.Server != defaultServer {
+		args = append(args, "--server", p.Server)
 	}
-	args = append(args, "-C", s.Path, "-n", s.Namespace, "capture", "run", "--min", strconv.Itoa(min), "--plugin-root", pluginRoot)
-	log, err := backgroundLog(filepath.Join(s.Path, ".kioku/capture.log"))
+	args = append(args, "-C", p.Path, "-n", p.Namespace, "capture", "run", "--min", strconv.Itoa(min), "--plugin-root", pluginRoot)
+	log, err := openBackgroundLog(filepath.Join(p.Path, ".kioku/capture.log"), os.O_APPEND|syscall.O_NONBLOCK)
 	if err != nil {
-		return
+		return "", false
 	}
 	defer log.Close()
+	if info, err := log.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+
 	c := exec.Command(exe, args...)
-	c.Dir = in.Cwd
+	c.Dir = cwd
 	c.Env = processEnv("KIOKU_SERVER", "CLAUDE_CODE_SESSION_ID", "KIOKU_SESSION_PULL")
-	c.Stdout, c.Stderr = log, log
-	_ = startProcess(c)
+	c.Stderr = log
+	if !waitForID {
+		c.Stdout = log
+		return "", startProcess(c) == nil
+	}
+
+	// Cap SessionStart's wait, not the detached launcher's lifetime.
+	// A file keeps the launcher's stdout independent of the hook's lifetime.
+	output, err := os.CreateTemp(filepath.Dir(log.Name()), "capture-output-")
+	if err != nil {
+		return "", false
+	}
+	defer output.Close()
+	if err := os.Remove(output.Name()); err != nil {
+		return "", false
+	}
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	c.Stdout = output
+	if err := c.Start(); err != nil {
+		return "", false
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	select {
+	case err = <-done:
+	case <-timer.C:
+		return "", false
+	}
+	if _, seekErr := output.Seek(0, io.SeekStart); seekErr != nil {
+		return "", false
+	}
+	out, readErr := io.ReadAll(output)
+	if err != nil || readErr != nil {
+		return "", false
+	}
+	if m := captureLaunchLine.FindStringSubmatch(string(out)); m != nil {
+		return fmt.Sprintf("Kioku: %s の残り %s 件の capture を起動した（id %s）。", p.Namespace, m[1], m[2]), true
+	}
+	return "", false
 }
 
-func countQueueRows(path string, min int) (int, error) {
+// Bound hook reads without counting failed or malformed rows as pending work.
+func readHookQueue(path string) ([]queueRow, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return 0, errors.New("queue must be a regular file")
+		return nil, errors.New("queue must be a regular file")
 	}
 	const maxQueueBytes = 8 << 20
-	reader := bufio.NewReader(io.LimitReader(f, maxQueueBytes))
-	count, nonempty := 0, false
-	for count < min {
-		b, err := reader.ReadByte()
-		if err == io.EOF {
-			if nonempty {
-				count++
-			}
-			return count, nil
-		}
-		if err != nil {
-			return count, err
-		}
-		if b == '\n' {
-			if nonempty {
-				count++
-			}
-			nonempty = false
-		} else {
-			nonempty = true
-		}
+	data, err := io.ReadAll(io.LimitReader(f, maxQueueBytes+1))
+	if err != nil {
+		return nil, err
 	}
-	return count, nil
+	if len(data) > maxQueueBytes {
+		return nil, errors.New("queue exceeds 8 MiB")
+	}
+	return parseQueue(data)
 }

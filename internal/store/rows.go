@@ -24,15 +24,17 @@ func scanOrganization(s rowScanner) (OrganizationRow, error) {
 }
 
 type UserRow struct {
-	ID    string
-	Email string
-	Data  UserData
+	ID               string
+	Email            string
+	Data             UserData
+	PersonalOrgID    *string
+	GeneralProjectID *string
 }
 
 func scanUser(s rowScanner) (UserRow, error) {
 	var v UserRow
 	var raw string
-	err := s.Scan(&v.ID, &v.Email, &raw)
+	err := s.Scan(&v.ID, &v.Email, &raw, &v.PersonalOrgID, &v.GeneralProjectID)
 	if err != nil {
 		return v, err
 	}

@@ -16,5 +16,12 @@ func deleteOwner(q *store.Queries, pid, uid string) error {
 	if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" {
 		return fail(404, "project not found")
 	}
+	if err != nil {
+		return err
+	}
+	general, err := q.IsGeneralProject(pid)
+	if err == nil && general {
+		return fail(409, "General can only be deleted with your account")
+	}
 	return err
 }

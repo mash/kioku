@@ -10,6 +10,7 @@ import (
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/authtest"
+	"github.com/mash/kioku/internal/model"
 )
 
 type oauthTransport func(*http.Request) (*http.Response, error)
@@ -83,6 +84,9 @@ func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if resp.StatusCode == 200 {
+			resp = submitSignupResponse(t, f.url, &client, resp, identity)
+		}
 		resp.Body.Close()
 		if resp.StatusCode != 302 {
 			t.Fatalf("callback: %d", resp.StatusCode)
@@ -122,5 +126,17 @@ func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 	if refreshed.ID != a.ID || refreshed.Email != "new@example.com" {
 		t.Fatal("repeat login did not refresh the verified profile")
 	}
-
+	var previous string
+	for i, token := range []string{first, second, third} {
+		var projects []model.ProjectEntry
+		if status := f.request("GET", "/api/projects", token, nil, &projects); status != 200 || len(projects) != 1 || !projects[0].General || !strings.HasSuffix(projects[0].Namespace, "/general") || projects[0].Name != "General" {
+			t.Fatalf("account %d General: %d %+v", i, status, projects)
+		}
+		namespace := projects[0].Namespace
+		if i == 0 {
+			previous = namespace
+		} else if (namespace == previous) != (i == 2) {
+			t.Fatalf("General did not follow the account: %d %s", i, namespace)
+		}
+	}
 }

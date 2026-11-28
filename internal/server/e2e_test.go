@@ -254,6 +254,41 @@ func (e *e2e) oauthCallbackRequest(startURL, code, session string) *http.Request
 	return req
 }
 
+func signupFormRequest(t *testing.T, base string, cookies []*http.Cookie, page, slug string) *http.Request {
+	t.Helper()
+	var pending *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Name == "kioku_signup" {
+			pending = cookie
+		}
+	}
+	if pending == nil || !strings.Contains(page, `name="csrf" value="`+auth.Hash(pending.Value)+`"`) {
+		t.Fatal("signup page is missing its form token")
+	}
+	if slug == "" {
+		_, tail, ok := strings.Cut(page, `name="slug" type="text" value="`)
+		if !ok {
+			t.Fatal("signup page is missing its default slug")
+		}
+		slug, _, _ = strings.Cut(tail, `"`)
+	}
+	form := url.Values{"slug": {slug}, "csrf": {auth.Hash(pending.Value)}}
+	req, err := http.NewRequestWithContext(t.Context(), "POST", base+"/auth/signup", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", base)
+	req.AddCookie(pending)
+	return req
+}
+
+func (e *e2e) submitSignup(page *httptest.ResponseRecorder, slug string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	e.expect(page, http.StatusOK, nil)
+	return e.do(signupFormRequest(e.t, e.url, page.Result().Cookies(), page.Body.String(), slug))
+}
+
 func (e *e2e) startLoopback() loopbackAttempt {
 	e.t.Helper()
 	a := loopbackAttempt{verifier: auth.Token(), state: auth.Token(), redirect: "http://127.0.0.1:5000/callback"}
@@ -269,6 +304,9 @@ func (e *e2e) loginCode(subject string) map[string]string {
 	e.t.Helper()
 	a := e.startLoopback()
 	callback := e.do(e.oauthCallbackRequest(a.startURL, subject, ""))
+	if callback.Code == http.StatusOK {
+		callback = e.submitSignup(callback, "")
+	}
 	e.expect(callback, 302, nil)
 	target, err := callback.Result().Location()
 	if err != nil || target.Query().Get("state") != a.state || target.Query().Get("code") == "" {

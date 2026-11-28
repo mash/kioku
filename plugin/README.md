@@ -126,22 +126,22 @@ startup・clear・fork では、フックが取得とバージョン確認を省
 `/reload-plugins` は CLI を取得しない。新しいバージョンの CLI は次の startup などが取得する。
 
 フックは SessionStart・PreCompact・UserPromptSubmit・Stop・SessionEnd で動く。
-PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。Kioku なしも要約に残す。
-compact・resume は保存済みの選択か Kioku なしを復元し、Wiki の本文は再注入しない。
+PreCompact は namespace・server・mode・P・最後の pull の時刻と結果を要約に残すよう指示する。
+compact・resume は保存済みの選択を復元し、Wiki の本文は再注入しない。
 UserPromptSubmit・Stop・SessionEnd は `agent_id` がある入力では何も行わない。
 
-UserPromptSubmit は未選択時に、projects.json の trigger 語をプロンプトと cwd のブランチ名に照合する。Kioku なしではプロンプトだけに照合する。
+UserPromptSubmit は未選択時に、projects.json の trigger 語をプロンプトと cwd のブランチ名に照合する。
 ASCII だけの語は大文字小文字を区別せず、前後が `[a-z0-9]` でない位置に一致する。その他は部分一致で、ASCII 部分の大文字小文字を区別しない。
 Git を起動せず `.git/HEAD` を読み、worktree の `.git` ファイルにも対応する。detached HEAD や Git の外ではブランチ名を使わない。
 1 project だけに当たれば、hook が選択を保存し、背景で `kioku --server SERVER -n NAMESPACE pull` を起動する。
 手元コピーの index.md・overview.md と選択理由を渡し、pull の完了を待たずに戻る。コピーがなければ背景で取得中と伝える。
-背景 pull は、その完了時も server・namespace・path が同じ場合だけ結果を保存する。選択変更や Kioku なしを上書きしない。
+利用者のメッセージに別の namespace の明示指定があれば、Claude は `kioku -n NAMESPACE session select` で選び直す。
+背景 pull は、その完了時も server・namespace・path が同じ場合だけ結果を保存する。
 
-未選択で trigger 語が0件か複数 project に当たる場合は、全 project の namespace・description を一覧で出す。
-同じ server・namespace を1件にまとめ、trigger 語に当たった project を先頭へ並べる。namespace 完全一致と最寄りの `.kioku/config` はヒントとして表示する。
-既定以外の server も表示する。projects.json が無い・空・不正なら、最寄りの設定を1行のヒントとして出す。それもなければ出力しない。
-親は内容と description からユーザーに聞かずに1つ選び、`kioku -n NAMESPACE session select` を実行する。同じくらい合っても1つに決める。どれも合わなければ `kioku session select --none` を実行する。
-Kioku なしでは一覧を繰り返さず、選び直し方と該当するヒントを1行で示す。プロンプトに namespace も trigger 語も無ければ、親ディレクトリ探索は行わない。
+自動選択できない場合は、手元の全 project の namespace・description を一覧で出す。
+同じ server・namespace を1件にまとめ、trigger 語に当たった project を先頭へ並べる。最寄りの `.kioku/config` はヒントとして表示する。
+既定以外の server も表示する。projects.json が無い・空・不正なら、最寄りの設定をヒントとして出す。候補がなくても General の選択手順を表示する。
+親は最初のメッセージで namespace の指定があれば、projects.json に無くても優先する。指定が無ければ description で対象を選ぶ。対象が不明なら、`kioku project list` の `"general": true` の項目から namespace を使う。選択には `kioku -n NAMESPACE session select` を使う。
 選択済みなら trigger 語を照合せず、毎ターン index.md の場所と queue add の規則を出す。背景 pull 中と失敗の文を区別する。
 
 `session select` は通常の pull と同じ認証・保存先を使い、成功時に選択と結果を保存する。
@@ -153,8 +153,7 @@ pull に失敗しても実行前の手元コピーがあれば、そのコピー
 
 CLI は `CLAUDE_CODE_SESSION_ID` がある場合、選択を `${XDG_STATE_HOME:-~/.local/state}/kioku/sessions/<sid>.json` に保存する。
 選択時は `server`・`namespace`・`mode`・`path` を残し、pull 後は `last_pull_at`・`last_pull_result` を残す。
-`session select --none` は `declined_at` だけに置き換える。SID がない --none は失敗する。
-従来の pull・create・join の成功による選択は維持する。通常の pull の失敗は同じ対象の結果だけを更新し、create・join の失敗は選択を変えない。
+pull・create・join が成功すると、そのプロジェクトを選択する。通常の pull の失敗は同じ対象の結果だけを更新し、create・join の失敗は選択を変えない。
 状態ファイルは0600、ディレクトリは0700、期限は mtime から30日。CLI が書いた後に期限切れを削除する。
 hook が状態を書くのは自動選択時だけ。状態ファイルを送信先や認証・共有権限の正本にしない。
 

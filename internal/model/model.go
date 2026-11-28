@@ -33,9 +33,10 @@ type Project struct {
 	Deleting      bool              `json:"-"`
 }
 
-// ProjectEntry adds current inbox state to a project listing without persisting it.
+// ProjectEntry adds caller-specific General identity and current inbox state.
 type ProjectEntry struct {
 	Project
+	General    bool         `json:"general,omitempty"`
 	InboxCount int          `json:"inbox_count"`
 	Inbox      []InboxEntry `json:"inbox"`
 }

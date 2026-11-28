@@ -78,6 +78,21 @@ func finishLoopbackOAuth(t *testing.T, f *fixture, req *http.Request) *http.Resp
 	return resp
 }
 
+func submitSignupResponse(t *testing.T, base string, client *http.Client, page *http.Response, slug string) *http.Response {
+	t.Helper()
+	body, err := io.ReadAll(page.Body)
+	page.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(signupFormRequest(t, base, page.Cookies(), string(body), slug))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
 func loopbackSnapshot(t *testing.T, f *fixture) string {
 	t.Helper()
 	db := fixtureSQLDatabase(t, f)
@@ -158,6 +173,7 @@ func TestLoopbackExchangeConsumesFailures(t *testing.T) {
 			code := ""
 			if failure != "unissued" {
 				resp := finishLoopbackOAuth(t, f, startLoopbackOAuth(t, f, a))
+				resp = submitSignupResponse(t, f.url, f.client, resp, "")
 				if resp.StatusCode != 302 {
 					t.Fatal(resp.StatusCode)
 				}
@@ -284,6 +300,7 @@ func TestLoopbackDuplicateCallbackAndRevocation(t *testing.T) {
 			a := newLoopbackAttempt(t, f)
 			first, second := startLoopbackOAuth(t, f, a), startLoopbackOAuth(t, f, a)
 			resp := finishLoopbackOAuth(t, f, first)
+			resp = submitSignupResponse(t, f.url, f.client, resp, "")
 			u, err := resp.Location()
 			if err != nil || resp.StatusCode != 302 {
 				t.Fatalf("callback: %d %v", resp.StatusCode, err)
@@ -386,6 +403,7 @@ func TestLoopbackConcurrentExchange(t *testing.T) {
 	f := setupLoopback(t)
 	a := newLoopbackAttempt(t, f)
 	callback := finishLoopbackOAuth(t, f, startLoopbackOAuth(t, f, a))
+	callback = submitSignupResponse(t, f.url, f.client, callback, "")
 	u, err := callback.Location()
 	if err != nil {
 		t.Fatal(err)

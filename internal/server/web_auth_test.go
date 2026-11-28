@@ -122,12 +122,12 @@ func TestWikiBrowserAccess(t *testing.T) {
 
 func TestLoginReturnPaths(t *testing.T) {
 	t.Parallel()
-	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/u-abc/project", "/oauth/wiki", "/oauth/token"} {
+	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/alice/general", "/private-team/general"} {
 		if got, err := authorizeReturn(value); err != nil || got != value {
 			t.Errorf("valid %q: %q %v", value, got, err)
 		}
 	}
-	for _, value := range []string{"/projects/AbC_d-123", "https://evil.test/acme/wiki", "//evil.test/acme/wiki", "/\\evil.test/wiki", "/acme/../wiki", "/acme/%2e%2e", "/%2facme/wiki", "/acme%2fwiki", "/api/me", "/auth/start", "/oauth/token/extra", "/invite/token", "/acme/wiki#x", "/acme/wiki#", "/acme/wiki%0a", "acme/wiki", "/projects/..", "/projects/a%5cb"} {
+	for _, value := range []string{"/projects/AbC_d-123", "https://evil.test/acme/wiki", "//evil.test/acme/wiki", "/\\evil.test/wiki", "/acme/../wiki", "/acme/%2e%2e", "/%2facme/wiki", "/acme%2fwiki", "/api/me", "/auth/start", "/mcp/wiki", "/oauth/wiki", "/oauth/token", "/oauth/token/extra", "/invite/token", "/acme/wiki#x", "/acme/wiki#", "/acme/wiki%0a", "acme/wiki", "/projects/..", "/projects/a%5cb"} {
 		if _, err := authorizeReturn(value); err == nil {
 			t.Errorf("accepted %q", value)
 		}
@@ -161,6 +161,7 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 	}
 	req := startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + start})
 	resp := finishLoopbackOAuth(t, f, req)
+	resp = submitSignupResponse(t, f.url, f.client, resp, "")
 	if resp.StatusCode != 303 || resp.Header.Get("Location") != target {
 		t.Fatal(resp.StatusCode, resp.Header)
 	}
@@ -203,20 +204,20 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 	}
 }
 
-func TestOAuthNamespaceLoginReturn(t *testing.T) {
+func TestHyphenatedNamespaceLoginReturn(t *testing.T) {
 	t.Parallel()
 	f := setupWithWorker(t, false)
 	owner := f.login("owner@example.com")
-	createTestOrg(t, f, owner, "oauth")
+	createTestOrg(t, f, owner, "private-team")
 	var p fixtureProject
-	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "oauth/wiki"}, &p); code != 201 {
+	if code := f.request("POST", "/api/projects", owner, map[string]string{"name": "private-team/wiki"}, &p); code != 201 {
 		t.Fatal(code)
 	}
-	page := browserPage(t, f, "/oauth/wiki", "")
-	if page.Code != 404 || !strings.Contains(page.Body.String(), `href="/?return=%2Foauth%2Fwiki"`) {
+	page := browserPage(t, f, "/private-team/wiki", "")
+	if page.Code != 404 || !strings.Contains(page.Body.String(), `href="/?return=%2Fprivate-team%2Fwiki"`) {
 		t.Fatal(page.Code, page.Body)
 	}
-	if page := browserPage(t, f, "/oauth/wiki", owner); page.Code != 200 {
+	if page := browserPage(t, f, "/private-team/wiki", owner); page.Code != 200 {
 		t.Fatal(page.Code, page.Body)
 	}
 }

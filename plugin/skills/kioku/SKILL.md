@@ -93,10 +93,10 @@ remote mode の接続先は `https://kioku.magicians.ee` だけ。
 `~/.config/kioku/projects.json` や `.kioku/config` が別の接続先を示す場合、remote mode へ切り替えない。
 `kioku version` が失敗し、接続先も不明なら、接続先を `https://kioku.magicians.ee` とする。
 
-Claude Code の UserPromptSubmit フックは、未選択か Kioku なしなら trigger 語を照合する。
-1 project だけに当たれば自動選択し、背景で pull を始め、手元コピーの入口を渡す。
-一覧が出たら、親は最初のメッセージと description からユーザーに聞かずに1つ選び、`kioku -n NAMESPACE session select` を実行する。同じくらい合う場合も1つに決め、合うものが無ければ `kioku session select --none` を実行する。
-出力の入口を読み、選択したターンの返答の冒頭に「Kioku: NAMESPACE の wiki を読み込みました（理由: …）」を1行書く。Kioku なしなら「Kioku: 合う project が無いので Kioku なしで進めます」と書く。
+Claude Code の UserPromptSubmit フックは、未選択なら trigger 語を照合する。
+1 project だけに当たれば自動選択し、背景で pull を始め、手元コピーの入口を渡す。利用者のメッセージに別の namespace の明示指定があれば、フックの案内に従って選び直す。
+候補一覧が出たら、最初のメッセージに namespace の指定があれば、候補に無くても優先する。指定が無ければ description から一意に決まる namespace を使う。対象が不明か複数候補で決められなければ、フックの案内に従い一覧の `"general": true` の項目からアカウントの General の namespace を確認する。どちらも `kioku -n NAMESPACE session select` で選ぶ。
+Wiki の入口を読めたら、選択したターンの返答の冒頭に「Kioku: NAMESPACE の wiki を読み込みました（理由: …）」を1行書く。General の入口がまだなければ、General を選んだことを伝える。
 利用者が訂正したら、指定された project で `session select` を実行する。話題が変わった場合は `kioku session list` から選び直せる。
 選択済みなら、フックは入口 index.md のパスと queue add の規則を示す。背景の pull 中や失敗の文があれば、その状態を成功・最新と扱わない。失敗時は [selection.md](references/selection.md) の復旧手順に従う。
 
@@ -104,6 +104,7 @@ Claude Code の UserPromptSubmit フックは、未選択か Kioku なしなら 
 既存の人の認証を優先し、必要な場合だけ [connector.md](references/connector.md) へ進む。
 対象を選んだ直後に pull し、完了を待つ。
 新規作成時と projects.json に description（プロジェクトの説明）がない時は、[selection.md](references/selection.md) に従って説明案を作り、ユーザーの確認後に `--description` で渡す。
+projects.json で `"general": true` の項目には説明案を作らない。
 取得後に `P/wiki/index.md` から Wiki と maps を grep とファイルツールで読む。
 
 Claude Code の local mode では、親が共有できる重要な文書の URL を決め、毎ターンの規則に従って `queue add` で記録する。

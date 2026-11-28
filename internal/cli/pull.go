@@ -37,43 +37,49 @@ func (a *App) pullCommand(args []string) (resultErr error) {
 }
 
 func (a *App) syncProject() (syncResult, error) {
-	if a.Config.Namespace == "" && a.projectNamespace != "" {
-		if err := a.bindPullProject(a.projectNamespace); err != nil {
-			return syncResult{}, err
-		}
+	if a.Config.Namespace != "" || a.projectNamespace == "" {
+		return a.syncWiki()
 	}
-	return a.syncWiki()
+	project, err := a.bindPullProject(a.projectNamespace)
+	if err != nil {
+		return syncResult{}, err
+	}
+	result, err := a.syncWiki()
+	if err != nil {
+		return result, err
+	}
+	return result, a.projectEntryResult(a.updateGeneralFlags([]model.ProjectEntry{project}), "the next project list will refresh the General flag")
 }
 
 // Bind only a server-verified namespace, and never overwrite another binding.
-func (a *App) bindPullProject(namespace string) error {
+func (a *App) bindPullProject(namespace string) (model.ProjectEntry, error) {
 	unlock, err := a.localLock()
 	if err != nil {
-		return err
+		return model.ProjectEntry{}, err
 	}
 	defer unlock()
 	current, err := a.readProjectConfig()
 	if err != nil {
-		return err
+		return model.ProjectEntry{}, err
 	}
 	if current.Server != "" && (current.Server != a.Config.Server || current.Namespace != namespace) {
-		return errors.New("working directory is already bound to a different project")
+		return model.ProjectEntry{}, errors.New("working directory is already bound to a different project")
 	}
 	if err := a.checkUnboundMirror(); err != nil {
-		return err
+		return model.ProjectEntry{}, err
 	}
 	a.Config.Namespace = namespace
 	if _, err := a.projectPath(); err != nil {
-		return err
+		return model.ProjectEntry{}, err
 	}
-	var projects []model.Project
-	if _, err := a.request("GET", "/api/projects", nil, &projects); err != nil {
-		return err
+	projects, err := a.fetchProjectList()
+	if err != nil {
+		return model.ProjectEntry{}, err
 	}
 	for _, project := range projects {
 		if project.Namespace == namespace {
-			return nil
+			return project, nil
 		}
 	}
-	return fmt.Errorf("project %s not found, or you are not a member", namespace)
+	return model.ProjectEntry{}, fmt.Errorf("project %s not found, or you are not a member", namespace)
 }

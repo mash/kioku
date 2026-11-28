@@ -190,6 +190,9 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 	if err != nil {
 		return fail(403, "OAuth request expired")
 	}
+	if _, err := authorizeReturn(store.ValueString(pending.ReturnPath)); err != nil {
+		return err
+	}
 	device := store.ValueString(pending.CLILogin)
 	if device != "" && r.URL.Query().Has("error") {
 		return s.loopbackFailure(w, r, device, "access_denied")
@@ -202,33 +205,31 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		return fail(502, "OAuth exchange failed; restart login")
 	}
-	var token, loopbackURL string
-	expired := false
+	var completed oauthCompletion
+	var signup, loopbackOrigin string
 	err = s.Store.Write(r.Context(), func(q *store.Queries) error {
 		var login store.SessionRow
 		var loginData store.CLILoginData
 		if device != "" {
-			var ok bool
-			var e error
-			login, loginData, ok, e = pendingLoopback(q, device)
+			row, data, ok, e := pendingLoopback(q, device)
 			if e != nil {
 				return e
 			}
 			if !ok {
-				expired = true
-				return nil
+				return errLoopbackExpired
 			}
+			login, loginData = row, data
+			loopbackOrigin = redirectOrigin(store.ValueString(data.LoopbackRedirectURI))
 		}
 		user, e := q.UserByIdentity(pending.Provider, identity.ID)
 		if errors.Is(e, sql.ErrNoRows) {
 			if !s.Config.SignupAllowlist.allows(pending.Provider, identity.HostedDomain) {
 				return errSignupDenied
 			}
-			user = store.UserRow{ID: auth.Token()[:20]}
-			if e = q.PutIdentity(user.ID, pending.Provider, identity.ID); e != nil {
-				return e
-			}
-		} else if e != nil {
+			signup = auth.Token()
+			return s.beginSignup(q, signup, pending, identity.Identity, credential)
+		}
+		if e != nil {
 			return e
 		}
 		user.Email = identity.Email
@@ -237,27 +238,8 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 			return e
 		}
 		data := identityData(s.Cipher, credential, user.ID, pending.Provider, identity.ID)
-		if device != "" {
-			code := "kioku_loopback." + auth.Token()
-			login.UserID = user.ID
-			login.Expires = time.Now().Add(time.Minute).UnixMilli()
-			loginData.IdentitySessionData = data
-			loginData.LoopbackCodeHash = store.NullableString(auth.Hash(code))
-			login.Data, e = store.EncodeSessionData(loginData)
-			if e != nil {
-				return e
-			}
-			if e = q.PutSession(login); e != nil {
-				return e
-			}
-			loopbackURL = store.ValueString(loginData.LoopbackRedirectURI) + "?" + url.Values{"code": {code}, "state": {store.ValueString(loginData.LoopbackState)}}.Encode()
-		}
-		raw, e := store.EncodeSessionData(data)
-		if e != nil {
-			return e
-		}
-		token = auth.Token()
-		return q.InsertSession(store.SessionRow{ID: auth.Hash(token), Kind: "user", Status: "active", UserID: user.ID, Created: time.Now().UnixMilli(), Expires: time.Now().Add(30 * 24 * time.Hour).UnixMilli(), Data: raw})
+		completed, e = completeOAuth(q, user.ID, data, login, loginData)
+		return e
 	})
 	if errors.Is(err, errSignupDenied) {
 		s.setOAuthCookie(w, "", -1)
@@ -266,28 +248,74 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request, _ string)
 		}
 		return renderStatus(w, http.StatusForbidden, "アカウントを作成できません", struct{ Message string }{signupDeniedMessage}, messageTemplate)
 	}
+	if errors.Is(err, errLoopbackExpired) {
+		s.setOAuthCookie(w, "", -1)
+		return loopbackExpired(w)
+	}
 	if err != nil {
 		return err
 	}
 	s.setOAuthCookie(w, "", -1)
-	if expired {
-		return loopbackExpired(w)
+	if signup != "" {
+		s.setSignupCookie(w, signup, 600)
+		return signupPage(w, http.StatusOK, auth.Hash(signup), defaultUserSlug(identity.Email), "", loopbackOrigin)
 	}
-	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: token, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
-	if device != "" {
-		http.Redirect(w, r, loopbackURL, http.StatusFound)
-		return nil
-	}
-	target := "/"
-	if pending.ReturnPath != nil {
-		target, err = authorizeReturn(*pending.ReturnPath)
-		if err != nil {
-			return err
+	return s.finishOAuth(w, r, completed, store.ValueString(pending.ReturnPath))
+}
+
+var errLoopbackExpired = errors.New("CLI login expired")
+
+type oauthCompletion struct {
+	token, loopbackURL string
+}
+
+func completeOAuth(q *store.Queries, uid string, data store.IdentitySessionData, login store.SessionRow, loginData store.CLILoginData) (oauthCompletion, error) {
+	var result oauthCompletion
+	now := time.Now()
+	if login.ID != "" {
+		if login.Expires <= now.UnixMilli() {
+			return result, errLoopbackExpired
 		}
+		code := "kioku_loopback." + auth.Token()
+		login.UserID = uid
+		login.Expires = now.Add(time.Minute).UnixMilli()
+		loginData.IdentitySessionData = data
+		loginData.LoopbackCodeHash = store.NullableString(auth.Hash(code))
+		var err error
+		login.Data, err = store.EncodeSessionData(loginData)
+		if err != nil {
+			return result, err
+		}
+		if err = q.PutSession(login); err != nil {
+			return result, err
+		}
+		result.loopbackURL = store.ValueString(loginData.LoopbackRedirectURI) + "?" + url.Values{"code": {code}, "state": {store.ValueString(loginData.LoopbackState)}}.Encode()
 	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
+	raw, err := store.EncodeSessionData(data)
+	if err != nil {
+		return result, err
+	}
+	result.token = auth.Token()
+	return result, q.InsertSession(store.SessionRow{ID: auth.Hash(result.token), Kind: "user", Status: "active", UserID: uid, Created: now.UnixMilli(), Expires: now.Add(30 * 24 * time.Hour).UnixMilli(), Data: raw})
+}
+
+func (s *Server) finishOAuth(w http.ResponseWriter, r *http.Request, result oauthCompletion, returnPath string) error {
+	target, err := authorizeReturn(returnPath)
+	if err != nil {
+		return err
+	}
+	if target == "" {
+		target = "/"
+	}
+	http.SetCookie(w, &http.Cookie{Name: "kioku_session", Value: result.token, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(s.Config.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600})
+	if result.loopbackURL != "" {
+		http.Redirect(w, r, result.loopbackURL, http.StatusFound)
+	} else {
+		http.Redirect(w, r, target, http.StatusSeeOther)
+	}
 	return nil
 }
+
 func (s *Server) currentEmail(r *http.Request, uid string) (string, error) {
 	key, principal, err := s.session(r)
 	if err != nil {

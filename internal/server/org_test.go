@@ -36,7 +36,7 @@ func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testi
 	owner := f.login("owner@example.com")
 	other := f.login("other@example.com")
 	createTestOrg(t, f, owner, "acme")
-	createTestOrg(t, f, other, "other")
+	createTestOrg(t, f, other, "other-team")
 	var p fixtureProject
 	if c := f.request("POST", "/api/projects", owner, map[string]string{"name": "acme/platform"}, &p); c != 201 {
 		t.Fatal(c)
@@ -47,7 +47,7 @@ func TestNamespacesAreUniqueAndOrganizationsDoNotGrantProjectReadAccess(t *testi
 	if c := f.request("POST", "/api/projects", other, map[string]string{"name": "acme/stolen"}, nil); c != 404 {
 		t.Fatal("namespace theft", c)
 	}
-	if c := f.request("POST", "/api/projects", other, map[string]string{"name": "other/platform"}, nil); c != 201 {
+	if c := f.request("POST", "/api/projects", other, map[string]string{"name": "other-team/platform"}, nil); c != 201 {
 		t.Fatal("same slug in different organization", c)
 	}
 	for _, slug := range []string{"api", "auth", "billing", "UPPER", "../bad"} {

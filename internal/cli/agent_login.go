@@ -103,7 +103,10 @@ func (a *App) agentLogin(args []string) error {
 	// The one-use code is the only credential sent to the exchange endpoint.
 	client := *a
 	client.AgentToken, client.Config.Token, client.kind = "", "", credentialNone
-	var issued agentCredentials
+	var issued struct {
+		agentCredentials
+		General bool `json:"general"`
+	}
 	if _, err = client.request("POST", "/api/agent/login", map[string]string{"code": args[0], "name": name, "namespace": namespace}, &issued); err != nil {
 		return err
 	}
@@ -122,6 +125,7 @@ func (a *App) agentLogin(args []string) error {
 	}
 	issued.Server = a.Config.Server
 	a.Config.Namespace = issued.Namespace
+	a.projectGeneral = &issued.General
 	path := a.agentCredentialPath()
 	if err = ensureDirectory(filepath.Dir(path)); err != nil {
 		return err
@@ -134,7 +138,7 @@ func (a *App) agentLogin(args []string) error {
 	if err = a.saveProjectConfig(); err != nil {
 		return err
 	}
-	b, err := json.Marshal(issued)
+	b, err := json.Marshal(issued.agentCredentials)
 	if err != nil {
 		return err
 	}

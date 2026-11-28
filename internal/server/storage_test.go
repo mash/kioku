@@ -56,7 +56,7 @@ func TestRestoringSQLiteSelectsBackupContentReferences(t *testing.T) {
 	base := "/api/projects/" + p.ID
 	putFile(t, f, token, p.ID, "first.md", "First source")
 	var projects []fixtureProjectEntry
-	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 1 {
+	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 2 || !projects[0].General || projects[1].InboxCount != 1 {
 		t.Fatal(c, projects)
 	}
 	runGeneration(t, f, token, p.ID)

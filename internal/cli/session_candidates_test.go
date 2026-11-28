@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +16,10 @@ import (
 	"unicode/utf8"
 )
 
-const listHeaderText = "Kioku: このセッションは project が未選択。このメッセージの内容と各 description から最も合う project を、ユーザーに聞かずに 1 つ選び、%[1]s -n <namespace> session select を 1 回実行する。同じくらい合う project が複数あっても 1 つに決める。［server: …］の付いた行は %[1]s --server <server> -n <namespace> session select を使う。どれも合わなければ %[1]s session select --none を実行し、Kioku なしで進める。select が失敗したら kioku skill の失敗時の手順に従う。［ヒント: trigger 語 …］は、このメッセージかブランチ名が、その project の trigger 語に当たったことを示す。"
+const listHeaderText = "Kioku: project 未選択。最初のメッセージの namespace を優先する。候補に無い指定は %[2]s -n <namespace> session select で選ぶ。指定が無ければ各 description を確認する。候補を一意に選べるなら %[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。決められなければ %[2]s project list の \"general\": true の namespace を %[2]s -n <namespace> session select で選ぶ。select に失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
 const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -C %[4]s -n %[1]s queue add <URL> \"<何をしたか>\" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
-const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、wiki の入口を渡す。ほかの時は hook が project の一覧を出す。一覧に示された CLI の絶対パスと手順に従い、ユーザーに聞かずに project を選ぶか Kioku なしを選ぶ。\n"
+const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。\n"
 
 func candidateTestDir(t *testing.T) string {
 	t.Helper()
@@ -46,8 +45,11 @@ func testKiokuCommand(server string) string {
 func testTurnRule(ns, p, server string) string {
 	return fmt.Sprintf(turnRuleText, ns, p, testKiokuCommand(server), shellQuote(p))
 }
+func testCandidateHeader(server string) string {
+	return fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer), testKiokuCommand(server))
+}
 func testHintList(ns string) string {
-	return fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer)) + "\n- " + ns + ": （説明なし）［ヒント: cwd の .kioku/config］"
+	return testCandidateHeader(defaultServer) + "\n- " + ns + ": （説明なし）［ヒント: cwd の .kioku/config］"
 }
 
 func writeHookFixture(t *testing.T, path string, value any) {
@@ -103,18 +105,17 @@ func runRawPromptHook(t *testing.T, input, prompts string) string {
 
 func TestPromptHookAcceptanceExamples(t *testing.T) {
 	for _, tc := range []struct {
-		name, prompt, config, branch, selected, auto  string
-		declined, child, noWiki, blocked, other, many bool
+		name, prompt, config, branch, selected, auto string
+		child, noWiki, blocked, other, many          bool
 	}{
 		{name: "E1_list", prompt: "テスト通して"},
-		{name: "E2_namespace_hint", prompt: "org/b を続けて"},
 		{name: "E3_cwd_hint", prompt: "続けて", config: "org/a"},
 		{name: "E4_child", prompt: "Tesla", child: true},
-		{name: "E10_declined_namespace_hint", prompt: "次は org/b の件", declined: true},
 		{name: "E11_selected", prompt: "続けて", selected: "org/a"},
 		{name: "E21_list_limit", prompt: "続けて", many: true},
 		{name: "E23_two_triggers", prompt: "Tesla の充電が止まる件"},
 		{name: "E24_auto_select", prompt: "Tesla のログを見て", auto: "org/a"},
+		{name: "single_trigger_auto_selects_with_other_namespace", prompt: "Tesla の件は `org/b` を使って", auto: "org/a"},
 		{name: "E26_without_wiki", prompt: "Tesla", auto: "org/a", noWiki: true},
 		{name: "E27_word_boundary", prompt: "teslax のログ"},
 		{name: "E28_substring", prompt: "急速充電器の件", auto: "org/b"},
@@ -122,13 +123,8 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		{name: "R4_prompt_and_branch_conflicting_hits", prompt: "充電", branch: "feat/tesla-x"},
 		{name: "E29_branch", prompt: "続けて", branch: "feat/tesla-x", auto: "org/a"},
 		{name: "E30_selected_ignores_triggers", prompt: "充電の件も", selected: "org/a"},
-		{name: "E31_declined_auto_select", prompt: "Tesla", declined: true, auto: "org/a"},
-		{name: "E32_declined_multiple", prompt: "Tesla の充電", declined: true},
 		{name: "I11_unreadable_state", prompt: "Tesla", blocked: true},
 		{name: "I13_other_server", prompt: "Tesla", other: true, auto: "org/a"},
-		{name: "R14_declined_namespace_ignores_branch", prompt: "org/b を続けて", declined: true, branch: "feat/tesla-x"},
-		{name: "R14_declined_prompt_ignores_conflicting_branch", prompt: "Tesla", declined: true, branch: "feat/充電", auto: "org/a"},
-		{name: "I15_declined_without_prompt_hits", prompt: "続けて", declined: true, branch: "feat/tesla-x"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.blocked && os.Geteuid() == 0 {
@@ -172,9 +168,6 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			catalogBefore, _ := os.ReadFile(catalog)
 			catalogInfo, _ := os.Stat(catalog)
 			statePath, _ := sessionPath("session-1")
-			if tc.declined {
-				writeHookFixture(t, statePath, &sessionState{DeclinedAt: time.Now().UTC()})
-			}
 			if tc.selected != "" || tc.blocked {
 				s := sessionTestState(time.Now().UTC())
 				s.Namespace = "org/a"
@@ -201,11 +194,15 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 			}
 			got := runPromptHook(t, input)
 			if tc.name == "I13_other_server" {
-				if !strings.Contains(got, testKiokuCommand(defaultServer)+" -n <namespace> session select") || strings.Contains(got, testKiokuCommand("https://other.example")+" -n <namespace> session select") {
+				defaultSelect := testKiokuCommand(defaultServer) + " -n <namespace> session select"
+				if !strings.Contains(got, "利用者が示した project で "+defaultSelect) ||
+					!strings.Contains(got, "利用者のメッセージに別の namespace の明示指定があれば、"+defaultSelect+" で選び直す。") {
 					t.Fatal("correction carries selected server", got)
 				}
-				if !strings.Contains(got, testKiokuCommand(defaultServer)+" session select --none") || strings.Contains(got, testKiokuCommand("https://other.example")+" session select --none") {
-					t.Fatal("decline carries global flags", got)
+				command := testKiokuCommand("https://other.example")
+				if !strings.Contains(got, command+" -C "+shellQuote(ps[0].Path)+" project list") ||
+					!strings.Contains(got, command+" -n <namespace> session select") {
+					t.Fatal("fallback lost the selected server", got)
 				}
 			}
 			if tc.blocked {
@@ -218,7 +215,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				if tc.auto == "org/b" {
 					p = ps[1]
 				}
-				if s.Namespace != tc.auto || s.Path != p.Path || s.Server != p.Server || s.LastPullResult != sessionPullNone || s.declined() {
+				if s.Namespace != tc.auto || s.Path != p.Path || s.Server != p.Server || s.LastPullResult != sessionPullNone {
 					t.Fatal(s)
 				}
 				if len(started) != 1 {
@@ -266,17 +263,6 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					if got != testTurnRule("org/a", ps[0].Path, defaultServer) {
 						t.Fatal(got)
 					}
-				case tc.declined:
-					expected := "Kioku: このセッションは Kioku なしで進めている。話題が project に合ったら " + testKiokuCommand(defaultServer) + " -n <namespace> session select で選ぶ。一覧は " + testKiokuCommand(defaultServer) + " session list が出す。"
-					if tc.name == "E10_declined_namespace_hint" || tc.name == "R14_declined_namespace_ignores_branch" {
-						expected += "［ヒント: プロンプトに namespace］org/b"
-					}
-					if tc.name == "E32_declined_multiple" {
-						expected += "［ヒント: trigger 語 tesla］org/a、［ヒント: trigger 語 充電］org/b"
-					}
-					if got != expected {
-						t.Fatal(got)
-					}
 				case tc.many:
 					if !strings.Contains(got, "…ほか ") {
 						t.Fatal(got)
@@ -284,10 +270,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 				default:
 					aLine := "- org/a: A 案件の説明"
 					bLine := "- org/b: （説明なし）"
-					if tc.name == "E2_namespace_hint" {
-						bLine += "［ヒント: プロンプトに namespace］"
-					}
-					if tc.config != "" {
+					if tc.config == "org/a" {
 						aLine += "［ヒント: cwd の .kioku/config］"
 					}
 					if tc.name == "E23_two_triggers" || tc.name == "R4_prompt_and_branch_conflicting_hits" {
@@ -297,7 +280,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 					if tc.blocked {
 						aLine += "［ヒント: trigger 語 tesla］"
 					}
-					want := fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer)) + "\n" + aLine + "\n" + bLine
+					want := testCandidateHeader(defaultServer) + "\n" + aLine + "\n" + bLine
 					if got != want {
 						t.Fatalf("got %q\nwant %q", got, want)
 					}
@@ -377,35 +360,10 @@ func TestPromptHookE19MalformedPreservesState(t *testing.T) {
 }
 
 func TestSessionStartE21ExactText(t *testing.T) {
-	t.Run("E15_startup", func(t *testing.T) {
-		b, err := os.ReadFile("../../prompts/hook-start.txt")
-		if err != nil || string(b) != startHookText {
-			t.Fatal(string(b), err)
-		}
-	})
-	t.Run("E22_declined_compact_resume", func(t *testing.T) {
-		sessionTestEnv(t)
-		now := time.Date(2026, 11, 17, 1, 0, 0, 0, time.UTC)
-		if err := saveSession("session-1", time.Now(), &sessionState{DeclinedAt: now}); err != nil {
-			t.Fatal(err)
-		}
-		for _, source := range []string{"compact", "resume"} {
-			var out bytes.Buffer
-			a := &App{Out: &out, Err: io.Discard}
-			in := fmt.Sprintf(`{"session_id":"session-1","hook_event_name":"SessionStart","source":%q}`, source)
-			if err := a.sessionHook([]string{"--prompts", "../../prompts"}, strings.NewReader(in)); err != nil {
-				t.Fatal(err)
-			}
-			var got map[string]map[string]string
-			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-				t.Fatal(err)
-			}
-			want := "Kioku: このセッションは Kioku なし（2026-11-17T01:00:00Z に決めた）。話題が project に合ったら " + testKiokuCommand(defaultServer) + " -n <namespace> session select で選ぶ。"
-			if got["hookSpecificOutput"]["additionalContext"] != want {
-				t.Fatal(got)
-			}
-		}
-	})
+	b, err := os.ReadFile("../../prompts/hook-start.txt")
+	if err != nil || string(b) != startHookText {
+		t.Fatal(string(b), err)
+	}
 }
 
 func TestCandidateDiscoveryHandlesBrokenFiles(t *testing.T) {
@@ -452,9 +410,11 @@ func TestPromptHookE26WalksAboveGitRoot(t *testing.T) {
 	if got := runPromptHook(t, input); got != testHintList("org/p") {
 		t.Fatal(got)
 	}
-	writeHookFixture(t, filepath.Join(root, ".kioku/config"), Config{Server: defaultServer, Namespace: "org/nearest"})
-	if got := runPromptHook(t, input); got != testHintList("org/nearest") {
-		t.Fatal(got)
+	const origin = "https://self-hosted.example"
+	writeHookFixture(t, filepath.Join(root, ".kioku/config"), Config{Server: origin, Namespace: "org/nearest"})
+	want := testCandidateHeader(origin) + "\n- org/nearest［server: " + origin + "］: （説明なし）［ヒント: cwd の .kioku/config］"
+	if got := runPromptHook(t, input); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

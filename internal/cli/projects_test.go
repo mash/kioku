@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sync/atomic"
 )
 
 func projectEntryApp(t *testing.T) *App {
@@ -167,7 +170,7 @@ func TestProjectConfigRegistersAndPullRepairsEntry(t *testing.T) {
 
 	a, _, _, _ := syncFixture(t)
 	a.AuthDir = filepath.Join(t.TempDir(), "kioku", "auth")
-	if err := a.bindPullProject("org/project"); err != nil {
+	if _, err := a.bindPullProject("org/project"); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(a.metadataDir(), "config"), a.projectsPath()} {
@@ -288,4 +291,84 @@ func TestProjectDeleteWriteFailureWarnsWithoutPullAdvice(t *testing.T) {
 	if calls != 1 || !strings.Contains(warning, "projects.json") || !strings.Contains(warning, "remove") || strings.Contains(warning, "next pull") {
 		t.Fatal(calls, warning)
 	}
+}
+
+func TestBindingAndListRefreshGeneralFlagsWithoutOrdinaryPullListing(t *testing.T) {
+	const namespace = "alice/general"
+	const team = "team/general"
+	var listCalls atomic.Int32
+	var listGeneral, scoped atomic.Bool
+	listGeneral.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			listCalls.Add(1)
+			if scoped.Load() {
+				fmt.Fprint(w, `[{"namespace":"team/general","name":"Team notes"}]`)
+				return
+			}
+			general := ""
+			if listGeneral.Load() {
+				general = `,"general":true`
+			}
+			fmt.Fprintf(w, `[{"namespace":"alice/general","name":"General"%s},{"namespace":"team/general","name":"Team notes"}]`, general)
+		case "/api/projects/alice/general/snapshot":
+			fmt.Fprint(w, `{"revision":"empty","files":{}}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	a := projectEntryApp(t)
+	a.Client, a.ctx = server.Client(), t.Context()
+	a.Config = Config{Server: server.URL}
+	a.projectNamespace = namespace
+	path := writeProjectsFixture(t, a, fmt.Sprintf(`{"projects":[{"server":%q,"namespace":%q,"path":"/other","general":true}]}`, server.URL, team))
+	assertFlags := func(alice, other bool) {
+		t.Helper()
+		p, err := readProjects(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i, j := p.find(server.URL, namespace), p.find(server.URL, team)
+		if i < 0 || j < 0 || p.Projects[i].General != alice || p.Projects[j].General != other {
+			t.Fatalf("want General flags %t and %t, got %+v", alice, other, p.Projects)
+		}
+	}
+	if _, err := a.syncProject(); err != nil {
+		t.Fatal(err)
+	}
+	assertFlags(true, true)
+	scoped.Store(true)
+	if _, err := a.syncProject(); err != nil {
+		t.Fatal(err)
+	}
+	if got := listCalls.Load(); got != 1 {
+		t.Fatal("only binding should fetch the project list", got)
+	}
+	assertFlags(true, true)
+
+	if err := a.list(); err != nil {
+		t.Fatal(err)
+	}
+	assertFlags(true, false)
+
+	scoped.Store(false)
+	var out bytes.Buffer
+	a.Out = &out
+	if err := a.list(); err != nil {
+		t.Fatal(err)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &list); err != nil || len(list) != 2 || list[0]["general"] != true || len(list[1]) != 2 {
+		t.Fatal("list did not expose the flag only on General", out.String(), err)
+	}
+	// A subsequent list updates the flag without replacing the local binding.
+	listGeneral.Store(false)
+	out.Reset()
+	if err := a.list(); err != nil {
+		t.Fatal(err)
+	}
+	assertFlags(false, false)
 }

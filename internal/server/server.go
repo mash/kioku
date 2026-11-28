@@ -163,6 +163,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/account/identities/{provider}", s.wrap(s.unlinkIdentity, true))
 	s.mux.HandleFunc("POST /api/projects/{org}/{slug}/owner", s.wrap(s.transferProject, true))
 	s.mux.HandleFunc("POST /api/orgs/{org}/owner", s.wrap(s.transferOrganization, true))
+	s.mux.HandleFunc("POST /api/orgs/{org}/owners", s.wrap(s.addOrganizationOwner, true))
 
 	s.mux.HandleFunc("GET /api/projects/{org}/{slug}/agents", s.wrap(s.agents, true))
 	s.mux.HandleFunc("DELETE /api/projects/{org}/{slug}/agents/{agent}", s.wrap(s.revokeAgent, true))
@@ -190,6 +191,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/auth/loopback/token", s.wrap(s.loopbackToken, false))
 	s.mux.HandleFunc("GET /auth/{provider}/start", s.wrap(s.oauthStart, false))
 	s.mux.HandleFunc("GET /auth/{provider}/callback", s.wrap(s.oauthCallback, false))
+	s.mux.HandleFunc("POST /auth/signup", s.wrap(s.signup, false))
 	s.mux.HandleFunc("POST /api/logout", s.wrap(s.logout, true))
 	s.mux.HandleFunc("GET /api/me", s.wrap(s.me, true))
 	s.mux.HandleFunc("GET /api/projects", s.wrap(s.projects, true))

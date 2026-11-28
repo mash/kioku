@@ -44,12 +44,9 @@ func (q *Queries) PutOrganizationOwner(org, user string) error {
 	return err
 }
 
-// ReplaceOrganizationOwners makes user the only owner of org.
-func (q *Queries) ReplaceOrganizationOwners(org, user string) error {
-	if _, err := q.exec("DELETE FROM organization_owners WHERE org_id=?", org); err != nil {
-		return err
-	}
-	return q.PutOrganizationOwner(org, user)
+func (q *Queries) DeleteOrganizationOwner(org, user string) error {
+	_, err := q.exec("DELETE FROM organization_owners WHERE org_id=? AND user_id=?", org, user)
+	return err
 }
 func (q *Queries) ProjectMembers(project string) (map[string]string, error) {
 	return q.members("SELECT user_id,role FROM project_members WHERE project_id=?", project)
@@ -155,4 +152,22 @@ func (q *Queries) MembersForProjects(ids []string) (map[string]map[string]string
 		out[m.Project][m.User] = m.Role
 	}
 	return out, nil
+}
+
+func (q *Queries) OrganizationSlugTaken(slug string, now int64) (bool, error) {
+	var taken bool
+	err := q.row(`SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=?
+ UNION ALL SELECT 1 FROM user_slug_reservations WHERE slug=? AND expires>?)`, slug, slug, now).Scan(&taken)
+	return taken, err
+}
+
+func (q *Queries) ReserveUserSlug(slug string, expires int64) error {
+	_, err := q.exec("INSERT INTO user_slug_reservations(slug,expires) VALUES(?,?) ON CONFLICT(slug) DO UPDATE SET expires=excluded.expires", slug, expires)
+	return err
+}
+
+func (q *Queries) OrganizationHasGeneral(org string) (bool, error) {
+	var general bool
+	err := q.row("SELECT EXISTS(SELECT 1 FROM projects p JOIN users u ON u.general_project_id=p.id WHERE p.org_id=?)", org).Scan(&general)
+	return general, err
 }

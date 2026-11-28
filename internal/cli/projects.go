@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 
 	"github.com/mash/kioku/internal/atomicfile"
+	"github.com/mash/kioku/internal/model"
 )
 
 type projectEntry struct {
+	General     bool     `json:"general,omitempty"`
 	Triggers    []string `json:"triggers,omitempty"`
 	Server      string   `json:"server"`
 	Namespace   string   `json:"namespace"`
@@ -135,11 +137,36 @@ func (a *App) addProjectEntry(server, namespace, dir string, description *string
 		} else if existing := p.Projects[i].Path; existing != dir && a.Err != nil {
 			fmt.Fprintf(a.Err, "warning: %s already lists %s at %s; keeping that path\n", path, namespace, existing)
 		}
-		if description != nil && p.Projects[i].Description != *description {
-			p.Projects[i].Description = *description
-			return true
+		entry := &p.Projects[i]
+		changed := added
+		if description != nil && entry.Description != *description {
+			entry.Description = *description
+			changed = true
 		}
-		return added
+		if a.projectGeneral != nil && entry.General != *a.projectGeneral {
+			entry.General = *a.projectGeneral
+			changed = true
+		}
+		return changed
+	})
+}
+
+// Update only bound mirrors present in the response, which may be project-scoped.
+func (a *App) updateGeneralFlags(list []model.ProjectEntry) error {
+	general := make(map[string]bool, len(list))
+	for _, project := range list {
+		general[project.Namespace] = project.General
+	}
+	return updateProjects(a.projectsPath(), func(p *projectsFile) bool {
+		changed := false
+		for i := range p.Projects {
+			entry := &p.Projects[i]
+			if flag, ok := general[entry.Namespace]; ok && entry.Server == a.Config.Server && entry.General != flag {
+				entry.General = flag
+				changed = true
+			}
+		}
+		return changed
 	})
 }
 

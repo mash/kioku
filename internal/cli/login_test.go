@@ -398,6 +398,15 @@ func TestLoginReverseCSRFShowsAttackerAccount(t *testing.T) {
 	s.Config.BaseURL = ts.URL
 	provider.RedirectURL = ts.URL + "/auth/google/callback"
 	s.Config.Providers["google"] = provider
+	// This test covers account labeling after sign-in, not registration.
+	if err := stateStore.Write(t.Context(), func(q *store.Queries) error {
+		if err := q.PutUser(store.UserRow{ID: "registered", Email: "attacker@example.com"}); err != nil {
+			return err
+		}
+		return q.PutIdentity("registered", "google", "attacker-id")
+	}); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var out bytes.Buffer

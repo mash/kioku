@@ -11,8 +11,8 @@ func (a *App) organization(args []string) error {
 		return errors.New("usage: kioku org create <slug> | kioku org list")
 	}
 	switch args[0] {
-	case "transfer":
-		return a.orgTransfer(args)
+	case "transfer", "add-owner":
+		return a.orgChangeOwner(args)
 	case "create":
 		return a.orgCreate(args)
 	case "list":

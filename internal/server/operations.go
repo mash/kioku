@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/subtle"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -168,25 +167,22 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, uid strin
 		return err
 	}
 	defer unlock()
-	err = s.storage.deleteProject(r.Context(), pid, func(ctx context.Context, j store.JobRow) error {
-		err := s.reconcileAgentJobLocked(ctx, j)
-		if errors.Is(err, runner.ErrTemporary) {
-			return fail(503, "agent shutdown pending; retry deletion")
-		}
-		return err
-	}, func(q *store.Queries) error {
+	err = s.storage.deleteProject(r.Context(), pid, s.reconcileProjectDeletion, func(q *store.Queries) error {
 		if err := s.checkMutation(q, r, uid, ""); err != nil {
 			return err
 		}
-		role, err := q.ProjectRole(pid, uid)
-		if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" {
-			return fail(404, "project not found")
-		}
-		return err
+		return deleteOwner(q, pid, uid)
 	})
 	if err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]bool{"deleted": true})
 	return nil
+}
+func (s *Server) reconcileProjectDeletion(ctx context.Context, j store.JobRow) error {
+	err := s.reconcileAgentJobLocked(ctx, j)
+	if errors.Is(err, runner.ErrTemporary) {
+		return fail(503, "agent shutdown pending; retry deletion")
+	}
+	return err
 }

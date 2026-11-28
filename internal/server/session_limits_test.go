@@ -30,6 +30,9 @@ func TestBrowserLoginWorksWhenSessionTableIsFullAndBoundsEachUser(t *testing.T) 
 	login := func() {
 		t.Helper()
 		resp := finishLoopbackOAuth(t, f, startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + "/auth/google/start"}))
+		if resp.StatusCode == http.StatusOK {
+			resp = submitSignupResponse(t, f.url, f.client, resp, "")
+		}
 		if resp.StatusCode != http.StatusSeeOther {
 			t.Fatalf("browser login: %d", resp.StatusCode)
 		}

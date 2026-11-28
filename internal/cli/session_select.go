@@ -14,8 +14,6 @@ import (
 const selectInstruction = `Kioku: %s を選んだ（P=%s）。上が wiki の入口。本文のページは %s にあり、index.md から必要なものだけ読む。
 返答の冒頭に 1 行だけ書く: 「Kioku: %s の wiki を読み込みました（理由: <選んだ理由>）」。違うと利用者が言ったら、利用者が示した project で %s -n <namespace> session select を実行する。`
 
-const selectNoneText = "Kioku: このセッションは Kioku なしで進める。返答の冒頭に 1 行だけ書く: 「Kioku: 合う project が無いので Kioku なしで進めます」。"
-
 type entryFile struct {
 	Path, Body string
 	Truncated  bool

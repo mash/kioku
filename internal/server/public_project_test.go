@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestPublicProjectSurfacesDoNotExposeInternalID(t *testing.T) {
 	page := connectorForm(f, "GET", "/oauth/authorize", token, params)
 	assertPrivate(page.Body.Bytes())
 	_, _, options := consentControls(t, page)
-	if len(options) != 1 || options[0] != p.Namespace {
+	if !slices.Equal(options, []string{p.Namespace, "owner/general"}) {
 		t.Fatal(options)
 	}
 	// Persistence retains the ID; only the public representation changes.

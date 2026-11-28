@@ -186,15 +186,14 @@ Google と GitHub は Kioku へのログインに使います。Google のスコ
 
 | 入力 | 動作 |
 | --- | --- |
-| `kioku -n "$NAMESPACE" put PATH...` | ファイルやディレクトリを送る。各ファイルの YAML frontmatter に公開 HTTPS の `source_url` と `updated_at` が必要。受付は `accepted NAME`。 |
-| `kioku -n "$NAMESPACE" put --date 2026-11-20 file:///tmp/notes.md` | 公開 URL の無い Markdown 1 件を送る。`updated_at` があれば `--date` は不要。受付は `accepted KEY`。CLI はファイルにキーを書き戻す。 |
-| `kioku -n "$NAMESPACE" put https://example.com/doc` | Claude Code では URL を手元の queue に足してすぐ戻る。`queued URL` は受付前。今すぐ capture を起動するなら `--now --plugin-root "${CLAUDE_PLUGIN_ROOT}"` を付ける。 |
+| `kioku -n "$NAMESPACE" put PATH...` | ファイルやディレクトリを送る。各ファイルの YAML frontmatter にHTTPS の `source_url` と `updated_at` が必要。受付は `accepted NAME`。 |
+| `kioku -n "$NAMESPACE" put file:///tmp/notes.md` | 原本 URL のない Markdown 1 件を送る。送信用の `updated_at` にはファイルの更新時刻を使う。原本は変更しない。受付は `accepted KEY`。 |
 
 資料の共有範囲と[原資料の取得・検証規則](plugin/skills/kioku/references/capture.md)を確認してください。
-ローカルキーの形式は `kioku:local/<YYYYMMDD>-<64桁のSHA-256>` です。資料自身の日本標準時の日付と、frontmatter を除く本文から作ります。本文が変わると別のキーになります。
-HTTP は 202 と `{"source_url":"<受け付けたキー>"}` を返します。MCP の `source_put` も同じキーを返します。ローカル資料は MCP の frontmatter に `source_url: kioku:local` と資料自身の `updated_at` を書きます。
+ローカルキーは `kioku:local/<64桁のSHA-256>` です。frontmatter を除く本文のバイト列だけから作り、改行は変換しません。本文が変わると別のキーになります。
+HTTP の成功は 202 です。ローカル資料の put だけ `{"source_url":"<ローカルキー>"}` を返し、HTTPS 資料と削除は `{}` を返します。MCP の `source_put` も同じ結果を返します。MCP でローカル資料を送る場合、frontmatter に `source_url: kioku:local` を書きます。サーバーは受信時刻を `updated_at` に使います。
 サーバーは URL を取得し直しません。利用者の frontmatter に `remove: true` があっても削除フラグは変わりません。最後の受付から約10秒後の自動生成を待つか、`generate --wait` で生成・公開・pull を待ちます。
-複数のパスを送る場合、CLI は先に全ファイルを検証してから1件ずつ送ります。途中の失敗は `accepted NAME` で受付済みと区別します。`put file:` は受付後の書き戻しに失敗しても `accepted KEY` を表示し、終了コード1を返します。
+複数のパスを送る場合、CLI は先に全ファイルを検証してから1件ずつ送ります。途中の失敗は `accepted NAME` で受付済みと区別します。`put file:` の受付を確認できなければ、本文を変えずに同じコマンドで再試行できます。HTTPS URL の直接指定は受け付けません。
 
 ### 2. 原資料を取り除く
 
@@ -203,7 +202,7 @@ kioku -n "$NAMESPACE" delete https://example.com/the-original-document
 kioku -n "$NAMESPACE" generate --wait
 ```
 
-delete には公開 HTTPS URL か完全なローカルキーを指定します。HTTPS URL に一致する queue の行も消します。サーバーは `remove: true` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
+delete には取得元、原本 HTTPS URL、または完全なローカルキーを指定します。`tool:` の取得元は queue の行だけを、HTTPS URL は queue の行とサーバーの資料を対象にします。サーバーは `remove: true` の項目を保存し、CLI は成功した依頼ごとに `removed <SOURCE_URL>` を表示します。次の生成で対応する source ページと参照を除きます。公開済み Wiki を受付時に消す操作ではありません。
 
 待機中の同じ source_url の項目は、新しい put で置き換えます。削除の依頼も待機中の本文を取り消します。実行に固定済みの項目は置き換えず、新しい項目を次の実行に残します。URL は正規化せず完全一致で扱います。
 
@@ -228,7 +227,7 @@ HTML の View の出力規則は [Kioku スキルの参照文書](plugin/skills/
 
 Wiki を先に生成し、完全な Wiki があれば、同じジョブでほかの View を作成順に生成します。各 View は独立した runner セッションで Wiki と保存済みプロンプトを読み、検査に通った結果で前回の表示を上書きします。生成中のタイトル・プロンプトの編集ではスキップせず、各 View の入力アーカイブを作った時点の設定で公開します。View が失敗すると後の View はスキップします。[生成と予算](docs/WORKERS.md#generation-runner-type)
 
-Runner は新しい原資料を `wiki/source-<slug>.md`、ローカル資料を `wiki/source-<YYYYMMDD>-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。`WIKI.md` に従ってページを整理し、事実の記述から source ページを引用します。既定の prompt は概念・エンティティ・分析・概要ページと種類ごとの目録を作ります。`wiki/index.md` には source ページを載せません。整理の指示が system の規則と矛盾するときは system を優先します。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
+Runner は HTTPS・ローカルを問わず新しい原資料を `wiki/source-<slug>.md` に残し、frontmatter の `source_url` で既存ページを見つけて同じファイルを更新します。`WIKI.md` に従ってページを整理し、事実の記述から source ページを引用します。既定の prompt は概念・エンティティ・分析・概要ページと種類ごとの目録を作ります。`wiki/index.md` には source ページを載せません。整理の指示が system の規則と矛盾するときは system を優先します。`wiki/log.md` は変更を新しい順に100項目まで記録します。ログにトークンや署名付き URL の秘密を書かないことはプロンプトの規則で、サーバーの検査ではありません。
 
 出力は完全な `wiki/*.md` 集合です。サーバーは受け取り時に形式と source_url の対応を検査し、問題があれば400と一覧を返します。公開時は受理済み tar のハッシュを確認し、Markdown をそのまま公開します。原資料ページをサーバーが後から付け足す処理はありません。
 
@@ -396,7 +395,7 @@ Claude Code 以外では、スキルは `mktemp -d` を単独の Bash 呼び出�
 
 ### プラグインの運用
 
-Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。v8 では hook が会話セッションごとに対象を自動選択し、手元の Wiki の入口を読み、背景で pull します。`put URL` は queue に記録し、Stop・SessionEnd・SessionStart が capture セッションを起動します。詳細は [plugin/README](plugin/README.md) を参照してください。
+Claude Code のプラグインは [plugin/](plugin/README.md) にあります。SessionStart フックは、プラグインと同じバージョンの CLI を取得します。v8 では hook が会話セッションごとに対象を自動選択し、手元の Wiki の入口を読み、背景で pull します。PostToolUse が取得元を queue に記録し、Stop・SessionEnd・SessionStart が capture セッションを起動します。詳細は [plugin/README](plugin/README.md) を参照してください。
 
 旧コマンドは削除し、互換エイリアス・旧設定へのフォールバックは提供しません。
 

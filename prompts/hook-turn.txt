@@ -1,1 +1,1 @@
-Kioku: {{namespace}}（wiki: {{wiki}}、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は {{kioku}} -C {{p_arg}} -n {{namespace}} put <URL> で送る。共有範囲・機密・保存禁止を確かめてから送る。
+Kioku: {{namespace}}（wiki: {{wiki}}、入口は index.md）。調べる時はここを grep する。PostToolUse は対象の呼び出しから取得元を queue に足す。queue の行はサーバーの受付を示さない。

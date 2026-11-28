@@ -17,7 +17,7 @@ import (
 )
 
 const listHeaderText = "Kioku: project 未選択。最初のメッセージの namespace を優先する。候補に無い指定は %[2]s -n <namespace> session select で選ぶ。指定が無ければ各 description を確認する。候補を一意に選べるなら %[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。決められなければ %[2]s project list の \"general\": true の namespace を %[2]s -n <namespace> session select で選ぶ。select に失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
-const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -C %[4]s -n %[1]s put <URL> で送る。共有範囲・機密・保存禁止を確かめてから送る。"
+const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。PostToolUse は対象の呼び出しから取得元を queue に足す。queue の行はサーバーの受付を示さない。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
 const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。\n"
 
@@ -43,7 +43,7 @@ func testKiokuCommand(server string) string {
 	return kiokuCommand(exe, server)
 }
 func testTurnRule(ns, p, server string) string {
-	return fmt.Sprintf(turnRuleText, ns, p, testKiokuCommand(server), shellQuote(p))
+	return fmt.Sprintf(turnRuleText, ns, p)
 }
 func testCandidateHeader(server string) string {
 	return fmt.Sprintf(listHeaderText, testKiokuCommand(defaultServer), testKiokuCommand(server))

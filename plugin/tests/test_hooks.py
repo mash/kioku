@@ -80,6 +80,23 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(list((ROOT / 'hooks').glob('*.py')), [])
 
 
+    def test_local_put_permission_is_only_in_the_skill(self):
+        skill = (ROOT / 'skills/kioku/SKILL.md').read_text()
+        turn = (ROOT / 'prompts/hook-turn.txt').read_text()
+        rules = (ROOT / 'rules/kioku.md').read_text()
+        self.assertIn('put file:///絶対パス', skill)
+        self.assertIn('を継続して許可する', skill)
+        self.assertIn('利用者の保存禁止を優先する', skill)
+        self.assertIn('PostToolUse', turn)
+        self.assertIn('queue の行はサーバーの受付を示さない', turn)
+        self.assertNotIn(' put ', turn)
+        self.assertNotIn('継続して許可する', turn + rules)
+        self.assertIn('skills/kioku/SKILL.md', rules)
+        for text in (skill, turn, rules):
+            for old in ('queue add', '--date', '--now'):
+                self.assertNotIn(old, text)
+
+
 class HooksTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix='kioku hook test ')
@@ -637,13 +654,9 @@ class SessionHooksTest(unittest.TestCase):
 
     def turn_rule(self, state=None):
         state = self.state if state is None else state
-        command = shlex.quote(str(self.data / 'bin/kioku'))
-        if state['server'] != 'https://kioku.magicians.ee':
-            command += ' --server ' + state['server']
         line = (f'Kioku: {state["namespace"]}（wiki: {state["path"]}/wiki/、入口は index.md）。'
-                '調べる時はここを grep する。参照・作成した重要な文書の URL は '
-                f'{command} -C {shlex.quote(state["path"])} -n {state["namespace"]} put <URL> で送る。'
-                '共有範囲・機密・保存禁止を確かめてから送る。')
+                '調べる時はここを grep する。PostToolUse は対象の呼び出しから取得元を queue に足す。'
+                'queue の行はサーバーの受付を示さない。')
         if 'last_pull_result' not in state:
             line += '\n背景の pull は終わっていない。wiki/ は 1 回前の pull のままか、まだ無い。'
         return line

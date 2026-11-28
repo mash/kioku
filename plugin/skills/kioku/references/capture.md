@@ -1,27 +1,20 @@
 # 原資料の送信
 
-## Claude Code の取り込み担当
+## Claude Code の取り込み
 
-Claude Code では、親が共有範囲・機密・保存禁止を確認し、送信の要否を決める。
-以下は Claude Code の local mode にだけ適用する。Codex では今どおり直接 put する。Claude Chat と Cowork、remote mode も以下の共通手順で直接 put する。
+PostToolUse が、選択中で書き込み可能な project の queue に、対象ツールの取得元を追加する。本文は queue に書かない。対象は WebFetch、Artifact の読み取りと公開の成功、GitHub Issue/PR の閲覧、読み取り系 MCP ツール。親は手動で登録・起動しない。手元の状態は `kioku status` で確認する。今すぐ送りたい場合は次の起動契機を案内する。
 
-親は参照・作成した重要な文書と、結論を変えた文書の HTTPS URL を、`kioku -C P -n NAMESPACE put URL` で queue に足す。`--note` の値は記録であり、put の本文に入れない。ローカルファイルは queue の対象外とする。
-Stop は選択先の queued が5件以上、SessionEnd は1件以上で capture セッションを背景で起動する。次の SessionStart は登録済みの全 project の残りを確認する。今すぐ送る依頼では `put --now` を使う。
-親は URL ごとの子を起動しない。capture セッションへの文にある URL・namespace・server・mode・P・CLI・除外条件を使い、対象選択と pull を繰り返さない。
+Stop と SessionEnd は選択先を、SessionStart は登録済みの全 project を確認する。queued が1件以上で有効なロックがなければ capture を起動する。Stop と SessionStart は起動失敗と failed を通知し、SessionEnd は通知しない。ロックは全行の結果がそろうか30分で解除・失効する。
 
-capture セッションは、下の共通の取得規則と送信前の確認をすべて守る。公開 Web は文の各行に記載された `capture fetch` コマンドで原文を取る（HTTPS・20 MiBまで）。取得できるのはスナップショットの URL と、その同一ホストへの HTTPS 転送先だけ（GitHub の blob → raw 変換は下記の例外）。fetch は URL の既知の拡張子を保ち、なければ Content-Type から決める（不明なら .raw）。Read ツールで fetch が出力した保存先の原文を読み、Write ツールで指定の Markdown ファイルに資料を書き、記載された `capture put` コマンドで送信する。
-すべてのコマンドを記載どおりに、Bash 呼び出し1回につき1コマンドだけ実行する。シェル変数、;、&&、|、リダイレクト、echo、ls、cat、cd は使わない。ファイルの読み書きには Read と Write ツールを使う。mktemp を実行しない。
-各 URL の結果と理由を通常の出力に1行書く。記載の `capture result` では結果と理由だけを置き換える。結果は `accepted`（受付済み）、`unsaved`（未保存）、`unknown`（受付不明）のいずれかとする。理由の単一引用符は ` '\'' ` としてエスケープする。CLI は理由を capture.log に追記する。
-コマンドが拒否されたら変形して再試行せず、`unsaved` を記録して次の行へ進む。`capture result` 自体が拒否された場合も再試行しない。`unknown` はこの capture セッションの中で再送しない。次の capture が `unsaved` と `unknown` を試行3回まで送り直す。失敗や途中終了の場合も、最後に記載の unlock コマンドを単独で実行する。
-許可する connector は Notion の fetch/search、Slack の thread/channel 読み取り、Google Drive の read/download の完全名だけ。送信・作成・更新は許可しない。利用できない取得経路を権限拡大で回避しない。
-結果は `claude logs <id>` で確認する。キュー追加・起動・unlock だけで受付済みや Wiki 生成済みと伝えない。
+capture は起動時の手順に従い、一時ディレクトリ内だけで読む・書く。公開 HTTPS の `capture fetch` は同一ホストへの HTTPS 転送9回まで、20 MiB、30秒に限る。GitHub の blob から raw への取得は例外で、原本 URL は blob のままとする。認証付き資料は snapshot の範囲で許可されたコネクターから原本を読む。許可が無ければ未保存とし、許可を広げない。
 
-## 公開 URL の無い Markdown
+各行で `accepted`（HTTP 202 確認）、`unsaved`（取得または受付の失敗）、`skipped`（資料でないか原本 HTTPS URL を特定できない）の結果を一度返す。unsaved と skipped には理由を書く。unsaved と結果なしは合計2回まで試行する。受付は `capture.log` や `claude logs <id>` の source_url で確かめる。登録・起動は受付や Wiki 生成ではない。保存禁止の扱いは [SKILL.md](../SKILL.md) に従う。
 
-共有範囲と送信前の確認を守る。ローカル資料自身の日付を使い、ファイルの更新時刻や put した時刻で補わない。
-local mode では `kioku -n NAMESPACE put --date YYYY-MM-DD file:///絶対パス` を使う。`updated_at` が既にあれば `--date` を外す。CLI は受付後に `source_url` と、必要なら `updated_at` を書き戻す。
-remote mode では `source_url: kioku:local` と資料自身の `updated_at` を frontmatter に書く。手順は [remote.md](remote.md) を参照する。
-`accepted` が返ったら、削除に使うローカルキーを利用者に示す。書き戻しだけが失敗した場合は、受付済みと書き戻し失敗を区別する。本文を変えて送ると別のキーになる。古い資料は元のキーで削除する。
+## 原本 URL の無い Markdown
+
+local mode では `kioku -n NAMESPACE put file:///絶対パス` を使う。frontmatter は省略でき、書く場合の source_url は `kioku:local` とする。CLI は送信用の updated_at にファイルの mtime を用い、原本は変更しない。
+remote mode では `source_url: kioku:local` を frontmatter に書く。MCP は受信時刻を updated_at に使う。手順は [remote.md](remote.md) を参照する。
+受け取ったローカルキーの全文を利用者に示す。本文を変えて送ると別のキーになる。古い資料は元のキーで削除する。
 
 ## 共通の取得規則
 
@@ -91,17 +84,11 @@ updated_at: "2026-11-07T18:00:00+09:00"
 どの資料も次の条件を満たすか確認する。満たせなければ送信せず、未保存と伝える。
 
 - 原本 URL がある場合は HTTPS（暗号化した HTTP）で、ホストがあり、4,096 バイト以下とする。
-  ポートは省略か443とし、ユーザー情報（ユーザー名・パスワード）を含めない。
-  ホストは大文字小文字と末尾のドットを正規化して検証する。
-  `localhost`、`.localhost`・`.local` で終わるホストを使わない。
-  IP（ネットワーク上のアドレス）を直接使う場合は、公開ユニキャストに限る。
-  私用・ループバック・リンクローカル・共有・文書用などの予約アドレスを除く。
-  IP バージョン4（IPv4）を埋め込んだバージョン6（IPv6）も検証する。
-  原本 URL が違反する場合は別 URL に置き換えない。
+  ユーザー情報（ユーザー名・パスワード）、タブ、改行は含めない。サインインが必要な URL でもよい。識別子としての検査と、取得の制限を区別する。
 - 送信本文は有効な UTF-8 とし、NUL（ゼロ文字）を含めない。
   原文の本文は空白だけではなく、題名やエラー表示以外の内容を含むことを確認する。
   YAML パーサーで記述済みの frontmatter を検証し、重複がないことを確認する。原本 URL がある資料は5キーの値が揃っていることを確認する。
-  `updated_at` はオフセット付きの RFC 3339 形式とする。`put file:` では無い場合に限り `--date` を使える。
+  原本 URL のある資料の `updated_at` はオフセット付きの RFC 3339 形式とする。
   ファイル送信の `source_url` と `updated_at` は frontmatter だけに書き、送信引数にしない。
   トップレベルの `source_url` 引数は削除専用とする。
 - 両モードとも、サーバーは要求を Go の `encoding/json` で再エンコードする。
@@ -154,8 +141,7 @@ updated_at: "2026-11-07T18:00:00+09:00"
 
 ## 共有範囲と送信
 
-Claude Code では、親がプロンプトの URL と自分で開いた URL・作った URL から送信する URL を決める。
-Claude Code の local mode の親は毎ターンの規則に従って `put URL` を使う。URL ごとの Agent は起動しない。
+Claude Code の local mode は PostToolUse の登録と [SKILL.md](../SKILL.md) のローカル Markdown・保存禁止の手順を使う。
 その他の環境では、重要文書を参照・作成した時、結論を変えた文書を確定した時に送信する。
 ユーザーが共有を許可した範囲で行い、機密・別チームの資料・保存禁止を除く。
 共有先が曖昧なら送信せず確認する。`auto_put:false` などの自動送信禁止を守る。
@@ -164,7 +150,7 @@ Claude Code の local mode の親は毎ターンの規則に従って `put URL` 
 字句修正、日常のコマンド出力、生成 Wiki の再読は送信の対象にしない。
 
 remote mode は、本文を準備してから [remote.md](remote.md) の MCP（Model Context Protocol）で送信する。
-Claude Code の capture セッションは文の一時ディレクトリを使い、unlock に削除を任せる。
+Claude Code の capture セッションは文の一時ディレクトリを使い、結果がそろったら CLI が削除する。
 Claude Code 以外の local mode は、`mktemp -d` を単独の Bash 呼び出しで実行して一時ディレクトリを作る。
 出力した絶対パスをそのまま書き、シェル変数や `$(...)` は使わない。
 そのディレクトリに原資料の Markdown を書き、`kioku -n "$NAMESPACE" put PATH` で送信する。
@@ -177,8 +163,8 @@ Claude Code の local mode では、CLI が状態ファイルに会話の選択�
 コマンドの成功を確認し、Kioku がファイルを受け付けたとユーザーに伝える。
 複数ファイルは CLI が1件ずつ送信する。途中で失敗した場合は、受付済みと未保存を分ける。
 
-資料を取り除く依頼には `kioku -n "$NAMESPACE" delete SOURCE_URL` を使う。
-`SOURCE_URL` には原本 URL か完全なローカルキーを指定する。HTTPS URL は queue の行も消す。成功したら削除の依頼が受付済みと伝える。
+資料を取り除く依頼には `kioku -n "$NAMESPACE" delete SOURCE` を使う。
+`SOURCE` には取得元、原本 HTTPS URL、または完全なローカルキーを指定する。受付前の tool: は queue の行だけを消す。HTTPS URL は queue の行を消して、あわせてサーバーへ削除を依頼する。
 サーバーは次の生成で source ページと参照を除く。
 
 ## 失敗と鮮度
@@ -186,8 +172,8 @@ Claude Code の local mode では、CLI が状態ファイルに会話の選択�
 読み取り専用なら put／delete を実行しない。
 原文を読めない場合は、全文と、原本 URL があれば URL も渡すようユーザーに頼む。
 権限不足・オフラインでは未保存と伝え、別アカウントや別プロジェクトに切り替えない。
-capture セッションでは status・version を実行しない。受付成否が不明なら「受付不明」とし、同じ capture セッションでは再送せず、capture プロンプトの `capture result`・unlock の指示に従う。
-`put file:` で受付成否が不明なら、同じコマンドを実行し直せる。`put PATH` で受付成否が不明なら自動で再送せず、 `kioku -n "$NAMESPACE" status` のサーバーの inbox を確認する。
+capture セッションでは status・version を実行しない。202 を確認できなければ理由付き unsaved とし、同じ capture セッションでは再送しない。
+`put file:` で受付成否が不明なら、本文を変えずに同じコマンドを実行し直せる。`put PATH` で受付成否が不明なら自動で再送せず、 `kioku -n "$NAMESPACE" status` のサーバーの inbox を確認する。
 項目がないだけでは、未受付と生成済みを区別できない。判別できなければ受付不明と伝える。
 
 サーバーは原本の変更を取り直さない。更新時は Claude が全文を読み直して送信する。
@@ -195,6 +181,6 @@ capture セッションでは status・version を実行しない。受付成否
 生成中の項目は残し、新しい項目を次の生成に使う。
 サーバーは版を比較せず、後から受け付けた本文を使う。古い版でも新しい版を上書きする。
 
-ファイルの put は inbox に受け付け、Wiki の生成を待たない。`put URL` の `queued` はまだ受付前を示す。
+ファイルの put は inbox に受け付け、Wiki の生成を待たない。queue の queued はまだ受付前を示す。
 Wiki は最後の put の約 10 秒後の自動生成か、即時生成の依頼時の `kioku -n "$NAMESPACE" generate --wait` で更新する。
 `generate --wait` は生成完了後に pull する。受付だけで Wiki を生成したとは伝えない。

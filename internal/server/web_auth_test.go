@@ -122,7 +122,7 @@ func TestWikiBrowserAccess(t *testing.T) {
 
 func TestLoginReturnPaths(t *testing.T) {
 	t.Parallel()
-	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/u-abc/project", "/oauth/wiki", "/oauth/token"} {
+	for _, value := range []string{"", "/", "/oauth/authorize?client_id=x&state=s", "/acme/platform?file=wiki%2Ftopic.md&q=a%26b", "/alice/general", "/oauth/wiki", "/oauth/token"} {
 		if got, err := authorizeReturn(value); err != nil || got != value {
 			t.Errorf("valid %q: %q %v", value, got, err)
 		}
@@ -161,6 +161,7 @@ func TestWikiLoginRoundTrip(t *testing.T) {
 	}
 	req := startLoopbackOAuth(t, f, loopbackAttempt{startURL: f.url + start})
 	resp := finishLoopbackOAuth(t, f, req)
+	resp = submitSignupResponse(t, f.url, f.client, resp, "")
 	if resp.StatusCode != 303 || resp.Header.Get("Location") != target {
 		t.Fatal(resp.StatusCode, resp.Header)
 	}

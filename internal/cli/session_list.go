@@ -43,7 +43,9 @@ func renderProjectList(kioku string, ps []projectEntry, hints map[string][]strin
 				continue
 			}
 			description := strings.NewReplacer("\r", " ", "\n", " ").Replace(p.Description)
-			if description == "" {
+			if p.General {
+				description = "General"
+			} else if description == "" {
 				description = "（説明なし）"
 			}
 			line := "- " + p.Namespace

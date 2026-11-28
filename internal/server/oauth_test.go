@@ -84,6 +84,9 @@ func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if resp.StatusCode == 200 {
+			resp = submitSignupResponse(t, f.url, &client, resp, identity)
+		}
 		resp.Body.Close()
 		if resp.StatusCode != 302 {
 			t.Fatalf("callback: %d", resp.StatusCode)
@@ -125,8 +128,8 @@ func TestOAuthLoopbackFlowPKCEAndAccountIsolation(t *testing.T) {
 	}
 	var previous string
 	for i, token := range []string{first, second, third} {
-		var projects []model.Project
-		if status := f.request("GET", "/api/projects", token, nil, &projects); status != 200 || len(projects) != 1 || !strings.HasSuffix(projects[0].Namespace, "-general/general") || projects[0].Name != "General" {
+		var projects []model.ProjectEntry
+		if status := f.request("GET", "/api/projects", token, nil, &projects); status != 200 || len(projects) != 1 || !projects[0].General || !strings.HasSuffix(projects[0].Namespace, "/general") || projects[0].Name != "General" {
 			t.Fatalf("account %d General: %d %+v", i, status, projects)
 		}
 		namespace := projects[0].Namespace

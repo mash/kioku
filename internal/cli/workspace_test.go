@@ -220,7 +220,7 @@ func TestBindingRefusesUnmanagedMirrorsOnRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			for attempt := 0; attempt < 2; attempt++ {
-				if err := a.bindPullProject("org/project"); err == nil {
+				if _, err := a.bindPullProject("org/project"); err == nil {
 					t.Fatal("unmanaged files adopted")
 				}
 				if _, err := os.Stat(filepath.Join(a.metadataDir(), "config")); !os.IsNotExist(err) {
@@ -239,7 +239,7 @@ func TestBindingRefusesUnmanagedMirrorsOnRetry(t *testing.T) {
 
 func TestBindingRejectsUnavailableNamespaceWithoutSavingConfig(t *testing.T) {
 	a, _, _, _ := syncFixture(t)
-	if err := a.bindPullProject("org/not-a-member"); err == nil {
+	if _, err := a.bindPullProject("org/not-a-member"); err == nil {
 		t.Fatal("unavailable project accepted")
 	}
 	if _, err := os.Stat(filepath.Join(a.metadataDir(), "config")); !os.IsNotExist(err) {

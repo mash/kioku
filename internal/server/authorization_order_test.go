@@ -31,7 +31,8 @@ func TestAuthorizationRunsBeforeInputValidation(t *testing.T) {
 		{"POST", "/api/projects/" + p.ID + "/views", 403, 400},
 		{"PATCH", "/api/projects/" + p.ID + "/views/project-map", 403, 400},
 		{"POST", "/api/projects/" + p.ID + "/owner", 403, 400},
-		{"POST", "/api/orgs/" + org + "/owner", 404, 400},
+		{"POST", "/api/orgs/" + org + "/owner", 404, 409},
+		{"POST", "/api/orgs/" + org + "/owners", 404, 400},
 	} {
 		if c := f.request(tc.method, tc.path, other, invalid, nil); c != tc.member {
 			t.Errorf("%s %s by a member: %d, want %d", tc.method, tc.path, c, tc.member)

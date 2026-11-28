@@ -16,10 +16,10 @@ import (
 	"unicode/utf8"
 )
 
-const listHeaderText = "Kioku: このセッションは project が未選択。最初のメッセージと各 description から対象が一意に決まれば、%[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。対象が不明か、同じくらい合う候補が複数あれば、%[2]s project list でアカウントの General（u-<hash>-general/general）を確認し、その namespace で %[2]s -n <namespace> session select を実行する。select が失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
+const listHeaderText = "Kioku: このセッションは project が未選択。最初のメッセージに namespace の指定があれば、候補に無くてもその指定を優先する。指定が無ければ各 description を確認する。対象が一意に決まれば、%[1]s -n <namespace> session select を実行する。［server: …］の行は %[1]s --server <server> -n <namespace> session select を使う。対象が不明か、同じくらい合う候補が複数あれば、%[2]s project list でアカウントの General（\"general\": true の項目）を確認し、その namespace で %[2]s -n <namespace> session select を実行する。select が失敗したら kioku skill の復旧手順に従う。［ヒント: trigger 語 …］は、メッセージかブランチ名に一致した語を示す。"
 const turnRuleText = "Kioku: %[1]s（wiki: %[2]s/wiki/、入口は index.md）。調べる時はここを grep する。参照・作成した重要な文書の URL は %[3]s -C %[4]s -n %[1]s queue add <URL> \"<何をしたか>\" で 1 行足す。共有範囲・機密・保存禁止を確かめてから足す。"
 const failedPullText = "最後の pull は失敗。既存コピーを最新と呼ばず、kioku skill の失敗時の手順に従う。"
-const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たれば hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。\n"
+const startHookText = "Kioku: この会話で選んだ project があれば保持する。未選択なら、hook が最初のメッセージを trigger 語に照合する。1 project だけに当たり、別の namespace の指定が無ければ hook が選び、Wiki の入口を渡す。ほかの時は hook に示された CLI の絶対パスと手順に従う。対象が一意に決まらなければ、ユーザーに聞かずにアカウントの General を選ぶ。\n"
 
 func candidateTestDir(t *testing.T) string {
 	t.Helper()
@@ -126,6 +126,8 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 		{name: "I11_unreadable_state", prompt: "Tesla", blocked: true},
 		{name: "I13_other_server", prompt: "Tesla", other: true, auto: "org/a"},
 		{name: "explicit_namespace_conflicts_with_branch", prompt: "org/b を続けて", branch: "feat/tesla-x"},
+		{name: "uncached_explicit_namespace", prompt: "Tesla は `new-org/not-cached` を使って"},
+		{name: "own_namespace_does_not_conflict", prompt: "Tesla は `org/a` を使って", auto: "org/a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.blocked && os.Geteuid() == 0 {
@@ -279,7 +281,7 @@ func TestPromptHookAcceptanceExamples(t *testing.T) {
 						aLine += "［ヒント: trigger 語 tesla］"
 						bLine += "［ヒント: trigger 語 充電］"
 					}
-					if tc.blocked || tc.name == "explicit_namespace_conflicts_with_branch" {
+					if tc.blocked || tc.name == "explicit_namespace_conflicts_with_branch" || tc.name == "uncached_explicit_namespace" {
 						aLine += "［ヒント: trigger 語 tesla］"
 					}
 					want := testCandidateHeader(defaultServer) + "\n" + aLine + "\n" + bLine

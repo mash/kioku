@@ -53,7 +53,7 @@ func TestInboxAcceptanceReplacementAndLimits(t *testing.T) {
 		t.Fatal(c)
 	}
 	var projects []fixtureProjectEntry
-	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 1 || projects[0].InboxCount != 2 || len(projects[0].Inbox) != 2 {
+	if c := f.request("GET", "/api/projects", token, nil, &projects); c != 200 || len(projects) != 2 || !projects[0].General || projects[1].InboxCount != 2 || len(projects[1].Inbox) != 2 {
 		t.Fatal(c, projects)
 	}
 	f.stateStore.Write(context.Background(), func(st *store.Queries) error {

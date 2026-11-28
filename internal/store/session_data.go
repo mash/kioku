@@ -70,9 +70,9 @@ func (q *Queries) InsertSession(v SessionRow) error {
 	return err
 }
 
-// TakeSession consumes a single-use cli_login or login_code row by deleting it.
+// TakeSession consumes a single-use pending session by deleting it.
 func (q *Queries) TakeSession(id, kind string, now int64) (SessionRow, error) {
-	if kind != "cli_login" && kind != "login_code" {
+	if kind != "cli_login" && kind != "login_code" && kind != "signup" {
 		return SessionRow{}, errors.New("session kind is not single-use")
 	}
 	return scanSession(q.row("DELETE FROM sessions WHERE id=? AND kind=? AND expires>? RETURNING "+sessionsColumns, id, kind, now))

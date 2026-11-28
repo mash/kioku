@@ -152,7 +152,13 @@ func (s *Server) mcpCall(ctx context.Context, key string, raw json.RawMessage) (
 }
 
 func (s *Server) mcpProjects(key string) (any, error) {
-	projects := []map[string]string{}
+	type projectEntry struct {
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+		Role      string `json:"role"`
+		General   bool   `json:"general,omitempty"`
+	}
+	projects := []projectEntry{}
 	err := s.Store.Read(context.Background(), func(q *store.Queries) error {
 		grant, ok, err := connectorGrant(q, key)
 		if err != nil {
@@ -160,6 +166,10 @@ func (s *Server) mcpProjects(key string) (any, error) {
 		}
 		if !ok {
 			return fail(401, "connector login required")
+		}
+		user, err := q.User(grant.UserID)
+		if err != nil {
+			return err
 		}
 		rows, err := q.ProjectsForUser(grant.UserID)
 		if err != nil {
@@ -176,11 +186,11 @@ func (s *Server) mcpProjects(key string) (any, error) {
 			return err
 		}
 		for _, p := range projected {
-			projects = append(projects, map[string]string{"namespace": p.Namespace, "name": p.Name, "role": p.Members[grant.UserID]})
+			projects = append(projects, projectEntry{Namespace: p.Namespace, Name: p.Name, Role: p.Members[grant.UserID], General: p.ID == store.ValueString(user.GeneralProjectID)})
 		}
 		return nil
 	})
-	sort.Slice(projects, func(i, j int) bool { return projects[i]["namespace"] < projects[j]["namespace"] })
+	sort.Slice(projects, func(i, j int) bool { return projects[i].Namespace < projects[j].Namespace })
 	return map[string]any{"projects": projects}, err
 }
 

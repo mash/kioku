@@ -52,6 +52,10 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) er
 	}
 	out := []model.ProjectEntry{}
 	err = s.Store.Read(r.Context(), func(q *store.Queries) error {
+		user, e := q.User(uid)
+		if e != nil {
+			return e
+		}
 		rows, e := q.ProjectsForUser(uid)
 		if e != nil {
 			return e
@@ -59,7 +63,7 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) er
 		selected := rows[:0]
 		ids := []string{}
 		for _, row := range rows {
-			if principal.AgentID != "" && row.ID != principal.ProjectID {
+			if row.Deleting || (principal.AgentID != "" && row.ID != principal.ProjectID) {
 				continue
 			}
 			selected = append(selected, row)
@@ -80,7 +84,7 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request, uid string) er
 			}
 		}
 		for _, p := range projects {
-			entry := model.ProjectEntry{Project: p, Inbox: []model.InboxEntry{}}
+			entry := model.ProjectEntry{Project: p, General: p.ID == store.ValueString(user.GeneralProjectID), Inbox: []model.InboxEntry{}}
 			for _, item := range inbox[p.ID] {
 				entry.Inbox = append(entry.Inbox, model.InboxEntry{SourceURL: item.SourceURL, Remove: item.Remove})
 			}
@@ -134,18 +138,29 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request, uid strin
 	}
 	var result model.Project
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
+		if e := checkAccountActive(q, uid); e != nil {
+			return e
+		}
 		var org model.Organization
 		var e error
 		if req.Organization == "" {
 			org, e = personalOrg(q, uid)
 			if e == nil && !org.Owners[uid] {
-				return fail(409, "personal namespace ownership changed; select a named organization")
+				return fail(404, "organization not found or owner permission required")
 			}
+
 		} else {
 			org, e = orgOwner(q, req.Organization, uid)
 		}
 		if e != nil {
 			return e
+		}
+		for owner := range org.Owners {
+			if owner != uid {
+				if e = checkAccountActive(q, owner); e != nil {
+					return e
+				}
+			}
 		}
 		row.OrgID = org.ID
 		if _, e = q.ProjectBySlug(org.ID, row.Slug); e == nil {
@@ -221,11 +236,13 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request, uid string) erro
 	token := auth.Token()
 	inv := store.InviteRow{ID: auth.Token()[:20], ProjectID: r.PathValue("project"), CreatedBy: uid, Expires: time.Now().Add(7 * 24 * time.Hour).UnixMilli(), TokenHash: auth.Hash(token), Data: store.InviteData{Email: store.NullableString(req.Email)}}
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
-		p, e := owner(q, inv.ProjectID, uid)
+		_, e := owner(q, inv.ProjectID, uid)
 		if e != nil {
 			return e
 		}
-		if store.IsGeneralProject(uid, p.OrgID, p.Slug) {
+		if general, e := q.IsGeneralProject(inv.ProjectID); e != nil {
+			return e
+		} else if general {
 			return fail(409, "your General wiki is private")
 		}
 		return q.PutInvite(inv)

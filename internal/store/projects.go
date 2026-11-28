@@ -1,27 +1,24 @@
 package store
 
-const (
-	generalOrganizationPrefix = "general-"
-	GeneralProjectSlug        = "general"
-)
+const GeneralProjectSlug = "general"
 
-func GeneralOrganizationID(user string) string { return generalOrganizationPrefix + user }
-
-func IsGeneralProject(user, orgID, slug string) bool {
-	return orgID == GeneralOrganizationID(user) && slug == GeneralProjectSlug
+func (q *Queries) IsGeneralProject(project string) (bool, error) {
+	var general bool
+	err := q.row("SELECT EXISTS(SELECT 1 FROM users WHERE general_project_id=?)", project).Scan(&general)
+	return general, err
 }
 
 func (q *Queries) ProjectBySlug(org, slug string) (ProjectRow, error) {
 	return scanProject(q.row("SELECT "+projectsColumns+" FROM projects WHERE org_id=? AND slug=?", org, slug))
 }
-func (q *Queries) GeneralProject(user string) (ProjectRow, error) {
-	return q.ProjectBySlug(GeneralOrganizationID(user), GeneralProjectSlug)
+
+// A General's deletion flag is also the account's durable deletion barrier.
+func (q *Queries) AccountDeleting(user string) (bool, error) {
+	var deleting bool
+	err := q.row("SELECT EXISTS(SELECT 1 FROM users u JOIN projects p ON p.id=u.general_project_id WHERE u.id=? AND p.deleting=1)", user).Scan(&deleting)
+	return deleting, err
 }
-func (q *Queries) UsersWithoutGeneral() ([]UserRow, error) {
-	return q.listUser(`WHERE NOT EXISTS (
-		SELECT 1 FROM projects WHERE org_id=? || users.id AND slug=?
-	) ORDER BY id`, generalOrganizationPrefix, GeneralProjectSlug)
-}
+
 func (q *Queries) ProjectsForUser(user string) ([]ProjectRow, error) {
 	return q.listProject("WHERE id IN (SELECT project_id FROM project_members WHERE user_id=?) ORDER BY created,id", user)
 }
@@ -80,10 +77,13 @@ func (q *Queries) DeleteProjectRows(project string) error {
 	return q.DeleteProject(project)
 }
 
-// PruneExpired removes expired sessions and invites, and compacts the job and
+// PruneExpired removes expired sessions, invites and slug reservations, and compacts the job and
 // audit history of every project. The hourly maintenance pass runs it.
 func (q *Queries) PruneExpired(now int64) error {
 	if err := q.PruneSessions(now); err != nil {
+		return err
+	}
+	if _, err := q.exec("DELETE FROM user_slug_reservations WHERE expires<=?", now); err != nil {
 		return err
 	}
 	if _, err := q.exec("DELETE FROM invites WHERE expires<=?", now); err != nil {

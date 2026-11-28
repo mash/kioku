@@ -19,8 +19,8 @@ func deleteOwner(q *store.Queries, pid, uid string) error {
 	if err != nil {
 		return err
 	}
-	p, err := q.Project(pid)
-	if err == nil && store.IsGeneralProject(uid, p.OrgID, p.Slug) {
+	general, err := q.IsGeneralProject(pid)
+	if err == nil && general {
 		return fail(409, "General can only be deleted with your account")
 	}
 	return err

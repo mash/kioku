@@ -144,7 +144,21 @@ func (f *fixture) login(email string) string {
 		}
 		if uid == "" {
 			uid = auth.Token()[:20]
-			fixtureUsersPut(t, st, uid, model.User{ID: uid, Name: strings.Split(email, "@")[0], Email: email, Identities: map[string]string{"google": uid}})
+			slug := defaultUserSlug(email)
+			now := time.Now().UnixMilli()
+			taken, err := st.OrganizationSlugTaken(slug, now)
+			if err != nil {
+				return err
+			}
+			if taken {
+				slug = "user-" + auth.Hash(email)[:12]
+			}
+			if err := createAccount(st, uid, slug, email, strings.Split(email, "@")[0], now); err != nil {
+				return err
+			}
+			if err := st.PutIdentity(uid, "google", uid); err != nil {
+				return err
+			}
 		}
 		access := f.s.Cipher.SealIdentityTokens(auth.Credential{AccessToken: uid}, uid, "google", uid)
 		fixtureSessionsPut(t, st, auth.Hash(token), fixtureSession{UserID: uid, Expires: time.Now().Add(time.Hour), IdentityProvider: "google", IdentityID: uid, IdentityAccessToken: store.ValueString(access.AccessToken)})
@@ -301,7 +315,7 @@ func TestProjectSharingPutAndIsolation(t *testing.T) {
 		t.Fatal("source not in wiki")
 	}
 	var projects []fixtureProjectEntry
-	if code := f.request("GET", "/api/projects", eve, nil, &projects); code != 200 || len(projects) != 0 {
+	if code := f.request("GET", "/api/projects", eve, nil, &projects); code != 200 || len(projects) != 1 || !projects[0].General {
 		t.Fatalf("project and inbox isolation: %d %+v", code, projects)
 	}
 	resp, err := f.client.Get(f.url + "/api/projects")

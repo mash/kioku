@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sync/atomic"
 )
 
 func projectEntryApp(t *testing.T) *App {
@@ -167,7 +170,7 @@ func TestProjectConfigRegistersAndPullRepairsEntry(t *testing.T) {
 
 	a, _, _, _ := syncFixture(t)
 	a.AuthDir = filepath.Join(t.TempDir(), "kioku", "auth")
-	if err := a.bindPullProject("org/project"); err != nil {
+	if _, err := a.bindPullProject("org/project"); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(a.metadataDir(), "config"), a.projectsPath()} {
@@ -287,5 +290,60 @@ func TestProjectDeleteWriteFailureWarnsWithoutPullAdvice(t *testing.T) {
 	warning := a.Err.(*bytes.Buffer).String()
 	if calls != 1 || !strings.Contains(warning, "projects.json") || !strings.Contains(warning, "remove") || strings.Contains(warning, "next pull") {
 		t.Fatal(calls, warning)
+	}
+}
+
+func TestPullAndListRefreshGeneralFlag(t *testing.T) {
+	const namespace = "alice/general"
+	var listGeneral atomic.Bool
+	listGeneral.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			general := ""
+			if listGeneral.Load() {
+				general = `,"general":true`
+			}
+			fmt.Fprintf(w, `[{"namespace":"alice/general","name":"General"%s},{"namespace":"team/general","name":"Team notes"}]`, general)
+		case "/api/projects/alice/general/snapshot":
+			fmt.Fprint(w, `{"revision":"empty","files":{}}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	a := projectEntryApp(t)
+	a.Client, a.ctx = server.Client(), t.Context()
+	a.Config = Config{Server: server.URL, Namespace: namespace}
+	if err := a.addProjectEntry(a.Config.Server, namespace, a.Dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.syncProject(); err != nil {
+		t.Fatal(err)
+	}
+	path := a.projectsPath()
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"general": true`) {
+		t.Fatal("pull did not mark General", string(data), err)
+	}
+	var out bytes.Buffer
+	a.Out = &out
+	if err := a.list(); err != nil {
+		t.Fatal(err)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &list); err != nil || len(list) != 2 || list[0]["general"] != true || len(list[1]) != 2 {
+		t.Fatal("list did not expose the flag only on General", out.String(), err)
+	}
+	// A subsequent list updates the flag without replacing the local binding.
+	listGeneral.Store(false)
+	out.Reset()
+	if err := a.list(); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), `"general":`) {
+		t.Fatal("list did not clear the stale General flag", string(data), err)
 	}
 }

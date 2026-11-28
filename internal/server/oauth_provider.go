@@ -32,9 +32,8 @@ func authorizeReturn(value string) (string, error) {
 	allowed := u.Path == "/" || u.Path == "/oauth/authorize"
 	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 	if strings.HasPrefix(u.Path, "/") && len(parts) == 2 {
-		// Personal namespaces (u-...) are valid too. Reserve service route prefixes.
 		org := parts[0]
-		allowed = allowed || (validSlug(parts[1]) && validSlug(org) && (!reservedNamespace(org) || strings.HasPrefix(org, "u-")))
+		allowed = validSlug(parts[1]) && validSlug(org) && !reservedNamespace(org)
 	}
 	if !allowed {
 		return "", fail(400, "invalid login return path")

@@ -29,6 +29,7 @@ Global flags (before command): -n ORG/PROJECT; -C DIRECTORY; --server ORIGIN
   project share invite [EMAIL]                 Single-use invite; expires in 7 days
   project share transfer --yes EMAIL_OR_ID     Transfer project ownership
   org transfer --yes ORG EMAIL_OR_ID    Transfer organization ownership
+  org add-owner --yes ORG EMAIL_OR_ID   Add an organization co-owner
   project share remove EMAIL_OR_ID
   delete SOURCE_URL...                Remove sources at the next generation
   fetch URL --capture-token TOKEN --dir DIR --out FILE  HTTPS GET (20 MiB max) into the owned capture directory.

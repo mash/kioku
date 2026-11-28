@@ -25,7 +25,7 @@ func reservedNamespace(s string) bool {
 	return false
 }
 
-func projectSlug(name string) string {
+func normalizeSlug(name string) string {
 	s := strings.ToLower(name)
 	var b strings.Builder
 	dash := false
@@ -42,10 +42,13 @@ func projectSlug(name string) string {
 	if len(out) > 63 {
 		out = strings.TrimRight(out[:63], "-")
 	}
-	if !validSlug(out) {
-		out = "project-" + auth.Hash(name)[:12]
-	}
 	return out
+}
+func projectSlug(name string) string {
+	if slug := normalizeSlug(name); validSlug(slug) {
+		return slug
+	}
+	return "project-" + auth.Hash(name)[:12]
 }
 func orgOwner(q *store.Queries, slug, uid string) (model.Organization, error) {
 	row, err := q.OrganizationBySlug(slug)
@@ -62,19 +65,12 @@ func orgOwner(q *store.Queries, slug, uid string) (model.Organization, error) {
 	return org, err
 }
 func personalOrg(q *store.Queries, uid string) (model.Organization, error) {
-	id := "personal-" + uid
-	row, err := q.Organization(id)
-	if err == nil {
-		return organizationProjection(q, row)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	user, err := q.User(uid)
+	if err != nil {
 		return model.Organization{}, err
 	}
-	row = store.OrganizationRow{ID: id, Slug: "u-" + auth.Hash(uid)[:12], Data: store.OrganizationData{Name: "Personal projects", Created: time.Now().UnixMilli()}}
-	if err = q.PutOrganization(row); err != nil {
-		return model.Organization{}, err
-	}
-	if err = q.PutOrganizationOwner(id, uid); err != nil {
+	row, err := q.Organization(store.ValueString(user.PersonalOrgID))
+	if err != nil {
 		return model.Organization{}, err
 	}
 	return organizationProjection(q, row)
@@ -98,6 +94,9 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 	}
 	org := store.OrganizationRow{ID: auth.Token()[:20], Slug: req.Slug, Data: store.OrganizationData{Name: req.Name, Created: time.Now().UnixMilli()}}
 	if err := s.mutation(r, uid, func(q *store.Queries) error {
+		if e := checkAccountActive(q, uid); e != nil {
+			return e
+		}
 		owned, e := q.OwnedOrganizations(uid)
 		if e != nil {
 			return e
@@ -105,10 +104,12 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, uid 
 		if len(owned) >= 20 {
 			return fail(429, "organization ownership limit reached")
 		}
-		if _, e = q.OrganizationBySlug(req.Slug); e == nil {
-			return fail(409, "organization slug is already in use")
-		} else if !errors.Is(e, sql.ErrNoRows) {
+		taken, e := q.OrganizationSlugTaken(req.Slug, time.Now().UnixMilli())
+		if e != nil {
 			return e
+		}
+		if taken {
+			return fail(409, "organization slug is already in use or reserved")
 		}
 		if e = q.PutOrganization(org); e != nil {
 			return e

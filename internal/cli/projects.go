@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 
 	"github.com/mash/kioku/internal/atomicfile"
+	"github.com/mash/kioku/internal/model"
 )
 
 type projectEntry struct {
+	General     bool     `json:"general,omitempty"`
 	Triggers    []string `json:"triggers,omitempty"`
 	Server      string   `json:"server"`
 	Namespace   string   `json:"namespace"`
@@ -140,6 +142,27 @@ func (a *App) addProjectEntry(server, namespace, dir string, description *string
 			return true
 		}
 		return added
+	})
+}
+
+// Only update bound mirrors. Listing does not create or bind local directories.
+func (a *App) updateGeneralFlags(list []model.ProjectEntry) error {
+	general := make(map[string]bool)
+	for _, project := range list {
+		if project.General {
+			general[project.Namespace] = true
+		}
+	}
+	return updateProjects(a.projectsPath(), func(p *projectsFile) bool {
+		changed := false
+		for i := range p.Projects {
+			entry := &p.Projects[i]
+			if entry.Server == a.Config.Server && entry.General != general[entry.Namespace] {
+				entry.General = general[entry.Namespace]
+				changed = true
+			}
+		}
+		return changed
 	})
 }
 

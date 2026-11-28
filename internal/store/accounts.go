@@ -156,3 +156,21 @@ func (q *Queries) MembersForProjects(ids []string) (map[string]map[string]string
 	}
 	return out, nil
 }
+
+func (q *Queries) OrganizationSlugTaken(slug string, now int64) (bool, error) {
+	var taken bool
+	err := q.row(`SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=?
+ UNION ALL SELECT 1 FROM user_slug_reservations WHERE slug=? AND expires>?)`, slug, slug, now).Scan(&taken)
+	return taken, err
+}
+
+func (q *Queries) ReserveUserSlug(slug string, expires int64) error {
+	_, err := q.exec("INSERT INTO user_slug_reservations(slug,expires) VALUES(?,?) ON CONFLICT(slug) DO UPDATE SET expires=excluded.expires", slug, expires)
+	return err
+}
+
+func (q *Queries) OrganizationHasGeneral(org string) (bool, error) {
+	var general bool
+	err := q.row("SELECT EXISTS(SELECT 1 FROM projects p JOIN users u ON u.general_project_id=p.id WHERE p.org_id=?)", org).Scan(&general)
+	return general, err
+}

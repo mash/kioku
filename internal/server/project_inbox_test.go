@@ -31,7 +31,7 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 	for _, tc := range []struct {
 		name, token string
 		count       int
-	}{{"owner", owner, 2}, {"agent", agent, 1}} {
+	}{{"owner", owner, 3}, {"agent", agent, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var entries []struct {
 				Namespace  string           `json:"namespace"`
@@ -59,7 +59,7 @@ func TestProjectsIncludeOnlyTheirInboxSummary(t *testing.T) {
 							t.Fatal(item)
 						}
 					}
-				case empty.Namespace:
+				case empty.Namespace, "owner/general":
 					if entry.InboxCount != 0 || entry.Inbox == nil || len(entry.Inbox) != 0 {
 						t.Fatal(entry)
 					}

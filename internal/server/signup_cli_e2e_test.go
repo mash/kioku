@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/mash/kioku/internal/auth"
@@ -27,7 +28,15 @@ func TestE2ESignupLoopback(t *testing.T) {
 		t.Fatal("denial changed pending request or created credentials")
 	}
 
-	allowed := e.do(e.oauthCallbackRequest(a.startURL, "allowed", ""))
+	page := e.do(e.oauthCallbackRequest(a.startURL, "allowed", ""))
+	retry := e.submitSignup(page, "api")
+	e.expect(retry, 400, nil)
+	for _, form := range []*httptest.ResponseRecorder{page, retry} {
+		if form.Header().Get("Content-Security-Policy") != pageCSP+" http://127.0.0.1:5000" || form.Header().Get("Referrer-Policy") != "same-origin" {
+			t.Fatal("signup form policy does not allow the registered loopback", form.Header())
+		}
+	}
+	allowed := e.submitSignup(page, "")
 	e.expect(allowed, 302, nil)
 	target, err = allowed.Result().Location()
 	if err != nil || target.Query().Get("state") != a.state || target.Query().Get("code") == "" {

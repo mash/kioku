@@ -420,7 +420,12 @@ func fixtureUsersFind(t testing.TB, source any, id string) (model.User, bool) {
 	return u, true
 }
 func fixtureUsersPut(t testing.TB, q *store.Queries, id string, u model.User) {
-	fixtureCheck(t, q.PutUser(store.UserRow{ID: id, Email: u.Email, Data: store.UserData{Name: u.Name}}))
+	row, err := q.User(id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		fixtureCheck(t, err)
+	}
+	row.ID, row.Email, row.Data.Name = id, u.Email, u.Name
+	fixtureCheck(t, q.PutUser(row))
 	ids, err := q.Identities(id)
 	fixtureCheck(t, err)
 	for p := range ids {
@@ -814,6 +819,7 @@ func fixtureJobPrefix(j fixtureJob) string {
 }
 
 type fixtureProjectEntry struct {
+	General bool `json:"general,omitempty"`
 	fixtureProject
 	InboxCount int                `json:"inbox_count"`
 	Inbox      []model.InboxEntry `json:"inbox"`

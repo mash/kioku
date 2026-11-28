@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mash/kioku/internal/auth"
 	"github.com/mash/kioku/internal/store"
@@ -74,7 +75,7 @@ func signupCookies(t *testing.T, res *httptest.ResponseRecorder, issued bool) st
 			token = cookie.Value
 		}
 	}
-	if !cleared || issued != (token != "") {
+	if (!issued && !cleared) || issued != (token != "") {
 		t.Fatalf("wrong OAuth or session cookies: cleared=%v issued=%v", cleared, token != "")
 	}
 	return token
@@ -117,14 +118,17 @@ func TestE2ESignupPolicy(t *testing.T) {
 			db := e.signupSQL()
 			before := signupSnapshot(t, db)
 			res := e.signupCallback("google", "alice")
-			e.expect(res, tc.want, nil)
 			if tc.want == 303 {
+				signupCookies(t, res, false)
+				res = e.submitSignup(res, "")
+				e.expect(res, tc.want, nil)
 				if res.Header().Get("Location") != "/" {
 					t.Fatal("wrong default return path")
 				}
 				e.expect(e.call("GET", "/api/me", signupCookies(t, res, true), nil), 200, nil)
 				return
 			}
+			e.expect(res, tc.want, nil)
 			if tc.want == 403 {
 				assertSignupDenied(t, res)
 			} else if !strings.HasPrefix(res.Header().Get("Content-Type"), "application/json") || res.Header().Get("Set-Cookie") != "" {
@@ -154,10 +158,10 @@ func TestE2ESignupGitHub(t *testing.T) {
 			db := e.signupSQL()
 			switch mode {
 			case "restricted":
-				e.expect(e.signupCallback("google", "alice"), 303, nil)
+				e.expect(e.submitSignup(e.signupCallback("google", "alice"), ""), 303, nil)
 			case "github-only":
 				if err := e.db.Write(t.Context(), func(q *store.Queries) error {
-					if err := q.PutUser(store.UserRow{ID: "registered", Email: email}); err != nil {
+					if err := createAccount(q, "registered", "alice", email, "Alice", 1); err != nil {
 						return err
 					}
 					return q.PutIdentity("registered", "github", "123")
@@ -173,6 +177,9 @@ func TestE2ESignupGitHub(t *testing.T) {
 					t.Fatal("GitHub signup changed the database")
 				}
 				return
+			}
+			if mode == "open" {
+				res = e.submitSignup(res, "")
 			}
 			e.expect(res, 303, nil)
 			e.expect(e.call("GET", "/api/me", signupCookies(t, res, true), nil), 200, nil)
@@ -190,7 +197,7 @@ func TestE2ESignupMCPAndInvite(t *testing.T) {
 		"outside": {subject: "outside", hd: "other.example"},
 	}, false)
 	const start = "/auth/google/start"
-	owner := e.signupCallback("google", "allowed")
+	owner := e.submitSignup(e.signupCallback("google", "allowed"), "")
 	e.expect(owner, 303, nil)
 	token := signupCookies(t, owner, true)
 	project := e.project(token, "Signup test")
@@ -232,8 +239,14 @@ func TestE2ESignupConcurrent(t *testing.T) {
 		"first": {subject: "alice", hd: "nature.global"}, "second": {subject: "alice", hd: "nature.global"},
 	}, false)
 	start := "/auth/google/start"
-	requests := []*http.Request{e.oauthCallbackRequest(start, "first", ""), e.oauthCallbackRequest(start, "second", "")}
+	var requests []*http.Request
+	for _, code := range []string{"first", "second"} {
+		page := e.do(e.oauthCallbackRequest(start, code, ""))
+		e.expect(page, 200, nil)
+		requests = append(requests, signupFormRequest(t, e.url, page.Result().Cookies(), page.Body.String(), "alice"))
+	}
 	var group sync.WaitGroup
+	results := make(chan int, len(requests))
 	for _, req := range requests {
 		group.Go(func() {
 			res, err := e.client.Do(req)
@@ -242,15 +255,21 @@ func TestE2ESignupConcurrent(t *testing.T) {
 				return
 			}
 			res.Body.Close()
-			if res.StatusCode != 303 {
-				t.Errorf("callback status = %d, want 303", res.StatusCode)
-			}
+			results <- res.StatusCode
 		})
 	}
 	group.Wait()
+	close(results)
+	counts := map[int]int{}
+	for status := range results {
+		counts[status]++
+	}
+	if counts[303] != 1 || counts[409] != 1 {
+		t.Fatal("signup results", counts)
+	}
 	var users, ids, sessions int
-	err := e.signupSQL().QueryRow("SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM user_identities), (SELECT count(*) FROM sessions)").Scan(&users, &ids, &sessions)
-	if err != nil || users != 1 || ids != 1 || sessions != 2 {
+	err := e.signupSQL().QueryRow("SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM user_identities), (SELECT count(*) FROM sessions WHERE kind='user')").Scan(&users, &ids, &sessions)
+	if err != nil || users != 1 || ids != 1 || sessions != 1 {
 		t.Fatalf("users=%d identities=%d sessions=%d: %v", users, ids, sessions, err)
 	}
 }
@@ -275,7 +294,7 @@ func TestE2ESignupDatabaseFailures(t *testing.T) {
 				}
 			case "missing-user":
 				// Establish the identity through OAuth, then isolate a broken reference.
-				e.expect(e.signupCallback("google", "allowed"), 303, nil)
+				e.expect(e.submitSignup(e.signupCallback("google", "allowed"), ""), 303, nil)
 				if _, err := db.Exec("DELETE FROM users"); err != nil {
 					t.Fatal(err)
 				}
@@ -303,4 +322,90 @@ func TestE2ESignupDatabaseFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestE2EUserSlugChoiceAndReservation(t *testing.T) {
+	t.Parallel()
+	e := newSignupE2E(t, "", map[string]oauthTestLogin{
+		"first":  {subject: "first", email: "Alice.Smith+Work@example.com"},
+		"second": {subject: "second", email: "API@example.com"},
+		"repeat": {subject: "first", email: "new-email@example.com"},
+	}, false)
+	db := e.signupSQL()
+	page := e.signupCallback("google", "first")
+	e.expect(page, 200, nil)
+	signupCookies(t, page, false)
+	if !strings.Contains(page.Body.String(), `name="slug" type="text" value="alice-smith-work"`) {
+		t.Fatal("wrong default slug", page.Body)
+	}
+	var total int
+	if err := db.QueryRow("SELECT (SELECT count(*) FROM users)+(SELECT count(*) FROM projects)+(SELECT count(*) FROM organizations)").Scan(&total); err != nil || total != 0 {
+		t.Fatal("signup created records before the form was submitted", total, err)
+	}
+
+	badCSRF := signupFormRequest(t, e.url, page.Result().Cookies(), page.Body.String(), "chosen")
+	badCSRF.Header.Set("Cookie", "kioku_signup=wrong")
+	e.expect(e.do(badCSRF), 403, nil)
+	for _, slug := range []string{"api", "u-private", "Upper", "with--gap"} {
+		invalid := e.submitSignup(page, slug)
+		e.expect(invalid, 400, nil)
+		if !strings.Contains(invalid.Body.String(), "ユーザースラッグには") {
+			t.Fatal("missing signup validation message", invalid.Body)
+		}
+	}
+	first := e.submitSignup(page, "chosen")
+	e.expect(first, 303, nil)
+	token := signupCookies(t, first, true)
+	e.expect(e.submitSignup(page, "cannot-replay"), 410, nil)
+
+	var project, org, slug, namespace string
+	err := db.QueryRow(`SELECT u.general_project_id,u.personal_org_id,o.slug,o.slug||'/'||p.slug
+ FROM users u JOIN organizations o ON o.id=u.personal_org_id
+ JOIN projects p ON p.id=u.general_project_id AND p.org_id=o.id`).Scan(&project, &org, &slug, &namespace)
+	if err != nil || project == "" || org == "" || slug != "chosen" || namespace != "chosen/general" {
+		t.Fatal("invalid personal org/General references", slug, namespace, err)
+	}
+	e.expect(e.signupCallback("google", "repeat"), 303, nil)
+	if err = db.QueryRow("SELECT count(*) FROM projects WHERE org_id=?", org).Scan(&total); err != nil || total != 1 {
+		t.Fatal("repeat login changed General", total, err)
+	}
+
+	second := e.signupCallback("google", "second")
+	e.expect(second, 200, nil)
+	if !strings.Contains(second.Body.String(), `name="slug" type="text" value="user-api"`) {
+		t.Fatal("reserved email local part produced an invalid default", second.Body)
+	}
+	for _, name := range []string{"chosen", "team"} {
+		if name == "team" {
+			e.expect(e.call("POST", "/api/orgs", token, map[string]string{"slug": name}), 201, nil)
+		}
+		occupied := e.submitSignup(second, name)
+		e.expect(occupied, 409, nil)
+		if !strings.Contains(occupied.Body.String(), "使用中か予約済み") {
+			t.Fatal("missing slug conflict message", occupied.Body)
+		}
+	}
+	e.expect(e.call("DELETE", "/api/account", token, map[string]string{"confirm": "delete-account"}), 200, nil)
+	e.expect(e.submitSignup(second, "chosen"), 409, nil)
+	var expires int64
+	if err = db.QueryRow("SELECT expires FROM user_slug_reservations WHERE slug='chosen'").Scan(&expires); err != nil {
+		t.Fatal(err)
+	}
+	if duration := time.Until(time.UnixMilli(expires)); duration <= 90*24*time.Hour-time.Minute || duration > 90*24*time.Hour {
+		t.Fatal("slug was not reserved for 90 days", duration)
+	}
+	another := e.submitSignup(e.signupCallback("google", "third"), "third")
+	e.expect(another, 303, nil)
+	otherToken := signupCookies(t, another, true)
+	e.expect(e.call("POST", "/api/orgs", otherToken, map[string]string{"slug": "chosen"}), 409, nil)
+	if _, err = db.Exec("UPDATE user_slug_reservations SET expires=0 WHERE slug='chosen'"); err != nil {
+		t.Fatal(err)
+	}
+	registered := e.submitSignup(second, "chosen")
+	e.expect(registered, 303, nil)
+	e.expect(e.call("DELETE", "/api/account", signupCookies(t, registered, true), map[string]string{"confirm": "delete-account"}), 200, nil)
+	if _, err = db.Exec("UPDATE user_slug_reservations SET expires=0 WHERE slug='chosen'"); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.call("POST", "/api/orgs", otherToken, map[string]string{"slug": "chosen"}), 201, nil)
 }

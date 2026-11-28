@@ -61,18 +61,9 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	human := f.login("owner@example.com")
 	other := f.login("member@example.com")
 	uid, target := accountID(t, f, human), accountID(t, f, other)
-	p := securityProject(t, f, human)
-	if err := f.s.EnsureGeneralWikis(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	var generalID string
-	if err := f.stateStore.Read(t.Context(), func(q *store.Queries) error {
-		project, err := q.GeneralProject(uid)
-		generalID = project.ID
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
+	createTestOrg(t, f, human, "team")
+	p := consentProject(t, f, human, "team/evidence")
+	generalID := testGeneralID(t, f, uid)
 	putFile(t, f, human, generalID, "private.md", "Private evidence")
 	prefix := "projects/" + generalID + "/"
 	if keys, err := f.s.Blobs.List(t.Context(), prefix); err != nil || len(keys) == 0 {
@@ -105,8 +96,11 @@ func TestOwnershipHandoffAndAccountDeletionPreserveTeamData(t *testing.T) {
 	if c := f.request("POST", "/api/orgs/"+slug+"/owner", human, map[string]string{"target": target}, nil); c != 200 {
 		t.Fatal(c)
 	}
-	if c := f.request("POST", "/api/projects", human, map[string]string{"name": "Cannot reclaim personal namespace"}, nil); c != 409 {
-		t.Fatal("former owner reclaimed transferred namespace", c)
+	if keys, err := f.s.Blobs.List(t.Context(), prefix); err != nil || len(keys) == 0 {
+		t.Fatal("409 deleted General content", keys, err)
+	}
+	if status := f.request("GET", "/api/projects/owner/general/snapshot?manifest=1", human, nil, nil); status != 200 {
+		t.Fatal("409 made General inaccessible", status)
 	}
 	if c := f.request("DELETE", "/api/account", human, map[string]string{"confirm": "delete-account"}, nil); c != 200 {
 		t.Fatal(c)

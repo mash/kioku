@@ -130,6 +130,12 @@ func promptTurnContext(prompts string, s *sessionState) string {
 	return line
 }
 
+func promptNamespaces(prompt string) []string {
+	return slices.DeleteFunc(strings.FieldsFunc(prompt, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '/' || r == '_')
+	}), func(token string) bool { return !validNamespace(token) })
+}
+
 func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.Time) string {
 	if s != nil {
 		return promptTurnContext(prompts, s)
@@ -159,8 +165,9 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 			}
 		}
 	}
-	if len(hits) == 1 && !slices.ContainsFunc(ps, func(p projectEntry) bool {
-		return projectKey(p) != projectKey(hits[0]) && validNamespace(p.Namespace) && strings.Contains(in.Prompt, p.Namespace)
+	explicit := promptNamespaces(in.Prompt)
+	if len(hits) == 1 && !slices.ContainsFunc(explicit, func(namespace string) bool {
+		return namespace != hits[0].Namespace
 	}) {
 		if line := autoSelect(in, hits[0], words[projectKey(hits[0])], prompts, now); line != "" {
 			return line
@@ -180,7 +187,7 @@ func promptHook(in sessionHookInput, s *sessionState, prompts string, now time.T
 	hints := make(map[string][]string)
 	for _, p := range ps {
 		key := projectKey(p)
-		if strings.Contains(in.Prompt, p.Namespace) {
+		if slices.Contains(explicit, p.Namespace) {
 			hints[key] = append(hints[key], "プロンプトに namespace")
 		}
 		if p.Namespace == config.Namespace && p.Server == config.Server {

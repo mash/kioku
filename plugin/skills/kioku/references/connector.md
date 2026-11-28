@@ -3,7 +3,7 @@
 local mode では、確定した `SERVER`（接続先）・`NAMESPACE`（organization/project 形式のプロジェクト名）を使う。
 CLI が保存先を選ぶ。ユーザーが保存先を明示した場合だけ [selection.md](selection.md) の `-C` の手順に従う。
 Kioku の `cli_login_code` を使えるか確認する。
-namespace は [selection.md](selection.md) に従って決める。人の認証がなく対象が不明な初回だけ、`projects_list` でアカウントの General の namespace を確認する。
+namespace は [selection.md](selection.md) に従って決める。人の認証がなく対象が不明な初回だけ、`projects_list` の `"general": true` の項目からアカウントの General の namespace を確認する。
 本文の `kioku` は [SKILL.md](../SKILL.md) で定義した CLI のパスを指す。
 コマンドは CLI のパスで始め、変数の代入を前に付けない。
 

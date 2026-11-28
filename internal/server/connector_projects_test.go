@@ -50,8 +50,8 @@ func TestConnectorConsentProjectSelection(t *testing.T) {
 	f := setupWithWorker(t, false)
 	human := f.login("member@example.com")
 	params := connectorAuthorizeParams(f, connectorClient(t, f), auth.Token())
-	if page := connectorForm(f, "GET", "/oauth/authorize", human, params); page.Code != 200 || !strings.Contains(page.Body.String(), "Create or join") || strings.Contains(page.Body.String(), "<form") {
-		t.Fatal("expected instructions for a user without projects")
+	if page := connectorForm(f, "GET", "/oauth/authorize", human, params); page.Code != 200 || !strings.Contains(page.Body.String(), "member/general") {
+		t.Fatal("new account should have General available to share")
 	}
 	a := consentProject(t, f, human, "alpha")
 	b := consentProject(t, f, human, "beta")
@@ -62,8 +62,8 @@ func TestConnectorConsentProjectSelection(t *testing.T) {
 		t.Fatal("consent must list only the user's project namespaces")
 	}
 	action, fields, options := consentControls(t, page)
-	if !slices.Equal(options, []string{a.Namespace, b.Namespace}) || strings.Contains(action, "namespace") {
-		t.Fatal("expected exactly two unchecked projects in namespace order")
+	if !slices.Equal(options, []string{a.Namespace, b.Namespace, "member/general"}) || strings.Contains(action, "namespace") {
+		t.Fatal("expected three unchecked projects in namespace order")
 	}
 	if res := connectorForm(f, "POST", action+"&namespace="+b.Namespace, human, fields); res.Code != 400 || res.Header().Get("Location") != "" || !strings.Contains(res.Body.String(), "No project was selected") {
 		t.Fatal("query-only consent granted access", res.Code)

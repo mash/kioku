@@ -20,6 +20,8 @@ func TestWritesReturnWithoutPollingAndOnlyGenerationWaits(t *testing.T) {
 	jobKind := "generate"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/projects":
+			json.NewEncoder(w).Encode([]model.ProjectEntry{})
 		case strings.Contains(r.URL.Path, "/snapshot"):
 			if r.URL.Query().Get("manifest") == "1" {
 				snapshots++

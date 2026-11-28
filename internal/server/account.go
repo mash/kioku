@@ -166,7 +166,7 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
 	}
-	var general store.ProjectRow
+	var user store.UserRow
 	if err := s.updateAccount(r, uid, func(q *store.Queries) error {
 		var req struct {
 			Confirm string `json:"confirm"`
@@ -178,45 +178,68 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request, uid strin
 			return fail(400, "explicit delete-account confirmation required")
 		}
 		var err error
-		general, err = q.GeneralProject(uid)
+		user, err = q.User(uid)
 		return err
 	}); err != nil {
 		return err
 	}
-	unlock, err := s.storage.lock(r.Context(), "generate:"+general.ID)
+	generalID := store.ValueString(user.GeneralProjectID)
+	personalOrgID := store.ValueString(user.PersonalOrgID)
+	unlock, err := s.storage.lock(r.Context(), "generate:"+generalID)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	authorize := func(q *store.Queries) error {
+	// Admit and mark General deleting in the same write transaction. Creation
+	// and ownership changes cannot introduce blockers after that point.
+	admit := func(q *store.Queries) error {
 		if err := s.checkMutation(q, r, uid, ""); err != nil {
 			return err
 		}
-		return checkAccountDeletion(q, uid, general.ID)
+		return checkAccountDeletion(q, uid, generalID, personalOrgID)
 	}
 	finish := func(q *store.Queries) error {
-		if err := q.DeleteOrganizationRows(general.OrgID); err != nil {
+		personal, err := q.Organization(personalOrgID)
+		if err != nil {
+			return err
+		}
+		if err := q.ReserveUserSlug(personal.Slug, time.Now().Add(90*24*time.Hour).UnixMilli()); err != nil {
 			return err
 		}
 		owned, err := q.OwnedOrganizations(uid)
 		if err != nil {
 			return err
 		}
+		owned[personalOrgID] = true
 		for org := range owned {
-			if err := q.DeleteOrganizationRows(org); err != nil {
+			owners, err := q.OrganizationOwners(org)
+			if err != nil {
 				return err
+			}
+			if org == personalOrgID || len(owners) == 1 {
+				if err := q.DeleteOrganizationRows(org); err != nil {
+					return err
+				}
 			}
 		}
 		return q.DeleteAccountRows(uid)
 	}
-	if err := s.storage.deleteProjectAndFinish(r.Context(), general.ID, s.reconcileProjectDeletion, finish, authorize); err != nil {
+	if err := s.storage.deleteProjectAndFinish(r.Context(), generalID, s.reconcileProjectDeletion, admit, finish); err != nil {
 		return err
 	}
 	jsonOut(w, 200, map[string]bool{"deleted": true})
 	return nil
 }
 
-func checkAccountDeletion(q *store.Queries, uid, generalID string) error {
+func checkAccountActive(q *store.Queries, uid string) error {
+	deleting, err := q.AccountDeleting(uid)
+	if err == nil && deleting {
+		return fail(409, "account deletion is in progress")
+	}
+	return err
+}
+
+func checkAccountDeletion(q *store.Queries, uid, generalID, personalOrgID string) error {
 	projects, err := q.ProjectsForUser(uid)
 	if err != nil {
 		return err
@@ -237,17 +260,25 @@ func checkAccountDeletion(q *store.Queries, uid, generalID string) error {
 	if err != nil {
 		return err
 	}
+	owned[personalOrgID] = true
 	for org := range owned {
 		projects, err := q.OrganizationProjects(org)
 		if err != nil {
 			return err
 		}
-		if len(projects) > 0 {
+		for _, p := range projects {
+			if p.ID == generalID {
+				continue
+			}
+			if org == personalOrgID {
+				return fail(409, "delete other projects in your personal organization before deleting your account")
+			}
 			return fail(409, "transfer organization ownership before deleting your account")
 		}
 	}
 	return nil
 }
+
 func decodeTransferTarget(q *store.Queries, body requestBody) (string, error) {
 	var req struct {
 		Target string `json:"target"`
@@ -283,11 +314,16 @@ func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid str
 		if err != nil {
 			return err
 		}
-		if store.IsGeneralProject(uid, p.OrgID, p.Slug) {
+		if general, err := q.IsGeneralProject(p.ID); err != nil {
+			return err
+		} else if general {
 			return fail(409, "General belongs to your account")
 		}
 		target, err := decodeTransferTarget(q, body)
 		if err != nil {
+			return err
+		}
+		if err := checkAccountActive(q, target); err != nil {
 			return err
 		}
 		if target == uid || p.Members[target] == "" {
@@ -308,6 +344,14 @@ func (s *Server) transferProject(w http.ResponseWriter, r *http.Request, uid str
 	return nil
 }
 func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, uid string) error {
+	return s.changeOrganizationOwner(w, r, uid, true)
+}
+
+func (s *Server) addOrganizationOwner(w http.ResponseWriter, r *http.Request, uid string) error {
+	return s.changeOrganizationOwner(w, r, uid, false)
+}
+
+func (s *Server) changeOrganizationOwner(w http.ResponseWriter, r *http.Request, uid string, transfer bool) error {
 	body := readBody(w, r)
 	if err := s.confirmAccount(r, uid); err != nil {
 		return err
@@ -317,8 +361,18 @@ func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, ui
 		if err != nil {
 			return err
 		}
+		if transfer {
+			if general, err := q.OrganizationHasGeneral(org.ID); err != nil {
+				return err
+			} else if general {
+				return fail(409, "cannot transfer an organization that contains General")
+			}
+		}
 		target, err := decodeTransferTarget(q, body)
 		if err != nil {
+			return err
+		}
+		if err = checkAccountActive(q, target); err != nil {
 			return err
 		}
 		eligible := org.Owners[target]
@@ -338,10 +392,17 @@ func (s *Server) transferOrganization(w http.ResponseWriter, r *http.Request, ui
 		if target == uid || !eligible {
 			return fail(409, "new owner must already belong to an organization project")
 		}
-		return q.ReplaceOrganizationOwners(org.ID, target)
+		if transfer {
+			return q.ReplaceOrganizationOwners(org.ID, target)
+		}
+		return q.PutOrganizationOwner(org.ID, target)
 	}); err != nil {
 		return err
 	}
-	jsonOut(w, 200, map[string]bool{"transferred": true})
+	if transfer {
+		jsonOut(w, 200, map[string]bool{"transferred": true})
+	} else {
+		jsonOut(w, 200, map[string]bool{"added": true})
+	}
 	return nil
 }

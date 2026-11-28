@@ -95,28 +95,22 @@ func (fm markdownFrontmatter) rewrite(sourceURL, updatedAt string) (string, erro
 	if mapping == nil {
 		mapping = &yaml.Node{Kind: yaml.MappingNode}
 	}
-	set := func(key, value string) error {
+	set := func(key, value string) {
 		next := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 		for i := 0; i < len(mapping.Content); i += 2 {
 			if mapping.Content[i].Value == key {
-				if hasAnchorOrAlias(mapping.Content[i+1]) {
-					return errFrontmatter
-				}
+				old := mapping.Content[i+1]
 				mapping.Content[i+1] = next
-				return nil
+				preserveAliases(mapping, old)
+				return
 			}
 		}
 		mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, next)
-		return nil
 	}
 	if updatedAt != "" {
-		if err := set("updated_at", updatedAt); err != nil {
-			return "", err
-		}
+		set("updated_at", updatedAt)
 	}
-	if err := set("source_url", sourceURL); err != nil {
-		return "", err
-	}
+	set("source_url", sourceURL)
 	encoded, err := yaml.Marshal(mapping)
 	if err != nil {
 		return "", fmt.Errorf("write frontmatter: %w", err)
@@ -124,16 +118,60 @@ func (fm markdownFrontmatter) rewrite(sourceURL, updatedAt string) (string, erro
 	return "---\n" + string(encoded) + "---\n" + fm.body, nil
 }
 
-func hasAnchorOrAlias(n *yaml.Node) bool {
-	if n.Anchor != "" || n.Kind == yaml.AliasNode {
-		return true
-	}
-	for _, child := range n.Content {
-		if hasAnchorOrAlias(child) {
-			return true
+// Keep anchors of replaced values if another field still references them.
+// Promote the first remaining alias to the original node, so later aliases
+// still resolve and other fields do not inherit the replacement value.
+func preserveAliases(mapping, removed *yaml.Node) {
+	anchors := make(map[*yaml.Node]bool)
+	names := make(map[string]int)
+	var collect func(*yaml.Node, bool)
+	collect = func(n *yaml.Node, detached bool) {
+		if n.Anchor != "" {
+			names[n.Anchor]++
+			if detached {
+				anchors[n] = true
+			}
+		}
+		for _, child := range n.Content {
+			collect(child, detached)
 		}
 	}
-	return false
+	collect(removed, true)
+	if len(anchors) == 0 {
+		return
+	}
+	collect(mapping, false)
+	declared := map[*yaml.Node]bool{}
+	var visit func(*yaml.Node) *yaml.Node
+	visit = func(n *yaml.Node) *yaml.Node {
+		if n.Kind == yaml.AliasNode {
+			if !anchors[n.Alias] {
+				n.Value = n.Alias.Anchor
+				return n
+			}
+			n = n.Alias
+		}
+		if n.Anchor != "" {
+			if declared[n] {
+				return &yaml.Node{Kind: yaml.AliasNode, Value: n.Anchor, Alias: n}
+			}
+			declared[n] = true
+			if names[n.Anchor] > 1 {
+				// Moving a node must not change which declaration its aliases use.
+				name := n.Anchor + "_kioku"
+				for names[name] != 0 {
+					name += "_"
+				}
+				n.Anchor, names[name] = name, 1
+			}
+		}
+		delete(anchors, n)
+		for i, child := range n.Content {
+			n.Content[i] = visit(child)
+		}
+		return n
+	}
+	visit(mapping)
 }
 
 // FrontmatterSourceURL reads the source identity from a parsed frontmatter mapping.

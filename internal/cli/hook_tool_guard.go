@@ -54,7 +54,7 @@ func (e *hookToolEvent) UnmarshalJSON(data []byte) error {
 	}
 	if e.Event == "PostToolUse" && e.Name == "Artifact" {
 		var arg artifactInput
-		if json.Unmarshal(e.Input, &arg) == nil && arg.isPublish() && arg.URL == "" {
+		if json.Unmarshal(e.Input, &arg) == nil && arg.isPublish() {
 			return json.Unmarshal(data, &struct {
 				Response *json.RawMessage `json:"tool_response"`
 			}{Response: &e.Response})

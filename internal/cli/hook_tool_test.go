@@ -39,7 +39,8 @@ func TestHookToolSources(t *testing.T) {
 		{"Artifact", `{"action":"publish","file_path":"index.html"}`, pub, artifactURL},
 		{"Artifact", `{"action":"publish","url":"https://claude.ai/artifact/same"}`, pub, "https://claude.ai/artifact/same"},
 		{"Artifact", `{"action":"read","url":"` + codeArtifact + `","path":"index.html"}`, "", codeArtifact},
-		{"Artifact", `{"action":"publish","url":"` + codeArtifact + `"}`, "", codeArtifact},
+		{"Artifact", `{"action":"publish","url":"` + codeArtifact + `"}`, "", ""},
+		{"Artifact", `{"action":"publish","url":"` + codeArtifact + `"}`, `"Error: publish failed"`, ""},
 		{"Artifact", `{"action":"publish"}`, fmt.Sprintf(`"Published Test at %s (Version 2, version id 1790000000-c3d4)"`, codeArtifact), codeArtifact},
 		{"Artifact", `{"action":"publish"}`, `{"success":true,"url":"` + codeArtifact + `"}`, ""},
 		{"Artifact", `{"action":"publish"}`, `"Error: publish failed"`, ""},
@@ -66,6 +67,19 @@ func TestHookToolSources(t *testing.T) {
 	git("remote", "set-url", "origin", "../some/project")
 	if got := githubViewSource(t.Context(), cwd, "gh issue view 4"); got != "" {
 		t.Fatal("non-GitHub origin accepted", got)
+	}
+}
+
+func TestHookToolKeepsResponseForArtifactUpdates(t *testing.T) {
+	const url = "https://claude.ai/code/artifact/a897ab72-f9f4-4a60-80af-5be2dffecd79"
+	var in hookToolEvent
+	event := fmt.Sprintf(`{"hook_event_name":"PostToolUse","tool_name":"Artifact","tool_input":{"action":"publish","url":%q},"tool_response":%q}`,
+		url, "Published Test at "+url+" (Version 2, version id 1790000000-c3d4)")
+	if err := decodeHookEvent(strings.NewReader(event), &in); err != nil {
+		t.Fatal(err)
+	}
+	if got := toolHookSource(t.Context(), in); got != url || len(in.Response) == 0 {
+		t.Fatal(got, string(in.Response))
 	}
 }
 

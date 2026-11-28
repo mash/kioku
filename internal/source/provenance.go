@@ -109,10 +109,7 @@ func LocalFileContent(name, content string, mtime time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if value := frontmatterValue(fm.mapping, "source_url"); value != nil {
-		if hasAnchorOrAlias(value) {
-			return "", errFrontmatter
-		}
+	if frontmatterValue(fm.mapping, "source_url") != nil {
 		u, _ := FrontmatterSourceURL(fm.mapping)
 		switch {
 		case u == LocalSource:
@@ -140,9 +137,6 @@ func fileWithProvenance(name, content string) (Document, markdownFrontmatter, er
 		return Document{}, fm, err
 	}
 	if fm.mapping == nil {
-		return Document{}, fm, errFrontmatter
-	}
-	if value := frontmatterValue(fm.mapping, "source_url"); value != nil && value.Kind != yaml.ScalarNode && hasAnchorOrAlias(value) {
 		return Document{}, fm, errFrontmatter
 	}
 	doc.URL, err = FrontmatterSourceURL(fm.mapping)

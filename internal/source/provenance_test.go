@@ -139,22 +139,38 @@ func TestLocalFileFrontmatterOrMarkdownRules(t *testing.T) {
 	}
 }
 
-func TestProvenanceRewriteRejectsAnchorsAndAliasesInReplacedValues(t *testing.T) {
-	for _, header := range []string{
-		"source_url: &identity kioku:local\n",
-		"identity: &identity kioku:local\nsource_url: *identity\n",
-		"source_url: {nested: &identity kioku:local}\n",
-		"source_url: kioku:local\nupdated_at: &old 2026-11-28T00:00:00Z\n",
-		"source_url: kioku:local\nupdated_at: {x: &nested [one, two]}\n",
-		"source_url: kioku:local\nvalue: &old 2026-11-28T00:00:00Z\nupdated_at: {nested: *old}\n",
-	} {
-		input := "---\n" + header + "---\nBody\n"
-		stamp := time.Now()
-		if _, err := LocalFileContent("notes.md", input, stamp); !errors.Is(err, errFrontmatter) {
-			t.Fatalf("local file accepted %q: %v", header, err)
+func TestProvenanceRewritePreservesReferencesToReplacedValues(t *testing.T) {
+	const input = "---\nsource_url: &identity kioku:local\nupdated_at: &old {x: &nested [one, two]}\nsource_copy: *identity\nlist_copy: *nested\nmap_copy: *old\nagain: *old\n---\nBody\n"
+	stamp := time.Date(2026, 11, 28, 13, 0, 0, 0, time.UTC)
+	local, err := LocalFileContent("notes.md", input, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, inbox, err := InboxFile("notes.md", input, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ content, key string }{{local, LocalSource}, {inbox, doc.URL}} {
+		meta, err := Frontmatter(tc.content)
+		if err != nil {
+			t.Fatal(tc.content, err)
 		}
-		if _, _, err := InboxFile("notes.md", input, stamp); !errors.Is(err, errFrontmatter) {
-			t.Fatalf("inbox accepted %q: %v", header, err)
+		var values map[string]any
+		if err := meta.Decode(&values); err != nil {
+			t.Fatal(tc.content, err)
+		}
+		for key, want := range map[string]string{
+			"source_url": tc.key, "source_copy": LocalSource, "updated_at": stamp.Format(time.RFC3339),
+			"list_copy": "[one two]", "map_copy": "map[x:[one two]]", "again": "map[x:[one two]]",
+		} {
+			if got := fmt.Sprint(values[key]); got != want {
+				t.Fatalf("%s: %q, want %q\n%s", key, got, want, tc.content)
+			}
+		}
+	}
+	for _, invalid := range []string{"source_url: {nested: &identity kioku:local}", "identity: &identity kioku:local\nsource_url: *identity"} {
+		if _, err := LocalFileContent("notes.md", "---\n"+invalid+"\n---\nBody", stamp); !errors.Is(err, ErrLocalFileSource) {
+			t.Fatalf("local file accepted non-string source_url %q: %v", invalid, err)
 		}
 	}
 }

@@ -75,9 +75,12 @@ func toolHookSource(ctx context.Context, in hookToolEvent) string {
 		case arg.Action == "read":
 			raw = arg.URL
 		case arg.isPublish():
-			raw = arg.URL
+			raw = publishedArtifactURL(in.Response)
 			if raw == "" {
-				raw = publishedArtifactURL(in.Response)
+				return ""
+			}
+			if arg.URL != "" {
+				raw = arg.URL
 			}
 		}
 		if !isArtifactURL(raw) {
@@ -105,7 +108,7 @@ var publishResultLine = regexp.MustCompile(`^Published [^\r\n]+ at (https://[^ \
 func publishedArtifactURL(response json.RawMessage) string {
 	var line string
 	if json.Unmarshal(response, &line) == nil {
-		if match := publishResultLine.FindStringSubmatch(line); len(match) == 2 {
+		if match := publishResultLine.FindStringSubmatch(line); len(match) == 2 && isArtifactURL(match[1]) {
 			return match[1]
 		}
 	}

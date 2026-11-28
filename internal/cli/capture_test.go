@@ -157,6 +157,10 @@ func TestCaptureRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+		tools := slices.Index(args, "--tools")
+		if tools < 0 || tools+1 >= len(args) || args[tools+1] != "Artifact,Bash,Read,Write" {
+			t.Fatal("capture must restrict built-in tools independently of permission rules", args)
+		}
 		at := slices.Index(args, "--settings")
 		if at < 0 || at+1 >= len(args) {
 			t.Fatal("missing capture hook settings", args)
@@ -165,8 +169,8 @@ func TestCaptureRun(t *testing.T) {
 			Hooks map[string][]struct {
 				Matcher string
 				Hooks   []struct {
-					Type, Command string
-					Async         bool
+					Type, Command, OnFailure string
+					Async                    bool
 				}
 			}
 		}
@@ -175,7 +179,7 @@ func TestCaptureRun(t *testing.T) {
 		}
 		pre := settings.Hooks["PreToolUse"]
 		if len(pre) != 1 || pre[0].Matcher != "^(Artifact|mcp__.*|Bash|Read|Write)$" || len(pre[0].Hooks) != 1 ||
-			pre[0].Hooks[0].Type != "command" || pre[0].Hooks[0].Async ||
+			pre[0].Hooks[0].Type != "command" || pre[0].Hooks[0].Async || pre[0].Hooks[0].OnFailure != "block" ||
 			pre[0].Hooks[0].Command != "sh "+shellQuote(filepath.Join(root, "hooks", "kioku.sh"))+" tool-guard" {
 			t.Fatal(settings)
 		}

@@ -397,6 +397,40 @@ func TestCaptureSubmissionDoesNotBlockNewRegistration(t *testing.T) {
 	}
 }
 
+type failedDeleteOutput struct{}
+
+func (failedDeleteOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestDeleteSendsRemoveWhenOutputFails(t *testing.T) {
+	a := projectEntryApp(t)
+	const src = "https://example.com/already-accepted"
+	if err := a.registerQueueSource(src, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	request := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		request <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer ts.Close()
+	a.Config.Server, a.Client, a.ctx, a.Out = ts.URL, ts.Client(), t.Context(), failedDeleteOutput{}
+	if err := a.deleteSources([]string{src}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatal(err)
+	}
+	select {
+	case body := <-request:
+		if body["source_url"] != src || body["remove"] != true {
+			t.Fatal(body)
+		}
+	default:
+		t.Fatal("delete did not reach the server")
+	}
+}
+
 func TestCapturePutKeepsAcceptedStatusWhenBodyIsTruncated(t *testing.T) {
 	a := projectEntryApp(t)
 	const src = "https://example.com/accepted"

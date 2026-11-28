@@ -232,8 +232,7 @@ func (a *App) prepareCaptureTmp(token string) (string, error) {
 
 func captureAllowedTools(command, project, tmp string, rows []queueRow) []string {
 	token := filepath.Base(tmp)
-	// Claude Code uses Edit(path) for Write permissions. The synchronous
-	// guard separately rejects actual Edit calls.
+	// Claude Code uses Edit(path) for Write permissions. --tools omits Edit.
 	tools := []string{
 		"Bash(" + command + " capture fetch:*)",
 		"Bash(" + project + " capture put --capture-token " + token + ":*)",
@@ -417,14 +416,14 @@ func (a *App) captureRun(cwd string, now time.Time) (err error) {
 		"PreToolUse": []any{map[string]any{
 			"matcher": captureGuardMatcher,
 			"hooks": []any{map[string]any{
-				"type": "command", "command": "sh " + shellQuote(filepath.Join(root, "hooks", "kioku.sh")) + " tool-guard", "timeout": 10,
+				"type": "command", "command": "sh " + shellQuote(filepath.Join(root, "hooks", "kioku.sh")) + " tool-guard", "timeout": 10, "onFailure": "block",
 			}},
 		}},
 	}})
 	if err != nil {
 		return err
 	}
-	args := []string{"--bg", "--permission-mode", "dontAsk", "--plugin-dir", root, "--settings", string(settings)}
+	args := []string{"--bg", "--permission-mode", "dontAsk", "--plugin-dir", root, "--settings", string(settings), "--tools", "Artifact,Bash,Read,Write"}
 	args = append(args, "--allowedTools")
 	args = append(args, captureAllowedTools(vars["kioku"], projectCommand, tmp, rows)...)
 	prompt := renderTemplate(prompts.CaptureRun, vars)

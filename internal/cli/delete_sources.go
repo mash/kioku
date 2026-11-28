@@ -10,7 +10,7 @@ import (
 	"github.com/mash/kioku/internal/source"
 )
 
-func (a *App) deleteSources(args []string) error {
+func (a *App) deleteSources(args []string) (err error) {
 	if len(args) == 0 {
 		return errors.New("usage: kioku delete SOURCE...")
 	}
@@ -56,19 +56,19 @@ func (a *App) deleteSources(args []string) error {
 			return err
 		}
 	}
-	report := func(src string) error {
-		_, err := fmt.Fprintf(a.Out, "removed %s\n", src)
-		return err
-	}
-	reported := make(map[string]bool)
-	for _, src := range args {
-		if removed[src] && !reported[src] {
-			if err := report(src); err != nil {
-				return err
+	// Report completed local or remote removals even if a later request fails.
+	// A broken stdout pipe must not prevent the server requests.
+	defer func() {
+		for _, src := range args {
+			if removed[src] {
+				if _, writeErr := fmt.Fprintf(a.Out, "removed %s\n", src); writeErr != nil {
+					err = errors.Join(err, writeErr)
+					return
+				}
+				delete(removed, src)
 			}
-			reported[src] = true
 		}
-	}
+	}()
 	authorized := false
 	for _, src := range args {
 		if strings.HasPrefix(src, toolSourcePrefix) {
@@ -83,12 +83,7 @@ func (a *App) deleteSources(args []string) error {
 		if _, err := a.postPut(endpoint, model.PutRequest{Remove: true, SourceURL: src}, nil); err != nil {
 			return err
 		}
-		if !reported[src] {
-			if err := report(src); err != nil {
-				return err
-			}
-			reported[src] = true
-		}
+		removed[src] = true
 	}
 	return nil
 }
